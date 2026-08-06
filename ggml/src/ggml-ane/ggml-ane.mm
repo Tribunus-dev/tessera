@@ -850,12 +850,25 @@ static ggml_backend_ane_program * ggml_ane_program_load(const char * mlmodelc_di
     }
 }
 
+// Device-level view of the bound program. The device supports_op
+// runs before any backend context exists (weight-placement probes
+// at model load, scheduler assignment at graph build), so it cannot
+// reach the per-backend program pointer; it reads this instead.
+// ggml_backend_ane_set_program keeps it in sync. ANE advertises the
+// bundle-gated ops only while a program is bound: honest advertising,
+// so the scheduler is free to route to every available device without
+// ever handing ANE an op it has no bundle to run.
+static std::atomic<ggml_backend_ane_program *> g_ane_bound_program { nullptr };
+
 GGML_BACKEND_API struct ggml_backend_ane_program * ggml_backend_ane_program_load_from_dir(
         const char * mlmodelc_dir, const char * function_name) {
     return ggml_ane_program_load(mlmodelc_dir, function_name);
 }
 
 GGML_BACKEND_API void ggml_backend_ane_program_free(struct ggml_backend_ane_program * program) {
+    // un-advertise the bundle-gated ops if this was the bound program
+    ggml_backend_ane_program * expected = program;
+    g_ane_bound_program.compare_exchange_strong(expected, nullptr);
     delete program;
 }
 
@@ -1352,6 +1365,8 @@ static float * ggml_ane_tensor_f32_view(ggml_tensor * tensor, std::vector<float>
     // Returns either the tensor's own data (when already fp32 contiguous) or
     // a scratch buffer of fp32-converted data. Callers must hold the result
     // only across a single op because the scratch is overwritten per call.
+    // Returns nullptr for a dtype the elementwise path cannot view; the
+    // caller must fail the op loudly instead of miscomputing.
     const size_t n = ggml_nelements(tensor);
     if (tensor->type == GGML_TYPE_F32 && ggml_is_contiguous(tensor)) {
         return (float *) tensor->data;
@@ -1365,20 +1380,21 @@ static float * ggml_ane_tensor_f32_view(ggml_tensor * tensor, std::vector<float>
             scratch[i] = ((const float *) tensor->data)[i];
         }
     } else {
-        // Unsupported dtype for the elementwise path; zero-fill so the caller
-        // can still detect a wrong-dtype input via the op result.
-        std::memset(scratch.data(), 0, n * sizeof(float));
+        return nullptr;
     }
     return scratch.data();
 }
 
-static void ggml_ane_tensor_write_f32(ggml_tensor * tensor, const float * src) {
+static bool ggml_ane_tensor_write_f32(ggml_tensor * tensor, const float * src) {
     const size_t n = ggml_nelements(tensor);
     if (tensor->type == GGML_TYPE_F32) {
         std::memcpy(tensor->data, src, n * sizeof(float));
     } else if (tensor->type == GGML_TYPE_F16) {
         ggml_fp32_to_fp16_row(src, (ggml_fp16_t *) tensor->data, (int64_t) n);
+    } else {
+        return false;
     }
+    return true;
 }
 
 // Apply an elementwise op on fp32 views of src[0] (and src[1] for binary ops).
@@ -1390,23 +1406,63 @@ static bool ggml_ane_compute_elementwise(ggml_tensor * op) {
 
     std::vector<float> a_scratch;
     float * a = ggml_ane_tensor_f32_view(src0, a_scratch);
-
-    float * b = nullptr;
-    std::vector<float> b_scratch;
-    if (op->src[1] && (size_t) ggml_nelements(op->src[1]) == n) {
-        b = ggml_ane_tensor_f32_view(op->src[1], b_scratch);
+    if (a == nullptr) {
+        return false;
     }
 
+    std::vector<float> b_scratch;
     std::vector<float> out(n);
 
     switch (op->op) {
-        case GGML_OP_ADD: {
-            if (!b) return false;
-            vDSP_vadd(a, 1, b, 1, out.data(), 1, n);
-        } break;
+        case GGML_OP_ADD:
         case GGML_OP_MUL: {
-            if (!b) return false;
-            vDSP_vmul(a, 1, b, 1, out.data(), 1, n);
+            // Binary elementwise with ggml broadcast: src1 repeats over
+            // src0's shape (ggml_can_repeat(src1, src0)), so the src1
+            // index along each dim is i % ne1[d]. Fast paths cover the
+            // equal-count and scalar cases; the generic loop walks rows.
+            ggml_tensor * src1 = op->src[1];
+            if (src1 == nullptr || !ggml_can_repeat(src1, src0)) {
+                return false;
+            }
+            float * b = ggml_ane_tensor_f32_view(src1, b_scratch);
+            if (b == nullptr) {
+                return false;
+            }
+            const bool mul = (op->op == GGML_OP_MUL);
+            const size_t n1 = ggml_nelements(src1);
+            if (n1 == n) {
+                if (mul) vDSP_vmul(a, 1, b, 1, out.data(), 1, n);
+                else     vDSP_vadd(a, 1, b, 1, out.data(), 1, n);
+            } else if (n1 == 1) {
+                if (mul) vDSP_vsmul(a, 1, b, out.data(), 1, n);
+                else     vDSP_vsadd(a, 1, b, out.data(), 1, n);
+            } else {
+                const int64_t * ne  = src0->ne;
+                const int64_t * ne1 = src1->ne;
+                for (int64_t i3 = 0; i3 < ne[3]; ++i3) {
+                    const int64_t j3 = i3 % ne1[3];
+                    for (int64_t i2 = 0; i2 < ne[2]; ++i2) {
+                        const int64_t j2 = i2 % ne1[2];
+                        for (int64_t i1 = 0; i1 < ne[1]; ++i1) {
+                            const int64_t j1 = i1 % ne1[1];
+                            const size_t row  = (size_t) ((i3*ne[2] + i2)*ne[1] + i1) * ne[0];
+                            const size_t row1 = (size_t) ((j3*ne1[2] + j2)*ne1[1] + j1) * ne1[0];
+                            if (ne1[0] == ne[0]) {
+                                if (mul) vDSP_vmul(a + row, 1, b + row1, 1, out.data() + row, 1, ne[0]);
+                                else     vDSP_vadd(a + row, 1, b + row1, 1, out.data() + row, 1, ne[0]);
+                            } else if (ne1[0] == 1) {
+                                if (mul) vDSP_vsmul(a + row, 1, b + row1, out.data() + row, 1, ne[0]);
+                                else     vDSP_vsadd(a + row, 1, b + row1, out.data() + row, 1, ne[0]);
+                            } else {
+                                for (int64_t i0 = 0; i0 < ne[0]; ++i0) {
+                                    const float bv = b[row1 + (size_t) (i0 % ne1[0])];
+                                    out[row + i0] = mul ? a[row + i0]*bv : a[row + i0] + bv;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         } break;
         case GGML_OP_SCALE: {
             // ggml_scale stores the scalar in op_params[0].
@@ -1420,13 +1476,32 @@ static bool ggml_ane_compute_elementwise(ggml_tensor * op) {
             vDSP_vclip(a, 1, &lo, &hi, out.data(), 1, n);
         } break;
         case GGML_OP_REPEAT: {
-            // Tile src0 over dst. n_dst must be a whole multiple of n_src.
-            const size_t ns = ggml_nelements(src0);
-            if (ns == 0 || n % ns != 0) {
+            // Repeat src0 over dst per the ggml_repeat contract
+            // (ggml_can_repeat(src0, dst)); the src0 index along each dim
+            // is i % nes[d]. A flat tile is only correct when the repeat
+            // is along the outermost non-unit dim, so walk rows instead.
+            const int64_t * ne  = dst->ne;
+            const int64_t * nes = src0->ne;
+            if (!ggml_can_repeat(src0, dst)) {
                 return false;
             }
-            for (size_t i = 0; i < n; i += ns) {
-                std::memcpy(out.data() + i, a, ns * sizeof(float));
+            for (int64_t i3 = 0; i3 < ne[3]; ++i3) {
+                const int64_t j3 = i3 % nes[3];
+                for (int64_t i2 = 0; i2 < ne[2]; ++i2) {
+                    const int64_t j2 = i2 % nes[2];
+                    for (int64_t i1 = 0; i1 < ne[1]; ++i1) {
+                        const int64_t j1 = i1 % nes[1];
+                        const size_t row  = (size_t) ((i3*ne[2] + i2)*ne[1] + i1) * ne[0];
+                        const size_t rows = (size_t) ((j3*nes[2] + j2)*nes[1] + j1) * nes[0];
+                        if (nes[0] == ne[0]) {
+                            std::memcpy(out.data() + row, a + rows, (size_t) ne[0] * sizeof(float));
+                        } else {
+                            for (int64_t i0 = 0; i0 < ne[0]; ++i0) {
+                                out[row + i0] = a[rows + (size_t) (i0 % nes[0])];
+                            }
+                        }
+                    }
+                }
             }
         } break;
         case GGML_OP_LEAKY_RELU: {
@@ -1502,8 +1577,7 @@ static bool ggml_ane_compute_elementwise(ggml_tensor * op) {
             return false;
     }
 
-    ggml_ane_tensor_write_f32(dst, out.data());
-    return true;
+    return ggml_ane_tensor_write_f32(dst, out.data());
 }
 
 // Copy a leaf tensor's data into `dst` in fp32. Used to feed Core ML inputs.
@@ -2805,7 +2879,9 @@ static enum ggml_status ggml_backend_ane_graph_compute(ggml_backend_t backend, g
         // CLAMP, REPEAT, LEAKY_RELU, and the UNARY variants SILU/SIGMOID/
         // TANH/RELU/EXP/LOG/ABS/NEG/STEP/SQR/SQRT). Layout ops that we
         // advertise as supported are handled as no-ops over contiguous data.
-        if (node->op == GGML_OP_RESHAPE ||
+        // GGML_OP_NONE marks leaf/data tensors (weights); no compute.
+        if (node->op == GGML_OP_NONE ||
+            node->op == GGML_OP_RESHAPE ||
             node->op == GGML_OP_VIEW ||
             node->op == GGML_OP_TRANSPOSE ||
             node->op == GGML_OP_PERMUTE ||
@@ -2820,12 +2896,13 @@ static enum ggml_status ggml_backend_ane_graph_compute(ggml_backend_t backend, g
             // Type/shape conversion copy on the host-mapped arena. CAST is not
             // a standalone op in this ggml version; it lowers to CPY.
             std::vector<float> tmp;
-            if (!ggml_ane_gather_input_fp32(node->src[0], tmp)) {
-                GGML_LOG_ERROR("ane: CPY unsupported dtype %s\n",
-                               ggml_type_name(node->src[0]->type));
+            if (!ggml_ane_gather_input_fp32(node->src[0], tmp) ||
+                !ggml_ane_tensor_write_f32(node, tmp.data())) {
+                GGML_LOG_ERROR("ane: CPY unsupported dtype %s -> %s\n",
+                               ggml_type_name(node->src[0]->type),
+                               ggml_type_name(node->type));
                 return GGML_STATUS_FAILED;
             }
-            ggml_ane_tensor_write_f32(node, tmp.data());
             continue;
         }
 
@@ -2836,8 +2913,8 @@ static enum ggml_status ggml_backend_ane_graph_compute(ggml_backend_t backend, g
         // Reached an op we advertised but did not implement. This is a logic
         // error in supports_op; surface it loudly rather than producing
         // silently-wrong data (F-mode failures are far worse than a crash).
-        GGML_LOG_ERROR("ane: advertised op %s has no compute path\n",
-                       ggml_op_name(node->op));
+        GGML_LOG_ERROR("ane: advertised op %s (node '%s') has no compute path\n",
+                       ggml_op_name(node->op), node->name);
         return GGML_STATUS_FAILED;
     }
 
@@ -2896,6 +2973,8 @@ GGML_BACKEND_API bool ggml_backend_ane_set_program(
     // The previously bound program (if any) is not freed here; ownership stays
     // with the caller. Only one program may be bound per backend at a time.
     ctx->program.store(program);
+    // keep the device-level supports_op view in sync
+    g_ane_bound_program.store(program);
     return true;
 }
 
@@ -2964,6 +3043,27 @@ static ggml_backend_buffer_type_t ggml_backend_ane_device_get_buffer_type(ggml_b
     return buft;
 }
 
+// The Accelerate elementwise path (ggml_ane_compute_elementwise) views
+// every operand as a flat contiguous fp32 array. Advertise an elementwise
+// op only when the compute path can actually serve it: contiguous F32/F16
+// operands (the two dtypes ggml_ane_tensor_f32_view converts). Anything
+// else routes to CPU/Metal instead of failing at graph_compute.
+static bool ggml_ane_elementwise_servable(const ggml_tensor * op) {
+    const ggml_tensor * t[3] = { op, op->src[0], op->src[1] };
+    for (size_t i = 0; i < 3; ++i) {
+        if (t[i] == nullptr) {
+            continue;
+        }
+        if (!ggml_is_contiguous(t[i])) {
+            return false;
+        }
+        if (t[i]->type != GGML_TYPE_F32 && t[i]->type != GGML_TYPE_F16) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool ggml_ane_supported_tensor_type(enum ggml_type type) {
     // The elementwise/Accelerate path and the fp16 IOSurface->MLMultiArray
     // wrapping both need one of these host-convertible dtypes.
@@ -2986,19 +3086,20 @@ static bool ggml_ane_supported_tensor_type(enum ggml_type type) {
 
 // supports_op per deep-study Section 4.1.
 //
-// The ops we accept must have either a Core ML bundle dispatch (composite
-// transformer ops; today only MUL_MAT-style via the bound bundle, and that
-// path is still gated behind TODO(ane-bundle)) or an Accelerate elementwise
-// implementation (ggml_ane_compute_elementwise). We advertise only ops that
-// also have the elementwise path so the backend is exercisable without a
-// bundle. ANE-NATIVE-B body ops (RMS_NORM, SOFT_MAX, ROPE, GLU, GET_ROWS)
-// are advertised here and dispatched in ggml_ane_program_dispatch_op to
-// the bound bundle's functionName; the precise shape/dtype match is
-// enforced in dispatch_op, not here. Composite ANE-NATIVE-C ops (SDPA,
-// TILE640_*, DIAG_MASK_INF) are still NOT advertised because their
-// compute lives in a bundle function we do not dispatch yet; returning
-// true for them would make graph_compute fail at the "no compute path"
-// assert.
+// Two classes of ops are advertised:
+//   1. Ops with a compute path that needs no bundle: the layout/no-op
+//      group (NONE, RESHAPE, VIEW, ...), CPY, and the Accelerate
+//      elementwise set (ggml_ane_compute_elementwise). Each is gated on
+//      the exact contract its compute path implements (dtype/layout for
+//      elementwise and CPY) so the scheduler can route them to ANE on
+//      any host without ever handing over an unservable node.
+//   2. Bundle-gated ops (MUL_MAT, RMS_NORM, SOFT_MAX, ROPE, GLU,
+//      GET_ROWS, TILE640_MATMUL): true only while a program is bound
+//      (g_ane_bound_program). dispatch_op does the precise shape/dtype
+//      match against the bundle and rejects mismatches. Advertising
+//      them without a bundle would make graph_compute fail at the
+//      "no compute path" check and would pull weights into the ANE
+//      buffer at load for a backend that cannot serve their consumers.
 //
 // GELU decision (Section 4.2.3): the loaded Core ML bundle already bakes in
 // the tanh approximation, so GELU itself stays ANE-BREAKS here and the
@@ -3017,59 +3118,39 @@ static bool ggml_backend_ane_device_supports_op(ggml_backend_dev_t dev, const gg
     }
 
     switch (op->op) {
-        // ANE-NATIVE matmul (decode, M=1). The dispatch is gated on a
-        // bound bundle whose input/output shapes match the ggml op's
-        // shape; the bundle is the W0 spike's W0 matmul or, for real
-        // models, a per-projection bundle built with the model-specific
-        // weights. Only fp32 activations/weights are supported in the
-        // W1 spike; fp16 and quantized types are a follow-on.
-        case GGML_OP_MUL_MAT:
-            if (dev != nullptr) {
-                // The device-level supports_op does not have direct access
-                // to the per-backend program; the dispatch_op (in
-                // graph_compute) does the precise shape/dtype check and
-                // returns false if the bundle does not match. We
-                // advertise MUL_MAT as supported so the scheduler
-                // routes it to the ANE backend; a non-matching shape
-                // will then fall through (or be rejected) at dispatch time.
-                // The accuracy of the device-level supports_op matters
-                // for the scheduler's load balancing; the dispatch_op
-                // is the precise check.
-                return true;
-            }
-            return false;
+        // Leaf/data tensors (model weights, graph inputs). No compute;
+        // every backend that can hold the buffer owns them. Required so
+        // the scheduler can assign weights placed in the ANE buffer
+        // (ggml_backend_sched_backend_from_buffer checks supports_op for
+        // the tensor's own op, and leaves carry GGML_OP_NONE). Same
+        // convention as Metal/CUDA.
+        case GGML_OP_NONE:
+            return true;
 
-        // ANE-NATIVE-B body ops. Each is dispatched to the bound
-        // bundle's functionName when the bundle's baked shape/dtype
-        // matches the ggml op (the precise check lives in
-        // ggml_ane_program_dispatch_op). The device-level supports_op
-        // does not have direct access to the bound program, so it
-        // advertises the op and the dispatch_op decides. A bundle
-        // without the matching function causes dispatch_op to return
-        // false; the graph then fails at graph_compute's "no compute
-        // path" check rather than silently miscomputing. Real
-        // production graphs are scheduled by a multi-backend
-        // scheduler that routes unmatched ops to ggml-cpu.
+        // Bundle-gated ops. Each dispatches to the bound program's
+        // functionName; dispatch_op does the precise shape/dtype check
+        // and rejects mismatches. Advertised only while a program is
+        // actually bound (g_ane_bound_program, kept in sync by
+        // ggml_backend_ane_set_program): without a bundle ANE has no
+        // compute path for these, and advertising them anyway would
+        // pull weights into the ANE buffer at load and ops into ANE at
+        // schedule time, then fail graph_compute. With a program bound
+        // the router considers ANE alongside every other device, per
+        // the dispatch rule "ANE when ANE is faster, not when ANE is
+        // available".
+        case GGML_OP_MUL_MAT:
         case GGML_OP_RMS_NORM:
         case GGML_OP_SOFT_MAX:
         case GGML_OP_ROPE:
         case GGML_OP_GLU:
         case GGML_OP_GET_ROWS:
-            return dev != nullptr;
-
-        // L1 matmul (Phase 0). The TILE640_MATMUL op carries
-        // the 7 TILE640 sources; the dispatch path dequants on
-        // the host and runs the ANE fp16 matmul. The bundle is
-        // shape-locked at export time; the precise check lives
-        // in ggml_ane_program_dispatch_op (a shape mismatch
-        // returns false so the scheduler routes to a backend
-        // that has the matching bundle, e.g. ggml-cpu/Metal).
-        // The device-level supports_op advertises the op so
-        // the scheduler considers the ANE backend.
         case GGML_OP_TILE640_MATMUL:
-            return dev != nullptr;
+            return g_ane_bound_program.load(std::memory_order_relaxed) != nullptr;
 
         // ANE-NATIVE elementwise ops with an Accelerate implementation.
+        // Gated on exactly what the compute path can serve (contiguous
+        // F32/F16 operands; ggml_ane_elementwise_servable), so a routed
+        // op never reaches graph_compute without a compute path.
         case GGML_OP_ADD:
         case GGML_OP_MUL:
         case GGML_OP_SCALE:
@@ -3081,24 +3162,41 @@ static bool ggml_backend_ane_device_supports_op(ggml_backend_dev_t dev, const gg
         case GGML_OP_LOG:
         case GGML_OP_SIN:
         case GGML_OP_COS:
-            return true;
+            return ggml_ane_elementwise_servable(op);
 
-        // ANE-NATIVE layout / copy ops. Views and reshapes carry their own
+        // ANE-NATIVE layout ops. Views and reshapes carry their own
         // metadata and share the source buffer, so no compute is needed.
-        // CAST is not a standalone op in this ggml version; type conversion is
-        // expressed via CPY and handled on the host-mapped arena.
         case GGML_OP_RESHAPE:
         case GGML_OP_VIEW:
         case GGML_OP_TRANSPOSE:
         case GGML_OP_PERMUTE:
         case GGML_OP_CONT:
-        case GGML_OP_CPY:
             return true;
+
+        // Type conversion is expressed via CPY on the host-mapped arena
+        // (CAST is not a standalone op in this ggml version). Servable
+        // when the gather/write dtypes line up: the gather reads
+        // F32/F16/I32 and the write covers F32/F16.
+        case GGML_OP_CPY: {
+            const ggml_tensor * src = op->src[0];
+            if (src == nullptr || !ggml_is_contiguous(src) || !ggml_is_contiguous(op)) {
+                return false;
+            }
+            const bool src_ok = src->type == GGML_TYPE_F32 ||
+                                src->type == GGML_TYPE_F16 ||
+                                src->type == GGML_TYPE_I32;
+            const bool dst_ok = op->type == GGML_TYPE_F32 ||
+                                op->type == GGML_TYPE_F16;
+            return src_ok && dst_ok;
+        }
 
         // ANE-NATIVE unary ops (silu, sigmoid, tanh, exp, abs, relu, neg,
         // step, sgn). GELU/GELU_ERF/GELU_QUICK are ANE-BREAKS (handled in the
         // bundle, not here) so only the safe subset of UNARY is taken.
         case GGML_OP_UNARY:
+            if (!ggml_ane_elementwise_servable(op)) {
+                return false;
+            }
             switch (ggml_get_unary_op(op)) {
                 case GGML_UNARY_OP_SILU:
                 case GGML_UNARY_OP_SIGMOID:
