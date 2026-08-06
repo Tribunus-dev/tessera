@@ -4,6 +4,18 @@
 #include "ggml-impl.h"
 #include "ggml-backend-impl.h"
 #include "ggml-quants-v2-dispatch.h"
+// v1 regime router: learned per-(family, shape) device-preference
+// override of the v1 static cost model. The router is a
+// static-include lookup table in ggml-regime-router.h with the
+// generated policy in ggml-regime-router.gen.h. The router is
+// a strict no-op when the calibration runner has not yet
+// produced any entries: the lookup helpers fall back to
+// ts_v2_dispatch_should_use_v2_* on FAM_OTHER / out-of-range
+// shape_bucket / no matching entry, so the dispatch behaves
+// byte-identical to the v1 main when the router is empty.
+// See docs/ane-backend-deep-study.md Part 6.10 for the design.
+#include "ggml-regime-router.h"
+#include "ggml-regime-router.gen.h"
 
 #import <CoreML/CoreML.h>
 #import <Foundation/Foundation.h>
@@ -2160,10 +2172,28 @@ static bool ggml_ane_program_dispatch_op(ggml_backend_ane_program * program,
                 const int64_t n_total_outliers =
                     (int64_t) outlier_row_offsets[out_dim] -
                     (int64_t) outlier_row_offsets[0];
-                const bool use_v2_meta    = ts_v2_dispatch_should_use_v2_meta(
+                // v1 regime router: derive (family, shape_bucket)
+                // from the tensor name and the in_dim, then ask
+                // the router which device wins for this
+                // (family, shape) on both meta and outlier.
+                // Fallback is the v1 static cost model (the
+                // same ts_v2_dispatch_should_use_v2_* helpers);
+                // the router is a strict no-op when it has no
+                // data. The router exists so the dispatch can
+                // learn per-(family, shape) device preferences
+                // from real kernel output instead of static
+                // thresholds (M1 Pro data was off by ~10% on
+                // M1 base for meta decode at large N; the
+                // router's policy table fixes that kind of
+                // per-target drift without a code change).
+                const int family = ts_regime_infer_family(op->name);
+                const int shape_bucket =
+                    ts_regime_shape_bucket_for_in_dim(in_dim);
+                const bool use_v2_meta = ts_regime_router_lookup_meta(
+                    family, shape_bucket,
                     (int64_t) out_dim, pages_per_row);
-                const bool use_v2_outlier = ts_v2_dispatch_should_use_v2_outlier(
-                    n_total_outliers);
+                const bool use_v2_outlier = ts_regime_router_lookup_outlier(
+                    family, shape_bucket, n_total_outliers);
                 // 1. Meta decode: v2 batched or C ref batched.
                 // The C ref is a scalar loop over the whole
                 // tile's meta (fp16->fp32 for page_scales,

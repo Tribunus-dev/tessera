@@ -142,11 +142,11 @@ add_library(${TARGET}
 )
 
 # W5: zlib is required by tessera-s2s-capture.cpp (compress2 / uncompress).
-# macOS SDK provides libz in the default link line; Linux finds it via
-# find_package(ZLIB). The capture source itself is the only consumer in
-# this library, so the dependency is local.
+# macOS provides libz at /usr/lib/libz.dylib but it is NOT auto-linked
+# by the compiler driver; pass -lz explicitly. On Linux find_package(ZLIB)
+# exposes ZLIB::ZLIB. Same pattern as the tessera-s2s-cli target below.
 if(APPLE)
-    # libz is part of the macOS SDK; no extra link line needed.
+    target_link_libraries(${TARGET} PUBLIC -lz)
 else()
     find_package(ZLIB REQUIRED)
     target_link_libraries(${TARGET} PUBLIC ZLIB::ZLIB)

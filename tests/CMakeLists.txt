@@ -683,6 +683,11 @@ if (NOT GGML_BACKEND_DL)
         # tools).
         target_compile_definitions(test-regime-router PRIVATE
             "TS_REGIME_ROUTER_RUNNER=\"${CMAKE_BINARY_DIR}/bin/calibrate_regime_router\"")
+        # Pass the source dir so the test's determinism check can
+        # resolve the .gen.h absolute path under ctest (which runs
+        # tests from the build dir, not the source dir).
+        target_compile_definitions(test-regime-router PRIVATE
+            "TS_REGIME_ROUTER_SOURCE_DIR=\"${CMAKE_SOURCE_DIR}\"")
     endif()
 endif()
 
