@@ -133,6 +133,7 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
     { LLM_ARCH_MISTRAL3,         "mistral3"         },
     { LLM_ARCH_EAGLE3,           "eagle3"           },
     { LLM_ARCH_DFLASH,           "dflash"           },
+    { LLM_ARCH_QWEN3TTS_TALKER,   "qwen3-tts-talker" },
     { LLM_ARCH_QWEN3_TTS_CODE2WAV, "qwen3-tts-code2wav" },
     { LLM_ARCH_MISTRAL4,         "mistral4"         },
     { LLM_ARCH_PADDLEOCR,        "paddleocr"        },
@@ -654,6 +655,15 @@ static const std::map<llm_tensor, const char *> LLM_TENSOR_NAMES = {
     { LLM_TENSOR_C2W_OUT_SNAKE_A,                        "c2w.output.alpha" },
     { LLM_TENSOR_C2W_OUT_SNAKE_B,                        "c2w.output.beta" },
     { LLM_TENSOR_C2W_OUTPUT,                             "c2w.output" },
+    // qwen3-tts-talker
+    { LLM_TENSOR_TTS_CODEC_EMBD,                         "codec_embd" },
+    { LLM_TENSOR_TTS_CODEC_HEAD,                         "codec_head" },
+    { LLM_TENSOR_TTS_TEXT_PROJ_1,                        "text_proj_1" },
+    { LLM_TENSOR_TTS_TEXT_PROJ_2,                        "text_proj_2" },
+    { LLM_TENSOR_TTS_CP_PROJ,                            "cp_proj" },
+    { LLM_TENSOR_TTS_CP_NORM,                            "cp_norm" },
+    { LLM_TENSOR_TTS_CP_CODEC_EMBD,                      "cp_codec_embd" },
+    { LLM_TENSOR_TTS_CP_HEAD,                            "cp_head" },
 };
 
 // declare information about the model weight tensors:
@@ -953,6 +963,15 @@ static const std::map<llm_tensor, llm_tensor_info> LLM_TENSOR_INFOS = {
     {LLM_TENSOR_C2W_OUT_SNAKE_A,            {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL}},
     {LLM_TENSOR_C2W_OUT_SNAKE_B,            {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL}},
     {LLM_TENSOR_C2W_OUTPUT,                 {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_IM2COL}},
+    // qwen3-tts-talker
+    {LLM_TENSOR_TTS_CODEC_EMBD,             {LLM_TENSOR_LAYER_INPUT,     GGML_OP_GET_ROWS}},
+    {LLM_TENSOR_TTS_CODEC_HEAD,             {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL_MAT}},
+    {LLM_TENSOR_TTS_TEXT_PROJ_1,            {LLM_TENSOR_LAYER_INPUT,     GGML_OP_MUL_MAT}},
+    {LLM_TENSOR_TTS_TEXT_PROJ_2,            {LLM_TENSOR_LAYER_INPUT,     GGML_OP_MUL_MAT}},
+    {LLM_TENSOR_TTS_CP_PROJ,                {LLM_TENSOR_LAYER_INPUT,     GGML_OP_MUL_MAT}},
+    {LLM_TENSOR_TTS_CP_NORM,                {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL}},
+    {LLM_TENSOR_TTS_CP_CODEC_EMBD,          {LLM_TENSOR_LAYER_INPUT,     GGML_OP_GET_ROWS}},
+    {LLM_TENSOR_TTS_CP_HEAD,                {LLM_TENSOR_LAYER_INPUT,     GGML_OP_MUL_MAT}},
 };
 
 LLM_KV::LLM_KV(llm_arch arch, const char * suffix) : arch(arch), suffix(suffix) {}

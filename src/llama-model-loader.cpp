@@ -417,8 +417,9 @@ std::string llama_model_loader::scoped_key(const std::string & key) const {
     template bool llama_model_loader::get_arr<std::array<uint32_t, LLAMA_MAX_LAYERS>>(enum llm_kv kid, std::array<uint32_t, LLAMA_MAX_LAYERS> & result, bool required);
 
     // raw-key variants (arch-specific metadata without LLM_KV entries)
-    template bool llama_model_loader::get_arr<uint32_t>(const std::string & key, std::vector<uint32_t> & result, bool required);
-    template bool llama_model_loader::get_arr<int32_t> (const std::string & key, std::vector<int32_t> & result, bool required);
+    template bool llama_model_loader::get_arr<uint32_t>      (const std::string & key, std::vector<uint32_t>      & result, bool required);
+    template bool llama_model_loader::get_arr<int32_t>       (const std::string & key, std::vector<int32_t>       & result, bool required);
+    template bool llama_model_loader::get_arr<std::string>   (const std::string & key, std::vector<std::string>   & result, bool required);
 
     template<typename T>
     bool llama_model_loader::get_key(const std::string & key, T & result, bool required) {
