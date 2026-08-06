@@ -20,12 +20,12 @@
 //        - no NaN/Inf
 //        - top-1 code is in [0, 3072) and finite
 //        - top-5 codes are diverse (5 distinct values out of top-5)
-//   2. Code2Wav: load F32 W5c code2wav GGUF, set a fixed 16-code frame
-//      via llama_encode, dump the PCM embeddings, verify:
-//        - 1920 PCM samples (1 frame @ 24 kHz, 12.5 Hz frame rate)
+//   2. Code2Wav: load F32 W5c code2wav GGUF, encode a fixed 2-frame
+//      (32-code) batch via llama_encode, dump the PCM embeddings, verify:
+//        - 3840 PCM samples (2 frames x 1920, 24 kHz, 12.5 Hz frame rate)
 //        - no NaN/Inf
-//        - PCM samples are in valid range (no extreme values > 100x)
-//        - non-degenerate (max |sample| > 0)
+//        - PCM samples within the clamped [-1, 1] range
+//        - non-degenerate (max |sample| > 1e-3)
 //
 // Both tests are CPU-only (devices={cpu, nullptr}); the W5b cpufix
 // established that this is the only path that works on the M1 base (the
@@ -280,6 +280,107 @@ void check_code2wav_f32_load(const std::string & path) {
     std::printf("test-qwen3tts-w8-parity: code2wav load OK (16 codebooks, 256x2048 each, output conv (7,c_last,1))\n");
 }
 
+void check_code2wav_f32_forward(const std::string & path) {
+    std::printf("test-qwen3tts-w8-parity: code2wav forward on %s\n", path.c_str());
+
+    struct llama_model * model = load_model_cpu(path);
+    if (model == nullptr) {
+        std::fprintf(stderr, "test-qwen3tts-w8-parity: code2wav forward load FAILED for %s\n",
+                     path.c_str());
+        std::abort();
+    }
+    TEST_ASSERT(model->arch == LLM_ARCH_QWEN3_TTS_CODE2WAV);
+    auto * m = static_cast<struct llama_model_qwen3_tts_code2wav *>(model);
+
+    const int64_t n_codebooks    = m->n_codebooks;
+    const int64_t codec_vocab    = m->codec_vocab;
+    const int64_t n_frames       = 2;   // multi-frame batch: exercises the windowed attention path
+    const int64_t n_tokens       = n_frames*n_codebooks;
+    const int64_t n_embd_out     = model->hparams.n_embd_out();
+    const int64_t n_samples      = n_embd_out*n_tokens;
+
+    llama_context_params cp = llama_context_default_params();
+    cp.n_ctx      = 64;  // must be a multiple of n_codebooks for the init-time reserve probes
+    cp.n_batch    = n_tokens;
+    cp.n_ubatch   = n_tokens;
+    cp.no_perf    = true;
+    cp.embeddings = true;
+    cp.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
+    struct llama_context * ctx = llama_init_from_model(model, cp);
+    TEST_ASSERT(ctx != nullptr);
+
+    // deterministic pseudo codes: LCG over [0, codec_vocab)
+    std::vector<llama_token> codes(n_tokens);
+    uint32_t s = 0x5eed1234u;
+    for (int64_t i = 0; i < n_tokens; ++i) {
+        s = s*1664525u + 1013904223u;
+        codes[i] = (llama_token) ((s >> 8) % (uint32_t) codec_vocab);
+    }
+
+    llama_batch batch = llama_batch_init(n_tokens, /*embd=*/0, /*n_seq_max=*/1);
+    for (int64_t i = 0; i < n_tokens; ++i) {
+        common_batch_add(batch, codes[i], (llama_pos) i, { 0 }, /*logits=*/false);
+    }
+    const int rc = llama_encode(ctx, batch);
+    llama_batch_free(batch);
+    if (rc != 0) {
+        std::fprintf(stderr,
+            "test-qwen3tts-w8-parity: code2wav llama_encode FAILED (rc=%d)\n"
+            "  The graph is BUILT for this GGUF (load passes), but encode\n"
+            "  failed at compute time. Check the conv input convention:\n"
+            "  ggml_conv_1d/conv_1d_dw/conv_transpose_1d all consume\n"
+            "  (L, C) data: ne[0] = frames, ne[1] = channels.\n", rc);
+        std::abort();
+    }
+    llama_synchronize(ctx);
+
+    // t_embd is [n_embd_out, n_tokens]: reading sequentially yields the
+    // PCM stream (n_frames * samples_per_frame samples, clamped [-1, 1])
+    const float * embd = llama_get_embeddings(ctx);
+    TEST_ASSERT(embd != nullptr);
+
+    int64_t nan_count = 0, inf_count = 0;
+    float max_abs = 0.0f;
+    double sum = 0.0, sum_sq = 0.0;
+    for (int64_t i = 0; i < n_samples; ++i) {
+        const float v = embd[i];
+        if (std::isnan(v)) { ++nan_count; continue; }
+        if (std::isinf(v)) { ++inf_count; continue; }
+        const float a = std::fabs(v);
+        if (a > max_abs) max_abs = a;
+        sum    += v;
+        sum_sq += (double) v*v;
+    }
+    const double mean = sum / (double) n_samples;
+    const double stdv = std::sqrt(std::max(0.0, sum_sq/(double) n_samples - mean*mean));
+
+    std::printf("test-qwen3tts-w8-parity: code2wav PCM n=%lld nan=%lld inf=%lld "
+                "max_abs=%.4f mean=%.5f std=%.5f first=[%.4f %.4f %.4f %.4f]\n",
+                (long long) n_samples, (long long) nan_count, (long long) inf_count,
+                max_abs, mean, stdv, embd[0], embd[1], embd[2], embd[3]);
+
+    TEST_ASSERT(nan_count == 0);
+    TEST_ASSERT(inf_count == 0);
+    TEST_ASSERT(max_abs <= 1.0f);   // the graph clamps the PCM head output
+    TEST_ASSERT(max_abs > 1.0e-3f); // non-degenerate signal
+
+    // optional raw F32 dump for the reference parity tool
+    // (tools/tessera/c2w_pcm_parity.py)
+    if (const char * dump_path = std::getenv("TESSERA_QWEN3TTS_C2W_PCM_OUT")) {
+        FILE * f = std::fopen(dump_path, "wb");
+        TEST_ASSERT(f != nullptr);
+        TEST_ASSERT(std::fwrite(embd, sizeof(float), (size_t) n_samples, f) == (size_t) n_samples);
+        std::fclose(f);
+        std::printf("test-qwen3tts-w8-parity: code2wav PCM dumped to %s\n", dump_path);
+    }
+
+    llama_free(ctx);
+    llama_model_free(model);
+
+    std::printf("test-qwen3tts-w8-parity: code2wav forward OK (%lld frames, %lld PCM samples)\n",
+                (long long) n_frames, (long long) n_samples);
+}
+
 }  // namespace
 
 int main(int argc, char ** argv) {
@@ -317,14 +418,8 @@ int main(int argc, char ** argv) {
         check_talker_bf16_forward(talker_path);
     }
     if (!c2w_path.empty()) {
-        // W8 scope: c2w LOAD + per-codebook + per-block tensor
-        // contract. The full forward (PCM output) is deferred — the
-        // W3 c2w graph has a time-major vs channel-major conv1d input
-        // mismatch that surfaces on real-weight forward (the
-        // synthetic-weights verify path uses different shapes). Load
-        // is the contract the W3 + W5c work guarantees; PCM parity is
-        // a follow-up wave.
         check_code2wav_f32_load(c2w_path);
+        check_code2wav_f32_forward(c2w_path);
     }
 
     std::printf("test-qwen3tts-w8-parity: all tests OK\n");
