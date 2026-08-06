@@ -1116,6 +1116,14 @@ int llama_quantize(int argc, char ** argv) {
             } else {
                 usage(argv[0]);
             }
+        } else if (const int tessera_kind = common_tessera_flag_kind(argv[arg_idx]); tessera_kind > 0) {
+            // Tessera-owned top-level flag (--progress-file, --tessera-db,
+            // ...): already consumed into tessera_params by
+            // common_tessera_params_parse. Skip it here, including its
+            // value when the flag takes one.
+            if (tessera_kind == 2 && arg_idx + 1 < argc) {
+                arg_idx++;
+            }
         } else {
             // Tessera fork (Tier 2 HARD BREAK): unknown --flag here means
             // the user passed a legacy --tessera-* or --calib-* flag. Those
@@ -1299,8 +1307,9 @@ int llama_quantize(int argc, char ** argv) {
         arg_idx++;
     }
 
-    // parse nthreads
-    if (argc > arg_idx) {
+    // parse nthreads; a trailing --flag is tessera-owned and was already
+    // consumed by common_tessera_params_parse, so leave it alone
+    if (argc > arg_idx && strncmp(argv[arg_idx], "--", 2) != 0) {
         try {
             params.nthread = std::stoi(argv[arg_idx]);
         }
@@ -1518,11 +1527,13 @@ int llama_tessera_main(int argc, char ** argv) {
         const_cast<common_tessera_params &>(tp).w4a4 = true;
     }
 
-    // Subcommand-less path or tuning subcommand: rebuild the argv for
-    // the legacy llama_quantize subroutine. common_tessera_params_parse
-    // already shifted the subcommand token out of argv (it was a bare
-    // word in argv[1], not a flag), so argv[0] is still the binary name
-    // and the remaining args are the flag set + positional <input>
-    // <ftype> args that llama_quantize parses.
+    // Subcommand-less path or tuning subcommand: hand the argv to the
+    // legacy llama_quantize subroutine, which parses the positional
+    // <input> <output> <ftype> [nthreads] syntax. A tuning subcommand
+    // sits as a bare token in argv[1] (common_tessera_params_parse
+    // shifted its own local copy only), so shift it out here too.
+    if (sc != TESSERA_SC_NONE) {
+        return llama_quantize(argc - 1, argv + 1);
+    }
     return llama_quantize(argc, argv);
 }

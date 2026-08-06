@@ -1347,9 +1347,9 @@ bool common_params_parse(int argc, char ** argv, common_params & params, llama_e
 // Positional args (e.g. `model.gguf TESSERA_T640` for the legacy
 // llama-quantize positional syntax) are filtered out of the argv passed
 // to common_params_parse (which would otherwise reject them as unknown
-// args), and re-attached to a synthesized argv after parsing so the
-// caller's main quantize subroutine can find them. Each flag consumes
-// 1 (switch) or 2 (valued) argv slots, so the filter must keep flag
+// args). They reach the quantize subroutine through the caller's
+// original argv, which is unmodified here. Each flag consumes 1
+// (switch) or 2 (valued) argv slots, so the filter must keep flag
 // values together with their flag.
 bool common_tessera_params_parse(int argc, char ** argv, common_params & params, void(*print_usage)(int, char **)) {
     // Default: no subcommand active.
@@ -1415,13 +1415,10 @@ bool common_tessera_params_parse(int argc, char ** argv, common_params & params,
             i++;
         }
     }
-    // Reassemble: flag args first, then positionals. The order within
-    // each group is preserved. We need this for the caller to find the
-    // model + ftype via simple indices.
-    std::vector<char *> combined;
-    combined.reserve(flag_argv.size() + pos_argv.size());
-    for (char * p : flag_argv) combined.push_back(p);
-    for (char * p : pos_argv) combined.push_back(p);
+    // Positionals stay out of common_params_parse (it rejects unknown
+    // non-flag args) and reach the quantize subroutine through the
+    // caller's original argv, which is unmodified here.
+    (void) pos_argv;
 
     // The user-supplied print_usage (if any) runs first; the
     // tessera_top_level_help_footer runs after and only appends when no
@@ -1437,7 +1434,32 @@ bool common_tessera_params_parse(int argc, char ** argv, common_params & params,
     };
     (void) user_print;  // suppress unused-warning if user_print is null
 
-    return common_params_parse((int) combined.size(), combined.data(), params, LLAMA_EXAMPLE_TESSERA, print_wrapper);
+    return common_params_parse((int) flag_argv.size(), flag_argv.data(), params, LLAMA_EXAMPLE_TESSERA, print_wrapper);
+}
+
+int common_tessera_flag_kind(const char * flag) {
+    if (flag == nullptr) {
+        return 0;
+    }
+    // Built once from the same registration table common_params_parse
+    // uses, so the kind can never drift from the flag definitions.
+    static const std::unordered_map<std::string, int> kinds = [] {
+        std::unordered_map<std::string, int> m;
+        common_params dummy_params;
+        common_params_context ctx_arg = common_params_parser_init(dummy_params, LLAMA_EXAMPLE_TESSERA, nullptr);
+        for (auto & opt : ctx_arg.options) {
+            const int kind = (opt.value_hint != nullptr || opt.value_hint_2 != nullptr) ? 2 : 1;
+            for (const auto & a : opt.args) {
+                m[a] = kind;
+            }
+            for (const auto & a : opt.args_neg) {
+                m[a] = kind;
+            }
+        }
+        return m;
+    }();
+    const auto it = kinds.find(flag);
+    return it == kinds.end() ? 0 : it->second;
 }
 
 static std::string list_builtin_chat_templates() {

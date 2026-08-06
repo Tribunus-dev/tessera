@@ -175,6 +175,13 @@ const common_tessera_params & common_get_tessera_params();
 // <subcommand> [flags]` or omit the subcommand for the main quantize path.
 bool common_tessera_params_parse(int argc, char ** argv, common_params & params, void(*print_usage)(int, char **) = nullptr);
 
+// Tessera fork: classify a flag registered for LLAMA_EXAMPLE_TESSERA.
+// Returns 0 if `flag` is not a tessera flag, 1 if it is a switch (no
+// value), 2 if it takes a value. Lets the legacy quantize argv loop
+// skip tessera-owned flags that common_tessera_params_parse already
+// consumed into tessera_params.
+int common_tessera_flag_kind(const char * flag);
+
 // Tessera fork: the subcommand selected by the most recent
 // common_tessera_params_parse call. TESSERA_SC_NONE = no subcommand.
 enum tessera_subcommand common_tessera_active_subcommand();
