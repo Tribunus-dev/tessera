@@ -88,7 +88,7 @@ Consequences:
 
 ## 3. Route A architecture
 
-### 3.1 Models and graphs
+### 3.1 Models and graphs (Talker runtime: COMPLETE — `src/models/qwen3-tts-talker.cpp`)
 
 - Talker GGUF: Qwen3-TTS-12Hz-1.7B-Base (backbone + MTP module).
   - Text embedding (151,936) and codec embedding (3,072) as separate tensors;
@@ -97,6 +97,55 @@ Consequences:
     cross-graph hidden-state plumbing the fork already uses for DFlash
     (ctx_other borrowing). The backbone consumes aggregated codebook features
     and predicts codebook 0; the MTP head emits codebooks 1-15 per frame.
+
+    Runtime layout (per the W2 converter + verify tool, mirrored in the
+    C++ loader `src/models/qwen3-tts-talker.cpp` and validated by
+    `tests/test-qwen3tts-talker.cpp`):
+
+    | Tensor / Metadata        | Shape (ggml ne order) | Notes                                                                 |
+    |--------------------------|------------------------|-----------------------------------------------------------------------|
+    | text vocab (text-side)  | `token_embd` [n_embd=2048, 151936] | standard Qwen3 lookup table                                          |
+    | output norm (text-side)  | `output_norm` [n_embd=2048] | shared backbone + cp tail norm                                      |
+    | text-proj MLP            | `text_proj_{1,2}` {weight, bias}, [n_embd, n_embd] | the 2-layer SiLU MLP the W2 design documents                       |
+    | codec embedding          | `codec_embd` [n_embd=2048, codec_vocab=3072] | codebook-0 input embedding (separate from text vocab)            |
+    | codebook-0 head          | `codec_head` [n_embd=2048, codec_vocab=3072] | backbone codebook-0 logits over codec_vocab                       |
+    | cp bridge                | `cp_proj` {weight, bias}, weight [n_embd=2048, n_cp_embd=1024] | backbone hidden -> cp hidden                                      |
+    | cp final norm            | `cp_norm` [n_cp_embd=1024] | after the 5 cp layers                                              |
+    | per-cp-codebook embd     | `cp_codec_embd.{cid}.weight` cids 0..14, ne [n_embd=2048, n_cp_per_codebook=2048] | the 15 per-codebook 2048-entry tables                             |
+    | per-cp-codebook head      | `cp_head.{cid}.weight`       cids 0..14, ne [n_cp_embd=1024, n_cp_per_codebook=2048] | the 15 per-codebook projection heads                              |
+    | backbone layers          | `blk.0..27.*` (11 tensors each: attn_q/k/v/output, attn_q/k_norm, attn_norm, ffn_norm/gate/up/down) | standard Qwen3 dense decoder, mrope sections [24,20,20]            |
+    | cp-block layers          | `blk.28..32.*` (11 tensors each, same naming, smaller dims) | Qwen3-style dense decoder at n_cp_embd=1024 (the per-head width 64 is half the backbone's 128; the W5b WAVE-5B structural test uses a synthetic GGUF with n_cp_embd_head = n_embd_head so the cp pass can share a single kv cache; the Wave-8 real-weight golden parity test exercises the real 64-dim head with a separate context) |
+
+    The cp block rides on top of the backbone as `n_layer_nextn` layers
+    (Qwen3.5/3.6 MTP precedent) — `n_layer()` = backbone only (28 in
+    the real W2 GGUF, 3 in the W5b synthetic test) and `n_layer_all` =
+    `n_layer` + `n_pred_layers` (33 in the real W2, 5 in the W5b
+    synthetic). The cp block's per-cid `cp_codec_embd.{cid}` and
+    `cp_head.{cid}` tensors are registered as `LLM_TENSOR_LAYER_INPUT`
+    (single tensor each, cid encoded in the suffix); this avoids
+    overloading the layer-buffer mechanism (the cp block has 15
+    per-codebook entries, but the kv cache is sized to the model
+    layer count, not the codebook count).
+
+    MRoPE positions: 4-axis (T, F, B, 0) with sections [24, 20, 20, 0]
+    (sum=64 = n_rot on the 128-dim head). The framework's
+    `llm_graph_input_pos::set_input` auto-fills [T, T, T, 0] for text
+    tokens; per-frame code tokens pass a custom 4-axis position. The
+    W5 CLI uses a single forward (text prefill then per-frame
+    codebook-0 decode) so the framework's auto-fill path is
+    sufficient for the W5b structural test; the Wave-8 real-weight
+    golden parity test exercises the per-frame 4-axis path.
+
+    CP sub-graph (per the design, fully built in the C++ class): the
+    backbone's post-norm hidden is the bridge into the cp block via
+    `cp_proj` (2048 -> 1024). For the W5b WAVE-5B WAVE-5B scope the cp
+    sub-graph is exercised structurally only (per-frame call
+    pattern is the Wave-8 / W5c integration). The cp block's
+    per-cid heads (`cp_head.{cid}`) are concatenated into a single
+    `[n_cp_per_codebook, 15]` `t_h_nextn` output so the W5 CLI can
+    read back codebook-1..15 logits via the standard
+    `llama_get_embeddings` path with the nextn context type.
+
 - Code2Wav GGUF (second graph or separate file): causal ConvNet, one 16-code
   frame -> 80 ms of 24 kHz PCM, streaming. ggml has ggml_conv_1d and
   ggml_conv_transpose_1d; the snake activation is synthesized as
@@ -106,7 +155,7 @@ Consequences:
   offline Route B data prep on contributed corpora. No wave assigned; this
   graph ships only if cloning comes back or Route B needs corpus encoding.
 
-### 3.2 Runtime flow
+### 3.2 Runtime flow (Talker runtime: COMPLETE)
 
 ```
 mic / typed text -> Gemma 4 trunk -> answer tokens
@@ -115,6 +164,18 @@ mic / typed text -> Gemma 4 trunk -> answer tokens
   -> each complete 16-code frame pushed to Code2Wav
   -> streaming PCM chunks -> audio output
 ```
+
+The Talker class is loaded via `llama_model_load_from_file(<w2-gguf>)`,
+validates the W2 schema in `load_arch_hparams` /
+`load_arch_tensors` (raw-key TTS metadata + 15 per-cp-codebook
+`cp_codec_embd.{cid}.weight` / `cp_head.{cid}.weight` pairs + 28
+backbone + 5 cp-block layers with the W2 exact shapes), and exposes
+a forward graph that the W5 CLI drives per-frame. The cp block's
+per-frame forward (per-frame 4-axis mrope position, separate kv
+cache at the cp's smaller head dim) is the Wave-8 real-weight golden
+parity test; the W5b WAVE-5B structural test validates the loader
+against a synthetic GGUF and exercises the backbone forward end to
+end.
 
 Streaming contract: first chunk emitted at the first complete frame (80 ms of
 speech); chunk granularity thereafter = Code2Wav receptive field. Target first
