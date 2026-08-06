@@ -249,16 +249,39 @@ talker GGUF. That is the parity contract.
 
 ### Phase 2.5 - c2w conv convention fix, PCM parity unlocked (~2-3 days)
 
-DECISION: in scope. The W3-era code2wav graph transposes x to (L, C)
-before calling ggml_conv_1d, which expects channel-major (C, L). The
-fix is a channel-major rewrite of the c2w forward graph (pre_conv +
-per-block convs + upsampling path), keeping the weight convention the
-W3/W5c/W8 work already pinned ((K, IC, OC) in ggml ne = torch
-(OC, IC, K) reversed; 1D biases {c_out, 1, 1, 1}).
+RESOLVED 2026-08-06. The original diagnosis (time-major/channel-major
+conv mismatch) was wrong: ggml conv ops consume (L, C), so the graph's
+transposes were already correct. The real defects were four graph bugs
+plus a backend root cause:
 
-Gate: real-weight c2w forward produces finite PCM and matches the
-reference vocoder output within a defined band on the W7 chained
-corpus - PCM parity, not just load parity.
+1. conv biases load as (C, 1) but conv outputs are (L, C); reshape the
+   bias to (1, C) before the add (all three conv helpers).
+2. ggml_flash_attn_ext/soft_max_ext need an F16 mask; the c2w mask
+   tensor is now created as F16.
+3. the zero-frame placeholder leaf needs ggml_set_input() or the
+   scheduler gives it no backend and the allocator asserts.
+4. the converter must write <arch>.vocab_size (the "none" tokenizer
+   only loads dummy tokens when the key exists; llama_encode batch
+   validation rejects codec ids otherwise).
+5. ROOT CAUSE of the silent PCM corruption (corr ~ -0.1): the ANE
+   backend advertised GGML_OP_CONT as a free layout op and skipped it
+   in graph_compute, but CONT is not a view op - the allocator gives it
+   its own buffer, so skipping it left the buffer unwritten and every
+   consumer read stale memory. The scheduler pulled the upsample-path
+   cont nodes onto ANE (ACCEL devices are auto-added to every context
+   scheduler regardless of the devices list). Fix: ANE no longer
+   advertises CONT (CPU runs the actual copy); graph_compute now fails
+   loudly instead of silently skipping.
+
+Also fixed: the vocoder's RoPE uses relative frame positions 0..F-1
+(HF cache_position = arange per forward); ubatch token positions must
+not leak in.
+
+Gate: PASSED. Real-weight c2w forward (2 frames, 3840 PCM samples)
+matches the HF Qwen3TTSTokenizerV2 decoder at corr=0.999998,
+max_abs_diff=2.6e-3 (F16 im2col rounding band), via
+tools/tessera/c2w_pcm_parity.py; test-qwen3tts-w8-parity now runs the
+full c2w forward as a gate (range + non-degeneracy assertions).
 
 ### Phase 3 - Calibration capture for qwen3-tts (~1 week)
 
