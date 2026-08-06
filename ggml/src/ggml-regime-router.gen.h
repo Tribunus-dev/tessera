@@ -1,6 +1,6 @@
 // ggml-regime-router.gen.h
 //
-// v1 regime router policy table - GENERATED. DO NOT EDIT BY HAND.
+// Regime router policy table - GENERATED. DO NOT EDIT BY HAND.
 //
 // Regenerate with:
 //   tools/quantize/build/bin/calibrate_regime_router \
@@ -14,20 +14,19 @@
 // Shape set: gemma4-12b-trunk
 // Cell count: 36
 //
-// Each entry: { family, shape_bucket, use_v2_outlier, use_v2_meta }.
+// Each entry: { family, shape_bucket, use_accel_outlier, use_accel_meta }.
 // family = ts_regime_family_kind_t; shape_bucket =
 // ts_regime_shape_bucket_t. The router's lookup is
 // static inline; the dispatch's hot path is one
 // bounds check + 32-bit compare per call.
 //
-// use_v2_* decision rule: the bench records the v2
-// path's winner iff it is at least 5% faster than the
-// C ref path at this (family, shape). On a tie the
-// entry defers to the v1 static cost model in
-// ggml/src/ggml-quants-v2-dispatch.h. The dispatch
-// is identical to main when the runner records the
-// v1 static result (i.e. the router is a strict no-op
-// for tie cells).
+// use_accel_* decision rule: the bench records the accel
+// path as the winner iff it is at least 15% faster than
+// the scalar path at this (family, shape). On a tie the
+// entry defers to the static cost model in ggml-quants.h.
+// The dispatch is identical when the runner records the
+// static result (i.e. the router is a strict no-op for
+// tie cells).
 
 #pragma once
 

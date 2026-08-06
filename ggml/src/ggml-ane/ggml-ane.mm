@@ -3,17 +3,15 @@
 #include "ggml.h"
 #include "ggml-impl.h"
 #include "ggml-backend-impl.h"
-#include "ggml-quants-v2-dispatch.h"
 #include "gguf_weight_stream.h"
-// v1 regime router: learned per-(family, shape) device-preference
-// override of the v1 static cost model. The router is a
-// static-include lookup table in ggml-regime-router.h with the
-// generated policy in ggml-regime-router.gen.h. The router is
-// a strict no-op when the calibration runner has not yet
-// produced any entries: the lookup helpers fall back to
-// ts_v2_dispatch_should_use_v2_* on FAM_OTHER / out-of-range
-// shape_bucket / no matching entry, so the dispatch behaves
-// byte-identical to the v1 main when the router is empty.
+// Regime router: learned per-(family, shape) path-preference
+// override of the static TILE640 cost model in ggml-quants.h.
+// The router is a static-include lookup table in
+// ggml-regime-router.h with the generated policy in
+// ggml-regime-router.gen.h. The router is a strict no-op when
+// the calibration runner has not yet produced any entries: the
+// lookup helpers fall back to ts_t640_*_accel_wins on FAM_OTHER
+// / out-of-range shape_bucket / no matching entry.
 // See docs/ane-backend-deep-study.md Part 6.10 for the design.
 #include "ggml-regime-router.h"
 #include "ggml-regime-router.gen.h"
@@ -23,60 +21,14 @@
 #import <IOSurface/IOSurface.h>
 #import <Metal/Metal.h>
 
-// ggml's TILE640 row dequant (ggml-quants.c). The L1 dispatch
-// path calls this per row to dequant the TILE640 weight into
-// the bundle's pinned fp16 slot. The function is extern "C"
-// and declared in ggml-quants.h (which is included transitively
-// via ggml.h). The forward declaration below is a defensive
-// include-guard for the case where the header is unavailable.
-extern "C" void dequantize_row_tessera_t640(const void * GGML_RESTRICT x,
-                                             float * GGML_RESTRICT y,
-                                             int64_t k);
-// v2 variant (Accelerate + NEON). The v2 API takes the
-// packed words, the pre-decoded page_max + lane_scale
-// (fp32, /127) arrays, k, and the output. The caller is
-// responsible for the pre-decode; the dispatch's
-// GGML_OP_TILE640_MATMUL path calls decode_per_row_meta_v2
-// once for the whole tile and hands each per-row dequant
-// the pre-decoded arrays. The C reference in ggml-quants.c
-// is the documented fallback when v2 is disabled or k is
-// below the cutoff; the dispatch routes to the C ref
-// directly without going through the v2.
-extern "C" void dequantize_row_tessera_t640_v2(const void * GGML_RESTRICT packed,
-                                               const float * GGML_RESTRICT page_max,
-                                               const float * GGML_RESTRICT lane_scale,
-                                               int64_t k,
-                                               float * GGML_RESTRICT y);
-// Batched meta decode (one call for the whole TILE of rows).
-// Reads (n_rows * n_pages) page_scales + (n_rows * n_lanes)
-// lane_scales; writes (n_rows * n_pages) page_max + (n_rows
-// * n_lanes) lane_scale (fp32, /127). Used by the dispatch
-// to hoist the per-row meta decode out of the per-row
-// dequant loop.
-extern "C" void decode_per_row_meta_v2(const void * GGML_RESTRICT page_scales_packed,
-                                       const void * GGML_RESTRICT lane_scales_packed,
-                                       int64_t n_rows,
-                                       int64_t n_pages,
-                                       float * GGML_RESTRICT page_max_out,
-                                       float * GGML_RESTRICT lane_scale_out);
-// Batched outlier addback (one call for the whole BUFFER of
-// rows). Reads n_rows * row_len rows + per-row CSR offsets +
-// cols + vals; writes outlier addback into the rows buffer.
-// Used by the dispatch to hoist the per-row outlier addback
-// out of the per-row dequant loop.
-extern "C" void apply_outlier_addback_v2(float * GGML_RESTRICT rows,
-                                         int64_t row_len,
-                                         int64_t n_rows,
-                                         const int32_t * GGML_RESTRICT outlier_row_offsets,
-                                         const int32_t * GGML_RESTRICT outlier_cols,
-                                         const void * GGML_RESTRICT outlier_vals);
-extern "C" int  ggml_tessera_t640_v2_enabled(void);
-
-// GGML_TESSERA_T640_V2_MIN_K is the v2 dispatch cutoff
-// (defined in ggml-quants-v2.h). We include the header
-// here for the constant; the v2 function declarations are
-// already covered by the extern "C" block above.
-#include "ggml-quants-v2.h"
+// TILE640 host dequant + batched helpers (ggml-quants.c):
+// dequantize_row_tessera_t640 (flat row buffer),
+// dequantize_row_tessera_t640_with_meta (pre-decoded meta),
+// ts_decode_per_row_meta / ts_apply_outlier_addback (batched,
+// accel + scalar paths selected per call), and the accel
+// feature flag. The GGML_OP_TILE640_MATMUL path below dequants
+// the weight on the host into the bundle's pinned fp16 slot.
+#include "ggml-quants.h"
 
 #include <Accelerate/Accelerate.h>
 
@@ -1619,57 +1571,52 @@ static bool ggml_ane_gather_input_fp32(ggml_tensor * tensor, std::vector<float> 
 //                         ANE fp16 matmul; shape must match the
 //                         bound bundle's baked shape, otherwise
 //                         fall through to ggml-cpu/Metal)
-//                         The host-side dequant uses the v2
+//                         The host-side dequant uses the accel
 //                         (Accelerate + NEON) path in
-//                         ggml/src/ggml-quants-v2.c when
-//                         ggml_tessera_t640_v2_enabled() is
+//                         ggml-quants.c when
+//                         ggml_tessera_t640_accel_enabled() is
 //                         true and in_dim >=
-//                         GGML_TESSERA_T640_V2_MIN_K (1024);
-//                         the C reference in ggml-quants.c is
-//                         the documented fallback. The v2
-//                         dequant is 1.26-1.66x faster than the
-//                         C ref at in_dim >= 640 on M1 base
+//                         GGML_TESSERA_T640_ACCEL_MIN_K (1024);
+//                         the scalar path is the documented
+//                         fallback. The accel dequant is
+//                         1.26-1.66x faster than the scalar
+//                         path at in_dim >= 640 on M1 base
 //                         (16 GB, ~68 GB/s; the radix-243 trit
-//                         decode is the bottleneck); the v2
+//                         decode is the bottleneck); the accel
 //                         quant is 1.0-5.1x (small k ties,
-//                         large k wins 3-5x because the C ref
-//                         hits DRAM bandwidth on M1 base); the
-//                         v2 act_scale is 1.0-2.1x (small/med
-//                         wins, large k ties). These three
-//                         keep static dispatch rules
-//                         (v2 above the cutoff, C ref
+//                         large k wins 3-5x because the scalar
+//                         path hits DRAM bandwidth on M1 base);
+//                         ts_apply_act_scale is 1.0-2.1x
+//                         (small/med wins, large k ties). These
+//                         three keep static dispatch rules
+//                         (accel above the cutoff, scalar
 //                         below).
 //
-//                         Dynamic dispatch (v2 cost model):
-//                         the two batched v2 functions
-//                         (decode_per_row_meta_v2,
-//                         apply_outlier_addback_v2) are
-//                         decided per call by the helpers in
-//                         ggml/src/ggml-quants-v2-dispatch.h:
+//                         Per-call path selection (cost model):
+//                         the two batched helpers
+//                         (ts_decode_per_row_meta,
+//                         ts_apply_outlier_addback) select
+//                         their accel/scalar path per call,
+//                         decided by the regime router with the
+//                         static cost model in ggml-quants.h as
+//                         the fallback:
 //
-//                           apply_outlier_addback_v2:
-//                             v2 iff n_total in (0, 1024].
-//                             The v2's NEON bulk fp16->fp32
+//                           ts_apply_outlier_addback:
+//                             accel iff n_total in (0, 1024].
+//                             The accel NEON bulk fp16->fp32
 //                             path is active for n_total
-//                             <= 1024 (the 4 KB stack
-//                             scratch cap); above that the
-//                             v2 falls back to a scalar
-//                             convert + scatter that is
-//                             identical to the C ref. The
-//                             dispatch calls the C ref
-//                             directly above the threshold
-//                             to avoid a wasted function
-//                             call + the n_total > 1024
-//                             check inside v2. On M1 base:
-//                             1.66-1.88x at n_total=51-409
-//                             (the iPhone drafter's single-
-//                             row tail), ties at 3264-52224,
-//                             1.23x at 208896.
+//                             <= 1024 (the 4 KB stack scratch
+//                             cap); above that the scalar
+//                             convert + scatter runs. On M1
+//                             base: 1.66-1.88x at
+//                             n_total=51-409 (the iPhone
+//                             drafter's single-row tail), ties
+//                             at 3264-52224, 1.23x at 208896.
 //
-//                           decode_per_row_meta_v2:
-//                             v2 iff n_total_pages
+//                           ts_decode_per_row_meta:
+//                             accel iff n_total_pages
 //                             (= n_rows * n_pages) >= 4096.
-//                             On M1 base the v2 wins 1.09x
+//                             On M1 base accel wins 1.09x
 //                             at 135168+ elems (the vDSP +
 //                             NEON bulk calls amortise their
 //                             per-call setup tax), but
@@ -1677,19 +1624,17 @@ static bool ggml_ane_gather_input_fp32(ggml_tensor * tensor, std::vector<float> 
 //                             elems and ties at 33792. The
 //                             4096 threshold is conservative
 //                             (it routes the 33792-elem tie
-//                             to the C ref to avoid the
+//                             to the scalar path to avoid the
 //                             per-call tax on the hot path).
 //
-//                         The v2 dequant takes pre-decoded
-//                         meta as separate inputs; the C ref
-//                         meta produces those pre-decoded
-//                         arrays via ts_decode_per_row_meta_ref.
-//                         The C ref outlier scatters into the
-//                         v2 dequant's output buffer via
-//                         ts_apply_outlier_addback_ref. See
-//                         tests/bench-tessera-quants-v2.cpp
-//                         for the per-shape numbers and the
-//                         cost model constants.
+//                         dequantize_row_tessera_t640_with_meta
+//                         consumes the pre-decoded meta arrays
+//                         produced by ts_decode_per_row_meta;
+//                         the outlier addback scatters into the
+//                         dequant output buffer. See
+//                         tests/bench-tessera-quants.cpp for
+//                         the per-shape numbers and the cost
+//                         model constants.
 //   MUL_MAT (BF16/fp16)-> ANE if the bound bundle's function matches
 //                         the op's shape; otherwise fall through
 //                         to Accelerate BLAS (the W0 spike's path
@@ -2416,29 +2361,28 @@ static bool ggml_ane_program_dispatch_op(ggml_backend_ane_program * program,
             // (matching the L0.5 reference's behaviour per
             // test_b5_tile640_metal_dequant.cpp:343-349).
             //
-            // For the v2 (Accelerate + NEON) path, the dispatch
-            // hoists the per-row meta decode + outlier addback
-            // out of the per-row dequant loop:
-            //   1. decode_per_row_meta_v2: one call for the
+            // For the accel (Accelerate + NEON) path, the
+            // dispatch hoists the per-row meta decode + outlier
+            // addback out of the per-row dequant loop:
+            //   1. ts_decode_per_row_meta: one call for the
             //      whole TILE of meta (out_dim * pages_per_row
             //      page_scales + out_dim * pages_per_row * 32
             //      lane_scales). Amortises the vDSP setup cost
             //      across the whole tile.
             //   2. per-row dequant with the pre-decoded meta
-            //      (the v2 dequant takes the pre-decoded
-            //      page_max + lane_scale arrays as separate
-            //      inputs; the per-row dequant skips the inline
-            //      meta decode).
-            //   3. apply_outlier_addback_v2: one call for the
-            //      whole BUFFER of outliers (out_dim rows, n_total
-            //      outliers). Amortises the NEON bulk-convert
-            //      setup across the whole buffer.
+            //      (dequantize_row_tessera_t640_with_meta takes
+            //      the pre-decoded page_max + lane_scale arrays
+            //      as separate inputs; the per-row dequant
+            //      skips the inline meta decode).
+            //   3. ts_apply_outlier_addback: one call for the
+            //      whole BUFFER of outliers (out_dim rows,
+            //      n_total outliers). Amortises the NEON
+            //      bulk-convert setup across the whole buffer.
             //
-            // For the C ref path (v2 disabled or k < MIN_K),
+            // For the scalar path (accel disabled or k < MIN_K),
             // the dispatch falls back to the per-row scalar
             // loop with the flat [packed | page_scales |
-            // lane_scales] row buffer (the C ref's documented
-            // contract).
+            // lane_scales] row buffer.
             std::vector<ggml_fp16_t> weight_fp16((size_t) out_dim * in_dim);
             const int64_t pages_per_row = (in_dim + 639) / 640;
             const int64_t words_per_page = 32;
@@ -2514,32 +2458,30 @@ static bool ggml_ane_program_dispatch_op(ggml_backend_ane_program * program,
                     }
                 }
             }
-            const bool use_v2 = ggml_tessera_t640_v2_enabled() &&
-                                in_dim >= GGML_TESSERA_T640_V2_MIN_K;
-            if (use_v2) {
-                // Dynamic dispatch (v2 cost model):
-                //   - dequant: v2 per-row (with pre-decoded meta).
-                //     The v2 dequant is always faster than the
-                //     C ref at in_dim >= 1024 (1.30-1.63x on M1
-                //     Pro). Static rule; no per-call decision.
-                //   - meta decode: v2 batched or C ref batched.
-                //     v2 is 0.41-0.65x of C across all shapes
-                //     (the vDSP bulk calls don't amortise for
-                //     the typical Phase 0 shapes). The cost
-                //     model always picks the C ref.
-                //   - outlier addback: v2 batched or C ref
-                //     batched. v2 wins iff n_total in
-                //     (0, 1024] (the v2's internal NEON path
-                //     scratch cap; above it the v2 falls back
-                //     to scalar which is the same as the C
-                //     ref, so calling v2 wastes a function
-                //     call).
-                // The v2 dequant takes pre-decoded meta as
-                // separate inputs (the v2's API); the C ref
-                // meta produces those pre-decoded arrays. The
-                // C ref outlier scatters into the v2 dequant's
-                // output buffer. The per-row fp16 cast is
-                // unchanged.
+            const bool use_accel = ggml_tessera_t640_accel_enabled() &&
+                                   in_dim >= GGML_TESSERA_T640_ACCEL_MIN_K;
+            if (use_accel) {
+                // Accel pipeline (per-call path selection):
+                //   - dequant: accel per-row (with pre-decoded
+                //     meta). Faster than the scalar path at
+                //     in_dim >= 1024 (1.30-1.63x on M1 Pro).
+                //     Static rule; no per-call decision.
+                //   - meta decode: ts_decode_per_row_meta picks
+                //     its accel/scalar path per call. On M1 the
+                //     static cost model picks scalar for the
+                //     typical Phase 0 shapes (the vDSP bulk
+                //     calls don't amortise); the regime router
+                //     can override per (family, shape).
+                //   - outlier addback: ts_apply_outlier_addback
+                //     picks its accel/scalar path per call;
+                //     accel wins iff n_total in (0, 1024] (the
+                //     NEON bulk-convert scratch cap; above it
+                //     the scalar convert runs).
+                // The with-meta dequant takes pre-decoded meta
+                // as separate inputs; ts_decode_per_row_meta
+                // produces those arrays. The outlier addback
+                // scatters into the dequant output buffer. The
+                // per-row fp16 cast is unchanged.
                 std::vector<float> weight_f32((size_t) out_dim * in_dim);
                 std::vector<float> page_max_f32((size_t) out_dim * pages_per_row);
                 std::vector<float> lane_scale_f32(
@@ -2547,16 +2489,16 @@ static bool ggml_ane_program_dispatch_op(ggml_backend_ane_program * program,
                 const int64_t n_total_outliers =
                     (int64_t) outlier_row_offsets[out_dim] -
                     (int64_t) outlier_row_offsets[0];
-                // v1 regime router: derive (family, shape_bucket)
+                // Regime router: derive (family, shape_bucket)
                 // from the tensor name and the in_dim, then ask
-                // the router which device wins for this
+                // the router which path wins for this
                 // (family, shape) on both meta and outlier.
-                // Fallback is the v1 static cost model (the
-                // same ts_v2_dispatch_should_use_v2_* helpers);
-                // the router is a strict no-op when it has no
-                // data. The router exists so the dispatch can
-                // learn per-(family, shape) device preferences
-                // from real kernel output instead of static
+                // Fallback is the static cost model (the same
+                // ts_t640_*_accel_wins helpers); the router is
+                // a strict no-op when it has no data. The
+                // router exists so the dispatch can learn
+                // per-(family, shape) path preferences from
+                // real kernel output instead of static
                 // thresholds (M1 Pro data was off by ~10% on
                 // M1 base for meta decode at large N; the
                 // router's policy table fixes that kind of
@@ -2564,31 +2506,23 @@ static bool ggml_ane_program_dispatch_op(ggml_backend_ane_program * program,
                 const int family = ts_regime_infer_family(op->name);
                 const int shape_bucket =
                     ts_regime_shape_bucket_for_in_dim(in_dim);
-                const bool use_v2_meta = ts_regime_router_lookup_meta(
+                const bool accel_meta = ts_regime_router_lookup_meta(
                     family, shape_bucket,
                     (int64_t) out_dim, pages_per_row);
-                const bool use_v2_outlier = ts_regime_router_lookup_outlier(
+                const bool accel_outlier = ts_regime_router_lookup_outlier(
                     family, shape_bucket, n_total_outliers);
-                // 1. Meta decode: v2 batched or C ref batched.
-                // The C ref is a scalar loop over the whole
-                // tile's meta (fp16->fp32 for page_scales,
-                // int8->fp32/127 for lane_scales).
-                if (use_v2_meta) {
-                    decode_per_row_meta_v2(page_scales, lane_scales,
-                                           (int64_t) out_dim, pages_per_row,
-                                           page_max_f32.data(),
-                                           lane_scale_f32.data());
-                } else {
-                    ts_decode_per_row_meta_ref(
-                        (const uint16_t *) page_scales, lane_scales,
-                        (int64_t) out_dim, pages_per_row,
-                        page_max_f32.data(),
-                        lane_scale_f32.data());
-                }
-                // 2. Per-row v2 dequant with pre-decoded meta
-                // (the v2 dequant takes the packed words + the
-                // per-row page_max + lane_scale views from the
-                // pre-decoded arrays).
+                // 1. Meta decode: one batched call for the whole
+                // tile; the accel/scalar path is selected by the
+                // router decision above.
+                ts_decode_per_row_meta(page_scales, lane_scales,
+                                       (int64_t) out_dim, pages_per_row,
+                                       page_max_f32.data(),
+                                       lane_scale_f32.data(),
+                                       accel_meta);
+                // 2. Per-row dequant with pre-decoded meta
+                // (the with-meta dequant takes the packed words
+                // + the per-row page_max + lane_scale views
+                // from the pre-decoded arrays).
                 for (int32_t r = 0; r < out_dim; ++r) {
                     const uint32_t * row_packed = (const uint32_t *) &packed[
                         r * pages_per_row * words_per_page];
@@ -2596,29 +2530,20 @@ static bool ggml_ane_program_dispatch_op(ggml_backend_ane_program * program,
                     const float * row_lane_scale = &lane_scale_f32[
                         r * pages_per_row * TILE640_LANES_PER_PAGE];
                     float * row_y = &weight_f32[r * in_dim];
-                    dequantize_row_tessera_t640_v2(row_packed,
-                                                   row_page_max,
-                                                   row_lane_scale,
-                                                   in_dim, row_y);
+                    dequantize_row_tessera_t640_with_meta(row_packed,
+                                                          row_page_max,
+                                                          row_lane_scale,
+                                                          in_dim, row_y);
                 }
-                // 3. Outlier addback: v2 batched or C ref
-                // batched. The C ref is a scalar convert +
-                // scatter over the whole buffer; the v2 does
-                // a NEON bulk fp16->fp32 + scalar scatter when
-                // n_total <= 1024.
-                if (use_v2_outlier) {
-                    apply_outlier_addback_v2(weight_f32.data(), in_dim,
-                                             (int64_t) out_dim,
-                                             outlier_row_offsets,
-                                             outlier_cols,
-                                             outlier_vals);
-                } else {
-                    ts_apply_outlier_addback_ref(weight_f32.data(), in_dim,
-                                                 (int64_t) out_dim,
-                                                 outlier_row_offsets,
-                                                 outlier_cols,
-                                                 (const uint16_t *) outlier_vals);
-                }
+                // 3. Outlier addback: one batched call for the
+                // whole buffer; the accel/scalar path is
+                // selected by the router decision above.
+                ts_apply_outlier_addback(weight_f32.data(), in_dim,
+                                         (int64_t) out_dim,
+                                         outlier_row_offsets,
+                                         outlier_cols,
+                                         outlier_vals,
+                                         accel_outlier);
                 // 4. Per-row fp16 cast (the bundle's pinned slot
                 // dtype is fp16; the dequant is fp32).
                 for (int32_t r = 0; r < out_dim; ++r) {
@@ -2628,11 +2553,11 @@ static bool ggml_ane_program_dispatch_op(ggml_backend_ane_program * program,
                     }
                 }
             } else {
-                // C ref path: per-row scalar loop with the flat
-                // [packed | page_scales | lane_scales] row buffer
-                // (the C ref's documented contract). Below the v2
-                // cutoff (k < 1024) the vDSP setup cost is larger
-                // than the per-row work, so the scalar C ref wins.
+                // Scalar path: per-row scalar loop with the flat
+                // [packed | page_scales | lane_scales] row
+                // buffer. Below the accel cutoff (k < 1024) the
+                // vDSP setup cost is larger than the per-row
+                // work, so the scalar path wins.
                 std::vector<uint8_t> row_bytes(
                     (size_t)(pages_per_row * (words_per_page * 4 + 2 + words_per_page)));
                 std::vector<float> row_f32((size_t) in_dim);

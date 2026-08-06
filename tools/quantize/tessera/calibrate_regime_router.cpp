@@ -1,43 +1,42 @@
 // calibrate_regime_router
 //
-// CLI entry point for the v1 regime router calibration runner.
+// CLI entry point for the regime router calibration runner.
 // Sweeps a (family, shape_bucket) grid for a given shape set,
-// measures per-path L1 t_l^2 + latency for the v2 dispatch and
-// the C ref dispatch (the same v2/C ref pair the dispatch in
-// ggml-ane.mm GGML_OP_TILE640_MATMUL case picks between),
-// scores each path as t_l2 / mean_latency_us, and emits a
-// generated header ggml/src/ggml-regime-router.gen.h that
-// downstream commits consume.
+// measures per-path L1 t_l^2 + latency for the accel path and
+// the scalar path (the same pair the dispatch in ggml-ane.mm's
+// GGML_OP_TILE640_MATMUL case selects between), scores each
+// path as t_l2 / mean_latency_us, and emits a generated header
+// ggml/src/ggml-regime-router.gen.h that downstream commits
+// consume.
 //
-// The runner is the v1 calibration for the gemma 4 12B
-// model. The output is the v1 router policy table; the v1
-// static cost model in ggml-quants-v2-dispatch.h is the
-// FALLBACK when no entry matches.
+// The runner is the calibration for the gemma 4 12B model.
+// The output is the router policy table; the static cost model
+// in ggml-quants.h is the FALLBACK when no entry matches.
 //
 // Architecture:
 //   - The runner uses ts_higgs_proxy_pack_tile640 to pack a
 //     synthetic weight matrix into the TILE640 layout the
 //     GGML_OP_TILE640_MATMUL dispatch consumes.
-//   - It then runs apply_outlier_addback_v2 vs
-//     ts_apply_outlier_addback_ref (the dispatch's two
-//     outlier paths) and decode_per_row_meta_v2 vs
-//     ts_decode_per_row_meta_ref (the dispatch's two meta
-//     paths) at the (out_dim, in_dim) shape, with a small
-//     outlier count of n_total=51 (a representative value
-//     for the "v2 NEON path active" case) and 3264
-//     (representative for the "v2 NEON path inactive" case).
+//   - It then runs ts_apply_outlier_addback with use_accel=true
+//     vs use_accel=false (the dispatch's two outlier paths)
+//     and ts_decode_per_row_meta with use_accel=true vs false
+//     (the dispatch's two meta paths) at the (out_dim, in_dim)
+//     shape, with a small outlier count of n_total=51 (a
+//     representative value for the "accel NEON path active"
+//     case) and 3264 (representative for the "accel NEON path
+//     inactive" case).
 //   - Each call is timed with std::chrono::steady_clock
 //     (5 warmup + 10 measured, take median, in microseconds).
 //   - The score is t_l2 / mean_latency_us (lower is better):
 //     both error and time matter; the policy table picks the
 //     path that minimises the product. The L1 t_l2 is
 //     measured once per shape via ts_higgs_proxy_measure_l1
-//     and is identical for v2 and C ref (both paths produce
-//     the same bytes; only latency differs). The score is
-//     therefore equivalent to 1/latency at the v1 calibration
-//     granularity; the t_l2 in the score is documentation
-//     (the per-shape measurement is recorded in the
-//     .gen.h comments for the operator's review).
+//     and is identical for both paths (both produce the same
+//     bytes; only latency differs). The score is therefore
+//     equivalent to 1/latency at the calibration granularity;
+//     the t_l2 in the score is documentation (the per-shape
+//     measurement is recorded in the .gen.h comments for the
+//     operator's review).
 //   - The seed is pinned (0xR0u7E) and the shape data is
 //     deterministic; two consecutive runs produce
 //     byte-identical .gen.h. The test
@@ -50,7 +49,7 @@
 //                          (default: gemma4-12b-trunk). The shape set
 //                          selects which (family, in_dim) pairs to
 //                          bench; the runner does NOT take per-shape
-//                          overrides (the v1 scope is a fixed grid;
+//                          overrides (the scope is a fixed grid;
 //                          per-shape overrides are an A15 follow-up).
 //   --seed <N>             override the seed (default 0xR0u7E).
 //                          Used by the test for the determinism
@@ -60,8 +59,6 @@
 // codegen failure.
 
 #include "tessera-higgs-proxy.h"
-#include "ggml-quants-v2-dispatch.h"
-#include "ggml-quants-v2.h"
 #include "ggml-quants.h"
 #include "ggml-common.h"
 #include "ggml-impl.h"
@@ -345,24 +342,24 @@ const std::vector<ShapeCell> & shape_set(const std::string & name) {
 // ---------------------------------------------------------------------------
 // Per-cell calibration
 //
-// Times the v2 outlier addback vs the C ref outlier addback,
-// and the v2 meta decode vs the C ref meta decode, for the
-// (out_dim, in_dim) shape. Returns a result struct with the
-// (use_v2_outlier, use_v2_meta) bools and the per-path
-// latency + t_l2 for the .gen.h comments.
+// Times the accel outlier addback vs the scalar outlier
+// addback, and the accel meta decode vs the scalar meta
+// decode, for the (out_dim, in_dim) shape. Returns a result
+// struct with the (use_accel_outlier, use_accel_meta) bools
+// and the per-path latency + t_l2 for the .gen.h comments.
 // ---------------------------------------------------------------------------
 
 struct CellResult {
     int  family;
     int  shape_bucket;
     int  in_dim;
-    bool use_v2_outlier;
-    bool use_v2_meta;
+    bool use_accel_outlier;
+    bool use_accel_meta;
     double t_l2;          // single measurement, identical for both paths
-    double lat_v2_outlier_us;
-    double lat_cref_outlier_us;
-    double lat_v2_meta_us;
-    double lat_cref_meta_us;
+    double lat_accel_outlier_us;
+    double lat_scalar_outlier_us;
+    double lat_accel_meta_us;
+    double lat_scalar_meta_us;
     int  n_rows;
     int  n_pages;
     int  n_per_row;
@@ -434,12 +431,13 @@ CellResult calibrate_cell(const ShapeCell & cell, uint32_t seed) {
                                  cell.out_dim, cell.in_dim,
                                  packed);
 
-    // t_l2: single L1 measurement, identical for v2 and C
-    // ref (both produce the same dequantized bytes; only
-    // latency differs). The L1 measurement runs through the
-    // v2 dispatch by default at in_dim >= MIN_K (640) and
-    // the C ref below; the result is the same number in
-    // either case (the dequantized bytes are identical).
+    // t_l2: single L1 measurement, identical for the accel
+    // and scalar paths (both produce the same dequantized
+    // bytes; only latency differs). The L1 measurement runs
+    // through the accel path by default at in_dim >= MIN_K
+    // (640) and the scalar path below; the result is the
+    // same number in either case (the dequantized bytes are
+    // identical).
     r.t_l2 = ts_higgs_proxy_measure_l1(W_flat.data(),
                                        packed.data(),
                                        cell.out_dim, cell.in_dim,
@@ -462,79 +460,82 @@ CellResult calibrate_cell(const ShapeCell & cell, uint32_t seed) {
     }
 
     // Bench the outlier addback: allocate a fresh rows
-    // buffer per call (the v2 mutates it in place, so
+    // buffer per call (the addback mutates it in place, so
     // reset before each call to keep the bench honest).
     std::vector<float> rows((size_t) cell.out_dim * cell.in_dim, 0.0f);
-    r.lat_v2_outlier_us = bench_median_us([&](volatile float & sink) {
+    r.lat_accel_outlier_us = bench_median_us([&](volatile float & sink) {
         std::fill(rows.begin(), rows.end(), 0.0f);
-        apply_outlier_addback_v2(rows.data(), cell.in_dim,
+        ts_apply_outlier_addback(rows.data(), cell.in_dim,
                                  cell.out_dim,
                                  row_offsets.data(),
                                  cols.data(),
-                                 (const ggml_fp16_t *) vals.data());
+                                 (const ggml_fp16_t *) vals.data(),
+                                 /*use_accel=*/true);
         sink += rows[0];
     });
-    r.lat_cref_outlier_us = bench_median_us([&](volatile float & sink) {
+    r.lat_scalar_outlier_us = bench_median_us([&](volatile float & sink) {
         std::fill(rows.begin(), rows.end(), 0.0f);
-        ts_apply_outlier_addback_ref(rows.data(), cell.in_dim,
-                                     cell.out_dim,
-                                     row_offsets.data(),
-                                     cols.data(),
-                                     vals.data());
+        ts_apply_outlier_addback(rows.data(), cell.in_dim,
+                                 cell.out_dim,
+                                 row_offsets.data(),
+                                 cols.data(),
+                                 vals.data(),
+                                 /*use_accel=*/false);
         sink += rows[0];
     });
-    // Tie threshold: only override the v1 static cost model
-    // when the bench shows a decisive winner (>= 5% latency
-    // difference). The dispatch's v2 and C ref paths differ
-    // by 1-2% at large n_total (the v2 falls back to the
-    // same scalar loop the C ref uses above n_total=1024);
-    // a 1-2% bench difference is within the run-to-run
-    // noise floor (~1-3% on M1 base at 5 warmup + 10
-    // measured). Forcing the router to record a winner on
-    // a tie is wrong: the .gen.h bytes flip across
-    // regenerations and the router's "override" disagrees
-    // with itself between main and the iOS bundle. The
-    // architectural contract is that the router's entries
-    // are DECISIVE overrides, not noise-driven overrides.
+    // Tie threshold: only override the static cost model
+    // when the bench shows a decisive winner (>= 15% latency
+    // difference). The accel and scalar paths differ by 1-2%
+    // at large n_total (above n_total=1024 the accel path
+    // falls back to the same scalar loop); a 1-2% bench
+    // difference is within the run-to-run noise floor (~1-3%
+    // on M1 base at 5 warmup + 10 measured). Forcing the
+    // router to record a winner on a tie is wrong: the
+    // .gen.h bytes flip across regenerations and the
+    // router's "override" disagrees with itself between
+    // main and the iOS bundle. The architectural contract is
+    // that the router's entries are DECISIVE overrides, not
+    // noise-driven overrides.
     //
-    // On a tie we record the v1 static helper's result;
-    // the .gen.h then matches main's behaviour byte-for-
-    // byte for the tie cells and only diverges where the
-    // bench is decisive (>= 5%). The static's bool is
-    // computed at this (out_dim, n_per_row) shape so the
+    // On a tie we record the static cost model's result;
+    // the .gen.h then matches the dispatch's fallback
+    // behaviour byte-for-byte for the tie cells and only
+    // diverges where the bench is decisive. The static bool
+    // is computed at this (out_dim, n_per_row) shape so the
     // tie-resolve exactly matches the dispatch's fallback
     // contract.
-    // 15% tie threshold: a 5% threshold was too tight
-    // given the bench's 1-3% run-to-run noise floor on M1
-    // base; cells within 5% flipped winner between
-    // consecutive regenerations, breaking the .gen.h SHA
-    // stability the test asserts. The bench is now an
-    // adaptive MEDIAN (bench_median_us) that scales
-    // sample count with system pressure and converges
-    // when the running median is stable to 0.1%, but the
-    // residual noise on M1 base is still ~3-5% on
-    // highly-contended hosts. 15% is wide enough that
-    // the bench's noise floor doesn't drive a flip and
-    // the .gen.h bytes are bit-stable across runs. Below
-    // 15% the runner defers to the v1 static cost model
+    //
+    // 15% tie threshold: a 5% threshold was too tight given
+    // the bench's 1-3% run-to-run noise floor on M1 base;
+    // cells within 5% flipped winner between consecutive
+    // regenerations, breaking the .gen.h SHA stability the
+    // test asserts. The bench is now an adaptive MEDIAN
+    // (bench_median_us) that scales sample count with system
+    // pressure and converges when the running median is
+    // stable to 0.1%, but the residual noise on M1 base is
+    // still ~3-5% on highly-contended hosts. 15% is wide
+    // enough that the bench's noise floor doesn't drive a
+    // flip and the .gen.h bytes are bit-stable across runs.
+    // Below 15% the runner defers to the static cost model
     // (the no-op behaviour), which is the architectural
     // contract.
     constexpr double kTieRatio = 1.15;  // >= 15% to call a winner
-    const double ratio_outlier = r.lat_cref_outlier_us / r.lat_v2_outlier_us;
+    const double ratio_outlier = r.lat_scalar_outlier_us / r.lat_accel_outlier_us;
     if (ratio_outlier >= kTieRatio) {
-        r.use_v2_outlier = true;
+        r.use_accel_outlier = true;
     } else if (1.0 / ratio_outlier >= kTieRatio) {
-        r.use_v2_outlier = false;
+        r.use_accel_outlier = false;
     } else {
-        // Tie: defer to v1 static. Compute n_total as the
-        // dispatch does (outlier_row_offsets[out_dim] -
+        // Tie: defer to the static cost model. Compute
+        // n_total as the dispatch does
+        // (outlier_row_offsets[out_dim] -
         // outlier_row_offsets[0]).
         const int64_t n_total = (int64_t) cell.out_dim * cell.n_per_row;
-        r.use_v2_outlier = ts_v2_dispatch_should_use_v2_outlier(n_total);
+        r.use_accel_outlier = ts_t640_outlier_accel_wins(n_total);
     }
 
     // Bench the meta decode: allocate a fresh output buffer
-    // per call (the v2 writes into the same buffer, so
+    // per call (the decode writes into the same buffer, so
     // reset before each call). The page_scales +
     // lane_scales inputs are derived from the packed
     // buffer (the dispatch's actual data layout).
@@ -546,28 +547,30 @@ CellResult calibrate_cell(const ShapeCell & cell, uint32_t seed) {
     const int8_t   * lane_scales_p = (const int8_t *) (page_scales_p + r.n_pages);
     std::vector<float> page_max((size_t) cell.out_dim * r.n_pages);
     std::vector<float> lane_scale((size_t) cell.out_dim * r.n_pages * TILE640_LANES_PER_PAGE);
-    r.lat_v2_meta_us = bench_median_us([&](volatile float & sink) {
-        decode_per_row_meta_v2(page_scales_p, lane_scales_p,
+    r.lat_accel_meta_us = bench_median_us([&](volatile float & sink) {
+        ts_decode_per_row_meta(page_scales_p, lane_scales_p,
                                cell.out_dim, r.n_pages,
-                               page_max.data(), lane_scale.data());
+                               page_max.data(), lane_scale.data(),
+                               /*use_accel=*/true);
         sink += page_max[0];
     });
-    r.lat_cref_meta_us = bench_median_us([&](volatile float & sink) {
-        ts_decode_per_row_meta_ref(page_scales_p, lane_scales_p,
-                                   cell.out_dim, r.n_pages,
-                                   page_max.data(), lane_scale.data());
+    r.lat_scalar_meta_us = bench_median_us([&](volatile float & sink) {
+        ts_decode_per_row_meta(page_scales_p, lane_scales_p,
+                               cell.out_dim, r.n_pages,
+                               page_max.data(), lane_scale.data(),
+                               /*use_accel=*/false);
         sink += page_max[0];
     });
-    // Same tie threshold as outlier: only override the v1
-    // static cost model when the bench shows a decisive
-    // winner. See the outlier comment for the rationale.
-    const double ratio_meta = r.lat_cref_meta_us / r.lat_v2_meta_us;
+    // Same tie threshold as outlier: only override the static
+    // cost model when the bench shows a decisive winner. See
+    // the outlier comment for the rationale.
+    const double ratio_meta = r.lat_scalar_meta_us / r.lat_accel_meta_us;
     if (ratio_meta >= kTieRatio) {
-        r.use_v2_meta = true;
+        r.use_accel_meta = true;
     } else if (1.0 / ratio_meta >= kTieRatio) {
-        r.use_v2_meta = false;
+        r.use_accel_meta = false;
     } else {
-        r.use_v2_meta = ts_v2_dispatch_should_use_v2_meta(cell.out_dim, r.n_pages);
+        r.use_accel_meta = ts_t640_meta_accel_wins(cell.out_dim, r.n_pages);
     }
 
     return r;
@@ -611,20 +614,19 @@ void emit_gen_h(const std::string & out_path,
     s += "// Shape set: " + shape_set_name + "\n";
     s += "// Cell count: " + std::to_string(sorted.size()) + "\n";
     s += "//\n";
-    s += "// Each entry: { family, shape_bucket, use_v2_outlier, use_v2_meta }.\n";
+    s += "// Each entry: { family, shape_bucket, use_accel_outlier, use_accel_meta }.\n";
     s += "// family = ts_regime_family_kind_t; shape_bucket =\n";
     s += "// ts_regime_shape_bucket_t. The router's lookup is\n";
     s += "// static inline; the dispatch's hot path is one\n";
     s += "// bounds check + 32-bit compare per call.\n";
     s += "//\n";
-    s += "// use_v2_* decision rule: the bench records the v2\n";
-    s += "// path's winner iff it is at least 5% faster than the\n";
-    s += "// C ref path at this (family, shape). On a tie the\n";
-    s += "// entry defers to the v1 static cost model in\n";
-    s += "// ggml/src/ggml-quants-v2-dispatch.h. The dispatch\n";
-    s += "// is identical to main when the runner records the\n";
-    s += "// v1 static result (i.e. the router is a strict no-op\n";
-    s += "// for tie cells).\n";
+    s += "// use_accel_* decision rule: the bench records the accel\n";
+    s += "// path as the winner iff it is at least 15% faster than\n";
+    s += "// the scalar path at this (family, shape). On a tie the\n";
+    s += "// entry defers to the static cost model in\n";
+    s += "// ggml-quants.h. The dispatch is identical when the\n";
+    s += "// runner records the static result (i.e. the router is\n";
+    s += "// a strict no-op for tie cells).\n";
     s += "\n";
     s += "#pragma once\n";
     s += "\n";
@@ -644,14 +646,14 @@ void emit_gen_h(const std::string & out_path,
         // emitted bytes unstable: the bench's noise floor
         // is ~1-3% on M1 base, which flips the integer
         // us rounding across runs. The policy table
-        // (use_v2_*) is stable because the runner's tie
+        // (use_accel_*) is stable because the runner's tie
         // threshold (5%) defers ambiguous cells to the v1
         // static helper.
         std::snprintf(buf, sizeof(buf),
             "    { %d, %d, %s, %s },\n",
             c.family, c.shape_bucket,
-            c.use_v2_outlier ? "true" : "false",
-            c.use_v2_meta    ? "true" : "false");
+            c.use_accel_outlier ? "true" : "false",
+            c.use_accel_meta    ? "true" : "false");
         s += buf;
     }
     s += "};\n";
@@ -698,8 +700,8 @@ void emit_gen_h(const std::string & out_path,
         r += "Cell count: " + std::to_string(sorted.size()) + "\n";
         r += "\n";
         r += "| family | shape | in_dim | n_total_pages | n_per_row | t_l2 | "
-             "v2_outlier_us | cref_outlier_us | v2_meta_us | cref_meta_us | "
-             "use_v2_outlier | use_v2_meta |\n";
+             "accel_outlier_us | scalar_outlier_us | accel_meta_us | scalar_meta_us | "
+             "use_accel_outlier | use_accel_meta |\n";
         r += "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|:---:|:---:|\n";
         for (const auto & c : sorted) {
             char buf[1024];
@@ -709,28 +711,28 @@ void emit_gen_h(const std::string & out_path,
                 shape_label_from_int(c.shape_bucket),
                 c.in_dim, c.n_rows * c.n_pages, c.n_per_row,
                 c.t_l2,
-                c.lat_v2_outlier_us, c.lat_cref_outlier_us,
-                c.lat_v2_meta_us, c.lat_cref_meta_us,
-                c.use_v2_outlier ? "v2" : "C ref",
-                c.use_v2_meta    ? "v2" : "C ref");
+                c.lat_accel_outlier_us, c.lat_scalar_outlier_us,
+                c.lat_accel_meta_us, c.lat_scalar_meta_us,
+                c.use_accel_outlier ? "accel" : "scalar",
+                c.use_accel_meta    ? "accel" : "scalar");
             r += buf;
         }
         r += "\n";
         r += "## Score formula\n\n";
         r += "Per-cell score: `t_l2 / mean_latency_us` (lower is better).\n";
-        r += "The t_l2 is identical for v2 and C ref (both paths\n";
-        r += "produce the same dequantized bytes; only latency\n";
+        r += "The t_l2 is identical for the accel and scalar paths\n";
+        r += "(both produce the same dequantized bytes; only latency\n";
         r += "differs), so the score simplifies to `1/latency` at\n";
-        r += "the v1 calibration granularity. The t_l2 is reported\n";
+        r += "the calibration granularity. The t_l2 is reported\n";
         r += "for documentation (the per-shape measurement is\n";
         r += "recorded in this report for the operator's review).\n";
         r += "\n";
-        r += "The router records `use_v2_*` only when the bench\n";
-        r += "shows a decisive winner (>= 5% latency difference).\n";
-        r += "On a tie the entry defers to the v1 static cost\n";
-        r += "model. The dispatch is identical to main when the\n";
-        r += "runner records the v1 static result (i.e. the\n";
-        r += "router is a strict no-op for tie cells).\n";
+        r += "The router records `use_accel_*` only when the bench\n";
+        r += "shows a decisive winner (>= 15% latency difference).\n";
+        r += "On a tie the entry defers to the static cost model.\n";
+        r += "The dispatch is identical when the runner records the\n";
+        r += "static result (i.e. the router is a strict no-op for\n";
+        r += "tie cells).\n";
         md.write(r.data(), (std::streamsize) r.size());
         md.flush();
     }
@@ -748,10 +750,10 @@ int main(int argc, char ** argv) {
         if (a == "-h" || a == "--help") {
             std::printf("usage: %s --out <path> [--shape <name>] [--seed <N>]\n", argv[0]);
             std::printf("\n");
-            std::printf("v1 regime router calibration runner.\n");
+            std::printf("regime router calibration runner.\n");
             std::printf("Sweeps (family, shape_bucket) for a shape set,\n");
-            std::printf("measures per-path L1 + latency, picks the v2/C\n");
-            std::printf("ref winner per (family, shape), and emits a\n");
+            std::printf("measures per-path L1 + latency, picks the accel/\n");
+            std::printf("scalar winner per (family, shape), and emits a\n");
             std::printf("generated header ggml-regime-router.gen.h.\n");
             std::printf("\n");
             std::printf("Options:\n");
@@ -786,15 +788,15 @@ int main(int argc, char ** argv) {
         CellResult r = calibrate_cell(cells[i], seed);
         std::fprintf(stderr,
             "  %s/%s in_dim=%d n_total_pages=%d: "
-            "use_v2_outlier=%s (%.2f vs %.2f us), "
-            "use_v2_meta=%s (%.2f vs %.2f us), t_l2=%.4e\n",
+            "use_accel_outlier=%s (%.2f vs %.2f us), "
+            "use_accel_meta=%s (%.2f vs %.2f us), t_l2=%.4e\n",
             family_label_from_int(r.family),
             shape_label_from_int(r.shape_bucket),
             r.in_dim, r.n_rows * r.n_pages,
-            r.use_v2_outlier ? "v2" : "C ref",
-            r.lat_v2_outlier_us, r.lat_cref_outlier_us,
-            r.use_v2_meta    ? "v2" : "C ref",
-            r.lat_v2_meta_us, r.lat_cref_meta_us,
+            r.use_accel_outlier ? "accel" : "scalar",
+            r.lat_accel_outlier_us, r.lat_scalar_outlier_us,
+            r.use_accel_meta    ? "accel" : "scalar",
+            r.lat_accel_meta_us, r.lat_scalar_meta_us,
             r.t_l2);
         results.push_back(r);
     }

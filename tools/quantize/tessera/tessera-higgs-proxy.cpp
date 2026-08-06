@@ -16,8 +16,6 @@
 // quantizer for deterministic packing, the v2 (Accelerate + NEON)
 // dequant + the v2 dispatch cost model for the L1 measurement.
 #include "ggml-quants.h"
-#include "ggml-quants-v2.h"
-#include "ggml-quants-v2-dispatch.h"
 
 #include <algorithm>
 #include <cmath>
@@ -426,14 +424,14 @@ float ts_higgs_proxy_measure_l1(const float * W_orig_flat,
     const int64_t pages = (in_dim + TILE640_PAGE_SIZE - 1) / TILE640_PAGE_SIZE;
     const size_t row_bytes = ts_higgs_proxy_t640_row_bytes(pages);
 
-    // The GGML_OP_TILE640_MATMUL dispatch rule (ggml-ane.mm): v2
-    // dequant iff v2 enabled and in_dim >= MIN_K; the meta decode
-    // goes through the v2 cost model (returns false today, so the
-    // C reference decode runs; the branch tracks future cost-model
-    // changes without drift).
-    const bool use_v2 = ggml_tessera_t640_v2_enabled() &&
-                        in_dim >= GGML_TESSERA_T640_V2_MIN_K;
-    const bool use_v2_meta = ts_v2_dispatch_should_use_v2_meta(out_dim, pages);
+    // The GGML_OP_TILE640_MATMUL dispatch rule (ggml-ane.mm):
+    // accel dequant iff accel enabled and in_dim >= MIN_K; the
+    // meta decode goes through the static cost model (returns
+    // false today, so the scalar decode runs; the branch tracks
+    // future cost-model changes without drift).
+    const bool use_accel = ggml_tessera_t640_accel_enabled() &&
+                           in_dim >= GGML_TESSERA_T640_ACCEL_MIN_K;
+    const bool accel_meta = ts_t640_meta_accel_wins(out_dim, pages);
 
     // Per-row scratch (aligned, like the dispatch's row buffer).
     std::vector<uint8_t> row_buf(row_bytes);
@@ -447,21 +445,17 @@ float ts_higgs_proxy_measure_l1(const float * W_orig_flat,
 
     for (int64_t r = 0; r < out_dim; r++) {
         std::memcpy(row_buf.data(), base + (size_t)r * row_bytes, row_bytes);
-        if (use_v2) {
+        if (use_accel) {
             const uint32_t * words = (const uint32_t *)row_buf.data();
             const uint16_t * ps = (const uint16_t *)
                 (row_buf.data() + (size_t)pages * TILE640_WORDS_PER_PAGE * sizeof(uint32_t));
             const int8_t * ls = (const int8_t *)(ps + pages);
-            if (use_v2_meta) {
-                decode_per_row_meta_v2(ps, ls, 1, pages,
-                                       page_max.data(), lane_scale.data());
-            } else {
-                ts_decode_per_row_meta_ref(ps, ls, 1, pages,
-                                           page_max.data(), lane_scale.data());
-            }
-            dequantize_row_tessera_t640_v2(words, page_max.data(),
-                                           lane_scale.data(), in_dim,
-                                           row_y.data());
+            ts_decode_per_row_meta(ps, ls, 1, pages,
+                                   page_max.data(), lane_scale.data(),
+                                   accel_meta);
+            dequantize_row_tessera_t640_with_meta(words, page_max.data(),
+                                                  lane_scale.data(), in_dim,
+                                                  row_y.data());
         } else {
             dequantize_row_tessera_t640(row_buf.data(), row_y.data(), in_dim);
         }

@@ -662,27 +662,28 @@ if (NOT GGML_BACKEND_DL)
     llama_build_and_test(test-quantize-perf.cpp)
     llama_build_and_test(test-rope.cpp)
     llama_build_and_test(test-col2im-1d.cpp)
-    # TILE640 v2 (Accelerate + NEON) parity test for the 5 quant
-    # helpers in ggml/src/ggml-quants-v2.c. Verifies bit-identical
-    # output vs the C references in ggml/src/ggml-quants.c.
-    llama_build_and_test(test-tessera-quants-v2.cpp)
-    if (TARGET test-tessera-quants-v2)
-        target_include_directories(test-tessera-quants-v2 PRIVATE
+    # TILE640 quant path-parity test: each batched helper in
+    # ggml/src/ggml-quants.c is one implementation with an
+    # Accelerate + NEON accel path and a scalar fallback; the
+    # test pins both paths and asserts they agree.
+    llama_build_and_test(test-tessera-quants.cpp)
+    if (TARGET test-tessera-quants)
+        target_include_directories(test-tessera-quants PRIVATE
             ${PROJECT_SOURCE_DIR}/ggml/src)
     endif()
-    # TILE640 v2 throughput benchmark. Times each of the 5
-    # functions on the canonical Phase 0 shapes; reports
-    # speedup vs the C reference. Not a ctest target (it's
+    # TILE640 quant throughput benchmark. Times the accel and
+    # scalar paths of each helper on the canonical Phase 0
+    # shapes and reports the speedup. Not a ctest target (it's
     # a manual benchmark binary, not a pass/fail test).
-    llama_build(bench-tessera-quants-v2.cpp)
-    if (TARGET bench-tessera-quants-v2)
-        target_include_directories(bench-tessera-quants-v2 PRIVATE
+    llama_build(bench-tessera-quants.cpp)
+    if (TARGET bench-tessera-quants)
+        target_include_directories(bench-tessera-quants PRIVATE
             ${PROJECT_SOURCE_DIR}/ggml/src)
     endif()
-    # TILE640 v2 dynamic dispatch test. Asserts the cost model
-    # helpers in ggml/src/ggml-quants-v2-dispatch.h return the
-    # right bool per shape, and that the C ref fallback helpers
-    # are self-consistent with the v2's scalar fallback.
+    # TILE640 dispatch test. Asserts the static cost model
+    # helpers in ggml/src/ggml-quants.h return the right bool
+    # per shape, and that the batched helpers' accel and
+    # scalar paths are bit-identical.
     llama_build_and_test(test-ane-tile640-dispatch.cpp)
     if (TARGET test-ane-tile640-dispatch)
         target_include_directories(test-ane-tile640-dispatch PRIVATE
@@ -702,11 +703,11 @@ if (NOT GGML_BACKEND_DL)
             ${PROJECT_SOURCE_DIR}/ggml/src/ggml-ane)
         target_link_libraries(test-ane-gguf-stream PRIVATE ggml-ane)
     endif()
-    # v1 regime router test. With the empty .gen.h baseline
-    # (Commit 1) the test asserts the FALLBACK CONTRACT: every
-    # (family, shape_bucket) lookup returns the v1 static
-    # helper's bool. The same test stays green as the .gen.h
-    # grows in Commit 3+ (it only ever asserts fallback
+    # Regime router test. With the empty .gen.h baseline
+    # the test asserts the FALLBACK CONTRACT: every
+    # (family, shape_bucket) lookup returns the static cost
+    # model helper's bool. The same test stays green as the
+    # .gen.h grows (it only ever asserts the fallback
     # contract; the per-(family, shape) coverage test is in
     # the dispatch test, not here).
     llama_build_and_test(test-regime-router.cpp)

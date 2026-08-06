@@ -17,6 +17,10 @@
 #include <omp.h>
 #endif
 
+#if defined(__APPLE__)
+#include <Accelerate/Accelerate.h>
+#endif
+
 #define GROUP_MAX_EPS 1e-15f
 #define GROUP_MAX_EPS_IQ3_XXS 1e-8f
 #define GROUP_MAX_EPS_IQ2_S 1e-8f
@@ -79,6 +83,53 @@ void quantize_row_q1_0_ref(const float * GGML_RESTRICT x, block_q1_0 * GGML_REST
 //   [pages]                           uint16_t  page_scales (f16)
 //   [pages * TILE640_LANES_PER_PAGE]  int8_t    lane_scales
 //
+// Each batched helper is one implementation with two internal
+// paths: an Accelerate (vDSP) + NEON path and a scalar path,
+// selected per call. The GGML_OP_TILE640_MATMUL dispatch in
+// ggml-ane.mm passes the regime router's decision; tests and
+// benches pass an explicit path or the static cost model's
+// (ts_t640_outlier_accel_wins / ts_t640_meta_accel_wins in
+// ggml-quants.h). The batched helpers are bit-identical across
+// paths; the quantizer's vDSP reductions may shift the page
+// threshold by 1-2 ulp vs the scalar sum, which flips trits
+// only for inputs within that noise
+// (tests/test-tessera-quants.cpp asserts the bound).
+//
+// Build gating: __APPLE__ (Accelerate) and __aarch64__ (NEON).
+// Everywhere else the scalar path is the only path, which keeps
+// ggml-base portable.
+//
+
+#if defined(__aarch64__) || defined(__ARM_NEON)
+#define GGML_TESSERA_T640_NEON 1
+#else
+#define GGML_TESSERA_T640_NEON 0
+#endif
+
+// Accel feature flag. Default on; set GGML_TESSERA_T640_ACCEL_DISABLE=1
+// to force the scalar paths at runtime (no recompile). Read by the
+// quantizer and the ANE dispatch's pipeline gate.
+static int g_t640_accel_enabled = -1;  // -1 = unset, 0 = disabled, 1 = enabled
+
+int ggml_tessera_t640_accel_enabled(void) {
+    if (g_t640_accel_enabled < 0) {
+        const char * env = getenv("GGML_TESSERA_T640_ACCEL_DISABLE");
+        g_t640_accel_enabled = (env && env[0] == '1') ? 0 : 1;
+    }
+    return g_t640_accel_enabled;
+}
+
+// Explicit override for tests and benches that need to pin a
+// specific internal path (the production dispatch reads the
+// flag; it never sets it).
+void ggml_tessera_t640_set_accel_enabled(int enabled) {
+    g_t640_accel_enabled = enabled ? 1 : 0;
+}
+
+// Power-of-3 tables for the 243-base packer (trit positions
+// 0..4 within a group; the 4 group strides within a lane word).
+static const uint32_t k_t640_pow3[5]   = { 1, 3, 9, 27, 81 };
+static const uint32_t k_t640_pow243[4] = { 1, 243, 59049, 14348907 };
 
 void quantize_row_tessera_t640_ref(const float * GGML_RESTRICT x, void * GGML_RESTRICT y, int64_t k) {
     assert(k >= 0);
@@ -88,29 +139,60 @@ void quantize_row_tessera_t640_ref(const float * GGML_RESTRICT x, void * GGML_RE
     uint16_t * page_scales = (uint16_t *) (packed + pages * TILE640_WORDS_PER_PAGE);
     int8_t   * lane_scales = (int8_t *)   (page_scales + pages);
 
+#if defined(__APPLE__)
+    // Below the cutoff the vDSP call setup costs more than the
+    // per-page work; the scalar path wins.
+    const bool accel = k >= GGML_TESSERA_T640_ACCEL_MIN_K &&
+                       ggml_tessera_t640_accel_enabled();
+#else
+    const bool accel = false;
+#endif
+
     for (int p = 0; p < pages; p++) {
         const int base     = p * TILE640_PAGE_SIZE;
         const int page_len = (base + TILE640_PAGE_SIZE <= k) ? TILE640_PAGE_SIZE : (int)(k - base);
 
-        float sum_abs  = 0.0f;
-        float page_max = 0.0f;
-        for (int j = 0; j < page_len; j++) {
-            const float a = fabsf(x[base + j]);
-            sum_abs += a;
-            if (a > page_max) page_max = a;
+        // Per-page: page_max and threshold = mean(|x|).
+        // vDSP_meamgv is the mean of magnitudes; vDSP_sve would
+        // give sum(x), which is near zero for symmetric signals.
+        // The parallel reductions may differ from the scalar sum
+        // by 1-2 ulp in the threshold; trits flip only for inputs
+        // within that noise, inside the round-trip error bar.
+        float page_max  = 0.0f;
+        float threshold = 0.0f;
+        if (accel) {
+#if defined(__APPLE__)
+            vDSP_maxmgv(x + base, 1, &page_max, (vDSP_Length) page_len);
+            vDSP_meamgv(x + base, 1, &threshold, (vDSP_Length) page_len);
+#endif
+        } else {
+            float sum_abs = 0.0f;
+            for (int j = 0; j < page_len; j++) {
+                const float a = fabsf(x[base + j]);
+                sum_abs += a;
+                if (a > page_max) page_max = a;
+            }
+            threshold = sum_abs / page_len;
         }
-        const float threshold = sum_abs / page_len;
 
         page_scales[p] = GGML_FP32_TO_FP16(page_max);
 
         for (int l = 0; l < TILE640_LANES_PER_PAGE; l++) {
             const int col0 = base + l * TILE640_LANE_SIZE;
+            // The partial last lane stops at k; the accel path
+            // must use the shorter lane_len (vDSP reads the full
+            // range unconditionally and would run past k).
+            const int lane_len = (col0 + TILE640_LANE_SIZE <= k)
+                ? TILE640_LANE_SIZE : (int)(k - col0);
 
             float lane_max = 0.0f;
-            for (int j = 0; j < TILE640_LANE_SIZE; j++) {
-                const int col = col0 + j;
-                if (col < k) {
-                    const float a = fabsf(x[col]);
+            if (accel) {
+#if defined(__APPLE__)
+                vDSP_maxmgv(x + col0, 1, &lane_max, (vDSP_Length) lane_len);
+#endif
+            } else {
+                for (int j = 0; j < lane_len; j++) {
+                    const float a = fabsf(x[col0 + j]);
                     if (a > lane_max) lane_max = a;
                 }
             }
@@ -122,24 +204,57 @@ void quantize_row_tessera_t640_ref(const float * GGML_RESTRICT x, void * GGML_RE
             }
             lane_scales[p * TILE640_LANES_PER_PAGE + l] = ls;
 
-            uint32_t word   = 0;
-            uint32_t pow243 = 1;
+            // Trit encode: 4 groups of 5 trits per lane. Per
+            // group, 5 base-3 trits pack into group_val; per
+            // lane, 4 group_vals pack base-243 into one 32-bit
+            // word (4 * log2(243) = 31.7 bits).
+            uint32_t word = 0;
             for (int g = 0; g < 4; g++) {
                 uint32_t group_val = 0;
-                uint32_t pow3      = 1;
-                for (int d = 0; d < 5; d++) {
-                    const int col = col0 + g * 5 + d;
+                const int gcol = col0 + g * 5;
+#if GGML_TESSERA_T640_NEON
+                // 4 trits per NEON chunk + 1 scalar tail. The
+                // chunk needs 4 contiguous valid cols (< k).
+                const int valid = (accel && gcol + 4 <= k) ? 4 : (k - gcol);
+                if (valid >= 4) {
+                    float32x4_t vf = vld1q_f32(x + gcol);
+                    int32x4_t vmask_pos = vcgtq_f32(vf, vdupq_n_f32(threshold));
+                    int32x4_t vmask_neg = vcltq_f32(vf, vdupq_n_f32(-threshold));
+                    // trit = (v > +threshold) | 2*(v < -threshold)
+                    int32x4_t vtrit = vorrq_s32(vandq_s32(vmask_pos, vdupq_n_s32(1)),
+                                                vandq_s32(vmask_neg, vdupq_n_s32(2)));
+                    // group_val_partial = sum_{d=0..3} trit[d] * 3^d,
+                    // reduced via pairwise adds (NEON has no
+                    // horizontal int32 add).
+                    static const int32_t k_pow3_i32[4] = { 1, 3, 9, 27 };
+                    int32x4_t vmul = vmulq_s32(vtrit, vld1q_s32(k_pow3_i32));
+                    int32x2_t vs  = vpadd_s32(vget_low_s32(vmul), vget_high_s32(vmul));
+                    int32x2_t vss = vpadd_s32(vs, vs);
+                    group_val += (uint32_t) vget_lane_s32(vss, 0);
+                }
+                for (int d = (valid >= 4 ? 4 : 0); d < 5; d++) {
+                    const int col = gcol + d;
                     uint32_t trit = 0;
                     if (col < k) {
                         const float v = x[col];
                         if (v >  threshold) trit = 1;
                         if (v < -threshold) trit = 2;
                     }
-                    group_val += trit * pow3;
-                    pow3 *= 3;
+                    group_val += trit * k_t640_pow3[d];
                 }
-                word += group_val * pow243;
-                pow243 *= 243;
+#else
+                for (int d = 0; d < 5; d++) {
+                    const int col = gcol + d;
+                    uint32_t trit = 0;
+                    if (col < k) {
+                        const float v = x[col];
+                        if (v >  threshold) trit = 1;
+                        if (v < -threshold) trit = 2;
+                    }
+                    group_val += trit * k_t640_pow3[d];
+                }
+#endif
+                word += group_val * k_t640_pow243[g];
             }
             packed[p * TILE640_WORDS_PER_PAGE + l] = word;
         }
@@ -174,6 +289,261 @@ void dequantize_row_tessera_t640(const void * GGML_RESTRICT x, float * GGML_REST
                 }
             }
         }
+    }
+}
+
+// Row dequant with pre-decoded meta (the batched dispatch path):
+// the caller ran ts_decode_per_row_meta for the whole tile and
+// passes this row's page_max / lane_scale views. The flat-buffer
+// dequantize_row_tessera_t640 above reads the meta inline.
+//
+// Trit decode: radix-243 has a serial dependency on the remainder
+// (each extraction divides by 3), so the unpack is scalar; the
+// {+1, 0, -1} sign mapping and the per-col multiply are NEON in
+// 4-element chunks. The sign convention matches the scalar path
+// bit-for-bit: sign = (trit == 1) - (trit == 2), then y = sign *
+// scale produces {+scale, 0, -scale} exactly.
+void dequantize_row_tessera_t640_with_meta(const void * GGML_RESTRICT packed,
+                                           const float * GGML_RESTRICT page_max_in,
+                                           const float * GGML_RESTRICT lane_scale_in,
+                                           int64_t k,
+                                           float * GGML_RESTRICT y) {
+    const int pages = (int)((k + TILE640_PAGE_SIZE - 1) / TILE640_PAGE_SIZE);
+    const uint32_t * packed_words = (const uint32_t *) packed;
+
+    // Per-page scratch: sign vector and per-lane scale broadcast,
+    // one full page each to keep the vDSP call full-length
+    // (640 * 4 * 2 = 5 KB, stack-alloc is fine).
+    float sign_buf[TILE640_PAGE_SIZE]  __attribute__((aligned(16)));
+    float scale_buf[TILE640_PAGE_SIZE] __attribute__((aligned(16)));
+
+    for (int p = 0; p < pages; p++) {
+        const int base     = p * TILE640_PAGE_SIZE;
+        const int page_len = (base + TILE640_PAGE_SIZE <= k) ? TILE640_PAGE_SIZE : (int)(k - base);
+
+        const float page_max = page_max_in[p];
+
+        for (int l = 0; l < TILE640_LANES_PER_PAGE; l++) {
+            const int   col0  = l * TILE640_LANE_SIZE;
+            // lane_scale_in is pre-divided by 127 by the batched
+            // meta decode, so this is the only scale op.
+            const float scale = page_max *
+                lane_scale_in[p * TILE640_LANES_PER_PAGE + l];
+
+            // 4 radix-243 groups = 20 trits per lane.
+            uint32_t rem = packed_words[p * TILE640_WORDS_PER_PAGE + l];
+            int8_t trits[20];
+            int t = 0;
+            for (int g = 0; g < 4; g++) {
+                uint32_t idx = rem % 243;
+                rem /= 243;
+                for (int d = 0; d < 5; d++) {
+                    trits[t++] = (int8_t) (idx % 3);
+                    idx /= 3;
+                }
+            }
+
+            // 5 NEON chunks of 4 trits. NEON's vceq_s8 returns
+            // 0xFF (-1) on match, so vsub_s8(eq2, eq1) gives
+            // {0, +1, -1} for trit {0, 1, 2}.
+#if GGML_TESSERA_T640_NEON
+            const float32x4_t vscale = vdupq_n_f32(scale);
+            for (int chunk = 0; chunk < 5; chunk++) {
+                int8_t t8[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+                t8[0] = trits[chunk * 4 + 0];
+                t8[1] = trits[chunk * 4 + 1];
+                t8[2] = trits[chunk * 4 + 2];
+                t8[3] = trits[chunk * 4 + 3];
+                int8x8_t vt   = vld1_s8(t8);
+                int8x8_t eq1  = vceq_s8(vt, vdup_n_s8(1));
+                int8x8_t eq2  = vceq_s8(vt, vdup_n_s8(2));
+                int8x8_t vsign_s8 = vsub_s8(eq2, eq1);
+                int16x8_t vsign_s16 = vmovl_s8(vsign_s8);
+                int32x4_t vsign_i32 = vmovl_s16(vget_low_s16(vsign_s16));
+                float32x4_t vsign_f32 = vcvtq_f32_s32(vsign_i32);
+                vst1q_f32(&sign_buf[col0 + chunk * 4], vsign_f32);
+                vst1q_f32(&scale_buf[col0 + chunk * 4], vscale);
+            }
+#else
+            for (int j = 0; j < 20; j++) {
+                const int8_t trit = trits[j];
+                sign_buf[col0 + j]  = (trit == 1) ? 1.0f : (trit == 2) ? -1.0f : 0.0f;
+                scale_buf[col0 + j] = scale;
+            }
+#endif
+        }
+
+        // Zero the trailing portion of the last page.
+        if (page_len < TILE640_PAGE_SIZE) {
+            for (int j = page_len; j < TILE640_PAGE_SIZE; j++) {
+                sign_buf[j]  = 0.0f;
+                scale_buf[j] = 0.0f;
+            }
+        }
+
+#if defined(__APPLE__)
+        vDSP_vmul(sign_buf, 1, scale_buf, 1, y + base, 1, (vDSP_Length) page_len);
+#else
+        for (int j = 0; j < page_len; j++) {
+            y[base + j] = sign_buf[j] * scale_buf[j];
+        }
+#endif
+    }
+}
+
+void ts_decode_per_row_meta(const void * GGML_RESTRICT page_scales_packed,
+                            const void * GGML_RESTRICT lane_scales_packed,
+                            int64_t n_rows,
+                            int64_t n_pages,
+                            float * GGML_RESTRICT page_max_out,
+                            float * GGML_RESTRICT lane_scale_out,
+                            bool use_accel) {
+    const uint16_t * ps = (const uint16_t *) page_scales_packed;
+    const int8_t   * ls = (const int8_t   *) lane_scales_packed;
+    const int64_t n_total_pages = n_rows * n_pages;
+    const int64_t n_lanes_per_row = n_pages * TILE640_LANES_PER_PAGE;
+    const int64_t n_total_lanes = n_rows * n_lanes_per_row;
+
+    if (n_total_pages == 0 || n_total_lanes == 0) return;
+
+    // page_max: fp16 -> fp32. Accel: NEON vcvt_f32_f16 in
+    // 4-element chunks over the whole batch; tail is scalar.
+    int64_t p = 0;
+#if GGML_TESSERA_T640_NEON
+    if (use_accel) {
+        for (; p + 4 <= n_total_pages; p += 4) {
+            uint64_t bits;
+            memcpy(&bits, &ps[p], sizeof(bits));
+            float32x4_t vf = vcvt_f32_f16(vreinterpret_f16_u64(vdup_n_u64(bits)));
+            vst1q_f32(&page_max_out[p], vf);
+        }
+    }
+#endif
+    for (; p < n_total_pages; p++) {
+        page_max_out[p] = GGML_FP16_TO_FP32(ps[p]);
+    }
+
+    // lane_scale: int8 -> fp32 / 127 over the whole batch.
+    // Accel: one vDSP_vflt8 bulk convert + a NEON vdivq_f32
+    // divide (the win over per-row decoding: amortise the
+    // convert across n_rows). vDSP_vsdiv is NOT used: it
+    // multiplies by an internal reciprocal and differs from
+    // the scalar IEEE division by 1 ulp on some inputs; the
+    // two paths are bit-identical by contract.
+#if defined(__APPLE__)
+    if (use_accel) {
+        // vDSP_vflt8 takes const char * (sign-extending).
+        vDSP_vflt8((const char *) ls, 1, lane_scale_out, 1, (vDSP_Length) n_total_lanes);
+#if GGML_TESSERA_T640_NEON
+        const float32x4_t v127 = vdupq_n_f32(127.0f);
+        int64_t i = 0;
+        for (; i + 4 <= n_total_lanes; i += 4) {
+            vst1q_f32(&lane_scale_out[i],
+                      vdivq_f32(vld1q_f32(&lane_scale_out[i]), v127));
+        }
+        for (; i < n_total_lanes; i++) {
+            lane_scale_out[i] /= 127.0f;
+        }
+#else
+        for (int64_t i = 0; i < n_total_lanes; i++) {
+            lane_scale_out[i] /= 127.0f;
+        }
+#endif
+        return;
+    }
+#endif
+    for (int64_t i = 0; i < n_total_lanes; i++) {
+        lane_scale_out[i] = ((float) ls[i]) / 127.0f;
+    }
+}
+
+void ts_apply_outlier_addback(float * GGML_RESTRICT rows,
+                              int64_t row_len,
+                              int64_t n_rows,
+                              const int32_t * GGML_RESTRICT outlier_row_offsets,
+                              const int32_t * GGML_RESTRICT outlier_cols,
+                              const void * GGML_RESTRICT outlier_vals,
+                              bool use_accel) {
+    const uint16_t * vals = (const uint16_t *) outlier_vals;
+    if (n_rows <= 0) return;
+    const int64_t base = (int64_t) outlier_row_offsets[0];
+    const int64_t n_total = (int64_t) outlier_row_offsets[n_rows] - base;
+    if (n_total <= 0) return;
+
+    // Accel path: ONE NEON bulk fp16 -> fp32 convert of all
+    // n_total values into the 4 KB stack scratch, then the
+    // scalar scatter. Above the scratch cap the scalar convert
+    // runs instead; the scatter is per-element and
+    // vDSP-incompatible either way (irregular column indices).
+#if GGML_TESSERA_T640_NEON
+    if (use_accel && n_total <= TS_T640_OUTLIER_ACCEL_MAX_N_TOTAL) {
+        float val_scratch[TS_T640_OUTLIER_ACCEL_MAX_N_TOTAL] __attribute__((aligned(16)));
+        int64_t i = 0;
+        for (; i + 4 <= n_total; i += 4) {
+            uint64_t bits;
+            memcpy(&bits, &vals[base + i], sizeof(bits));
+            float32x4_t vf = vcvt_f32_f16(vreinterpret_f16_u64(vdup_n_u64(bits)));
+            vst1q_f32(&val_scratch[i], vf);
+        }
+        for (; i < n_total; i++) {
+            val_scratch[i] = GGML_FP16_TO_FP32(vals[base + i]);
+        }
+        for (int64_t r = 0; r < n_rows; r++) {
+            const int32_t lo = outlier_row_offsets[r];
+            const int32_t hi = outlier_row_offsets[r + 1];
+            float * GGML_RESTRICT row = rows + r * row_len;
+            for (int32_t ki = lo; ki < hi; ki++) {
+                const int32_t col = outlier_cols[ki];
+                if (col >= 0 && col < row_len) {
+                    row[col] = val_scratch[ki - (int32_t) base];
+                }
+            }
+        }
+        return;
+    }
+#endif
+
+    for (int64_t r = 0; r < n_rows; r++) {
+        const int32_t lo = outlier_row_offsets[r];
+        const int32_t hi = outlier_row_offsets[r + 1];
+        float * GGML_RESTRICT row = rows + r * row_len;
+        for (int32_t ki = lo; ki < hi; ki++) {
+            const int32_t col = outlier_cols[ki];
+            if (col >= 0 && col < row_len) {
+                row[col] = GGML_FP16_TO_FP32(vals[ki]);
+            }
+        }
+    }
+}
+
+void ts_apply_act_scale(float * GGML_RESTRICT y,
+                        const void * GGML_RESTRICT act_scale_packed,
+                        int64_t n) {
+    const uint16_t * as = (const uint16_t *) act_scale_packed;
+#if defined(__APPLE__)
+    // y[i] *= fp16_to_fp32(act_scale[i]). vDSP has no bulk
+    // fp16 -> fp32 convert, so NEON converts into stack scratch
+    // (n <= 4096) and vDSP_vmul does the bulk multiply.
+    if (n <= 4096) {
+        float scratch[4096] __attribute__((aligned(16)));
+        int64_t i = 0;
+#if GGML_TESSERA_T640_NEON
+        for (; i + 4 <= n; i += 4) {
+            uint64_t bits;
+            memcpy(&bits, &as[i], sizeof(bits));
+            float32x4_t vf = vcvt_f32_f16(vreinterpret_f16_u64(vdup_n_u64(bits)));
+            vst1q_f32(&scratch[i], vf);
+        }
+#endif
+        for (; i < n; i++) {
+            scratch[i] = GGML_FP16_TO_FP32(as[i]);
+        }
+        vDSP_vmul(scratch, 1, y, 1, y, 1, (vDSP_Length) n);
+        return;
+    }
+#endif
+    for (int64_t i = 0; i < n; i++) {
+        y[i] *= GGML_FP16_TO_FP32(as[i]);
     }
 }
 

@@ -1,6 +1,6 @@
 // test-regime-router
 //
-// Test for the v1 regime router (ggml/src/ggml-regime-router.h).
+// Test for the regime router (ggml/src/ggml-regime-router.h).
 // The router is a static-include lookup table; the .gen.h
 // is committed and the calibration runner regenerates it on
 // demand (make regime-router-regen).
@@ -15,15 +15,15 @@
 //      1024 -> medium, 4096 -> large, 8192 -> xlarge).
 //   3. Fallback contract (FAM_OTHER + out-of-range): the
 //      router's OTHER family branch always falls back to
-//      the v1 static helpers, even when the table is
-//      non-empty. Out-of-range family / shape_bucket
-//      values are also rejected and routed to the v1
-//      static helpers (defence against bad input from a
-//      future caller).
+//      the static cost model helpers, even when the table
+//      is non-empty. Out-of-range family / shape_bucket
+//      values are also rejected and routed to the static
+//      cost model (defence against bad input from a future
+//      caller).
 //   4. Table-driven lookup: for known (fam, bucket) pairs
 //      that have an entry, the lookup returns the table's
-//      value, NOT the v1 static result. This is the
-//      architectural point of the router: the table
+//      value, NOT the static cost model's result. This is
+//      the architectural point of the router: the table
 //      overrides the static threshold for known shapes.
 //   5. Gen.h invariants: the table is well-formed, all
 //      entries are in valid family + bucket ranges, no
@@ -33,8 +33,6 @@
 #include "ggml-common.h"
 #include "ggml-impl.h"
 #include "ggml-quants.h"
-#include "ggml-quants-v2.h"
-#include "ggml-quants-v2-dispatch.h"
 #include "ggml-regime-router.h"
 #include "ggml-regime-router.gen.h"
 
@@ -258,18 +256,18 @@ int test_fallback_outlier(void) {
     // The router's FALLBACK contract: FAM_OTHER is the
     // deliberate fallback family. Even if a future entry
     // exists for the other family, the router's "other"
-    // branch returns the v1 static result without
+    // branch returns the static cost model's result without
     // consulting the table. This is the contract that
     // makes the router a strict no-op for tensors with
-    // unrecognised suffixes (the v1 static threshold
-    // remains the safe default).
+    // unrecognised suffixes (the static threshold remains
+    // the safe default).
     int64_t n_total_cases[] = { 0, 51, 204, 409, 1024, 1025, 3264, 52224, 208896 };
     int      shape_cases[] = {
         TS_REGIME_SHAPE_TINY, TS_REGIME_SHAPE_SMALL, TS_REGIME_SHAPE_MEDIUM,
         TS_REGIME_SHAPE_LARGE, TS_REGIME_SHAPE_XLARGE,
     };
     for (int64_t n_total : n_total_cases) {
-        const bool expected = ts_v2_dispatch_should_use_v2_outlier(n_total);
+        const bool expected = ts_t640_outlier_accel_wins(n_total);
         for (int shape : shape_cases) {
             const bool got = ts_regime_router_lookup_outlier(
                 TS_REGIME_FAM_OTHER, shape, n_total);
@@ -277,19 +275,19 @@ int test_fallback_outlier(void) {
                 failures++;
                 printf("  FAIL n_total=%-7lld fam=other            shape=%-7s got=%s expected=%s\n",
                        (long long) n_total, ts_regime_shape_label(shape),
-                       got ? "v2" : "C ref",
-                       expected ? "v2" : "C ref");
+                       got ? "accel" : "scalar",
+                       expected ? "accel" : "scalar");
             }
         }
     }
-    // Out-of-range family / shape must also fall back to v1
-    // static (defence against bad input from a future
-    // caller; the dispatch's call site feeds the family
-    // and shape derived from the tensor name, so a bug in
-    // ts_regime_infer_family / ts_regime_shape_bucket_*
+    // Out-of-range family / shape must also fall back to the
+    // static cost model (defence against bad input from a
+    // future caller; the dispatch's call site feeds the
+    // family and shape derived from the tensor name, so a
+    // bug in ts_regime_infer_family / ts_regime_shape_bucket_*
     // could feed garbage).
     for (int64_t n_total : n_total_cases) {
-        const bool expected = ts_v2_dispatch_should_use_v2_outlier(n_total);
+        const bool expected = ts_t640_outlier_accel_wins(n_total);
         const bool got_bad_fam  = ts_regime_router_lookup_outlier(-1,  TS_REGIME_SHAPE_MEDIUM, n_total);
         const bool got_bad_shp  = ts_regime_router_lookup_outlier(TS_REGIME_FAM_ATTN_Q, 99, n_total);
         if (got_bad_fam != expected) failures++;
@@ -305,8 +303,8 @@ int test_fallback_meta(void) {
     printf("fallback contract (meta, FAM_OTHER):\n");
     int failures = 0;
     // Same contract for the meta lookup. The FAM_OTHER
-    // branch returns the v1 static result, regardless of
-    // the (family, bucket) grid.
+    // branch returns the static cost model's result,
+    // regardless of the (family, bucket) grid.
     struct { int64_t n_rows; int64_t n_pages; } cases[] = {
         {  1,   1 }, {  1,  16 }, {  1,  64 },
         { 16,  16 }, { 16,  64 }, { 64,  16 },
@@ -319,7 +317,7 @@ int test_fallback_meta(void) {
         TS_REGIME_SHAPE_LARGE, TS_REGIME_SHAPE_XLARGE,
     };
     for (const auto & c : cases) {
-        const bool expected = ts_v2_dispatch_should_use_v2_meta(c.n_rows, c.n_pages);
+        const bool expected = ts_t640_meta_accel_wins(c.n_rows, c.n_pages);
         for (int shape : shape_cases) {
             const bool got = ts_regime_router_lookup_meta(
                 TS_REGIME_FAM_OTHER, shape, c.n_rows, c.n_pages);
@@ -328,8 +326,8 @@ int test_fallback_meta(void) {
                 printf("  FAIL n_rows=%-4lld n_pages=%-3lld fam=other            shape=%-7s got=%s expected=%s\n",
                        (long long) c.n_rows, (long long) c.n_pages,
                        ts_regime_shape_label(shape),
-                       got ? "v2" : "C ref",
-                       expected ? "v2" : "C ref");
+                       got ? "accel" : "scalar",
+                       expected ? "accel" : "scalar");
             }
         }
     }
@@ -343,16 +341,16 @@ int test_table_lookup(void) {
     printf("table-driven lookup (known fam, bucket):\n");
     int failures = 0;
     // For each entry in the .gen.h, assert the lookup
-    // returns the table's value (not the v1 static
-    // result). This is the architectural point of the
-    // router: the table overrides the static threshold
+    // returns the table's value (not the static cost
+    // model's result). This is the architectural point of
+    // the router: the table overrides the static threshold
     // for known (family, shape_bucket) pairs.
     for (int i = 0; i < kRegimePolicyCount; i++) {
         const int fam = kRegimePolicy[i].family;
         const int shape = kRegimePolicy[i].shape_bucket;
         // Use a representative n_total and (n_rows,
-        // n_pages) for the v1 static comparison. The
-        // v1 static is shape-independent, so any
+        // n_pages) for the static cost model comparison.
+        // The static model is shape-independent, so any
         // (n_total, n_rows, n_pages) gives the same
         // static result; the values below are at the
         // boundary of the static threshold (n_total=512,
@@ -363,9 +361,9 @@ int test_table_lookup(void) {
         const int64_t n_rows  = 256;
         const int64_t n_pages = 8;
         const bool expected_outlier =
-            kRegimePolicy[i].use_v2_outlier;
+            kRegimePolicy[i].use_accel_outlier;
         const bool expected_meta =
-            kRegimePolicy[i].use_v2_meta;
+            kRegimePolicy[i].use_accel_meta;
         const bool got_outlier =
             ts_regime_router_lookup_outlier(fam, shape, n_total);
         const bool got_meta =
@@ -374,15 +372,15 @@ int test_table_lookup(void) {
             failures++;
             printf("  FAIL [%d] fam=%-18s shape=%-7s outlier got=%s expected=%s\n",
                    i, ts_regime_family_label(fam), ts_regime_shape_label(shape),
-                   got_outlier ? "v2" : "C ref",
-                   expected_outlier ? "v2" : "C ref");
+                   got_outlier ? "accel" : "scalar",
+                   expected_outlier ? "accel" : "scalar");
         }
         if (got_meta != expected_meta) {
             failures++;
             printf("  FAIL [%d] fam=%-18s shape=%-7s meta    got=%s expected=%s\n",
                    i, ts_regime_family_label(fam), ts_regime_shape_label(shape),
-                   got_meta ? "v2" : "C ref",
-                   expected_meta ? "v2" : "C ref");
+                   got_meta ? "accel" : "scalar",
+                   expected_meta ? "accel" : "scalar");
         }
     }
     printf("  %d entries checked; failures=%d\n", kRegimePolicyCount, failures);
@@ -420,7 +418,8 @@ int test_gen_h_invariants(void) {
             // The OTHER family is a fallback; the
             // runner must NEVER emit an entry for it
             // (the lookup explicitly routes OTHER to
-            // v1 static without consulting the table).
+            // the static cost model without consulting
+            // the table).
             printf("  FAIL [%d] entry for FAM_OTHER (must not exist)\n", i);
             failures++;
         }
@@ -470,10 +469,6 @@ int test_determinism(void) {
 }  // namespace
 
 int main(void) {
-    if (!ggml_tessera_t640_v2_enabled()) {
-        printf("v2 disabled (GGML_TESSERA_T640_V2_DISABLE=1); skipping\n");
-        return 0;
-    }
     int rc = 0;
     rc |= test_family_classifier();
     rc |= test_shape_bucket();

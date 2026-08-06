@@ -157,8 +157,7 @@ target_include_directories(${TARGET} PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/tessera)
 
-# ggml internal headers (ggml-quants.h, ggml-quants-v2.h,
-# ggml-quants-v2-dispatch.h): tessera-higgs-proxy.cpp drives the same
+# ggml internal headers (ggml-quants.h): tessera-higgs-proxy.cpp drives the same
 # TILE640 quant/dequant dispatch the GGML_OP_TILE640_MATMUL inference
 # path uses. PRIVATE: the headers never leak into downstream consumers.
 target_include_directories(${TARGET} PRIVATE
@@ -306,14 +305,14 @@ if(LLAMA_TOOLS_INSTALL)
     install(TARGETS ${TARGET} RUNTIME)
 endif()
 
-# calibrate_regime_router: v1 regime router calibration runner.
+# calibrate_regime_router: regime router calibration runner.
 # Sweeps (family, shape_bucket) for a given shape set, picks
-# the v2 vs C ref winner per cell, and emits
+# the accel vs scalar winner per cell, and emits
 # ggml/src/ggml-regime-router.gen.h. The committed .gen.h is
 # the source of truth; the runner is `make regime-router-regen`
 # (the custom target below) when the model fixtures change.
-# Links llama-quantize-impl for the TILE640 v2 functions
-# (apply_outlier_addback_v2, decode_per_row_meta_v2) + the
+# Links llama-quantize-impl for the TILE640 batched helpers
+# (ts_apply_outlier_addback, ts_decode_per_row_meta) + the
 # L1-on-ANE proxy (ts_higgs_proxy_measure_l1).
 set(TARGET calibrate_regime_router)
 add_executable(${TARGET} tessera/calibrate_regime_router.cpp)
