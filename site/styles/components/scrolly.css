@@ -1,0 +1,103 @@
+/* Tessera Observatory v1 -- scrollytelling frame.
+ *
+ * The frame is the visible viewport, anchored in place. Sections
+ * translate within the frame as the user scrolls. The page's normal
+ * scroll position drives a timeline variable; each section's
+ * translation is a linear function of that timeline.
+ *
+ * Mechanics:
+ *   - .scrolly-frame  -- position: fixed, fills the viewport, z-index
+ *     above the rest of the page. The frame is the "stage."
+ *   - .scrolly-sentinel -- a normal-flow element whose height is
+ *     (N * 100vh). Provides the scroll range; the user thinks they
+ *     are scrolling a tall page.
+ *   - .scrolly-section -- position: absolute, full frame minus the
+ *     header. The JS driver applies transform: translate3d(0, X, 0)
+ *     based on the section's index and the current scroll position.
+ *   - prefers-reduced-motion: reduce -- the frame is static, sections
+ *     flow in normal document order, the sentinel is hidden. The user
+ *     gets a normal scrolling page.
+ *
+ * Why this is here: the user said "the frame to be static and the
+ * scrolling action to bring the elements from one section to the next
+ * in and out of frame." This is the implementation.
+ *
+ * The header is z-index 50 (sticky); the scrolly-frame is z-index 1.
+ * Sections are positioned with top: var(--header-height) so the
+ * header overlays the top of the frame cleanly.
+ */
+
+:root {
+  --header-height: 64px;
+}
+
+.scrolly-frame {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  z-index: 1;
+  pointer-events: auto;
+}
+
+.scrolly-sentinel {
+  /* The sentinel provides the scroll range. N * 100vh, where N is the
+   * number of sections in the frame. The user scrolls this distance
+   * to walk through all sections; the JS driver maps scrollY to
+   * per-section translations.
+   *
+   * The sentinel is aria-hidden and pointer-events: none. The user
+   * cannot interact with it; the actual content is the fixed frame.
+   */
+  height: calc(5 * 100vh);
+  pointer-events: none;
+  position: relative;
+  z-index: 0;
+}
+
+.scrolly-section {
+  position: absolute;
+  top: var(--header-height);
+  left: 0;
+  right: 0;
+  bottom: 0;
+  /* Each section is its own full-frame container. The internal
+   * content is centered vertically and horizontally by the section's
+   * own children (the chapter / hero styles).
+   */
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* Will-change: transform is set by the JS driver on first scroll.
+   * Kept off the initial state to avoid always-on layer compositing
+   * for users with reduced motion.
+   */
+  -webkit-overflow-scrolling: touch;
+}
+
+/* When the user prefers reduced motion, the scrolly frame collapses
+ * into a normal-flow stack. Sections become static blocks in document
+ * order; the sentinel is hidden; the user scrolls normally.
+ *
+ * This is the fallback for users with vestibular sensitivity, screen
+ * reader users who navigate by section landmarks, and anyone who
+ * disables smooth scrolling at the OS level.
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --header-height: 0px;
+  }
+  .scrolly-frame {
+    position: static;
+    inset: auto;
+    overflow: visible;
+  }
+  .scrolly-sentinel { display: none; }
+  .scrolly-section {
+    position: static;
+    top: auto;
+    left: auto;
+    right: auto;
+    bottom: auto;
+    transform: none !important;
+    overflow: visible;
+  }
+}
