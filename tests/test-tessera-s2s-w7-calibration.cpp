@@ -41,6 +41,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <string>
 #include <unistd.h>
 #include <vector>
@@ -99,6 +100,19 @@ int main(int argc, char ** argv) {
     std::printf("test-tessera-s2s-w7-calibration: talker=%s out=%s\n",
                 talker_path.c_str(), out_path.c_str());
 
+    // truncate the trace file (the W5 capture's tessera_rt_s2s_append
+    // opens with std::ios::app so it appends; we want a fresh run
+    // every time, otherwise the post-hoc line_count check would
+    // see the cumulative total from prior runs).
+    {
+        std::ofstream trunc(out_path.c_str(), std::ios::binary | std::ios::trunc);
+        if (!trunc.is_open()) {
+            std::fprintf(stderr, "test-tessera-s2s-w7-calibration: cannot truncate %s\n",
+                         out_path.c_str());
+            std::abort();
+        }
+    }
+
     // load talker
     struct llama_model * model = load_model_cpu(talker_path);
     if (model == nullptr) {
@@ -156,15 +170,29 @@ int main(int argc, char ** argv) {
         "Come", "Leave", "Stay", "Move", "Rest",
         "Read", "Write", "Speak", "Listen", "Watch",
         "Eat", "Drink", "Sleep", "Wake", "Work",
+        "Song", "Dance", "Play", "Sing", "Laugh",
     };
+    static_assert(sizeof(corpus) / sizeof(corpus[0]) == 100, "corpus must be 100 entries");
 
     const int32_t n_frames_target = 100;
     int32_t n_frames_emitted = 0;
     int32_t n_frames_failed  = 0;
     uint16_t codes_frame[TESSERA_S2S_CODES_PER_FRAME];
+    // gemma_tokens + qwen_ids: the W5 capture requires both to be
+    // non-null arrays (even when empty). The capture's null check
+    // returns 1 before reaching the JSON serializer; with the
+    // serializer never running, the test can't emit any records.
+    // We pass an empty (non-null) array for each so the check
+    // passes and the capture runs end-to-end.
+    int32_t empty_tokens[1] = { 0 };
+    const int32_t n_empty_tokens = 0;
 
     for (int32_t fi = 0; fi < n_frames_target; ++fi) {
         const char * prompt = corpus[fi];
+        if ((fi % 10) == 0) {
+            std::printf("  frame %d/%d prompt='%s'\n", fi, n_frames_target, prompt);
+            std::fflush(stdout);
+        }
         std::vector<llama_token> tokens(64);
         int32_t n_tok = llama_tokenize(llama_model_get_vocab(model),
                                         prompt, (int32_t) std::strlen(prompt),
@@ -183,7 +211,11 @@ int main(int argc, char ** argv) {
         }
 
         llama_batch batch = llama_batch_init(1, /*embd=*/0, /*n_seq_max=*/1);
-        common_batch_add(batch, tokens[0], (llama_pos) 0, { 0 }, /*logits=*/false);
+        // position = fi (not 0): each call needs Y > X (last KV
+        // cache pos). Fresh context has X = -1; after call fi the
+        // cache holds positions [0..fi]. So call fi+1 must set
+        // Y = fi+1. We use fi here and let the cache start at 0.
+        common_batch_add(batch, tokens[0], (llama_pos) fi, { 0 }, /*logits=*/false);
         const int decode_rc = llama_decode(ctx, batch);
         llama_batch_free(batch);
         if (decode_rc != 0) {
@@ -211,10 +243,10 @@ int main(int argc, char ** argv) {
         tessera_s2s_timing timing = {};
         tessera_s2s_capture_args args;
         std::memset(&args, 0, sizeof(args));
-        args.gemma_tokens   = nullptr;
-        args.gemma_tokens_n = 0;
-        args.qwen_ids        = nullptr;
-        args.qwen_ids_n     = 0;
+        args.gemma_tokens   = empty_tokens;
+        args.gemma_tokens_n = n_empty_tokens;
+        args.qwen_ids       = empty_tokens;
+        args.qwen_ids_n     = n_empty_tokens;
         args.utf8            = prompt;
         args.codes_frame     = codes_frame;
         args.n_frames        = 1;
@@ -235,8 +267,11 @@ int main(int argc, char ** argv) {
     }
 
     // post-hoc schema re-validation: every NDJSON line must contain
-    // the v1 schema tag and a non-empty "codes" b64 field whose
-    // length is a multiple of 4 (b64 padding invariant).
+    // the v1 schema tag and a "codes" sub-object with a non-empty
+    // "zlib_b64" string whose length is a multiple of 4 (b64
+    // padding invariant). The W5 capture evolved the codes field
+    // from a flat b64 string to {"frames":N,"zlib_b64":"..."} so
+    // the validator walks into the sub-object.
     TEST_ASSERT(n_frames_emitted == n_frames_target);
     TEST_ASSERT(n_frames_failed  == 0);
 
@@ -247,14 +282,19 @@ int main(int argc, char ** argv) {
     while (std::fgets(line, sizeof(line), in) != nullptr) {
         ++line_count;
         TEST_ASSERT(std::strstr(line, "llama.tessera.s2s.v1") != nullptr);
-        const char * cp = std::strstr(line, "\"codes\":\"");
-        TEST_ASSERT(cp != nullptr);
-        cp += std::strlen("\"codes\":\"");
-        const char * end = std::strchr(cp, '"');
+        TEST_ASSERT(std::strstr(line, "\"provenance\":\"s2s\"") != nullptr);
+        TEST_ASSERT(std::strstr(line, "\"voice\":{\"preset\":") != nullptr);
+        // codes is a sub-object: {"frames":N,"zlib_b64":"<b64>"}
+        const char * codes = std::strstr(line, "\"codes\":{");
+        TEST_ASSERT(codes != nullptr);
+        const char * b64 = std::strstr(codes, "\"zlib_b64\":\"");
+        TEST_ASSERT(b64 != nullptr);
+        b64 += std::strlen("\"zlib_b64\":\"");
+        const char * end = std::strchr(b64, '"');
         TEST_ASSERT(end != nullptr);
-        const size_t b64_len = (size_t) (end - cp);
+        const size_t b64_len = (size_t) (end - b64);
         TEST_ASSERT(b64_len > 0);
-        TEST_ASSERT(b64_len % 4 == 0);
+        TEST_ASSERT(b64_len % 4 == 0);  // b64 padding invariant
     }
     std::fclose(in);
     TEST_ASSERT(line_count == n_frames_target);
