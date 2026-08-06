@@ -323,6 +323,23 @@ target_include_directories(test-qwen3tts-talker PRIVATE ${PROJECT_SOURCE_DIR}/sr
 llama_build(test-qwen3tts-w8-parity.cpp)
 llama_test(test-qwen3tts-w8-parity)
 target_include_directories(test-qwen3tts-w8-parity PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
+# W7: chained end-to-end calibration. Drives the real BF16 talker
+# through 100 text tokens, captures per-frame s2s.v1 records via
+# the W5 tessera_rt_s2s_append C API, and asserts the NDJSON output
+# is well-formed (>=100 valid records, b64 round-trips, fail-closed
+# provenance, no-key per C3). Standalone binary: links the capture
+# source directly so the test is independent of the full quantize-impl
+# graph and runs in seconds.
+llama_build(test-tessera-s2s-w7-calibration.cpp
+            ${PROJECT_SOURCE_DIR}/common/tessera-s2s-capture.cpp)
+target_include_directories(test-tessera-s2s-w7-calibration
+                            PRIVATE ${PROJECT_SOURCE_DIR}/src)
+if(APPLE)
+    target_link_libraries(test-tessera-s2s-w7-calibration PRIVATE -lz)
+else()
+    target_link_libraries(test-tessera-s2s-w7-calibration PRIVATE ZLIB::ZLIB)
+endif()
 llama_build(test-telemetry-record.cpp ${PROJECT_SOURCE_DIR}/tools/imatrix/telemetry-record.cpp)
 target_include_directories(test-telemetry-record PRIVATE ${PROJECT_SOURCE_DIR}/tools/imatrix)
 llama_test(test-telemetry-record)
