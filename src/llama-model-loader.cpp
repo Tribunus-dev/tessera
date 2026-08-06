@@ -1344,7 +1344,10 @@ struct ggml_tensor * llama_model_loader::create_tensor(
     const bool duplicated = flags & TENSOR_DUPLICATED;
 
     struct ggml_tensor * tensor = ggml_dup_tensor(ctx, cur);
-    ggml_set_name(tensor, ggml_get_name(cur));
+    // use the exposed view name, not the raw file name: under a
+    // component_prefix the bound tensor carries the stripped name;
+    // with no prefix both are identical
+    ggml_set_name(tensor, tn.str().c_str());
 
     if (duplicated) {
         size_data += ggml_nbytes(cur);
