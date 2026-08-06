@@ -341,6 +341,7 @@ extern "C" {
         bool use_extra_bufts; // use extra buffer types (used for weight repacking)
         bool no_host;         // bypass host buffer allowing extra buffers to be used
         bool no_alloc;        // only load metadata and simulate memory allocations
+        bool load_mtp;        // whether to load MTP layers
     };
 
     struct llama_sampler_seq_config {
@@ -1037,16 +1038,38 @@ extern "C" {
     // Set abort callback
     LLAMA_API void llama_set_abort_callback(struct llama_context * ctx, ggml_abort_callback abort_callback, void * abort_callback_data);
 
+    // Identifier for the observer state on a llama_context. The verifier and
+    // drafter each have an independent (filter, filter_data, epoch) so that
+    // running both through the same process can collect importance statistics
+    // in separate buckets without name prefixes on the observer tensors.
+    // DFlash drafter graphs dispatch to DRAFTER; everything else uses the
+    // scope that llama_set_imatrix_observer_scope() last selected.
+    enum llama_observer_scope {
+        LLAMA_OBSERVER_SCOPE_VERIFIER = 0,
+        LLAMA_OBSERVER_SCOPE_DRAFTER  = 1,
+    };
+
     // Select graph-resident importance observers dynamically. Returning false
-    // omits the named observer from subsequently built decode graphs.
+    // omits the named observer from subsequently built decode graphs. The
+    // filter applies to the scope most recently set via
+    // llama_set_imatrix_observer_scope; the previous scope's filter is kept.
     typedef bool (*llama_imatrix_observer_filter)(const char * tensor_name, void * user_data);
     LLAMA_API void llama_set_imatrix_observer_filter(
             struct llama_context             * ctx,
             llama_imatrix_observer_filter      filter,
             void                            * user_data);
 
-    // Advance the graph-topology epoch after an observer filter changes its
-    // active tensor set. This preserves graph reuse between transitions.
+    // Switch the active observer scope for this context. Subsequent calls to
+    // llama_set_imatrix_observer_filter and llama_bump_imatrix_observer_epoch
+    // operate on the named scope. imatrix_observers on llama_context_params
+    // remains the context-level master switch, independent of scope.
+    LLAMA_API void llama_set_imatrix_observer_scope(
+            struct llama_context        * ctx,
+            enum llama_observer_scope     scope);
+
+    // Advance the graph-topology epoch for the active scope after its observer
+    // filter changes its active tensor set. This preserves graph reuse between
+    // transitions.
     LLAMA_API void llama_bump_imatrix_observer_epoch(struct llama_context * ctx);
 
     // Wait until all computations are finished
@@ -1628,9 +1651,32 @@ extern "C" {
         void * get_opt_pars_ud;                     // userdata for calculating optimizer parameters
 
         enum ggml_opt_optimizer_type optimizer_type;
+
+        enum ggml_opt_loss_type loss_type; // loss to minimize. GGML_OPT_LOSS_TYPE_LK requires the labels to be
+                                           // dense probability distributions (see tools/quantize/tessera/tessera-lk-loss.h),
+                                           // not the token-id labels used for cross-entropy.
+
+        // DFlash / D-PACE training: when true, the sparse cross-entropy label
+        // fill writes labels[target, pos] = weight[pos] instead of 1.0, so the
+        // ggml CE computes sum_j w_j * (-log q(y_j)) with a per-position
+        // gradient scale. Weights are passed via llama_set_opt_label_weights
+        // before llama_opt_epoch. Default false keeps finetune.cpp and the
+        // LK driver on the existing 1.0 path unchanged.
+        bool use_weighted_ce;
     };
 
     LLAMA_API void llama_opt_init(struct llama_context * lctx, struct llama_model * model, struct llama_opt_params lopt_params);
+
+    // DFlash / D-PACE training: attach a per-position CE weight buffer. The
+    // buffer must contain n_tok floats per example (ndata * n_tok total),
+    // laid out as weights[idata * n_tok + pos]. The buffer is borrowed, not
+    // copied: it must outlive llama_opt_epoch. Pass NULL to detach. n_tok
+    // is the per-example token count (= n_ctx_train set via llama_opt_params).
+    // Only takes effect when lopt_params.use_weighted_ce was true.
+    LLAMA_API void llama_set_opt_label_weights(
+            struct llama_context * lctx,
+            const float          * weights,
+            size_t                 n_tok);
 
     LLAMA_API void llama_opt_epoch(
             struct llama_context    * lctx,

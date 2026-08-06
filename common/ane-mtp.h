@@ -35,6 +35,63 @@ struct common_ane_compute_function {
     bool warm = false;
 };
 
+// Phase 0 profile: per-function microsecond-level timing of the four
+// dispatch phases the ANE heterogeneous backend drives per call.
+// The phases are measured inside dispatch_pinned_function_locked
+// (input_prep / ane_dispatch / output_read) and inside the pump's
+// signal_fn ane_signal_slot_events (signal). All times are in
+// microseconds; both totals and per-call max are tracked so the
+// caller can see both throughput (total / count) and tail latency
+// (max) at a glance. The counters are monotonic across the
+// program's lifetime; common_ane_mtp_program_phase_stats returns
+// a snapshot of the current values, organized as a per-function
+// table for easy rendering.
+//
+// The struct is a SNAPSHOT type: the per-function program state
+// is kept in an internal atomic-backed struct (single-writer on
+// the E-core thread, multi-reader on the host), and
+// common_ane_mtp_program_phase_stats copies the atomics into
+// this POD for return. Plain uint64_t fields make the struct
+// copyable and trivially destructible; the snapshot is the
+// stable, copy-friendly view.
+struct common_ane_phase_stats {
+    // input_prep: building the input MLFeatureProvider (the
+    // per-input slot loop + extra_inputs merge + MLDictionaryFeatureProvider
+    // construction). Most of the cost is feature-dict boxing.
+    uint64_t input_prep_us_total = 0;
+    uint64_t input_prep_us_max = 0;
+    // ane_dispatch: the Core ML predictionFromFeatures call. This
+    // is the actual ANE work (or CPU fallback). It dominates the
+    // total dispatch time for the gemma4 prefill bundle.
+    uint64_t ane_dispatch_us_total = 0;
+    uint64_t ane_dispatch_us_max = 0;
+    // output_read: reading the outputs from the feature provider
+    // + zero-copy verification (dataPointer == pinned.dataPointer
+    // for every output slot in the function).
+    uint64_t output_read_us_total = 0;
+    uint64_t output_read_us_max = 0;
+    // signal: the per-slot MTLSharedEvent signals emitted by the
+    // pump's signal_fn. Each call is a single
+    // ggml_mtl_shared_event_signal so this is normally <1us, but
+    // it sums up under many outputs.
+    uint64_t signal_us_total = 0;
+    uint64_t signal_us_max = 0;
+    // Number of successful dispatches the stats were collected
+    // over. Failed dispatches (Core ML error, output not zero-
+    // copy, pump not ready) are excluded.
+    uint64_t count = 0;
+};
+
+// One row in the per-function phase table returned by
+// common_ane_mtp_program_phase_stats. The row pairs a function
+// (name + role + bucket) with its accumulated phase stats.
+struct common_ane_program_phase_stats_row {
+    std::string function_name;
+    std::string role;
+    uint32_t bucket = 0;
+    common_ane_phase_stats stats;
+};
+
 struct common_ane_prefill_manifest {
     uint32_t abi_version = 0;
     uint32_t hidden_size = 0;
@@ -87,6 +144,57 @@ common_ane_mtp_boundary_stats common_ane_mtp_program_boundary_stats(
         const common_ane_mtp_program_ptr & program);
 std::vector<common_ane_compute_function> common_ane_compute_functions(
         const common_ane_mtp_program_ptr & program);
+
+// Phase 0 profile: per-function phase table snapshot. Returns
+// one row per warm function in the program; rows are sorted by
+// (role, bucket) to match common_ane_compute_functions. The
+// returned vector is a snapshot: subsequent dispatches update
+// the program's internal counters; callers that need a
+// consistent view should pin via a barrier (call twice and take
+// the diff, or call once at the end of a benchmark loop).
+std::vector<common_ane_program_phase_stats_row> common_ane_mtp_program_phase_stats(
+        const common_ane_mtp_program_ptr & program);
+
+// Phase 0 profile streaming. When the host sets a non-empty path
+// via common_ane_phase_profile_set_output, the dispatch path
+// (dispatch_pinned_function_locked) appends one NDJSON line per
+// phase per dispatch to that path. Each line has the shape:
+//
+//   {"phase":"<phase>","us":<microseconds>,"n_tokens":<n>,"ts":<iso8601>}
+//
+// where <phase> is one of "input_prep", "ane_dispatch",
+// "output_read" (matching the C++ struct common_ane_phase_stats
+// field names) and <n> is the function's first non-batch input
+// dim (the lane-active dim for prefill, MTP, and DFlash). The
+// emit is opt-in: when the path is empty (the default) the
+// dispatch path makes a single empty-string check per phase
+// and returns. The file is opened lazily on the first emit
+// and held until common_ane_phase_profile_set_output is called
+// with a different path (or empty) or the process exits.
+//
+// The flag is read by both the host (synchronous dispatch) and
+// the E-core pump (the submit_fn runs on the E-core thread), so
+// the path is process-global. Multi-program dispatch paths
+// share the same output file; the ts field is the per-line
+// timestamp and the function name is implicit (the program is
+// the one whose dispatch_pinned_function_locked is running).
+//
+// The default-empty path keeps the production dispatch path
+// branch-free when profiling is off; the cost of the profile
+// flag is one branch + one file-write per dispatch phase.
+void common_ane_phase_profile_set_output(const char * path);
+const char * common_ane_phase_profile_get_output();
+
+// Test-only internal API. The dispatch path is the only legit
+// caller of phase_profile_emit; this declaration exists so
+// tests/test-ane-phase-profile-emit.cpp can drive a synthetic
+// emit without spinning up a real .mlmodelc. The function is
+// declared in the public header (rather than a private header)
+// because the .mm file's anonymous-namespace helpers aren't
+// visible to external translation units. Production code
+// should not call this directly.
+void common_ane_phase_profile_emit_test_only(
+        const char * phase, uint64_t us, uint32_t n_tokens);
 
 // Execute a fixed-sequence prefill function named prefill_sN. The function
 // consumes I32 token_ids and positions shaped [lane_bucket, N], and writes

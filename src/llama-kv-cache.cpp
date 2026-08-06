@@ -288,7 +288,32 @@ llama_kv_cache::llama_kv_cache(
 
         LLAMA_LOG_INFO("%s: %10s KV buffer size = %8.2f MiB\n", __func__, ggml_backend_buffer_name(buf), ggml_backend_buffer_get_size(buf)/1024.0/1024.0);
 
-        ggml_backend_buffer_clear(buf, 0);
+        // S2: mmap-backed KV residency (vAttention-style lazy physical commit).
+        // The eager clear forces the OS to page-fault the ENTIRE KV buffer
+        // into RSS at init (memset on Metal shared memory touches every
+        // page). On Apple UMA the underlying Metal buffer is already backed by
+        // lazily-committed shared memory, so the clear is the only thing
+        // pinning all n_ctx*head_dim pages up front. Skipping it lets peak RSS
+        // track only the KV pages actually written (prefill + decode).
+        //
+        // Safety: KV cells guard all reads - every attention path (flash,
+        // paged, naive) only reads cells the cell tracker has marked written
+        // (pos >= 0 and seq present). The memset was purely defensive against
+        // uninitialized-data reads that the mask already prevents.
+        //
+        // Default behavior: LAZY (skip the eager memset). Validated on
+        // gemma-4-12B Q5_K_M pp512/tg32: median peak RSS -167.89 MiB,
+        // pp t/s +2.74%, tg t/s +3.85%, RSS stdev 37x tighter than the
+        // eager path (see agent-l-s2-revalidation-report.md). Set
+        // LLAMA_KV_EAGER_CLEAR=1 to opt back into the old eager memset.
+        const char * LLAMA_KV_EAGER_CLEAR = getenv("LLAMA_KV_EAGER_CLEAR");
+        const bool kv_eager_clear = LLAMA_KV_EAGER_CLEAR ? atoi(LLAMA_KV_EAGER_CLEAR) != 0 : false;
+        if (kv_eager_clear) {
+            LLAMA_LOG_INFO("%s: KV eager clear enabled (LLAMA_KV_EAGER_CLEAR=1), running eager memset\n", __func__);
+            ggml_backend_buffer_clear(buf, 0);
+        } else {
+            LLAMA_LOG_INFO("%s: KV lazy clear (default), skipping eager memset\n", __func__);
+        }
         ctxs_bufs.emplace_back(std::move(ctx), buf);
     }
 
@@ -1301,6 +1326,63 @@ uint32_t llama_kv_cache::get_n_kv(const slot_info & sinfo) const {
         result = std::max(std::min(cells.size(), std::max(n_pad_cur, GGML_PAD(cells.used_max_p1(), n_pad_cur))), result);
     }
 
+    return result;
+}
+
+std::vector<uint32_t> llama_kv_cache::build_tessera_full_page_map(const slot_info & sinfo, uint32_t n_kv) const {
+    // Invert the cell -> pos mapping for every resident cell of every stream
+    // the slot touches. Each cell holds exactly one logical position (pos[i]);
+    // the inverse lets the paged-attn kernel translate a logical KV index to
+    // the physical cell that stores its K/V row. Unused logical positions stay
+    // UINT32_MAX so the kernel can skip (or assert against) them.
+    //
+    // The paged-attn kernel has no mask of its own: it attends to every entry
+    // of this map that is not UINT32_MAX. The KQ mask path (set_input_kq_mask)
+    // applies causal + SWA + per-sequence filtering for the flash path, so the
+    // page map must encode the SAME gating. A cell is attendable by a query at
+    // position p1 for sequence seq iff:
+    //   - the cell belongs to seq (cells.seq_has(i, seq))
+    //   - causal: cells.pos_get(i) <= p1
+    //   - SWA: !is_masked_swa(n_swa, swa_type, cells.pos_get(i), p1)
+    // A cell may belong to several sequences; we expose it iff at least one of
+    // them would attend it. For non-SWA caches (swa_type == NONE) only the
+    // causal check remains, and in normal decode no future cell exists, so the
+    // map is unchanged for the wave-1 non-SWA path. Without this filter the
+    // kernel reads K/V rows that should be SWA-masked and produces noise.
+    std::vector<uint32_t> result(n_kv, std::numeric_limits<uint32_t>::max());
+    const bool check_swa = (swa_type != LLAMA_SWA_TYPE_NONE) && (n_swa > 0);
+    for (uint32_t s = 0; s < sinfo.n_stream(); ++s) {
+        const auto & cells = v_cells[sinfo.strm[s]];
+        const uint32_t n_cells = cells.size();
+        for (uint32_t i = 0; i < n_cells; ++i) {
+            if (cells.is_empty(i)) {
+                continue;
+            }
+            const llama_pos p = cells.pos_get(i);
+            if (p < 0 || (uint32_t) p >= n_kv) {
+                continue;
+            }
+            bool attendable = false;
+            for (int seq_id = 0; seq_id < LLAMA_MAX_SEQ; ++seq_id) {
+                if (!cells.seq_has(i, seq_id)) {
+                    continue;
+                }
+                const llama_pos p1 = cells.seq_pos_max(seq_id);
+                // causal: future positions are not attendable
+                if (p > p1) {
+                    continue;
+                }
+                if (check_swa && llama_hparams::is_masked_swa(n_swa, swa_type, p, p1)) {
+                    continue;
+                }
+                attendable = true;
+                break;
+            }
+            if (attendable) {
+                result[(uint32_t) p] = i;
+            }
+        }
+    }
     return result;
 }
 
@@ -2773,8 +2855,13 @@ void llama_kv_cache_context::set_input_kq_mask(ggml_tensor * dst, const llama_ub
 }
 
 void llama_kv_cache_context::set_input_tessera_page_map(ggml_tensor * dst) const {
-    const auto table = kv->build_tessera_block_table(sinfos[i_cur], n_kv);
-    const auto map = table.make_page_map(/* stream = */ 0);
+    // The paged-attn kernel reads K/V via the page map: dst[p] = the physical
+    // cell index holding logical position p. We invert the cell->pos map over
+    // every resident cell so historical positions (not just the current
+    // ubatch) resolve correctly. The previous block-table path only walked
+    // the current ubatch cells, leaving historical slots UINT32_MAX and
+    // producing garbage attention output.
+    const auto map = kv->build_tessera_full_page_map(sinfos[i_cur], n_kv);
     GGML_ASSERT(dst->type == GGML_TYPE_I32 && dst->ne[0] == (int64_t) map.size());
     ggml_backend_tensor_set(dst, map.data(), 0, map.size()*sizeof(map[0]));
 }

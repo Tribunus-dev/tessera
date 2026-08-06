@@ -38,6 +38,10 @@ int main(int argc, char ** argv) {
         LOG_INF("%s: force changing v cache type to f32 due to a lack of f16 support for OUT_PROD\n", __func__);
         params.cache_type_v = GGML_TYPE_F32;
     }
+    if (params.flash_attn_type != LLAMA_FLASH_ATTN_TYPE_DISABLED) {
+        LOG_INF("%s: forcing flash_attn = disabled, FLASH_ATTN_EXT has no backward pass so it cannot be trained\n", __func__);
+        params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
+    }
 
     llama_backend_init();
     llama_numa_init(params.numa);
@@ -73,6 +77,7 @@ int main(int argc, char ** argv) {
         /*get_opt_pars    =*/common_opt_lr_pars,
         /*get_opt_pars_ud =*/&params.lr,
         /*optimizer_type  =*/params.optimizer,
+        /*loss_type       =*/GGML_OPT_LOSS_TYPE_CROSS_ENTROPY,
     };
     llama_opt_init(ctx, model, lopt_params);
 

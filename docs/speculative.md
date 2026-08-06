@@ -79,8 +79,14 @@ setting `LLAMA_DFLASH_TELEMETRY` to an output path before starting llama.cpp.
 Each record contains the proposed block length, accepted prefix length, and
 per-position draft confidence. The stream is append-only and flushed after
 every verification, so it is suitable for long-running representative prompt
-sets and survives an interrupted run. Convert it into an AWQ and evolved
-Tile640 policy with:
+sets and survives an interrupted run. The schema is `llama.tessera.spec.v1`: one record per spec step carrying
+`schema, seq_id, step_idx, prime_token, drafted, accepted,
+drafted_tokens[], accepted_tokens[], confidence[]`. The per-position
+verifier/drafter top-k distributions (`topk, *_argmax[], *_topk_*[][]`)
+are added to the same record when `--telemetry-topk` is set. The
+previous v1/v2/v3 split and the `--telemetry-v1-compat` adapter are
+gone.
+Convert the stream into an AWQ and evolved Tile640 policy with:
 
 ```bash
 python tools/ane-mtp/dflash-calibration-policy.py \
@@ -163,6 +169,43 @@ Currently only drafts with a Qwen3 backbone are supported; support for other bac
 See:
 
 - #25173
+
+### Embedded MTP (`draft-mtp`)
+
+Some target GGUFs ship a small MTP (multi-token-prediction) component embedded
+directly in the model file. When the server loads such a model, it
+automatically enables the `draft-mtp` speculative path by default, so no
+explicit `--spec-type` is required: the embedded component is wired in as
+the drafter and verified by the target model.
+
+The auto-enable runs at load time in `tools/server/server-context.cpp` and
+is gated on three conditions: the user has not set `--spec-type` explicitly,
+the model GGUF carries an MTP component (detected as `mtp.component.present`
+in the metadata), and `--no-embedded-mtp` was not passed. When all three
+hold, the server sets `--spec-type draft-mtp` itself and logs a one-line
+informational message at model load.
+
+To opt out of the auto-enable, pass `--no-embedded-mtp` (env:
+`LLAMA_ARG_NO_EMBEDDED_MTP`):
+
+```
+llama-server -m model-with-mtp.gguf --no-embedded-mtp
+```
+
+Use it when:
+
+- the model fails to load with the embedded MTP path (the auto-enable is
+  best-effort and the underlying drafter wiring may be incomplete for some
+  architectures);
+- you want plain inference with no speculative decoding at all, without
+  having to remember to set `--spec-type none`;
+- you want to wire in your own drafter via `--model-draft` and would
+  rather not have the server's auto-MTP shadow your choice.
+
+`--no-embedded-mtp` only suppresses the auto-enable trigger. Setting
+`--spec-type draft-mtp` explicitly still works and is the right way to
+opt back in once you have read the load-time log and confirmed the
+target architecture is supported.
 
 ### n-gram Cache (`ngram-cache`)
 

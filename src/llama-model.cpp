@@ -27,6 +27,7 @@
 #include <cfloat>
 #include <cstdint>
 #include <cstring>
+#include <cstdlib>
 #include <cmath>
 #include <functional>
 #include <map>
@@ -36,6 +37,25 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+// DFlash subclass dispatch: the arch stays LLM_ARCH_DFLASH, but a Gemma4
+// drafter carries Gemma4-specific tensors (attn_post_norm, ffn_post_norm,
+// rope_freqs, out_scale).  When those are present in the GGUF, we route
+// to llama_model_dflash_gemma4 which loads and applies them; otherwise
+// the arch-agnostic base class is used.
+//
+// The detection is done at construction time so the rest of the loader
+// sees a finalized class.  The legacy arch-only factory falls back to the
+// base class because it has no GGUF to inspect.
+static llama_model * llama_model_create_dflash(llama_model_loader & ml, const llama_model_params & params) {
+    // The LLM_TENSOR_ATTN_POST_NORM tensor name (see llama-arch.cpp) is
+    // "blk.%d.post_attention_norm"; the canonical GGUF entry has the
+    // ".weight" suffix from `create_tensor(..., "weight", i)`.
+    if (ml.get_tensor_meta("blk.0.post_attention_norm.weight") != nullptr) {
+        return new llama_model_dflash_gemma4(params);
+    }
+    return new llama_model_dflash(params);
+}
 
 static llama_model * llama_model_mapping(llm_arch arch, const llama_model_params & params) {
     switch (arch) {
@@ -237,6 +257,8 @@ static llama_model * llama_model_mapping(llm_arch arch, const llama_model_params
             return new llama_model_chameleon(params);
         case LLM_ARCH_WAVTOKENIZER_DEC:
             return new llama_model_wavtokenizer_dec(params);
+        case LLM_ARCH_QWEN3_TTS_CODE2WAV:
+            return new llama_model_qwen3_tts_code2wav(params);
         case LLM_ARCH_PLM:
             return new llama_model_plm(params);
         case LLM_ARCH_BAILINGMOE:
@@ -330,6 +352,19 @@ llama_model * llama_model_create(llama_model_loader & ml, const llama_model_para
     llm_arch arch = ml.get_arch();
     if (arch == LLM_ARCH_UNKNOWN) {
         throw std::runtime_error("unknown model architecture: '" + ml.get_arch_name() + "'");
+    }
+
+    // DFlash subclass dispatch needs the loader to inspect the GGUF for the
+    // Gemma4 marker; the arch-only factory cannot do this.
+    if (arch == LLM_ARCH_DFLASH) {
+        llama_model * model = llama_model_create_dflash(ml, params);
+        if (model != nullptr) {
+            model->arch = arch;
+            if (params.split_mode == LLAMA_SPLIT_MODE_TENSOR && !llm_arch_supports_sm_tensor(arch)) {
+                throw std::runtime_error(std::string("LLAMA_SPLIT_MODE_TENSOR not implemented for architecture '") + llm_arch_name(arch) + "'");
+            }
+        }
+        return model;
     }
 
     return llama_model_create(arch, params);
@@ -2183,6 +2218,18 @@ ggml_tensor * llama_model::get_rope_factors(const llama_cparams & cparams, int i
 llama_memory_i * llama_model::create_memory(const llama_memory_params & params, const llama_cparams & cparams) const {
     llama_memory_i * res;
 
+    // The tessera paged-attn kernel reads V in row-major (non-transposed) layout
+    // only. When TESSERA_PAGED_ATTN is requested on a unified cache, force the
+    // V cache to be stored non-transposed so the decode paged path can read it
+    // directly. Otherwise the kernel silently reads transposed bytes as garbage.
+    // This is a no-op when flash_attn is already on (v_trans already false) and
+    // only widens the non-flash matmul layout when paged is opted into.
+    const bool paged_active = cparams.kv_unified && []{
+        const char * v = std::getenv("TESSERA_PAGED_ATTN");
+        return v && std::strcmp(v, "1") == 0;
+    }();
+    const bool attn_v_trans = !cparams.flash_attn && !paged_active;
+
     switch (arch) {
         // Models that need specific instantiation should be handled in the
         // switch statement
@@ -2194,6 +2241,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
         case LLM_ARCH_NEO_BERT:
         case LLM_ARCH_EUROBERT:
         case LLM_ARCH_WAVTOKENIZER_DEC:
+        case LLM_ARCH_QWEN3_TTS_CODE2WAV:
         case LLM_ARCH_MODERN_BERT:
         case LLM_ARCH_GEMMA_EMBEDDING:
         case LLM_ARCH_DREAM:
@@ -2210,7 +2258,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                         *this,
                         params.type_k,
                         params.type_v,
-                        !cparams.flash_attn,
+                        attn_v_trans,
                         cparams.offload_kqv,
                         cparams.kv_unified,
                         cparams.n_ctx_seq,
@@ -2271,7 +2319,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                             /* model             */ *this,
                             /* attn_type_k       */ params.type_k,
                             /* attn_type_v       */ params.type_v,
-                            /* attn_v_trans      */ !cparams.flash_attn,
+                            /* attn_v_trans      */ attn_v_trans,
                             /* attn_swa_full     */ params.swa_full,
                             /* attn_kv_size      */ cparams.n_ctx_seq,
                             /* attn_n_ubatch     */ cparams.n_ubatch,
@@ -2290,7 +2338,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                             /* model             */ *this,
                             /* attn_type_k       */ params.type_k,
                             /* attn_type_v       */ params.type_v,
-                            /* attn_v_trans      */ !cparams.flash_attn,
+                            /* attn_v_trans      */ attn_v_trans,
                             /* attn_kv_size      */ cparams.n_ctx_seq,
                             /* attn_n_pad        */ 1,
                             /* attn_n_swa        */ hparams.n_swa,
@@ -2341,7 +2389,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                                 *this,
                                 params.type_k,
                                 params.type_v,
-                                !cparams.flash_attn,
+                                attn_v_trans,
                                 cparams.offload_kqv,
                                 params.swa_full,
                                 cparams.kv_unified,
@@ -2371,7 +2419,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                                     *this,
                                     params.type_k,
                                     params.type_v,
-                                    !cparams.flash_attn,
+                                    attn_v_trans,
                                     cparams.offload_kqv,
                                     params.swa_full,
                                     cparams.kv_unified,
@@ -2388,7 +2436,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                                     *this,
                                     params.type_k,
                                     params.type_v,
-                                    !cparams.flash_attn,
+                                    attn_v_trans,
                                     cparams.offload_kqv,
                                     params.swa_full,
                                     cparams.kv_unified,
@@ -2409,7 +2457,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                                 hparams,
                                 params.type_k,
                                 params.type_v,
-                                !cparams.flash_attn,
+                                attn_v_trans,
                                 cparams.offload_kqv,
                                 cparams.kv_unified,
                                 cparams.n_ctx_seq,
@@ -2472,6 +2520,7 @@ llama_model_params llama_model_default_params() {
         /*.use_extra_bufts             =*/ true,
         /*.no_host                     =*/ false,
         /*.no_alloc                    =*/ false,
+        /*.load_mtp                    =*/ false,
     };
 
     return result;
@@ -2648,6 +2697,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
         case LLM_ARCH_QWEN2MOE:
         case LLM_ARCH_QWEN3:
         case LLM_ARCH_QWEN3MOE:
+        case LLM_ARCH_QWEN3_TTS_CODE2WAV:
         case LLM_ARCH_LLADA_MOE:
         case LLM_ARCH_RND1:
         case LLM_ARCH_OLMO2:

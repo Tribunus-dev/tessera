@@ -10,8 +10,18 @@ ggml_add_backend_library(ggml-metal
                          ggml-metal-device.cpp
                          ggml-metal-common.cpp
                          ggml-metal-context.m
+                         ggml-metal-event.mm
                          ggml-metal-ops.cpp
+                         metal-dump-dequant.mm
                         )
+
+# Tessera Layer 1 instrumentation: metal-dump-dequant.mm includes
+# tessera-debug.h. The header is on the llama-tessera-debug include
+# path. Guarded so the first caller wins.
+if (NOT TARGET llama-tessera-debug)
+    add_subdirectory(${CMAKE_SOURCE_DIR}/common/tessera-debug ${CMAKE_BINARY_DIR}/_deps/llama-tessera-debug)
+endif()
+target_link_libraries(ggml-metal PUBLIC llama-tessera-debug)
 
 target_link_libraries(ggml-metal PRIVATE
                       ${FOUNDATION_LIBRARY}

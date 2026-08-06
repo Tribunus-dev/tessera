@@ -14,6 +14,8 @@
 #include "ops.h"
 #include "ggml.h"
 #include "common.h"
+#include "cpu-dump-dequant.h"
+#include "cpu-dump-matmul-output.h"
 
 #if defined(_MSC_VER) || defined(__MINGW32__)
 #include <malloc.h> // using malloc.h with MSC/MINGW
@@ -1269,6 +1271,10 @@ void ggml_compute_forward_mul_mat(
     const int ith = params->ith;
     const int nth = params->nth;
 
+    if (ith == 0) {
+        cpu_dump_dequant(src0, ne01, ne00, src0->name);
+    }
+
     enum ggml_type           const vec_dot_type         = type_traits_cpu[src0->type].vec_dot_type;
     ggml_from_float_t        const from_float           = type_traits_cpu[vec_dot_type].from_float;
     int64_t                  const vec_dot_num_rows     = type_traits_cpu[src0->type].nrows;
@@ -1314,6 +1320,15 @@ void ggml_compute_forward_mul_mat(
                                      src1->type,
                                      dst->type))
                     goto UseGgmlGemm1;
+        // LLAMAFILE fast path completed for all (i12, i13) - the dst tensor
+        // is now fully populated. Capture the matmul output sidecar on
+        // thread 0 (the other threads are already past this point). No
+        // explicit barrier is needed because the sgemm call is blocking
+        // and only thread 0 reaches the capture point when all work is
+        // done (the for loops above are single-threaded).
+        if (ith == 0) {
+            cpu_dump_matmul_output(params, dst, src0->name);
+        }
         return;
     }
 UseGgmlGemm1:;
@@ -1382,6 +1397,10 @@ UseGgmlGemm1:;
                                      vec_dot_type,
                                      dst->type))
                     goto UseGgmlGemm2;
+        // LLAMAFILE fast path with wdata staging: dst is fully populated.
+        if (ith == 0) {
+            cpu_dump_matmul_output(params, dst, src0->name);
+        }
         return;
     }
 UseGgmlGemm2:;
@@ -1448,6 +1467,17 @@ UseGgmlGemm2:;
         }
 
         current_chunk = atomic_fetch_add_explicit(&params->threadpool->current_chunk, 1, memory_order_relaxed);
+    }
+
+    // L2 forward-pass matmul-output sidecar: capture the F32 dst tensor
+    // AFTER all threads have completed. The barrier ensures thread 0
+    // sees a fully-populated dst before serializing it to the sidecar.
+    // No-op when --tessera-matmul-output-dir is not set.
+    if (params->threadpool != NULL) {
+        ggml_barrier(params->threadpool);
+    }
+    if (ith == 0) {
+        cpu_dump_matmul_output(params, dst, src0->name);
     }
 }
 

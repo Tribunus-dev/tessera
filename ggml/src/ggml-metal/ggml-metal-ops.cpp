@@ -7,6 +7,7 @@
 #include "ggml-metal-impl.h"
 #include "ggml-metal-common.h"
 #include "ggml-metal-device.h"
+#include "metal-dump-dequant.h"
 
 #include <cassert>
 #include <algorithm>
@@ -40,6 +41,7 @@ struct ggml_metal_op {
         this->dev             = dev;
         this->lib             = ggml_metal_device_get_library(dev);
         this->enc             = ggml_metal_encoder_init(cmd_buf, use_concurrency);
+        this->cmd_buf         = cmd_buf;
         this->mem_ranges      = ggml_mem_ranges_init(debug_graph);
         this->idx_start       = idx_start;
         this->idx_end         = idx_end;
@@ -91,6 +93,7 @@ struct ggml_metal_op {
     ggml_metal_device_t  dev;
     ggml_metal_library_t lib;
     ggml_metal_encoder_t enc;
+    ggml_metal_cmd_buf_t cmd_buf; // backing command buffer (for completed handlers)
     ggml_mem_ranges_t    mem_ranges;
 
     bool use_fusion;
@@ -1185,7 +1188,11 @@ int ggml_metal_op_get_rows(ggml_metal_op_t ctx, int idx) {
     GGML_TENSOR_LOCALS( int32_t, ne,  op,         ne);
     GGML_TENSOR_LOCALS(uint64_t, nb,  op,         nb);
 
-    auto pipeline = ggml_metal_library_get_pipeline_get_rows(lib, op->src[0]->type);
+    // i64 indices are only instantiated for f32 sources (the SET_ROWS backward gather)
+    GGML_ASSERT(op->src[1]->type == GGML_TYPE_I32 ||
+            (op->src[1]->type == GGML_TYPE_I64 && op->src[0]->type == GGML_TYPE_F32));
+
+    auto pipeline = ggml_metal_library_get_pipeline_get_rows(lib, op);
 
     ggml_metal_kargs_get_rows args = {
         /*.ne00t =*/ ggml_is_quantized(op->src[0]->type) ? ne00/16 : ne00,
@@ -1764,6 +1771,16 @@ int ggml_metal_op_tile640_matmul(ggml_metal_op_t ctx, int idx) {
     const int32_t out_dim = ggml_get_op_params_i32(op, 0);
     const int32_t n_tokens = (int32_t) op->src[6]->ne[1];
     const int32_t in_dim = (int32_t) op->src[6]->ne[0];
+
+    // Tessera Layer 1: dump the GPU dequantized weight to the sidecar
+    // before the matmul. Dispatches the row-aware kernel_TILE640_DEQUANT
+    // so the sidecar reflects the runtime's actual dequant (including
+    // the sparse outlier addback), not a CPU re-dequant. No-op when the
+    // dequant debug hook is not enabled (see metal-dump-dequant.h).
+    metal_dump_dequant_tile640(ctx->dev, ctx->enc, ctx->cmd_buf, op,
+                               (int64_t) in_dim,
+                               (int64_t) out_dim,
+                               op->src[0]->name);
     const int32_t pages_per_row = (in_dim + 639) / 640;
     const int32_t words_per_page =
         (int32_t) (op->src[0]->ne[0] / (out_dim * pages_per_row));
@@ -1819,6 +1836,15 @@ int ggml_metal_op_tile640_matmul_id(ggml_metal_op_t ctx, int idx) {
     const int32_t n_experts = ggml_get_op_params_i32(op, 0);
     const int32_t out_dim   = ggml_get_op_params_i32(op, 1);
     const int32_t in_dim    = (int32_t) op->src[6]->ne[0];
+
+    // Tessera Layer 1: dump the GPU dequantized weight bank (all
+    // n_experts*out_dim rows) to the sidecar before the matmul. Same
+    // row-aware kernel_TILE640_DEQUANT path as the dense matmul. No-op
+    // when the dequant debug hook is not enabled.
+    metal_dump_dequant_tile640(ctx->dev, ctx->enc, ctx->cmd_buf, op,
+                               (int64_t) in_dim,
+                               (int64_t) n_experts * (int64_t) out_dim,
+                               op->src[0]->name);
     const int32_t n_broadcast = (int32_t) op->src[6]->ne[1];
     const int32_t n_tokens  = (int32_t) op->src[6]->ne[2];
     const int32_t n_expert_used = (int32_t) op->src[7]->ne[0];
@@ -2291,6 +2317,14 @@ int ggml_metal_op_pool_2d(ggml_metal_op_t ctx, int idx) {
 int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
     ggml_tensor * op = ctx->node(idx);
 
+    // Tessera Layer 1: dump the dequantized weight to the sidecar before
+    // the matmul kernel runs. No-op when the dequant debug hook is not
+    // enabled (see metal-dump-dequant.h).
+    metal_dump_dequant(ctx->dev, op->src[0],
+                       (int64_t) op->src[0]->ne[1] * op->src[0]->ne[2] * op->src[0]->ne[3],
+                       (int64_t) op->src[0]->ne[0],
+                       op->src[0]->name);
+
     ggml_metal_library_t lib = ctx->lib;
     ggml_metal_encoder_t enc = ctx->enc;
 
@@ -2540,6 +2574,14 @@ size_t ggml_metal_op_mul_mat_id_extra_ids(const ggml_tensor * op) {
 int ggml_metal_op_mul_mat_id(ggml_metal_op_t ctx, int idx) {
     ggml_tensor * op = ctx->node(idx);
 
+    // Tessera Layer 1: dump the dequantized weight to the sidecar before
+    // the matmul kernel runs. No-op when the dequant debug hook is not
+    // enabled.
+    metal_dump_dequant(ctx->dev, op->src[0],
+                       (int64_t) op->src[0]->ne[1] * op->src[0]->ne[2] * op->src[0]->ne[3],
+                       (int64_t) op->src[0]->ne[0],
+                       op->src[0]->name);
+
     ggml_metal_library_t lib = ctx->lib;
     ggml_metal_encoder_t enc = ctx->enc;
 
@@ -2775,7 +2817,9 @@ int ggml_metal_op_tessera_paged_attn(ggml_metal_op_t ctx, int idx) {
     ggml_tensor * op = ctx->node(idx);
     GGML_ASSERT(op->src[0]->type == GGML_TYPE_F32);
     GGML_ASSERT(op->src[1]->type == op->src[2]->type);
-    GGML_ASSERT(op->src[1]->type == GGML_TYPE_F32 || op->src[1]->type == GGML_TYPE_F16);
+    GGML_ASSERT(op->src[1]->type == GGML_TYPE_F32 || op->src[1]->type == GGML_TYPE_F16 ||
+                op->src[1]->type == GGML_TYPE_Q8_0 || op->src[1]->type == GGML_TYPE_Q2_K ||
+                op->src[1]->type == GGML_TYPE_Q4_0 || op->src[1]->type == GGML_TYPE_Q5_0);
     GGML_ASSERT(op->src[3]->type == GGML_TYPE_I32);
     const bool v_trans = ggml_get_op_params_i32(op, 1) != 0;
 
@@ -2787,8 +2831,16 @@ int ggml_metal_op_tessera_paged_attn(ggml_metal_op_t ctx, int idx) {
         (int32_t) op->src[1]->ne[1], (int32_t) op->src[3]->ne[0],
         (int32_t) op->src[1]->ne[2], (int32_t) op->src[0]->ne[3], (int32_t) v_trans, scale,
     };
-    const char * kernel = op->src[1]->type == GGML_TYPE_F16
-        ? "kernel_tessera_paged_attn_f16" : "kernel_tessera_paged_attn_f32";
+    const char * kernel = nullptr;
+    switch (op->src[1]->type) {
+        case GGML_TYPE_F16:  kernel = "kernel_tessera_paged_attn_f16";  break;
+        case GGML_TYPE_F32:  kernel = "kernel_tessera_paged_attn_f32";  break;
+        case GGML_TYPE_Q8_0: kernel = "kernel_tessera_paged_attn_q8_0"; break;
+        case GGML_TYPE_Q2_K: kernel = "kernel_tessera_paged_attn_q2_K"; break;
+        case GGML_TYPE_Q4_0: kernel = "kernel_tessera_paged_attn_q4_0"; break;
+        case GGML_TYPE_Q5_0: kernel = "kernel_tessera_paged_attn_q5_0"; break;
+        default: GGML_ABORT("tessera_paged_attn: unsupported K/V type");
+    }
     auto pipeline = ggml_metal_library_get_pipeline(ctx->lib, kernel);
     if (!pipeline.pipeline) {
         pipeline = ggml_metal_library_compile_pipeline(ctx->lib, kernel, kernel, nullptr);

@@ -416,6 +416,10 @@ std::string llama_model_loader::scoped_key(const std::string & key) const {
     template bool llama_model_loader::get_arr<std::vector<int32_t>>(enum llm_kv kid, std::vector<int32_t> & result, bool required);
     template bool llama_model_loader::get_arr<std::array<uint32_t, LLAMA_MAX_LAYERS>>(enum llm_kv kid, std::array<uint32_t, LLAMA_MAX_LAYERS> & result, bool required);
 
+    // raw-key variants (arch-specific metadata without LLM_KV entries)
+    template bool llama_model_loader::get_arr<uint32_t>(const std::string & key, std::vector<uint32_t> & result, bool required);
+    template bool llama_model_loader::get_arr<int32_t> (const std::string & key, std::vector<int32_t> & result, bool required);
+
     template<typename T>
     bool llama_model_loader::get_key(const std::string & key, T & result, bool required) {
         const std::string resolved_key = scoped_key(key);
@@ -442,6 +446,10 @@ std::string llama_model_loader::scoped_key(const std::string & key) const {
     template bool llama_model_loader::get_key<float>      (enum llm_kv kid, float & result,       bool required);
     template bool llama_model_loader::get_key<uint32_t>   (enum llm_kv kid, uint32_t & result,    bool required);
     template bool llama_model_loader::get_key<std::string>(enum llm_kv kid, std::string & result, bool required);
+
+    // raw-key variants (arch-specific metadata without LLM_KV entries)
+    template bool llama_model_loader::get_key<uint32_t>(const std::string & key, uint32_t & result, bool required);
+    template bool llama_model_loader::get_key<float>   (const std::string & key, float & result,    bool required);
 
     template<>
     bool llama_model_loader::get_key(enum llm_kv kid, enum llama_pooling_type & result, bool required) {
@@ -541,6 +549,7 @@ llama_model_loader::llama_model_loader(
         llama_load_mode load_mode,
         bool check_tensors,
         bool no_alloc,
+        bool load_mtp,
         const llama_model_kv_override * param_overrides_p,
         const llama_model_tensor_buft_override * param_tensor_buft_overrides_p,
         const char * component_prefix_p)
@@ -858,6 +867,7 @@ llama_model_loader::llama_model_loader(
 
     this->check_tensors = check_tensors;
     this->no_alloc = no_alloc;
+    this->load_mtp = load_mtp;
 }
 
 std::string llama_model_loader::get_arch_name() const {

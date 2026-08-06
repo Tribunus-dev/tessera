@@ -310,6 +310,25 @@ generator emits the plain calibration text, a sample index, a deterministic
 manifest, and a `llama.tessera.training-corpus.v1` receipt under CC BY-NC-SA
 4.0 with attribution to tribunus.dev.
 
+`--real` switches the same builder to the architect-chosen real corpora:
+Wikitext-103 (CC BY-SA 3.0) for text, COCO val2014 captions (CC BY 4.0 on
+the annotations; per-image Flickr licenses are mixed) for vision, and
+LibriSpeech dev.clean (CC BY 4.0) for audio. `--corpora` selects which
+modalities to fetch (comma-separated; default `text`); `--budget` selects
+the sample count per modality (`light` 1K/256/256, `medium` 5K/1K/1K,
+`heavy` 20K/4K/4K for text/vision/audio); `--dry-run` lists what would be
+fetched without any network or disk write. Text is stratified by paragraph
+length (short / medium / long) so the calibration pipeline gets a balanced
+mix; vision is uniform random over the COCO val2014 captions shard;
+audio is uniform random over the LibriSpeech dev.clean shard (the shard is
+already speaker-stratified). The output schema is the v1 schema extended
+with a `modality` field on each record and `image_path` / `audio_path` on
+the multimodal records; `multimodal_calibrate.py` (M1) consumes those
+fields and the `vision_samples` / `audio_samples` arrays in the manifest.
+The `training-corpus-receipt.json` gains a `corpora` block recording the
+upstream repository, downloaded byte count, the SHA256 of the first 1 MB
+of the downloaded payload, and the per-corpus license / attribution.
+
 `moe-calibrate.py` connects that corpus to llama-imatrix. It begins with a
 deterministic stratified set of 128 samples, accumulates graph-resident
 observer output across rounds, and adds 128 samples per round up to 1024.
@@ -391,4 +410,156 @@ both its logical-source and assembled-artifact digests.
   tools/tessera/evidence-store.py summarize \
   --store /Volumes/Julian\ T7/calibration/evidence \
   --run-id gemma4-pilot
+```
+
+## PrefixQuant outlier identification
+
+`kv_prefix_identifier.py` is the offline first step of the PrefixQuant
+(arXiv:2410.05265) integration. It reads a `llama-imatrix` GGUF, computes
+the per-position max activation magnitude for each tensor, and flags
+positions whose max exceeds `eta` times the per-tensor median
+(`eta=64` per paper). The number of prefix candidates is
+`ceil(max(per-tensor outlier count))`, taken from the embedding tensor
+when present, otherwise from the widest tensor in the imatrix. The output
+uses `llama.tessera.kv-prefix-tokens.v1` and records the per-tensor
+outlier counts and the source imatrix path so the choice of
+`outlier_count` is auditable. The actual KV-prefix loader is a future
+runtime layer; this tool only identifies the tokens.
+
+```sh
+python tools/tessera/kv_prefix_identifier.py \
+  --imatrix /Volumes/Julian\ T7/calibration/gemma4-rich.imatrix.gguf \
+  --output /Volumes/Julian\ T7/calibration/gemma4-kv-prefix-tokens.json \
+  --model-family gemma4 \
+  --threshold 64
+```
+
+## Per-tile Hessian trace (L3 sensitivity, E5)
+
+`l3_hessian_trace.py` is the L3 E5 unlock. It computes the empirical
+Hessian trace ``tr(X^T X / N)`` per tensor and buckets it by 640-wide
+input-channel tiles (the T640 page size), then writes a
+`llama.tessera.hessian-trace-policy.v1` document. HAWQ-V2 (NeurIPS 2020)
+shows the average Hessian trace is the right layer-wise sensitivity
+metric; the IterQuant L5 orchestrator on `tessera/track-iterquant-prod`
+consumes this as a third signal alongside the LLM.int8 outlier count
+and the IterQuant token-level sensitivity.
+
+Two estimators are supported: `hutchinson` (default, 50 Rademacher
+probes; matches HAWQ-V2) and `exact-diagonal` (uses the imatrix's
+per-channel `in_sum2` and is the right choice when only the
+calibration observer is available). Both produce per-tensor
+`hessian_trace` / `hessian_trace_avg` and a per-tile
+`hessian_trace_per_tile` array.
+
+The consumer is `tile640_quantize_v3.py --hessian-trace-policy`, which
+loads the pre-computed policy and merges the per-tensor trace values
+into the in-memory calibration policy. Downstream code (the L5
+orchestrator, the quantizer's sensitivity scorer) reads the merged
+fields as first-class entries on each tensor family.
+
+```sh
+# Producer
+python tools/tessera/l3_hessian_trace.py \
+  --layers /Volumes/Julian\ T7/calibration/gemma4-layers \
+  --output /Volumes/Julian\ T7/calibration/gemma4-hessian-trace.json \
+  --method hutchinson --n-hutchinson-vectors 50
+
+# Demo + validation harness
+python tools/tessera/l3_hessian_trace_demo.py --determinism-check
+
+# Consumer
+python tools/tile640/quantize_v3.py \
+  --model-dir /path/to/model --output out.gguf \
+  --imatrix gemma4.imatrix.npz \
+  --calibration-policy gemma4-evolved-policy.json \
+  --hessian-trace-policy gemma4-hessian-trace.json
+```
+
+## Per-layer error table (L1 vs L1.5)
+
+`per_layer_error_table.py` consumes the L1 + L1.5 v3 sidecars and produces a
+per-layer error report. Per-tensor epsilon(l, b) is the relative
+Frobenius error between the L1.5 FP16 reference and the L1 dequantized
+output, normalized by the reference norm. Per-layer totals are the sum of
+per-tensor errors within the layer. Output is a schema-versioned JSON
+document (`llama.tessera.per-layer-error-table.v1`) or a greppable
+`--format table` rendering.
+
+Layer name derivation strips `.weight`/`.bias` and the per-expert index,
+then keeps the `blk.<N>` prefix; tensors outside that pattern (token
+embedding, output, norms) fall back to the full name. Missing L1 or L1.5
+files are skipped with a warning, not a hard error. Reuses
+`l3_sidecar_v3_reader.py` for v1/v2/v3 dispatch.
+
+The wave-4 gotcha applies: in current production runs the L1.5 file
+contains the same F32 as the L1 file, so epsilon is zero until the FP16
+reference path lands in the C++ dequant hook. The smoke test asserts this
+contract.
+
+```sh
+python tools/tessera/per_layer_error_table.py \
+  --sidecar-dir /path/to/v3/sidecars \
+  --out error-table.json --format json
+```
+
+## Latency LUT (per-shape, per-kernel)
+
+`latency_lut.py` reads the per-row `timing_ns` and `kernel_id` from the
+v3 sidecar strip and aggregates to a per-(shape, kernel_id) lookup table.
+Default grouping is `shape-kernel`; `--group-by {shape,kernel,shape-kernel}`
+overrides. Per-row mean and per-row population std are reported alongside
+the count and mean total. v1/v2 sidecars (no v3 strip) are skipped with a
+stderr warning rather than polluting the LUT with zero-timed records.
+
+L1.5 sidecars are matched via the `.act.dequant.f32` suffix rather than a
+glob, so an L1 glob does not substring-match L1.5 files. Output is a
+schema-versioned JSON document (`llama.tessera.latency-lut.v1`).
+
+```sh
+python tools/tessera/latency_lut.py \
+  --sidecar-dir /path/to/v3/sidecars \
+  --out lut.json --format json
+
+# include L1.5 timings too
+python tools/tessera/latency_lut.py \
+  --sidecar-dir /path/to/v3/sidecars \
+  --out lut.json --include-l15
+```
+
+## Linear fidelity predictor (Phase E)
+
+`fidelity_predictor.py` is a linear (not neural network) regression that
+maps the L5 6-signal score to the per-tensor quant error. The model is
+intentionally simple for inspectability: `intercept` (scalar), `alpha`
+(6-vector), `beta` ((n_layers, n_layers) symmetric, sparse band,
+zero by default). Training is closed-form `np.linalg.lstsq` on the
+augmented `[1, s_0..s_5]` design matrix, seeded via
+`np.random.default_rng(seed)`. Two `train()` calls with the same seed
+produce bit-identical coefficients.
+
+Inputs: the same 6 signals the L5 orchestrator consumes (imatrix,
+gradient, layer, kurtosis, hessian_trace, outlier). Targets: per-tensor
+error from Phase B's table (or a synthetic ground truth when B isn't
+available). The output schema is
+`llama.tessera.fidelity-predictor.v1`.
+
+`beta` is retained in the `Predictor` struct for the per-pair
+adjacent-layer interaction term but defaults to zero; the 10-row
+synthetic bundle is too small to fit per-pair interactions robustly
+without overfitting. The model is ready to re-enable beta once a
+richer Phase-B cohort is wired in.
+
+```sh
+# Train + emit a predictor JSON from the synthetic 10-tensor bundle
+python tools/tessera/fidelity_predictor.py --train-demo --out pred.json
+
+# Programmatic use
+python -c "
+from tools.tessera.fidelity_predictor import train, predict_error
+import numpy as np
+scores = np.array([0.5, 0.3, 0.2, 0.1, 0.4, 0.2])  # 6 signals
+pred = train(scores_arr=..., errors_arr=..., layer_indices=...)
+err  = predict_error(scores, neighbors=[], predictor=pred)
+"
 ```

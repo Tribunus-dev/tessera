@@ -1403,16 +1403,24 @@ void llm_graph_context::cb(ggml_tensor * cur, const char * name, int il) const {
 
 bool llm_graph_context::imatrix_observer_enabled(
         const char * weight_name) const {
-    return cparams.imatrix_observers &&
-           (!cparams.imatrix_observer_filter ||
-            cparams.imatrix_observer_filter(
-                weight_name, cparams.imatrix_observer_filter_data));
+    if (!cparams.imatrix_observers) {
+        return false;
+    }
+    const int scope = imatrix_observer_scope();
+    GGML_ASSERT(scope >= LLAMA_OBSERVER_SCOPE_VERIFIER &&
+                scope <= LLAMA_OBSERVER_SCOPE_DRAFTER);
+    const auto filter = cparams.imatrix_observer_filter[scope];
+    if (filter == nullptr) {
+        return true;
+    }
+    return filter(weight_name, cparams.imatrix_observer_filter_data[scope]);
 }
 
 std::string llm_graph_context::imatrix_observer_name(const char * weight_name) const {
-    if (is_drafter_arch()) {
-        return std::string("dft.") + weight_name;
-    }
+    // The verifier/drafter split is owned by the per-scope IMatrixCollector
+    // bound to this context, not by a name prefix. The graph build hands the
+    // bare weight name to ggml so downstream tooling identifies the observer
+    // by its tensor name only; scope separation happens at collect time.
     return std::string(weight_name);
 }
 
@@ -3045,9 +3053,12 @@ ggml_tensor * llm_graph_context::build_attn(
         tessera_paged_attn_enabled() &&
         cparams.kv_unified && cparams.causal_attn && ubatch.n_tokens == 1 &&
         inp->get_tessera_page_map() &&
+        !mctx_cur->is_v_trans() &&
         !kq_b && !sinks && !v_mla &&
         q_cur->type == GGML_TYPE_F32 &&
-        (mctx_cur->type_k() == GGML_TYPE_F16 || mctx_cur->type_k() == GGML_TYPE_F32) &&
+        (mctx_cur->type_k() == GGML_TYPE_F16 || mctx_cur->type_k() == GGML_TYPE_F32 ||
+         mctx_cur->type_k() == GGML_TYPE_Q8_0 || mctx_cur->type_k() == GGML_TYPE_Q2_K ||
+         mctx_cur->type_k() == GGML_TYPE_Q4_0 || mctx_cur->type_k() == GGML_TYPE_Q5_0) &&
         mctx_cur->type_k() == mctx_cur->type_v();
 
     if (use_tessera_paged) {
@@ -3060,7 +3071,9 @@ ggml_tensor * llm_graph_context::build_attn(
         q = ggml_permute(ctx0, q, 0, 2, 1, 3); // [d, token, q_head, stream]
         k = mctx_cur->get_k_paged(ctx0, il);
         v = mctx_cur->get_v_paged(ctx0, il);
-        cur = ggml_tessera_paged_attn(ctx0, q, k, v, inp->get_tessera_page_map(), kq_scale);
+        // pass the cache's true V layout explicitly: the op can no longer infer
+        // it from shapes (ambiguous when head_dim == n_kv, e.g. SWA caches).
+        cur = ggml_tessera_paged_attn(ctx0, q, k, v, inp->get_tessera_page_map(), kq_scale, mctx_cur->is_v_trans());
         cur = ggml_reshape_2d(ctx0, cur, cur->ne[0]*cur->ne[1], cur->ne[2]*cur->ne[3]);
         cb(cur, "tessera_paged_kqv_out", il);
     } else {
@@ -3321,8 +3334,11 @@ ggml_tensor * llm_graph_context::build_attn(
     ggml_tensor * v = mctx_cur->get_v(ctx0, il);
     const bool use_tessera_paged = tessera_paged_attn_enabled() && cparams.kv_unified &&
         cparams.causal_attn && ubatch.n_tokens == 1 && inp->get_tessera_page_map(is_swa) &&
+        !mctx_cur->is_v_trans() &&
         !kq_b && !sinks && !v_mla && q_cur->type == GGML_TYPE_F32 &&
-        (mctx_cur->type_k() == GGML_TYPE_F16 || mctx_cur->type_k() == GGML_TYPE_F32) &&
+        (mctx_cur->type_k() == GGML_TYPE_F16 || mctx_cur->type_k() == GGML_TYPE_F32 ||
+         mctx_cur->type_k() == GGML_TYPE_Q8_0 || mctx_cur->type_k() == GGML_TYPE_Q2_K ||
+         mctx_cur->type_k() == GGML_TYPE_Q4_0 || mctx_cur->type_k() == GGML_TYPE_Q5_0) &&
         mctx_cur->type_k() == mctx_cur->type_v();
     ggml_tensor * cur = nullptr;
     if (use_tessera_paged) {
@@ -3334,7 +3350,9 @@ ggml_tensor * llm_graph_context::build_attn(
         q = ggml_permute(ctx0, q, 0, 2, 1, 3);
         k = mctx_cur->get_k_paged(ctx0, il);
         v = mctx_cur->get_v_paged(ctx0, il);
-        cur = ggml_tessera_paged_attn(ctx0, q, k, v, inp->get_tessera_page_map(is_swa), kq_scale);
+        // pass the cache's true V layout explicitly: the op can no longer infer
+        // it from shapes (ambiguous when head_dim == n_kv, e.g. SWA caches).
+        cur = ggml_tessera_paged_attn(ctx0, q, k, v, inp->get_tessera_page_map(is_swa), kq_scale, mctx_cur->is_v_trans());
         cur = ggml_reshape_2d(ctx0, cur, cur->ne[0]*cur->ne[1], cur->ne[2]*cur->ne[3]);
         cb(cur, "tessera_paged_kqv_out", il);
     } else {

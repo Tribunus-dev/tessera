@@ -129,6 +129,15 @@ if (CUDAToolkit_FOUND)
                              ${GGML_SOURCES_CUDA}
                             )
 
+    # Tessera Layer 1 instrumentation: cuda-dump-dequant.cu includes
+    # tessera-debug.h to write the dequant sidecar. The header lives in
+    # common/tessera-debug/ and is exposed as a public include dir on
+    # the llama-tessera-debug target. Guarded so the first caller wins.
+    if (NOT TARGET llama-tessera-debug)
+        add_subdirectory(${CMAKE_SOURCE_DIR}/common/tessera-debug ${CMAKE_BINARY_DIR}/_deps/llama-tessera-debug)
+    endif()
+    target_link_libraries(ggml-cuda PUBLIC llama-tessera-debug)
+
     add_compile_definitions(GGML_CUDA_PEER_MAX_BATCH_SIZE=${GGML_CUDA_PEER_MAX_BATCH_SIZE})
 
     if (GGML_CUDA_GRAPHS)

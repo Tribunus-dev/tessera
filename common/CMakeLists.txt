@@ -82,8 +82,6 @@ add_library(${TARGET}
     imatrix-loader.h
     json-schema-to-grammar.cpp
     llguidance.cpp
-    log.cpp
-    log.h
     ngram-cache.cpp
     ngram-cache.h
     ngram-map.cpp
@@ -98,8 +96,16 @@ add_library(${TARGET}
     reasoning-budget.h
     sampling.cpp
     sampling.h
+    speculative-calibration.cpp
+    speculative-calibration.h
     speculative.cpp
     speculative.h
+    tessera-analytical-io.cpp
+    tessera-analytical-io.h
+    tessera-config.cpp
+    tessera-config.h
+    tessera-runtime.cpp
+    tessera-runtime.h
     trie.cpp
     trie.h
     unicode.cpp
@@ -119,9 +125,22 @@ add_library(${TARGET}
     )
 
 if (APPLE)
-    target_sources(${TARGET} PRIVATE ane-mtp.mm ane-mtp.h)
+    target_sources(${TARGET} PRIVATE
+        ane-mtp.mm ane-mtp.h
+        ane-pump.mm ane-pump.h)
     set_source_files_properties(ane-mtp.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
-    target_link_libraries(${TARGET} PRIVATE "-framework CoreML" "-framework Foundation" "-framework IOSurface")
+    set_source_files_properties(ane-pump.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
+    # ggml-metal provides ggml_mtl_shared_event_t for the W7
+    # MTLSharedEvent handoff per state slot. The events are
+    # signaled by the ANE dispatch path on OUTPUT_READY and
+    # consumed by the Metal backend (or by the host via
+    # ggml_mtl_shared_event_wait). The dependency is
+    # architecturally justified: the events are the cross-timeline
+    # lock-free primitive between the ANE side (in common) and
+    # the Metal side (in ggml). ggml-base pulls in nothing extra.
+    target_link_libraries(${TARGET} PRIVATE
+        ggml ggml-base
+        "-framework CoreML" "-framework Foundation" "-framework IOSurface")
 endif()
 
 set_target_properties(${TARGET} PROPERTIES
@@ -130,8 +149,14 @@ set_target_properties(${TARGET} PROPERTIES
     MACHO_CURRENT_VERSION 0 # keep macOS linker from seeing oversized version number
 )
 
-target_include_directories(${TARGET} PUBLIC . ../vendor)
+target_include_directories(${TARGET} PUBLIC . ./tessera-debug ../vendor)
 target_compile_features   (${TARGET} PUBLIC cxx_std_17)
+
+# Bake the in-repo schema path into the analytical-IO helper so it can
+# locate the schema files at runtime without an env-var set. Installed
+# builds override this via TESSERA_SCHEMA_DIR at runtime.
+target_compile_definitions(${TARGET} PRIVATE
+    TESSERA_SCHEMA_DIR="${CMAKE_SOURCE_DIR}/common/schemas")
 
 if (BUILD_SHARED_LIBS)
     set_target_properties(${TARGET} PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -141,6 +166,7 @@ if (BUILD_SHARED_LIBS)
 endif()
 
 target_link_libraries(${TARGET} PUBLIC  llama-common-base)
+target_link_libraries(${TARGET} PUBLIC  llama-log)
 target_link_libraries(${TARGET} PRIVATE cpp-httplib)
 
 if (LLAMA_LLGUIDANCE)
@@ -176,3 +202,45 @@ if (LLAMA_LLGUIDANCE)
 endif()
 
 target_link_libraries(${TARGET} PUBLIC llama Threads::Threads)
+
+# Low-level logging primitives. Built as its own static target so the
+# backends (ggml-cpu, ggml-cuda, ggml-metal) and the tessera-debug
+# sidecar writer can use the LOG_* macros without dragging in the
+# whole common/ library. Guarded so the first caller wins.
+if (NOT TARGET llama-log)
+    add_subdirectory(${CMAKE_SOURCE_DIR}/common/log ${CMAKE_BINARY_DIR}/_deps/llama-log)
+endif()
+
+# Tessera Layer 1 sidecar writer. Built as its own static target so
+# the backends (ggml-cpu, ggml-cuda, ggml-metal) can link against it
+# directly without dragging in the whole common/ library. The first
+# caller (whichever backend configures first) wins; subsequent calls
+# from the other backends are no-ops.
+if (NOT TARGET llama-tessera-debug)
+    add_subdirectory(${CMAKE_SOURCE_DIR}/common/tessera-debug ${CMAKE_BINARY_DIR}/_deps/llama-tessera-debug)
+endif()
+
+target_link_libraries(${TARGET} PUBLIC llama-tessera-debug)
+
+# Standalone smoke test for the analytical-IO helper
+# (tessera-analytical-io.{h,cpp}). Sibling of the tessera-debug
+# smoke test pattern: kept here (rather than in a subdir) because
+# the helper lives in the main common/ library, and a missing link
+# should not break the rest of common/. Run as
+# ./bin/test-tessera-analytical-io.
+if (LLAMA_BUILD_TESTS)
+    set(TS_ANALYTICAL_IO_TEST_TARGET test-tessera-analytical-io)
+    add_executable(${TS_ANALYTICAL_IO_TEST_TARGET} test_tessera_analytical_io.cpp)
+    target_link_libraries(${TS_ANALYTICAL_IO_TEST_TARGET} PRIVATE ${TARGET})
+    target_compile_features(${TS_ANALYTICAL_IO_TEST_TARGET} PRIVATE cxx_std_17)
+    add_test(NAME ${TS_ANALYTICAL_IO_TEST_TARGET} COMMAND ${TS_ANALYTICAL_IO_TEST_TARGET})
+
+    # Companion emit binary: writes a sample L3-outlier NDJSON file
+    # via the helper. Used by the Python end-to-end test
+    # (tools/tessera/test_analytical_io.py) to verify the cross-
+    # language C++ writer -> polars reader contract.
+    set(TS_EMIT_L3_TARGET test-emit-l3-ndjson)
+    add_executable(${TS_EMIT_L3_TARGET} test_emit_l3_ndjson.cpp)
+    target_link_libraries(${TS_EMIT_L3_TARGET} PRIVATE ${TARGET})
+    target_compile_features(${TS_EMIT_L3_TARGET} PRIVATE cxx_std_17)
+endif()

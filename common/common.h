@@ -107,8 +107,42 @@ enum llama_example {
     LLAMA_EXAMPLE_EXPORT_GRAPH_OPS,
     LLAMA_EXAMPLE_DOWNLOAD,
     LLAMA_EXAMPLE_TOKENIZE,
+    // Tessera fork: top-level scope for all --tessera-* / subcommand flags.
+    // Subcommand-specific flags are additionally tagged with a
+    // tessera_subcommand value in common_arg (see common/tessera-args.h).
+    LLAMA_EXAMPLE_TESSERA,
 
     LLAMA_EXAMPLE_COUNT,
+};
+
+// Tessera fork: subcommand namespace. The CLI surface is collapsed from
+// a flat 60-flag pile into 19 named subcommands. A flag is visible only
+// when its tagged tessera_subcommand is either empty (top-level / "any")
+// or matches the current ctx_arg.tessera_sc.
+enum tessera_subcommand {
+    TESSERA_SC_NONE,        // no subcommand (main quantize path / top-level)
+    TESSERA_SC_ACCEPT,
+    TESSERA_SC_ADAPT,
+    TESSERA_SC_ANONYMIZE,
+    TESSERA_SC_AWQ,
+    TESSERA_SC_CALIBRATE,
+    TESSERA_SC_CAPABILITY,
+    TESSERA_SC_CHAMPQ,
+    TESSERA_SC_DATASET,
+    TESSERA_SC_DPACE,
+    TESSERA_SC_EVOLVE,
+    TESSERA_SC_GA,
+    TESSERA_SC_KERNEL_FITNESS,
+    TESSERA_SC_L15,
+    TESSERA_SC_L2,
+    TESSERA_SC_L5,
+    TESSERA_SC_POLICY,
+    TESSERA_SC_RUNTIME_PROBE,
+    TESSERA_SC_THROUGHPUT,
+    TESSERA_SC_UNIFIED_WRITER,   // Phase 16: --write-unified-gguf CLI
+    TESSERA_SC_W4A4,
+
+    TESSERA_SC_COUNT,
 };
 
 enum common_sampler_type {
@@ -175,6 +209,8 @@ enum common_speculative_type {
     COMMON_SPECULATIVE_TYPE_DRAFT_DFLASH,  // DFlash speculative decoding
     COMMON_SPECULATIVE_TYPE_DRAFT_DSPARK,  // DSpark speculative decoding (DFlash + Markov head)
     COMMON_SPECULATIVE_TYPE_DRAFT_HYBRID,  // DFlash and MTP arbitration
+    COMMON_SPECULATIVE_TYPE_DRAFT_ADAPTIVE, // Workstream B: run all 4 embedded drafters (MTP/DFlash/DSPark/Eagle3)
+                                            // in parallel and let the verifier arbitrate the longest accepted prefix.
     COMMON_SPECULATIVE_TYPE_NGRAM_SIMPLE,  // simple self-speculative decoding based on n-grams
     COMMON_SPECULATIVE_TYPE_NGRAM_MAP_K,   // self-speculative decoding with n-gram keys only
     COMMON_SPECULATIVE_TYPE_NGRAM_MAP_K4V, // self-speculative decoding with n-gram keys and 4 m-gram values
@@ -356,6 +392,43 @@ struct common_params_speculative_draft {
     std::vector<llama_model_tensor_buft_override> tensor_buft_overrides;
 };
 
+// Workstream B: per-drafter slots for the ADAPTIVE muxer.
+//
+// COMMON_SPECULATIVE_TYPE_DRAFT_ADAPTIVE runs all 4 embedded drafters (MTP,
+// DFlash, DSPark, Eagle3) per step.  Each drafter needs its own llama_context
+// because the architectures differ and the per-drafter KV caches must be
+// independent.  This struct carries the 4 ctx_dft pointers and the per-drafter
+// n_max override.
+//
+// The drafter contexts are non-owning here; lifetime is managed by the caller
+// (typically common_speculative_init_from_params when Workstream A's embedded
+// loader is in place; the test fixtures construct short-lived contexts).
+//
+// For the deterministic tie-breaking, the muxer runs drafters in this fixed
+// order (matches the architect's spec): MTP, DFlash, DSPark, Eagle3.  See
+// common_speculative_impl_draft_adaptive for the use of this order.
+struct common_params_speculative_adaptive {
+    llama_context * ctx_dft_mtp    = nullptr;
+    llama_context * ctx_dft_dflash = nullptr;
+    llama_context * ctx_dft_dspark = nullptr;
+    llama_context * ctx_dft_eagle3 = nullptr;
+
+    // Per-drafter n_max override.  0 = use params.speculative.draft.n_max.
+    int32_t n_max_mtp    = 0;
+    int32_t n_max_dflash = 0;
+    int32_t n_max_dspark = 0;
+    int32_t n_max_eagle3 = 0;
+
+    // true when at least the MTP drafter is wired (the others are optional
+    // for incremental bring-up; the muxer skips drafters whose ctx is null).
+    bool has_any() const {
+        return ctx_dft_mtp    != nullptr ||
+               ctx_dft_dflash != nullptr ||
+               ctx_dft_dspark != nullptr ||
+               ctx_dft_eagle3 != nullptr;
+    }
+};
+
 struct common_params_speculative_ngram_mod {
     int32_t n_match = 24;
 
@@ -380,6 +453,10 @@ struct common_params_speculative {
     // used by Simple, MTP, Eagle3, etc. - all methods that require some kind of draft model
     common_params_speculative_draft draft;
 
+    // Workstream B: ADAPTIVE muxer per-drafter context slots.  Only consulted
+    // when COMMON_SPECULATIVE_TYPE_DRAFT_ADAPTIVE is in `types`.
+    common_params_speculative_adaptive adaptive;
+
     common_params_speculative_ngram_mod ngram_mod;
     common_params_speculative_ngram_map ngram_simple;
     common_params_speculative_ngram_map ngram_map_k;
@@ -387,8 +464,15 @@ struct common_params_speculative {
 
     common_params_speculative_ngram_cache ngram_cache;
 
+    // True when a drafter model needs to be loaded.  Two sources:
+    //   1. draft.mparams non-empty -> a separate drafter GGUF on disk.
+    //   2. draft.target_model_path non-empty -> the drafter is embedded
+    //      in the target GGUF; common_speculative_init_from_params will
+    //      open the target GGUF and pull the drafter tensors out of
+    //      it (see common/speculative.cpp ctor for the embedded branch
+    //      and the convention used to group the per-drafter tensors).
     bool has_dft() const {
-        return !draft.mparams.empty();
+        return !draft.mparams.empty() || !draft.target_model_path.empty();
     }
 
     uint32_t need_n_rs_seq() const {
@@ -397,7 +481,8 @@ struct common_params_speculative {
                    t == COMMON_SPECULATIVE_TYPE_DRAFT_EAGLE3 ||
                    t == COMMON_SPECULATIVE_TYPE_DRAFT_DFLASH ||
                    t == COMMON_SPECULATIVE_TYPE_DRAFT_DSPARK ||
-                   t == COMMON_SPECULATIVE_TYPE_DRAFT_HYBRID;
+                   t == COMMON_SPECULATIVE_TYPE_DRAFT_HYBRID ||
+                   t == COMMON_SPECULATIVE_TYPE_DRAFT_ADAPTIVE;
         });
 
         return needs_rs_seq ? draft.n_max : 0u;
@@ -466,7 +551,10 @@ struct common_params {
     int32_t n_chunks              =    -1; // max number of chunks to process (-1 = unlimited)
     int32_t n_spec_steps          =    64; // [imatrix] number of spec-decoding steps to roll forward when --model-draft is set (0 = until context limit)
     std::string telemetry_out;             // [imatrix] path to write per-step accept/reject JSONL when --model-draft is set
-    int32_t n_telemetry_topk   = 0;        // [imatrix] when > 0 with telemetry_out, emit v2 schema with verifier+drafter top-k distributions per draft position (0 = v1 only)
+    int32_t n_telemetry_topk   = 0;        // [imatrix] when > 0 with telemetry_out, additionally emit verifier+drafter top-k distributions per draft position in the llama.tessera.spec.v1 record (0 = minimal record with confidence[] only)
+    std::string features_out;              // [imatrix] prefix for offline trunk target-layer feature capture (<prefix>.bin + <prefix>.json); enables the dedicated capture pass
+    std::vector<int32_t> feature_layers;   // [imatrix] trunk layer ids to capture, in the encoder concatenation order (the drafter's target_layer_ids)
+    int32_t features_warmup    = 256;      // [imatrix] per-chunk prefix tokens to process for context but not emit (their hidden states lack a full left window); 0 = emit all
     int32_t n_parallel            =     1; // number of parallel sequences to decode
     int32_t n_sequences           =     1; // number of sequences to decode
     int32_t n_outputs_max         =     0; // max outputs in a batch (0 = n_batch)
@@ -607,7 +695,7 @@ struct common_params {
     struct common_params_model mmproj;
     bool mmproj_use_gpu = true;     // use GPU for multimodal model
     bool no_mmproj = false;         // explicitly disable multimodal model
-    bool no_embedded_mtp = false;   // do not auto-enable the embedded MTP draft even if the GGUF has one
+    bool no_embedded_mtp = false;   // disable auto-enable of the MTP draft embedded in the model GGUF
     std::vector<std::string> image; // path to image file(s) ; TODO: change the name to "media"
     int image_min_tokens = -1;
     int image_max_tokens = -1;
@@ -717,7 +805,24 @@ struct common_params {
 
     // imatrix params
     int32_t n_out_freq  = 10; // output the imatrix every n_out_freq iterations
-    int32_t n_save_freq =  0; // save the imatrix every n_save_freq iterations
+    int32_t n_save_freq =  0; // save the imatrix every n_save_freq iterations (0 = dynamic ladder or none)
+    bool    dynamic_save_freq = true; // when n_save_freq == 0, use the dynamic
+                                      // save ladder (start paranoid, relax as
+                                      // runtime stability is proven over wall
+                                      // time). Set to false via --no-dynamic-save
+                                      // to fall back to the pre-2026-08 behaviour
+                                      // (0 == no intermediate saves).
+    float   memory_budget_fraction = 0.6f; // refuse to start if model_size >
+                                           // physmem * F (jetsam SIGKILL is
+                                           // likely on macOS / iOS when this
+                                           // is exceeded). 0 disables.
+    bool    no_memory_check = false; // skip the memory precheck
+    bool    no_pid_file     = false; // do not write <output>.pid
+    int32_t max_minutes     = 0;     // wall-time cap in minutes; 0 = no cap.
+                                     // When set, the binary installs a SIGALRM
+                                     // handler that exits at the next chunk
+                                     // boundary (atomic save on the next save
+                                     // boundary keeps the prior checkpoint).
     int32_t i_chunk     =  0; // start processing from this chunk
     int32_t imatrix_convergence_min_chunks = 0; // minimum chunks before adaptive stopping (0 = disabled)
     int32_t imatrix_convergence_interval   = 16; // chunks between convergence checks
@@ -757,6 +862,15 @@ struct common_params {
     llama_progress_callback load_progress_callback = NULL;
     void *                  load_progress_callback_user_data = NULL;
     bool no_alloc = false; // Don't allocate model buffers
+
+    // admission control + prefill pacing (server). Default 0 = disabled.
+    int32_t max_admitted_requests = 0;
+    int32_t prefill_chunk_size    = 0;
+    // OpenTelemetry span export (server).
+    bool        otel_enabled      = false;
+    std::string otel_endpoint;
+    std::string otel_service_name = "llama.cpp";
+    float       otel_sample_rate  = 1.0f;
 };
 
 // call once at the start of a program if it uses libcommon

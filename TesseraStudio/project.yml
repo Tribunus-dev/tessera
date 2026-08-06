@@ -1,0 +1,87 @@
+name: TesseraStudio
+
+options:
+  bundleIdPrefix: com.tessera.studio
+  deploymentTarget:
+    macOS: "14.0"
+    iOS: "17.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ENABLE_HARDENED_RUNTIME: "YES"
+
+# The SwiftUI sources do `import TesseraCore` (and TesseraCore does
+# `import CTesseraFFI`), so those modules must stay separate compilation
+# units. We reuse the existing SPM package unchanged: each app target
+# links the `TesseraCore` product and compiles only its own app surface.
+packages:
+  TesseraStudio:
+    path: .
+
+targets:
+  TesseraStudioMac:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources/TesseraStudioMac
+      # Both PrivacyInfo.xcprivacy and Shared/Assets.xcassets must land
+      # in Copy Bundle Resources. xcodegen 2.45.4 has no top-level
+      # `resources:` field; the only working way is `sources:` with
+      # `buildPhase: resources`.
+      - path: Support/Mac/PrivacyInfo.xcprivacy
+        buildPhase: resources
+      - path: Shared/Assets.xcassets
+        buildPhase: resources
+    dependencies:
+      - package: TesseraStudio
+        product: TesseraCore
+      # Worker 1 builds tessera.xcframework into artifacts/ via
+      # TesseraStudio/scripts/build-xcframework.sh. When the xcframework is
+      # present, the FFI symbols take over; until then the SwiftPM CTesseraFFI
+      # stub is what links into TesseraCore and TesseraFFIBridge.isAvailable
+      # is false, so the engine tools fall back to the tessera-cli subprocess
+      # (see TesseraCLIBinaryResolver).
+      - framework: artifacts/tessera.xcframework
+    settings:
+      base:
+        PRODUCT_NAME: TesseraStudioMac
+        PRODUCT_BUNDLE_IDENTIFIER: com.tessera.studio.mac
+        INFOPLIST_FILE: Support/Mac/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Support/Mac/TesseraStudioMac.entitlements
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGNING_REQUIRED: "NO"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+    scheme:
+      testTargets: []
+
+  TesseraStudioiOS:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Sources/TesseraStudioiOS
+      - path: Shared/Assets.xcassets
+        buildPhase: resources
+    dependencies:
+      - package: TesseraStudio
+        product: TesseraCore
+    settings:
+      base:
+        PRODUCT_NAME: TesseraStudioiOS
+        PRODUCT_BUNDLE_IDENTIFIER: com.tessera.studio.ios
+        INFOPLIST_FILE: Support/iOS/Info.plist
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGNING_ALLOWED: "NO"
+        CODE_SIGNING_REQUIRED: "NO"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+    scheme:
+      testTargets: []

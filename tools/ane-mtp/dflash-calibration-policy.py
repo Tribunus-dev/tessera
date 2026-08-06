@@ -7,8 +7,12 @@ from pathlib import Path
 
 
 SCHEMA = "llama.speculative.calibration-policy.v1"
+# The unified llama.tessera.spec.v1 schema is the only schema the imatrix
+# spec-calibration path emits. It always carries `confidence[]` (the cheap
+# per-step payload), so consumers that only look at drafted/accepted/
+# confidence work without change.
 EVENT_SCHEMAS = {
-    "llama.dflash.acceptance.v1": "dflash",
+    "llama.tessera.spec.v1": "dflash",
     "llama.mtp.acceptance.v1": "mtp",
 }
 

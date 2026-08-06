@@ -17,6 +17,8 @@ add_library(mtmd
             clip-impl.h
             clip-model.h
             clip-graph.h
+            clip-capture.cpp
+            clip-capture.h
             models/models.h
             models/cogvlm.cpp
             models/conformer.cpp
@@ -65,6 +67,24 @@ target_include_directories(mtmd PUBLIC  .)
 target_include_directories(mtmd PRIVATE ../..)
 target_include_directories(mtmd PRIVATE ../../vendor)
 target_compile_features   (mtmd PRIVATE cxx_std_17)
+
+if (APPLE)
+    # tessera: AudioToolbox is the production macOS audio decode
+    # path (WAV / MP3 / FLAC / AAC / ALAC). The clip-capture
+    # module's Apple branch uses ExtAudioFile to decode; the
+    # inline WAV parser remains as a final fallback. The
+    # find_library + target_link_libraries pattern is the
+    # standard CMake approach for system frameworks;
+    # AudioToolbox is a system framework, not a third-party dep.
+    # CoreFoundation is required by AudioToolbox's CFString /
+    # CFURL helpers.
+    find_library(AudioToolbox_FRAMEWORK AudioToolbox)
+    find_library(CoreFoundation_FRAMEWORK CoreFoundation)
+    target_link_libraries(mtmd PRIVATE
+        ${AudioToolbox_FRAMEWORK}
+        ${CoreFoundation_FRAMEWORK})
+    target_compile_definitions(mtmd PRIVATE TS_HAVE_AUDIOTOOLBOX)
+endif()
 
 if (MTMD_VIDEO)
     target_compile_definitions(mtmd PRIVATE MTMD_VIDEO)
@@ -139,4 +159,13 @@ if (LLAMA_BUILD_TOOLS)
     set_target_properties(llama-mtmd-debug PROPERTIES OUTPUT_NAME llama-mtmd-debug)
     target_link_libraries(llama-mtmd-debug PRIVATE llama-common mtmd Threads::Threads)
     target_compile_features(llama-mtmd-debug PRIVATE cxx_std_17)
+
+    # tessera: clip-graph activation capture CLI. Mirrors the
+    # llama-imatrix pattern (standalone binary the orchestrator
+    # invokes). Does not link against llama-common or
+    # llama-quantize-impl to keep the surface minimal.
+    add_executable(llama-clip-capture clip-capture-cli.cpp)
+    set_target_properties(llama-clip-capture PROPERTIES OUTPUT_NAME llama-clip-capture)
+    target_link_libraries(llama-clip-capture PRIVATE mtmd Threads::Threads)
+    target_compile_features(llama-clip-capture PRIVATE cxx_std_17)
 endif()

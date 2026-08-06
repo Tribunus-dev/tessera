@@ -52,10 +52,22 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
         ggml-cpu/vec.cpp
         ggml-cpu/ops.h
         ggml-cpu/ops.cpp
+        ggml-cpu/cpu-dump-dequant.h
+        ggml-cpu/cpu-dump-dequant.cpp
+        ggml-cpu/cpu-dump-matmul-output.h
+        ggml-cpu/cpu-dump-matmul-output.cpp
         )
 
     target_compile_features(${GGML_CPU_NAME} PRIVATE c_std_11 cxx_std_17)
-    target_include_directories(${GGML_CPU_NAME} PRIVATE . ggml-cpu)
+    target_include_directories(${GGML_CPU_NAME} PRIVATE . ggml-cpu ${CMAKE_SOURCE_DIR}/common)
+
+    # Bring the tessera-debug static target into scope before linking
+    # against it. Guarded so the first caller (any of the backends or
+    # common/) wins; the rest are no-ops.
+    if (NOT TARGET llama-tessera-debug)
+        add_subdirectory(${CMAKE_SOURCE_DIR}/common/tessera-debug ${CMAKE_BINARY_DIR}/_deps/llama-tessera-debug)
+    endif()
+    target_link_libraries(${GGML_CPU_NAME} PUBLIC llama-tessera-debug)
 
     if (APPLE AND GGML_ACCELERATE)
         find_library(ACCELERATE_FRAMEWORK Accelerate)

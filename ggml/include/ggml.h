@@ -430,7 +430,9 @@ extern "C" {
         GGML_TYPE_NVFP4   = 40, // NVFP4 (4 blocks, E4M3 scale)
         GGML_TYPE_Q1_0    = 41,
         GGML_TYPE_Q2_0    = 42,
-        GGML_TYPE_COUNT   = 43,
+        GGML_TYPE_TESSERA_T640    = 43, // 2D Tile640 ternary; 6 component tensors
+        GGML_TYPE_TESSERA_T640_3D = 44, // 3D expert bank marker; same physical encoding as T640
+        GGML_TYPE_COUNT   = 45,
     };
 
     // precision
@@ -2435,13 +2437,19 @@ extern "C" {
     // Page-map attention. page_map is I32 [n_kv] and maps each logical KV
     // position to its physical cache cell; K/V remain in their original
     // storage and are never gathered into a contiguous staging tensor.
+    //
+    // v_trans must be supplied by the caller (it knows the cache layout) rather
+    // than inferred from tensor shapes: when the V head dimension equals the KV
+    // arena size (e.g. SWA caches where head_dim == n_kv), a shape-based
+    // inference is ambiguous and picks the wrong layout, producing garbage.
     GGML_API struct ggml_tensor * ggml_tessera_paged_attn(
             struct ggml_context * ctx,
             struct ggml_tensor  * q,
             struct ggml_tensor  * k,
             struct ggml_tensor  * v,
             struct ggml_tensor  * page_map,
-            float                 scale);
+                      float       scale,
+                      bool        v_trans);
 
     GGML_API void ggml_flash_attn_ext_set_prec(
             struct ggml_tensor * a,

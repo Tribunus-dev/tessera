@@ -493,6 +493,7 @@ llama_context::~llama_context() {
         }
     }
     ggml_opt_free(opt_ctx);
+    ggml_backend_residency_free(residency);
 }
 
 void llama_context::resolve_fused_ops(const llama_memory_context_i * mctx, uint32_t n_seqs) {
@@ -641,6 +642,15 @@ void llama_context::sched_reserve() {
         n_splits_pp = ggml_backend_sched_get_n_splits(sched.get());
         n_nodes_pp  = ggml_graph_n_nodes(gf);
     }
+
+    // Project C: residency tracker. Records (backend, tensor, iter) per call
+    // to graph_compute so callers can query stale entries via
+    // ggml_backend_residency_suggest_releases. The tracker is enabled
+    // unconditionally; the recording loop in graph_compute is a tight
+    // O(n_nodes) pass with no allocation per node, so the overhead is
+    // negligible. Project B (auto-select) is gated on TESSERA_AUTO_SELECT
+    // because it changes per-node backend assignment.
+    residency = ggml_backend_residency_new();
 
     // reserve with tg (token generation) graph to get the number of splits and nodes
     {
@@ -1147,13 +1157,25 @@ void llama_context::set_abort_callback(bool (*abort_callback)(void * data), void
 void llama_context::set_imatrix_observer_filter(
         llama_imatrix_observer_filter filter,
         void * user_data) {
-    cparams.imatrix_observer_filter = filter;
-    cparams.imatrix_observer_filter_data = user_data;
-    ++cparams.imatrix_observer_epoch;
+    const int scope = cparams.imatrix_observer_scope;
+    GGML_ASSERT(scope >= LLAMA_OBSERVER_SCOPE_VERIFIER &&
+                scope <= LLAMA_OBSERVER_SCOPE_DRAFTER);
+    cparams.imatrix_observer_filter[scope] = filter;
+    cparams.imatrix_observer_filter_data[scope] = user_data;
+    ++cparams.imatrix_observer_epoch[scope];
+}
+
+void llama_context::set_imatrix_observer_scope(enum llama_observer_scope scope) {
+    GGML_ASSERT(scope >= LLAMA_OBSERVER_SCOPE_VERIFIER &&
+                scope <= LLAMA_OBSERVER_SCOPE_DRAFTER);
+    cparams.imatrix_observer_scope = scope;
 }
 
 void llama_context::bump_imatrix_observer_epoch() {
-    ++cparams.imatrix_observer_epoch;
+    const int scope = cparams.imatrix_observer_scope;
+    GGML_ASSERT(scope >= LLAMA_OBSERVER_SCOPE_VERIFIER &&
+                scope <= LLAMA_OBSERVER_SCOPE_DRAFTER);
+    ++cparams.imatrix_observer_epoch[scope];
 }
 
 void llama_context::set_embeddings(bool value) {
@@ -2581,9 +2603,51 @@ ggml_status llama_context::graph_compute(
         set_n_threads_fn.second(set_n_threads_fn.first, n_threads);
     }
 
+    // Project B: per-graph backend auto-select. Opt-in via
+    // TESSERA_AUTO_SELECT=1 because the heuristic re-assigns nodes to
+    // backends (CPU for layout, ACCEL for elementwise, MUL_MAT stays
+    // wherever the scheduler put it), which is a different assignment from
+    // the scheduler's static load-balancing default. Off by default to
+    // keep the existing behaviour; the opt-in switch is the safety hatch
+    // for A/B comparison.
+    static const bool auto_select_enabled = []() {
+        const char * v = getenv("TESSERA_AUTO_SELECT");
+        return v != nullptr && v[0] != '\0' && v[0] != '0';
+    }();
+    if (auto_select_enabled && !backend_ptrs.empty()) {
+        const size_t n_assigned = ggml_backend_sched_auto_select(
+                sched.get(), gf, backend_ptrs.data(), backend_ptrs.size());
+        LLAMA_LOG_DEBUG("%s: auto_select assigned %zu / %d nodes\n",
+                        __func__, n_assigned, ggml_graph_n_nodes(gf));
+    }
+
     auto status = ggml_backend_sched_graph_compute_async(sched.get(), gf);
     if (status != GGML_STATUS_SUCCESS) {
         LLAMA_LOG_ERROR("%s: ggml_backend_sched_graph_compute_async failed with error %d\n", __func__, status);
+        return status;
+    }
+
+    // Project C: residency mark. After the compute lands, walk the graph's
+    // node list and record (backend, tensor, iter) for every node. The
+    // post-compute walk is intentional: ggml_backend_sched_get_tensor_backend
+    // returns the backend that actually ran the node, which is determined
+    // by the scheduler's assignment during graph_compute_async. Recording
+    // per-iter (not per-tensor) means we don't need the eval callback to
+    // carry the backend; the scheduler is the source of truth and we read
+    // its assignment back after the fact.
+    if (residency != nullptr) {
+        const int64_t iter = residency_iter++;
+        const int n_nodes = ggml_graph_n_nodes(gf);
+        for (int i = 0; i < n_nodes; ++i) {
+            ggml_tensor * node = ggml_graph_node(gf, i);
+            if (node == nullptr) {
+                continue;
+            }
+            ggml_backend_t backend = ggml_backend_sched_get_tensor_backend(sched.get(), node);
+            if (backend != nullptr) {
+                ggml_backend_residency_mark_used(residency, backend, node, iter);
+            }
+        }
     }
 
     // fprintf(stderr, "splits: %d\n", ggml_backend_sched_get_n_splits(sched));
@@ -3388,13 +3452,21 @@ static void llama_set_param(struct ggml_tensor * tensor, llama_opt_param_filter 
 
 void llama_context::opt_init(struct llama_model * model, struct llama_opt_params lopt_params) {
     GGML_ASSERT(!opt_ctx);
+    opt_loss_type         = lopt_params.loss_type;
+    opt_use_weighted_ce   = lopt_params.use_weighted_ce;
+    if (!opt_use_weighted_ce) {
+        // Default: detach any leftover weight buffer so an earlier driver
+        // can't leak its weights into a later (non-DFlash) call.
+        opt_label_weights       = nullptr;
+        opt_label_weights_n_ctx = 0;
+    }
     model->hparams.n_ctx_train = lopt_params.n_ctx_train > 0 ? lopt_params.n_ctx_train : n_ctx();
     const uint32_t n_batch     = std::min(this->n_batch(),  model->hparams.n_ctx_train);
     const uint32_t n_ubatch    = std::min(this->n_ubatch(), n_batch);
     GGML_ASSERT(model->hparams.n_ctx_train % n_batch  == 0);
     GGML_ASSERT(n_batch                    % n_ubatch == 0);
 
-    ggml_opt_params opt_params = ggml_opt_default_params(sched.get(), GGML_OPT_LOSS_TYPE_CROSS_ENTROPY);
+    ggml_opt_params opt_params = ggml_opt_default_params(sched.get(), lopt_params.loss_type);
     opt_params.opt_period      = n_batch / n_ubatch;
     opt_params.get_opt_pars    = lopt_params.get_opt_pars;
     opt_params.get_opt_pars_ud = lopt_params.get_opt_pars_ud;
@@ -3427,11 +3499,22 @@ void llama_context::opt_init(struct llama_model * model, struct llama_opt_params
     }
 }
 
+void llama_context::set_opt_label_weights(const float * weights, size_t n_tok) {
+    if (weights == nullptr || n_tok == 0) {
+        opt_label_weights       = nullptr;
+        opt_label_weights_n_ctx = 0;
+        return;
+    }
+    opt_label_weights       = weights;
+    opt_label_weights_n_ctx = n_tok;
+}
+
 void llama_context::opt_epoch_iter(
         ggml_opt_dataset_t               dataset,
         ggml_opt_result_t                result,
         const std::vector<llama_token> & tokens,
         const std::vector<llama_token> & labels_sparse,
+        const std::vector<float>       & labels_dense,
         llama_batch                    & batch,
         ggml_opt_epoch_callback          callback,
         bool                             train,
@@ -3517,12 +3600,42 @@ void llama_context::opt_epoch_iter(
             {
                 struct ggml_tensor * labels = ggml_opt_labels(opt_ctx);
                 GGML_ASSERT(labels->ne[1] == n_ubatch);
-                ggml_set_zero(labels);
-                const float onef = 1.0f;
-                for (uint32_t pos_ubatch = 0; pos_ubatch < n_ubatch; ++pos_ubatch) {
-                    const uint32_t ilabel = pos_ctx + pos_batch + pos_ubatch;
-                    GGML_ASSERT(labels_sparse[ilabel] < labels->ne[0]);
-                    ggml_backend_tensor_set(labels, &onef, (pos_ubatch*labels->ne[0] + labels_sparse[ilabel])*sizeof(float), sizeof(float));
+                if (opt_loss_type == GGML_OPT_LOSS_TYPE_LK) {
+                    // LK labels are dense probability distributions, one [n_vocab]
+                    // column per position, already contiguous in labels_dense; copy
+                    // each position's column straight into the labels tensor.
+                    const int64_t n_vocab = labels->ne[0];
+                    for (uint32_t pos_ubatch = 0; pos_ubatch < n_ubatch; ++pos_ubatch) {
+                        const uint32_t ilabel = pos_ctx + pos_batch + pos_ubatch;
+                        ggml_backend_tensor_set(labels, labels_dense.data() + (size_t)ilabel*n_vocab,
+                                (size_t)pos_ubatch*n_vocab*sizeof(float), n_vocab*sizeof(float));
+                    }
+                } else {
+                    // DFlash / D-PACE: when use_weighted_ce is on, the sparse
+                    // label fill writes labels[target, pos] = weight[pos]
+                    // instead of 1.0, so the ggml CE computes
+                    // sum_j w_j * (-log q(y_j)) with a per-position gradient
+                    // scale. n_ctx is the per-example length set at opt_init
+                    // (= the dataset's n_ctx), and idata_in_loop / (n_ctx/n_ubatch)
+                    // recovers the current example id since ubatch_per_ctx is an
+                    // integer divisor (asserted in opt_epoch).
+                    ggml_set_zero(labels);
+                    const int64_t ubatch_per_ctx = n_ctx / n_ubatch;
+                    const int64_t idata          = idata_in_loop / ubatch_per_ctx;
+                    const float  * wbuf          = opt_use_weighted_ce ? opt_label_weights : nullptr;
+                    const size_t  wbuf_n_ctx     = opt_label_weights_n_ctx;
+                    for (uint32_t pos_ubatch = 0; pos_ubatch < n_ubatch; ++pos_ubatch) {
+                        const uint32_t ilabel = pos_ctx + pos_batch + pos_ubatch;
+                        GGML_ASSERT(labels_sparse[ilabel] < labels->ne[0]);
+                        // default weight 1.0; the only change is reading from
+                        // the per-position weight buffer when wbuf is set.
+                        float wf = 1.0f;
+                        if (wbuf != nullptr && ilabel < wbuf_n_ctx) {
+                            wf = wbuf[idata * wbuf_n_ctx + ilabel];
+                        }
+                        ggml_backend_tensor_set(labels, &wf,
+                                (pos_ubatch*labels->ne[0] + labels_sparse[ilabel])*sizeof(float), sizeof(float));
+                    }
                 }
             }
             ggml_opt_eval(opt_ctx, result);
@@ -3543,7 +3656,11 @@ void llama_context::opt_epoch(
         int64_t                   idata_split,
         ggml_opt_epoch_callback   callback_train,
         ggml_opt_epoch_callback   callback_eval) {
-    const uint32_t n_ctx    = this->n_ctx();
+    // Iterate the training context, not the padded capacity: n_ctx_train equals
+    // n_ctx() unless the caller pinned it (opt_init), e.g. to train short
+    // fixed-length datapoints. The per-datapoint copy below and opt_epoch_iter
+    // must both key off the same length.
+    const uint32_t n_ctx    = llama_model_n_ctx_train(&model);
     const uint32_t n_batch  = std::min(cparams.n_batch,  n_ctx);
     const uint32_t n_ubatch = std::min(cparams.n_ubatch, n_batch);
     const  int64_t ndata    = ggml_opt_dataset_ndata(dataset);
@@ -3557,6 +3674,15 @@ void llama_context::opt_epoch(
     std::vector<llama_token>        tokens(n_ctx);
     std::vector<llama_token> labels_sparse(n_ctx);
 
+    // LK trains against dense probability-distribution labels ([n_vocab] per
+    // position); cross-entropy keeps the sparse token-id labels above. The
+    // dense buffer is only allocated when needed.
+    const bool dense_labels = (opt_loss_type == GGML_OPT_LOSS_TYPE_LK);
+    std::vector<float> labels_dense;
+    if (dense_labels) {
+        labels_dense.resize((size_t)n_ctx * model.vocab.n_tokens());
+    }
+
     int64_t idata = 0;
 
     int64_t t_loop_start = ggml_time_us();
@@ -3565,8 +3691,12 @@ void llama_context::opt_epoch(
         constexpr bool train = true;
         const int64_t idata_in_loop = idata*ubatch_per_ctx;
 
-        ggml_opt_dataset_get_batch_host(dataset, tokens.data(), n_ctx*sizeof(llama_token), labels_sparse.data(), idata);
-        opt_epoch_iter(dataset, result_train, tokens, labels_sparse, batch,
+        if (dense_labels) {
+            ggml_opt_dataset_get_batch_host(dataset, tokens.data(), n_ctx*sizeof(llama_token), labels_dense.data(), idata);
+        } else {
+            ggml_opt_dataset_get_batch_host(dataset, tokens.data(), n_ctx*sizeof(llama_token), labels_sparse.data(), idata);
+        }
+        opt_epoch_iter(dataset, result_train, tokens, labels_sparse, labels_dense, batch,
             callback_train, train, idata_in_loop, ndata_in_loop, t_loop_start);
     }
 
@@ -3576,8 +3706,12 @@ void llama_context::opt_epoch(
         constexpr bool train = false;
         const int64_t idata_in_loop = (idata - idata_split)*ubatch_per_ctx;
 
-        ggml_opt_dataset_get_batch_host(dataset, tokens.data(), n_ctx*sizeof(llama_token), labels_sparse.data(), idata);
-        opt_epoch_iter(dataset, result_eval, tokens, labels_sparse, batch,
+        if (dense_labels) {
+            ggml_opt_dataset_get_batch_host(dataset, tokens.data(), n_ctx*sizeof(llama_token), labels_dense.data(), idata);
+        } else {
+            ggml_opt_dataset_get_batch_host(dataset, tokens.data(), n_ctx*sizeof(llama_token), labels_sparse.data(), idata);
+        }
+        opt_epoch_iter(dataset, result_eval, tokens, labels_sparse, labels_dense, batch,
             callback_eval, train, idata_in_loop, ndata_in_loop, t_loop_start);
     }
 
@@ -3790,10 +3924,25 @@ void llama_set_imatrix_observer_filter(
         llama_context * ctx,
         llama_imatrix_observer_filter filter,
         void * user_data) {
+    if (ctx == nullptr) {
+        return;
+    }
     ctx->set_imatrix_observer_filter(filter, user_data);
 }
 
+void llama_set_imatrix_observer_scope(
+        llama_context * ctx,
+        enum llama_observer_scope scope) {
+    if (ctx == nullptr) {
+        return;
+    }
+    ctx->set_imatrix_observer_scope(scope);
+}
+
 void llama_bump_imatrix_observer_epoch(llama_context * ctx) {
+    if (ctx == nullptr) {
+        return;
+    }
     ctx->bump_imatrix_observer_epoch();
 }
 
@@ -4298,6 +4447,13 @@ bool llama_opt_param_filter_all(const struct ggml_tensor * tensor, void * userda
 
 void llama_opt_init(struct llama_context * ctx, struct llama_model * model, struct llama_opt_params lopt_params) {
     ctx->opt_init(model, lopt_params);
+}
+
+void llama_set_opt_label_weights(struct llama_context * ctx, const float * weights, size_t n_tok) {
+    if (ctx == nullptr) {
+        return;
+    }
+    ctx->set_opt_label_weights(weights, n_tok);
 }
 
 void llama_opt_epoch(

@@ -21,6 +21,11 @@
 struct common_arg {
     std::set<enum llama_example> examples = {LLAMA_EXAMPLE_COMMON};
     std::set<enum llama_example> excludes = {};
+    // Tessera fork: when non-empty, this flag is only visible to the
+    // listed subcommands. Empty set = visible regardless of subcommand
+    // (top-level / "any"). Only meaningful when LLAMA_EXAMPLE_TESSERA
+    // is in `examples`; ignored otherwise.
+    std::set<enum tessera_subcommand> tessera_sc = {};
     std::vector<const char *> args;
     std::vector<const char *> args_neg;  // for negated args like --no-xxx
     const char * value_hint   = nullptr; // help text or example for arg value
@@ -76,6 +81,11 @@ struct common_arg {
 
     common_arg & set_examples(std::initializer_list<enum llama_example> examples);
     common_arg & set_excludes(std::initializer_list<enum llama_example> excludes);
+    // Tessera fork: tag a flag with the subcommand(s) it belongs to. A
+    // flag with no subcommand tag is visible regardless of the active
+    // subcommand. Multiple subcommand tags mean the flag is visible
+    // under any of them.
+    common_arg & set_tessera_sc(std::initializer_list<enum tessera_subcommand> sc);
     common_arg & set_env(const char * env);
     common_arg & set_sampling();
     common_arg & set_spec();
@@ -113,6 +123,11 @@ namespace common_arg_utils {
 
 struct common_params_context {
     enum llama_example ex = LLAMA_EXAMPLE_COMMON;
+    // Tessera fork: the active subcommand. TESSERA_SC_NONE means the
+    // main quantize path (no subcommand given). When ex ==
+    // LLAMA_EXAMPLE_TESSERA, this controls per-subcommand flag
+    // visibility via common_arg::tessera_sc.
+    enum tessera_subcommand tessera_sc = TESSERA_SC_NONE;
     common_params & params;
     std::vector<common_arg> options;
     void(*print_usage)(int, char **) = nullptr;
@@ -130,6 +145,15 @@ bool common_params_to_map(int argc, char ** argv, llama_example ex, std::map<com
 // these arguments are not treated as command line arguments
 // see: https://github.com/ggml-org/llama.cpp/issues/18163
 void common_params_add_preset_options(std::vector<common_arg> & args);
+
+// Dispatch a single Tessera-flavored arg (--tessera-*, --calib-*,
+// --progress-file, --quantize-db) at argv[i] to the handler registered
+// in common_params_parse_ex via the add_opt path. Intended for tools
+// (llama-quantize) that hand-roll their arg loop instead of calling
+// common_params_parse.
+// Returns argv slots consumed (1 = switch, 2 = valued), 0 if argv[i] is
+// not a Tessera flag, or -1 on a validation error (message written to err).
+int common_arg_dispatch_tessera(int argc, char ** argv, int i, std::string & err);
 
 struct common_models_handler {
     common_download_hf_plan plan;

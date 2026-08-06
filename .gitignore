@@ -153,3 +153,20 @@ a.out.*
 
 AGENTS.local.md
 .pi/SYSTEM.md
+
+# Tessera Studio xcframework build outputs (see
+# TesseraStudio/scripts/build-xcframework.sh). The xcframework is rebuilt
+# locally; it is not checked in.
+/TesseraStudio/artifacts/
+/build-ffi/
+
+# Tessera calibration corpus payloads. The build-calibration-corpus.py
+# --real path downloads Wikitext-103 / COCO val2014 / LibriSpeech into
+# data/calibration/ (text, vision/ images, audio/ FLACs). The builder
+# is checked in; the downloaded contents are not.
+/data/calibration/
+
+# Tessera Studio packaging output. The `packaging/build-and-notarize.sh`
+# script writes the final .pkg installer here. It is rebuilt by the
+# packaging script on every release.
+/dist/

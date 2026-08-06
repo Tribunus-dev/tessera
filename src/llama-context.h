@@ -137,6 +137,7 @@ struct llama_context {
     void set_imatrix_observer_filter(
             llama_imatrix_observer_filter filter,
             void * user_data);
+    void set_imatrix_observer_scope(enum llama_observer_scope scope);
     void bump_imatrix_observer_epoch();
 
     void set_embeddings (bool value);
@@ -234,6 +235,12 @@ struct llama_context {
 
     void opt_init(struct llama_model * model, struct llama_opt_params lopt_params);
 
+    // DFlash / D-PACE: attach a per-position CE weight buffer used by the
+    // sparse label fill when opt_use_weighted_ce is set. Pass NULL/n_tok=0 to
+    // detach. The buffer is borrowed, not copied - the caller keeps ownership
+    // and must keep the memory alive across llama_opt_epoch.
+    void set_opt_label_weights(const float * weights, size_t n_tok);
+
     // TODO: more flexible combinations of logical/physical batch size and context size
     void opt_epoch(
             ggml_opt_dataset_t      dataset,
@@ -248,6 +255,7 @@ struct llama_context {
             ggml_opt_result_t                result,
             const std::vector<llama_token> & tokens,
             const std::vector<llama_token> & labels_sparse,
+            const std::vector<float>       & labels_dense,
             llama_batch                    & batch,
             ggml_opt_epoch_callback          callback,
             bool                             train,
@@ -393,8 +401,32 @@ private:
     ggml_backend_t backend_cpu = nullptr;
     std::vector<ggml_backend_ptr> backends;
 
+    // Project B (auto-select) + Project C (residency tracker) wiring.
+    // The residency tracker records (backend, tensor, iter) per call to
+    // graph_compute and exposes stale entries via suggest_releases. The
+    // tracker is enabled unconditionally (it's just a record-keeping data
+    // structure with no side effects), but the auto-select pass that
+    // re-assigns nodes to backends is gated on TESSERA_AUTO_SELECT (opt-in
+    // env var) because it changes the existing per-node assignment.
+    ggml_backend_residency_t residency = nullptr;
+    int64_t                  residency_iter = 0;
+
     // training
     ggml_opt_context_t opt_ctx = nullptr;
+    // loss selected at opt_init; decides whether opt_epoch_iter fills sparse
+    // one-hot labels (cross-entropy) or copies dense distribution labels (LK)
+    ggml_opt_loss_type opt_loss_type = GGML_OPT_LOSS_TYPE_CROSS_ENTROPY;
+    // DFlash / D-PACE: when true, the sparse label fill writes
+    // labels[target, pos] = opt_label_weights[idata*n_ctx + pos] instead of 1.0.
+    // opt_init copies this from llama_opt_params.use_weighted_ce. Default false
+    // so finetune.cpp and the LK driver see the existing 1.0 path.
+    bool                opt_use_weighted_ce        = false;
+    // Per-position CE weights. Set by llama_set_opt_label_weights; the caller
+    // owns the buffer and must keep it alive across llama_opt_epoch. nullptr
+    // (or out-of-range ilabel) behaves as weight 1.0 to keep the existing
+    // path identical when the flag is off.
+    const float *       opt_label_weights          = nullptr;
+    size_t              opt_label_weights_n_ctx    = 0;
 
     ggml_threadpool_t threadpool       = nullptr;
     ggml_threadpool_t threadpool_batch = nullptr;

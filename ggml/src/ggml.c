@@ -942,6 +942,22 @@ static const struct ggml_type_traits type_traits[GGML_TYPE_COUNT] = {
         .type_size                = 0,
         .is_quantized             = false,
     },
+    [GGML_TYPE_TESSERA_T640] = {
+        .type_name                = "tessera_t640",
+        .blck_size                = TILE640_PAGE_SIZE,
+        .type_size                = sizeof(int32_t), // logical; the pack is a 6-tensor cluster
+        .is_quantized             = true,
+        .to_float                 = (ggml_to_float_t) dequantize_row_tessera_t640,
+        .from_float_ref           = (ggml_from_float_t) quantize_row_tessera_t640_ref,
+    },
+    [GGML_TYPE_TESSERA_T640_3D] = {
+        .type_name                = "tessera_t640_3d",
+        .blck_size                = TILE640_PAGE_SIZE,
+        .type_size                = sizeof(int32_t),
+        .is_quantized             = true,
+        .to_float                 = (ggml_to_float_t) dequantize_row_tessera_t640,
+        .from_float_ref           = (ggml_from_float_t) quantize_row_tessera_t640_ref,
+    },
 };
 
 const struct ggml_type_traits * ggml_get_type_traits(enum ggml_type type) {
@@ -3905,7 +3921,7 @@ struct ggml_tensor * ggml_get_rows(
     GGML_ASSERT(a->ne[2] == b->ne[1]);
     GGML_ASSERT(a->ne[3] == b->ne[2]);
     GGML_ASSERT(b->ne[3] == 1);
-    GGML_ASSERT(b->type == GGML_TYPE_I32);
+    GGML_ASSERT(b->type == GGML_TYPE_I32 || b->type == GGML_TYPE_I64);
 
     // TODO: implement non F32 return
     enum ggml_type type = GGML_TYPE_F32;
@@ -5459,16 +5475,17 @@ struct ggml_tensor * ggml_tessera_paged_attn(
         struct ggml_tensor  * k,
         struct ggml_tensor  * v,
         struct ggml_tensor  * page_map,
-        float                 scale) {
+                  float       scale,
+                  bool        v_trans) {
     GGML_ASSERT(q->type == GGML_TYPE_F32);
-    GGML_ASSERT((k->type == GGML_TYPE_F16 || k->type == GGML_TYPE_F32) &&
-                (v->type == GGML_TYPE_F16 || v->type == GGML_TYPE_F32));
+    GGML_ASSERT((k->type == GGML_TYPE_F16 || k->type == GGML_TYPE_F32 || k->type == GGML_TYPE_Q8_0 || k->type == GGML_TYPE_Q2_K || k->type == GGML_TYPE_Q4_0 || k->type == GGML_TYPE_Q5_0) &&
+                (v->type == GGML_TYPE_F16 || v->type == GGML_TYPE_F32 || v->type == GGML_TYPE_Q8_0 || v->type == GGML_TYPE_Q2_K || v->type == GGML_TYPE_Q4_0 || v->type == GGML_TYPE_Q5_0));
     GGML_ASSERT(page_map->type == GGML_TYPE_I32);
     GGML_ASSERT(q->ne[0] == k->ne[0]);
-    const bool v_trans = v->ne[0] == k->ne[2];
     GGML_ASSERT(k->ne[1] == v->ne[1]);
     GGML_ASSERT(k->ne[3] == v->ne[3]);
     GGML_ASSERT(v_trans || k->ne[2] == v->ne[2]);
+    GGML_ASSERT(v_trans ? v->ne[0] == k->ne[2] : v->ne[0] == k->ne[0]);
     GGML_ASSERT(q->ne[2] % k->ne[1] == 0);
     GGML_ASSERT(page_map->ne[1] == q->ne[3]);
     // page_map is the logical sequence.  K/V may have more rows because they
@@ -7332,6 +7349,24 @@ static void ggml_compute_backward(
                 // noop
             }
         } break;
+        case GGML_OP_SET_ROWS: {
+            // result is a view of src2 with the rows of src0 written at the indices in src1, so the gradient
+            // of src0 is the rows of grad gathered at src1; ggml_get_rows reads the index type directly (I32
+            // or I64) and does not broadcast ne[2]/ne[3], which the KV-cache path satisfies (indices cover
+            // every slice)
+            if (src0_needs_grads) {
+                GGML_ASSERT(grad->ne[2] == src1->ne[1] && grad->ne[3] == src1->ne[2] &&
+                        "SET_ROWS backward: broadcasting across ne[2]/ne[3] is not supported");
+
+                ggml_add_or_set(ctx, cgraph, isrc0, ggml_get_rows(ctx, grad, src1));
+            }
+            if (src1_needs_grads) {
+                // noop
+            }
+            // the destination rows that are not overwritten pass grad through to src2; the KV-cache training
+            // path never needs this (the cache buffer is not a trainable parameter), so fail loudly if asked
+            GGML_ASSERT(!src2_needs_grads && "SET_ROWS backward: gradients for the destination are not implemented");
+        } break;
         case GGML_OP_DIAG_MASK_INF: {
             if (src0_needs_grads) {
                 /* ggml_diag_mask_inf_impl() shouldn't be here */
@@ -7657,6 +7692,7 @@ void ggml_build_backward_expand(
             case GGML_OP_CPY:           // gradients in CPY target are irrelevant
             case GGML_OP_GET_ROWS:      // row indices not differentiable
             case GGML_OP_GET_ROWS_BACK: // same as for GET_ROWS
+            case GGML_OP_SET_ROWS:      // row indices not differentiable
             case GGML_OP_ROPE:          // positions not differentiable
                 ignore_src[1] = true;
                 break;
@@ -7678,7 +7714,8 @@ void ggml_build_backward_expand(
 
         // inplace operations are currently not supported
         GGML_ASSERT(!node->view_src || node->op == GGML_OP_CPY || node->op == GGML_OP_VIEW ||
-            node->op == GGML_OP_RESHAPE || node->op == GGML_OP_PERMUTE || node->op == GGML_OP_TRANSPOSE);
+            node->op == GGML_OP_RESHAPE || node->op == GGML_OP_PERMUTE || node->op == GGML_OP_TRANSPOSE ||
+            node->op == GGML_OP_SET_ROWS);
 
         const size_t ihash = ggml_hash_find(&cgraph->visited_hash_set, node);
         GGML_ASSERT(ihash != GGML_HASHSET_FULL);

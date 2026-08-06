@@ -39,6 +39,55 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+# CHAMP-Q channel permutation. Imported lazily in main() so the helper
+# module path can be customised via TESSERA_TOOLS / sys.path; the
+# functions themselves have no side effects on import.
+try:
+    from tools.tessera.champq_permute import (  # type: ignore
+        CHAMPQPolicy,
+        apply_champq_permutation,
+        compute_champq_permutation,
+        decode_q_to_weight,
+        invert_champq_permutation,
+    )
+    _CHAMPQ_AVAILABLE = True
+except ImportError:
+    try:
+        # tools/ is on sys.path when quantize_v3 is run as a script.
+        from tessera.champq_permute import (  # type: ignore
+            CHAMPQPolicy,
+            apply_champq_permutation,
+            compute_champq_permutation,
+            decode_q_to_weight,
+            invert_champq_permutation,
+        )
+        _CHAMPQ_AVAILABLE = True
+    except ImportError:
+        _CHAMPQ_AVAILABLE = False
+
+# PE-QAT: parameter-efficient quantization-aware training policy. The
+# trainer lives in tools.tessera.pe_qat and is imported as a normal
+# module import (it has no platform-specific deps). The policy is
+# consumed in the main quantize loop via apply_pe_qat_to_weight().
+try:
+    from tools.tessera.pe_qat import (  # type: ignore
+        PE_QAT_POLICY_SCHEMA,
+        _pe_qat_policy_for,
+        apply_pe_qat_to_weight,
+    )
+    _PE_QAT_AVAILABLE = True
+except ImportError:
+    try:
+        # tools/ is on sys.path when quantize_v3 is run as a script.
+        from tessera.pe_qat import (  # type: ignore
+            PE_QAT_POLICY_SCHEMA,
+            _pe_qat_policy_for,
+            apply_pe_qat_to_weight,
+        )
+        _PE_QAT_AVAILABLE = True
+    except ImportError:
+        _PE_QAT_AVAILABLE = False
+
 ACCELERATE_BACKEND = None
 ANE_BACKEND = None
 if sys.platform == "darwin" and os.environ.get("TESSERA_ACCELERATE", "1") != "0":
@@ -1518,6 +1567,9 @@ def quantize_2d(weights: np.ndarray, out_dim: int, in_dim: int,
                 awq_clip: float = 1.0,
                 tensor_name: str = "",
                 ternary_threshold: float = 1.0,
+                lrq_u: Optional[np.ndarray] = None,
+                lrq_v: Optional[np.ndarray] = None,
+                lrq_agg: str = "mean",
                 ) -> Dict[str, np.ndarray]:
     """Full 2D weight quantization: ternary + pack + scales + outliers.
 
@@ -1526,26 +1578,63 @@ def quantize_2d(weights: np.ndarray, out_dim: int, in_dim: int,
         ternarize and scale W'
         stored_input_scale[c] = 1.0 / s[c]^awq_alpha   (applied to input at runtime)
 
+    LRQ step (when lrq_u and lrq_v are provided):
+        Reconstruct S = U @ V (shape (out_dim, in_dim)). Aggregate across
+        the output dimension to a per-input-channel scale
+        ``s_agg[c] = mean_r(S[r, c])`` (or RMS for ``lrq_agg="rms"``).
+        Apply the per-input-channel scale to the weight, ternarize, and
+        store ``1.0 / s_agg`` as the input scale. The full U and V are not
+        applied at runtime (we do not touch the runtime); they are kept in
+        the policy as audit metadata so a future runtime extension can
+        apply the low-rank correction additively.
+
     `ternary_threshold` is a multiplier on the per-row mean(|W|) used as the
     {-1, 0, +1} cutoff. Default 1.0 = legacy tessera behaviour. A value >1
     produces a sparser quantization (more zeros), <1 denser. Per-tensor
     calibrated via tools/tessera/per_tensor_calibrate.py.
     """
-    if act_scales is not None and awq_alpha is None:
+    if lrq_u is not None and lrq_v is not None:
+        # Reconstruct the rank-r scale and aggregate it to per-input-channel.
+        # The aggregation preserves energy ("rms") or the linear mean
+        # ("mean"); both reduce to the AWQ convention at rank 1.
+        s = np.asarray(lrq_u, dtype=np.float32) @ np.asarray(lrq_v, dtype=np.float32)
+        if lrq_agg == "rms":
+            s_agg = np.sqrt(np.mean(s * s, axis=0) + 1e-12).astype(np.float32)
+        else:
+            s_agg = np.mean(s, axis=0).astype(np.float32)
+        # Clamp before inversion so the F16 reciprocal is always finite.
+        s_agg = np.maximum(s_agg, np.float32(1e-6))
+        w_scale = s_agg.reshape(1, in_dim)
+        weights_scaled = (weights.astype(np.float32) * w_scale)
+        input_scale = (1.0 / s_agg).astype(np.float32)
+        resolved_alpha = 0.0  # AWQ path is bypassed when LRQ is active
+    elif act_scales is not None and awq_alpha is None:
         awq_alpha, _ = awq_scale_search(
             weights, act_scales, outlier_frac, tensor_name=tensor_name
         )
-    resolved_alpha = 0.0 if awq_alpha is None else awq_alpha
-    input_scale = np.ones(in_dim, dtype=np.float32)
-    if act_scales is not None and resolved_alpha > 0.0:
-        # Per-channel scale on weights. Normalize and bound the telemetry
-        # before inversion so the serialized F16 reciprocal is always finite.
-        w_scale = normalized_awq_scale(act_scales, resolved_alpha)
-        weights_scaled = (weights.astype(np.float32) * w_scale.reshape(1, in_dim))
-        # inverse goes to the input
-        input_scale = 1.0 / w_scale
+        resolved_alpha = 0.0 if awq_alpha is None else awq_alpha
+        input_scale = np.ones(in_dim, dtype=np.float32)
+        if act_scales is not None and resolved_alpha > 0.0:
+            # Per-channel scale on weights. Normalize and bound the telemetry
+            # before inversion so the serialized F16 reciprocal is always finite.
+            w_scale = normalized_awq_scale(act_scales, resolved_alpha)
+            weights_scaled = (weights.astype(np.float32) * w_scale.reshape(1, in_dim))
+            # inverse goes to the input
+            input_scale = 1.0 / w_scale
+        else:
+            weights_scaled = weights.astype(np.float32)
     else:
-        weights_scaled = weights.astype(np.float32)
+        resolved_alpha = 0.0 if awq_alpha is None else awq_alpha
+        input_scale = np.ones(in_dim, dtype=np.float32)
+        if act_scales is not None and resolved_alpha > 0.0:
+            # Per-channel scale on weights. Normalize and bound the telemetry
+            # before inversion so the serialized F16 reciprocal is always finite.
+            w_scale = normalized_awq_scale(act_scales, resolved_alpha)
+            weights_scaled = (weights.astype(np.float32) * w_scale.reshape(1, in_dim))
+            # inverse goes to the input
+            input_scale = 1.0 / w_scale
+        else:
+            weights_scaled = weights.astype(np.float32)
 
     if not 0.7 <= awq_clip <= 1.0:
         raise ValueError(f"AWQ clip must be in [0.7, 1.0], got {awq_clip}")
@@ -1579,9 +1668,18 @@ def quantize_2d(weights: np.ndarray, out_dim: int, in_dim: int,
         flat = core_weights.flatten()
         flat_ternary = np.zeros(flat.size, dtype=np.int8)
         # The legacy path kept positions where |w| >= mean(|W|); scale that
-        # by the calibrated multiplier.
+        # by the calibrated multiplier. Broadcast (out_dim,) over the
+        # flattened (out_dim * in_dim,) weight via row-major repeat:
+        # `per_row_threshold` is per-row, so the same value applies to
+        # every element of that row in the row-major flat layout. The v1
+        # comparison used `per_row_threshold.reshape(-1)` (shape out_dim)
+        # against an (out_dim * in_dim,) array, which broadcasts the
+        # threshold vector against the flat array as if it were a
+        # column-major layout — silently shifting the threshold for
+        # every row past row 0 and corrupting the ternarized output.
+        threshold_flat = np.repeat(per_row_threshold.reshape(-1), in_dim)
         abs_flat = np.abs(flat)
-        keep = abs_flat >= per_row_threshold.reshape(-1)
+        keep = abs_flat >= threshold_flat
         # We also need to know sign for the kept positions.
         flat_ternary[keep & (flat > 0)] = 1
         flat_ternary[keep & (flat < 0)] = -1
@@ -1873,6 +1971,465 @@ def quantize_2d_imatrix_mse(
     }
 
 
+def _septq_banded_cholesky(H: np.ndarray, bandwidth: int) -> np.ndarray:
+    """Compute a lower-triangular Cholesky factor L with H = L @ L.T.
+
+    Two strategies are used depending on banded-Cholesky feasibility:
+
+    1. **Banded Cholesky** (cost O(n * bandwidth^2)): the standard
+       outer-product Cholesky restricted to the band. Works when the
+       off-band energy of H is small relative to the diagonal (i.e., H is
+       "approximately" banded with the requested bandwidth).
+
+    2. **Full Cholesky + banded read-out** (fallback, cost O(n^3) via
+       BLAS): when the banded Cholesky fails because the off-band energy
+       of H is non-negligible (the common case for a rank-deficient H
+       from a small calibration set), compute the full Cholesky factor
+       and return it. The GPTQ-M helper does a banded forward-substitution
+       on the returned L which gives the exact banded portion of L^{-1}
+       regardless of whether L is full or banded.
+
+    The fallback fires only when the banded Cholesky would produce a
+    non-positive-definite s = H[j,j] - sum_{k=k_min}^{j-1} L[j,k]^2.
+    """
+    if H.ndim != 2 or H.shape[0] != H.shape[1]:
+        raise ValueError(f"H must be square, got {H.shape}")
+    n = H.shape[0]
+    if bandwidth < 0:
+        raise ValueError(f"bandwidth must be >= 0, got {bandwidth}")
+    L = np.zeros((n, n), dtype=H.dtype)
+    fallback = False
+    for j in range(n):
+        k_min = max(0, j - bandwidth)
+        if k_min < j:
+            s = H[j, j] - L[j, k_min:j] @ L[j, k_min:j]
+        else:
+            s = H[j, j]
+        if s <= 0.0:
+            fallback = True
+            break
+        L[j, j] = np.sqrt(s)
+        i_max = min(n, j + bandwidth + 1)
+        if i_max > j + 1 and k_min < j:
+            L[j + 1:i_max, j] = (
+                H[j + 1:i_max, j] - L[j + 1:i_max, k_min:j] @ L[j, k_min:j]
+            ) / L[j, j]
+        elif i_max > j + 1:
+            L[j + 1:i_max, j] = H[j + 1:i_max, j] / L[j, j]
+    if not fallback:
+        return L
+    # Fallback: full Cholesky via BLAS. The banded forward-sub in
+    # _septq_gptq_M produces the banded portion of L^{-1} regardless
+    # of whether L is full or banded, so the rest of the GPTQ-M path
+    # is unchanged.
+    L_full = np.linalg.cholesky(H)
+    return L_full
+
+
+def _septq_gptq_M(L: np.ndarray, bandwidth: int) -> np.ndarray:
+    """Build the strictly upper-triangular GPTQ update matrix from L = chol(H).
+
+    With L lower triangular, (L^{-1})_{jj} = 1 / L[j, j], so the closed-form
+    per-column update is ``M[j, k] = (L^{-1})_{k, j} * L[j, j]`` for k > j.
+    M is upper triangular with bandwidth ``bandwidth`` (M[j, k] = 0 for
+    k - j > bandwidth). The banded portion of L^{-1} comes from a banded
+    forward-substitution: for each j, solve L x = e_j keeping only x[k] for
+    k in (j, j + bandwidth + 1). Cost is O(n * bandwidth^2).
+    """
+    n = L.shape[0]
+    if bandwidth < 0:
+        raise ValueError(f"bandwidth must be >= 0, got {bandwidth}")
+    M = np.zeros((n, n), dtype=L.dtype)
+    for j in range(n):
+        x = np.zeros(n, dtype=L.dtype)
+        x[j] = 1.0 / L[j, j]
+        k_max = min(n, j + bandwidth + 1)
+        for k in range(j + 1, k_max):
+            row_min = max(0, k - bandwidth)
+            s = -np.dot(L[k, row_min:k], x[row_min:k])
+            x[k] = s / L[k, k]
+        if k_max > j + 1:
+            M[j, j + 1:k_max] = x[j + 1:k_max] * L[j, j]
+    return M
+
+
+def _septq_build_hessian(
+    in_dim: int,
+    act_scales: Optional[np.ndarray],
+    calibration_activations: Optional[np.ndarray],
+    ridge_fraction: float = 1e-4,
+) -> np.ndarray:
+    """Build the symmetric positive-definite Hessian H for the SEPTQ update.
+
+    With calibration activations X of shape (n_samples, in_dim), H is the
+    standard second-moment matrix H = X^T X / n_samples, optionally ridged
+    for numerical stability. Without activations we fall back to a diagonal
+    Hessian with H[j, j] = act_scales[j]^2 (the imatrix RMS proxy).
+    """
+    if calibration_activations is not None:
+        X = np.asarray(calibration_activations, dtype=np.float32)
+        if X.ndim != 2 or X.shape[1] != in_dim:
+            raise ValueError(
+                f"calibration_activations must be (n_samples, {in_dim}); got {X.shape}"
+            )
+        n = X.shape[0]
+        H = (X.T @ X) / np.float32(max(n, 1))
+        diag_mean = float(np.mean(np.diag(H)))
+        ridge = max(np.float32(ridge_fraction) * np.float32(diag_mean),
+                    np.float32(1e-2) * np.float32(diag_mean))
+        if ridge > 0:
+            H = H + np.eye(in_dim, dtype=np.float32) * ridge
+    elif act_scales is not None:
+        if act_scales.shape != (in_dim,):
+            raise ValueError(
+                f"act_scales shape mismatch: {act_scales.shape} vs {(in_dim,)}"
+            )
+        diag = np.maximum(act_scales.astype(np.float32), 1e-8) ** 2
+        H = np.diag(diag).astype(np.float32)
+    else:
+        H = np.eye(in_dim, dtype=np.float32)
+    return H
+
+
+def quantize_2d_septq(weights: np.ndarray, out_dim: int, in_dim: int,
+                      septq_ratio: float,
+                      act_scales: Optional[np.ndarray] = None,
+                      septq_iterations: int = 1,
+                      ternary_threshold: float = 1.0,
+                      tensor_name: str = "",
+                      calibration_activations: Optional[np.ndarray] = None,
+                      septq_hessian_mode: str = "banded",
+                      septq_hessian_bandwidth: int = 32,
+                      septq_importance_weight: str = "quant_error_h",
+                      septq_importance_lambda: float = 0.0,
+                      ) -> Dict[str, np.ndarray]:
+    """2D weight quantization using the SEPTQ recipe (KDD 2025).
+
+    SEPTQ is a two-step PTQ method:
+
+    1. **Static global importance.** Compute a per-element importance score
+       ``s[i,j] = (W[i,j] - Q(W[i,j]))^2 * H[j,j]`` where H is the Hessian of
+       the calibration activations and Q is a baseline quantizer. The top-k%
+       elements by importance form a static global mask M.
+    2. **Column-wise quantization with error compensation.** Build the
+       strictly upper-triangular GPTQ update matrix M = (H^{-1} / diag(H))
+       restricted to a band of width ``septq_hessian_bandwidth``. Quantize
+       the masked elements in one vectorized pass to {-1, 0, +1}, then
+       apply the cross-column update ``W[:, k] -= sum_j e_j * M[j, k]`` as a
+       single (out_dim, in_dim) @ (in_dim, in_dim) matmul.
+       {-1, 0, +1} and apply the cross-column update. The diagonal-H
+       approximation (this commit) makes the cross-column update a
+       no-op; the banded GPTQ-M path is added in a follow-up commit.
+
+    The end result is a mixed-precision representation: the "important"
+    elements are quantized to ternary {-1, 0, +1} and the "unimportant"
+    elements are kept at full precision. This is the opposite of the
+    standard Tessera flow where outliers are the "important" elements.
+
+    The diagonal-only approximation is used for the Hessian inverse: we use
+    H[j,j] (the column-wise importance from the imatrix) for the importance
+    scoring, and skip the cross-column error compensation. With a strictly
+    diagonal H_inv the cross-column update is identically zero, so this is
+    a tractable simplification of the full SEPTQ algorithm. The mask
+    selection uses argpartition (O(n)) instead of a full sort (O(n log n))
+    to make the importance ranking cheaper.
+
+    Two Hessian modes are supported:
+
+    * ``"banded"`` (default when ``calibration_activations`` is provided):
+      compute H = X^T X / n from the calibration activations, take the
+      banded Cholesky factor with bandwidth ``septq_hessian_bandwidth``,
+      and use the GPTQ update. This is the full SEPTQ algorithm modulo
+      the band truncation.
+    * ``"diagonal"``: H is a diagonal matrix with H[j, j] = act_scales[j]^2
+      (the imatrix RMS proxy). M is identically zero, so the cross-column
+      update is a no-op; only the static mask is active. This is the
+      v1 SEPTQ behaviour and is kept as a fast ablation baseline.
+
+    When ``calibration_activations`` is None and ``septq_hessian_mode`` is
+    ``"banded"``, the function silently falls back to the diagonal proxy.
+    The main script has no activations, so the banded mode is currently
+    only exercised by the A/B harness.
+
+    The output dict has the same shape as ``quantize_2d``. The
+    ``outlier_*`` entries store the UNIMPORTANT elements (full precision);
+    the ternary stores the IMPORTANT elements. The ``outlier_frac``
+    analogue is ``1 - septq_ratio``.
+
+    Args:
+        weights: 2D weight matrix [out_dim, in_dim], float32.
+        out_dim: output dimension.
+        in_dim: input dimension.
+        septq_ratio: fraction of elements to quantize (0, 1]. 1.0 = all
+            quantized (equivalent to RTN); 0.5 = half quantized, half
+            kept full precision.
+        act_scales: per-input-channel activation magnitude (RMS), used as
+            a proxy for the Hessian diagonal H[j,j]. If None, uniform
+            column importance is assumed.
+        septq_iterations: number of column-wise passes. The mask is fixed
+            at the first iteration (static global mask per the paper);
+            subsequent passes re-ternarize with the same mask. The default
+            of 1 is the canonical SEPTQ setting.
+        ternary_threshold: multiplier on per-row mean(|W|) for the {-1, 0,
+            +1} cutoff. Default 1.0 = legacy tessera behaviour.
+        tensor_name: for diagnostics only.
+        calibration_activations: optional (n_samples, in_dim) calibration
+            activations used to build the full Hessian in banded mode.
+        septq_hessian_mode: ``"banded"`` (default) or ``"diagonal"``.
+        septq_hessian_bandwidth: band radius for banded Cholesky; only
+            entries with |i - j| <= bandwidth participate in H^{-1}. The
+            default of 32 is a conservative trade-off: small enough to be
+            cheap (O(n * b^2) factorization) and large enough to capture
+            most of the cross-column benefit on typical layer activations.
+        septq_importance_weight: importance score mode. ``"quant_error_h"``
+            (default) is the original ``(W - Q(W))^2 * h_diag``. The
+            other modes are designed for heavy-tailed weights where the
+            original score lets outliers dominate the mask and forces
+            them into {-1, 0, +1}, which destroys their full-precision
+            values. See the per-mode descriptions in the source.
+        septq_importance_lambda: weight on the ``1/(|W| + eps)`` term
+            in the ``hybrid`` importance mode. Ignored for other modes.
+    """
+    if not 0.0 < septq_ratio <= 1.0:
+        raise ValueError(f"septq_ratio must be in (0, 1], got {septq_ratio}")
+    if septq_iterations < 1:
+        raise ValueError(f"septq_iterations must be >= 1, got {septq_iterations}")
+    if not 0.3 <= ternary_threshold <= 3.0:
+        raise ValueError(
+            f"ternary_threshold must be in [0.3, 3.0], got {ternary_threshold}"
+        )
+    if septq_hessian_mode not in ("diagonal", "banded"):
+        raise ValueError(
+            f"septq_hessian_mode must be 'diagonal' or 'banded', got {septq_hessian_mode}"
+        )
+    if septq_hessian_bandwidth < 0:
+        raise ValueError(
+            f"septq_hessian_bandwidth must be >= 0, got {septq_hessian_bandwidth}"
+        )
+    if septq_importance_weight not in (
+        "quant_error_h", "inv_abs_w", "inv_cdf", "hybrid",
+    ):
+        raise ValueError(
+            f"septq_importance_weight must be one of "
+            f"'quant_error_h', 'inv_abs_w', 'inv_cdf', 'hybrid'; "
+            f"got {septq_importance_weight!r}"
+        )
+    if septq_importance_lambda < 0:
+        raise ValueError(
+            f"septq_importance_lambda must be >= 0, got {septq_importance_lambda}"
+        )
+    # Bandwidth > in_dim - 1 is the same as full Cholesky. Clamp here so
+    # the inner helpers can assume 0 <= bandwidth < in_dim.
+    effective_bandwidth = min(septq_hessian_bandwidth, in_dim - 1)
+
+    W = weights.astype(np.float32, copy=False)
+    n = out_dim * in_dim
+    abs_W = np.abs(W)
+
+    # Resolve Hessian mode: banded requires activations; fall back to diagonal
+    # when activations are not available so the main-script path is unchanged.
+    effective_mode = septq_hessian_mode
+    if effective_mode == "banded" and calibration_activations is None:
+        effective_mode = "diagonal"
+
+    # Hessian diagonal proxy. The imatrix's RMS per channel is a cheap
+    # surrogate for H[j,j] = E[x_j^2] over the calibration distribution.
+    if act_scales is not None:
+        if act_scales.shape != (in_dim,):
+            raise ValueError(
+                f"act_scales shape mismatch: {act_scales.shape} vs {(in_dim,)}"
+            )
+        h_diag = np.maximum(act_scales.astype(np.float32), 1e-8)
+    else:
+        h_diag = np.ones(in_dim, dtype=np.float32)
+
+    # Per-row mean(|W|) threshold for the baseline ternarizer. Matches the
+    # standard Tessera behaviour at ternary_threshold=1.0.
+    row_mean_abs = abs_W.mean(axis=1, keepdims=True)
+    threshold_1d = (row_mean_abs * np.float32(ternary_threshold)).reshape(-1)
+    keep_2d = abs_W >= threshold_1d.reshape(out_dim, 1)
+
+    # Step 1: baseline ternarization to compute the quantization error used
+    # in the importance score. We ternarize using the same mean(|W|) rule
+    # as the standard Tessera flow so the SEPTQ importance ranking is
+    # directly comparable.
+    sign_W = np.sign(W).astype(np.int8)
+    ternary_init = np.where(keep_2d, sign_W, np.int8(0))
+    quant_error_init = (W - ternary_init.astype(np.float32)) ** 2
+
+    # Step 2: per-element importance. The original score is
+    # ``(W - Q(W))^2 * h_diag`` which puts the largest values on the
+    # heavy-tail elements (large |W| -> large ternarization error
+    # because Q(W) is sign(W) for |W| > row_mean). On heavy-tailed
+    # weights this lets outliers dominate the mask and forces them
+    # into {-1, 0, +1}, which destroys their full-precision values.
+    # The weighted modes downweight outliers so the mask focuses on
+    # the bulk where ternarization actually helps the MSE.
+    base_importance_2d = quant_error_init * h_diag.reshape(1, in_dim)
+    if septq_importance_weight == "quant_error_h":
+        importance_2d = base_importance_2d
+    elif septq_importance_weight == "inv_abs_w":
+        # Divide by |W| (with a small eps for stability) to downweight
+        # large-|W| elements. The mask then focuses on the bulk where
+        # ternarization is most useful.
+        weight_2d = np.float32(1.0) / (abs_W + np.float32(1e-8))
+        importance_2d = base_importance_2d * weight_2d
+    elif septq_importance_weight == "inv_cdf":
+        # Use the empirical 1 - CDF(|W|) as the weight. The CDF is
+        # computed per row (matching the per-row ternarization rule).
+        # This is the most aggressive downweighting: elements in the
+        # top of the row's magnitude distribution get weight ~0, so
+        # the mask never picks them.
+        abs_W_2d = abs_W
+        # Per-row ranks via argsort; convert to a [0, 1] CDF value.
+        row_ranks = np.empty_like(abs_W_2d, dtype=np.float32)
+        for r in range(out_dim):
+            order = np.argsort(abs_W_2d[r], kind="stable")
+            row_ranks[r, order] = np.arange(in_dim, dtype=np.float32) / max(in_dim - 1, 1)
+        cdf_weight_2d = np.float32(1.0) - row_ranks
+        importance_2d = base_importance_2d * cdf_weight_2d
+    elif septq_importance_weight == "hybrid":
+        # Additive hybrid: original score plus a lambda-weighted
+        # 1/(|W| + eps) term. With lambda = 0 this is the original;
+        # larger lambda progressively downweights outliers. The
+        # 1/(|W| + eps) term is scaled by h_diag so both terms share
+        # the same activation weighting and the units are comparable.
+        inv_abs_2d = np.float32(1.0) / (abs_W + np.float32(1e-8))
+        # Scale lambda to the bulk of the base importance so the
+        # lambda = 1 setting produces a comparable contribution from
+        # both terms. The base importance at a typical element is
+        # roughly E[(W - Q(W))^2] * E[H[j,j]]; we approximate the
+        # scale with the median of the base importance, which is
+        # robust to outliers.
+        base_scale = float(np.median(base_importance_2d))
+        inv_scale = float(np.median(inv_abs_2d * h_diag.reshape(1, in_dim)))
+        if inv_scale > 0 and base_scale > 0:
+            normalized_lambda = (
+                np.float32(septq_importance_lambda) *
+                np.float32(base_scale / inv_scale)
+            )
+        else:
+            normalized_lambda = np.float32(0.0)
+        importance_2d = base_importance_2d + normalized_lambda * inv_abs_2d * h_diag.reshape(1, in_dim)
+    else:
+        # Unreachable; the constructor validates the choice.
+        raise AssertionError(f"unreachable importance mode {septq_importance_weight!r}")
+    importance_flat = importance_2d.reshape(-1)
+
+    # Step 3: static global mask. We only need the top-k elements by
+    # importance, so we find the k-th largest value with argpartition
+    # (O(n)) and use it as a threshold. Cost is O(n) instead of O(n log n)
+    # for a full sort. With float32 importance values exact ties at the
+    # threshold are vanishingly rare, so the mask has exactly k True
+    # entries in practice. If there are ties the mask may have a few
+    # more than k entries; that is fine for SEPTQ which only uses the
+    # ratio approximately. Determinism is preserved: argpartition is
+    # quickselect and the threshold comparison is exact.
+    k = max(1, min(n, int(np.ceil(n * septq_ratio))))
+    if k >= n:
+        mask_2d = np.ones((out_dim, in_dim), dtype=bool)
+    else:
+        kth_idx = np.argpartition(-importance_flat, k - 1)[k - 1]
+        threshold = importance_flat[kth_idx]
+        mask_flat = importance_flat >= threshold
+        # If the threshold selection overshot (rare, only when there are
+        # exact float32 ties at the boundary), cap to exactly k True
+        # entries by clearing the lowest-importance over-shoots. Cost is
+        # O(n) once more; in practice this branch almost never fires
+        # for float32 importance values.
+        excess = int(mask_flat.sum()) - k
+        if excess > 0:
+            true_idx = np.flatnonzero(mask_flat)
+            true_importance = importance_flat[true_idx]
+            tail = np.argpartition(true_importance, excess)[:excess]
+            mask_flat[true_idx[tail]] = False
+        mask_2d = mask_flat.reshape(out_dim, in_dim)
+
+    # Step 4: vectorized column-wise quantization with error compensation.
+    # The v1 per-column Python loop was the dominant cost. It is replaced
+    # by a few vectorized ops: build the quantized mask, the ternary, and
+    # the per-position error matrix in a single pass each. The diagonal-H
+    # approximation is preserved as the "diagonal" mode (no cross-column
+    # update). The "banded" mode applies the GPTQ-M update via
+    # W_compensated = W - error_2d @ M with M derived from the banded
+    # Cholesky of H = X^T X / n.
+    quantized_mask_2d = mask_2d & keep_2d
+    ternary_2d = np.where(quantized_mask_2d, sign_W, np.int8(0))
+    # E is the per-position error at quantized positions, 0 elsewhere.
+    # Casting ternary_2d to float32 once and broadcasting is faster than
+    # the per-column `astype` of the original loop.
+    error_2d = (ternary_2d.astype(np.float32) - W) * quantized_mask_2d.astype(np.float32)
+
+    if effective_mode == "banded":
+        H = _septq_build_hessian(
+            in_dim, act_scales, calibration_activations
+        )
+        L = _septq_banded_cholesky(H, effective_bandwidth)
+        M = _septq_gptq_M(L, effective_bandwidth)
+        # W_compensated = W - E @ M. With banded M (b << in_dim) this is
+        # a dense matmul that BLAS handles in well under a second on
+        # 4096^2 inputs. E @ M is O(out_dim * in_dim^2) for the dense
+        # matmul even when M is banded (BLAS doesn't know about the zeros
+        # outside the band); a custom banded matmul would be O(out_dim *
+        # in_dim * bandwidth) but would require a separate code path.
+        W_compensated = W - error_2d @ M
+    else:
+        # Diagonal-only approximation: H_inv is diagonal, so M is
+        # identically zero. W_compensated is just W (the per-column
+        # local absorption in the v1 loop was a no-op because error_2d
+        # is zero at non-quantized positions; it is dropped here for
+        # clarity). Avoid the matmul entirely; BLAS would still take
+        # ~100ms even on a zero matrix.
+        W_compensated = W
+
+    ternary_final = ternary_2d.reshape(-1)
+
+    # Step 5: pack into the Tessera format. The "outliers" are the
+    # UNIMPORTANT elements (stored as full precision after the
+    # cross-column update has been applied). The ternary stores the
+    # IMPORTANT elements. The page/lane scales are computed against the
+    # original weights at the ternary positions only (the pack reflects
+    # the quantization; the outlier storage reflects the compensated
+    # W so that reconstruction at inference matches the optimized W).
+    unimportant_2d = np.where(~mask_2d, W_compensated, np.float32(0.0))
+    outlier_idx = np.where((~mask_2d).reshape(-1))[0].astype(np.int64)
+    outlier_vals = unimportant_2d.reshape(-1)[outlier_idx].astype(np.float32)
+
+    packed, pages_per_row = pack_tile640(ternary_final, out_dim, in_dim)
+    page_scales_f16, lane_scales = compute_scales(W, ternary_final, out_dim, in_dim)
+
+    if outlier_idx.size:
+        outlier_rows = (outlier_idx // in_dim).astype(np.int64)
+        order = np.argsort(outlier_rows, kind="stable")
+        outlier_rows = outlier_rows[order]
+        outlier_cols = (outlier_idx[order] % in_dim).astype(np.int32)
+        outlier_resid = outlier_vals[order].astype(np.float16)
+        row_counts = np.bincount(outlier_rows, minlength=out_dim)
+        outlier_row_offsets = np.empty(out_dim + 1, dtype=np.int32)
+        outlier_row_offsets[0] = 0
+        np.cumsum(row_counts, out=outlier_row_offsets[1:])
+    else:
+        outlier_row_offsets = np.zeros(out_dim + 1, dtype=np.int32)
+        outlier_cols = np.zeros(0, dtype=np.int32)
+        outlier_resid = np.zeros(0, dtype=np.float16)
+
+    return {
+        "packed": packed.astype(np.uint32).view(np.int32),
+        "page_scales": page_scales_f16.reshape(-1),
+        "lane_scales": lane_scales,
+        "outlier_row_offsets": outlier_row_offsets,
+        "outlier_cols": outlier_cols,
+        "outlier_vals": outlier_resid,
+        "input_scale": np.ones(in_dim, dtype=np.float16),  # AWQ disabled
+        "awq_alpha": 0.0,
+        "awq_clip": 1.0,
+        # Extra keys (not consumed by the GGUF writer; used by the A/B harness
+        # to reconstruct the quantized weight without unpacking Tile640).
+        "_ternary": ternary_final,
+        "_mask_2d": mask_2d,
+    }
+
+
 def quantize_3d(weights: np.ndarray, n_experts: int, out_dim: int, in_dim: int,
                 outlier_frac, imatrix: Optional[Dict[str, np.ndarray]] = None,
                 wname_hf: str = "", gguf_name: str = "",
@@ -1972,6 +2529,381 @@ def load_calibration_policy(path: Optional[str]) -> Optional[dict]:
     return policy
 
 
+HESSIAN_TRACE_SCHEMA = "llama.tessera.hessian-trace-policy.v1"
+
+
+def load_hessian_trace_policy(path: Optional[str]) -> Optional[dict]:
+    """Load an L3 E5 hessian-trace policy produced by l3_hessian_trace.py.
+
+    The policy inherits the speculative calibration-policy parent schema
+    so the same root-schema check as ``load_calibration_policy`` applies.
+    Returns None when ``path`` is empty.
+    """
+    if not path:
+        return None
+    with open(path, "r", encoding="utf-8") as source:
+        policy = json.load(source)
+    if policy.get("schema") not in {
+        "llama.dflash.calibration-policy.v1",
+        "llama.speculative.calibration-policy.v1",
+    }:
+        raise ValueError(f"{path}: unsupported calibration policy schema")
+    hessian = policy.get("hessian_trace")
+    if not isinstance(hessian, dict):
+        raise ValueError(
+            f"{path}: missing hessian_trace sub-policy (expected schema {HESSIAN_TRACE_SCHEMA!r})"
+        )
+    if hessian.get("schema") != HESSIAN_TRACE_SCHEMA:
+        raise ValueError(
+            f"{path}: hessian_trace.schema must be {HESSIAN_TRACE_SCHEMA!r}, "
+            f"got {hessian.get('schema')!r}"
+        )
+    return policy
+
+
+def merge_hessian_trace_into_policy(
+    calibration_policy: Optional[dict], trace_policy: Optional[dict]
+) -> Optional[dict]:
+    """Merge the per-tensor trace values into the in-memory calibration policy.
+
+    The merge is additive: each tensor entry under
+    ``trace_policy['hessian_trace']['tensors']`` adds a
+    ``hessian_trace`` / ``hessian_trace_avg`` /
+    ``hessian_trace_per_tile`` triplet to the corresponding tensor_family
+    in the calibration policy. New tensor families are created when no
+    existing entry matches the tensor name (substring match by default,
+    exact match when ``exact`` is set). The merge keeps the parent
+    speculative-calibration schema intact; downstream consumers
+    (the L5 orchestrator, the quantizer's sensitivity scorer) can then
+    read the trace values as a first-class field on each tensor.
+
+    Returns the calibration policy (mutated in place) or None when no
+    calibration policy is supplied. The trace-only path (no calibration
+    policy) writes the trace policy back as-is so the standalone tool
+    can drive the consumer side too.
+    """
+    if trace_policy is None:
+        return calibration_policy
+    hessian = trace_policy.get("hessian_trace", {})
+    records = hessian.get("tensors", [])
+    if calibration_policy is None:
+        # No parent calibration policy: emit the trace policy verbatim
+        # so the caller still gets a consumable document.
+        return trace_policy
+    families = calibration_policy.get("tensor_families", {})
+    # Pre-compute the matching tensor name once per family for speed.
+    matched_keys: set[str] = set()
+    for record in records:
+        name = record.get("name")
+        if not name:
+            continue
+        per_tile = record.get("hessian_trace_per_tile", [])
+        for key, entry in families.items():
+            matches = entry.get("match", [])
+            if not matches:
+                continue
+            exact = bool(entry.get("exact", False))
+            ok = (
+                name in matches
+                if exact
+                else any(fragment in name for fragment in matches)
+            )
+            if not ok:
+                continue
+            entry["hessian_trace"] = record.get("hessian_trace")
+            entry["hessian_trace_avg"] = record.get("hessian_trace_avg")
+            entry["hessian_trace_per_tile"] = list(per_tile)
+            entry["hessian_trace_n_tiles"] = record.get("n_tiles")
+            entry["hessian_trace_method"] = record.get("method", hessian.get("method"))
+            matched_keys.add(key)
+    # Tensors that did not match an existing family get their own entry
+    # so the L5 orchestrator can rank them even when no AWQ / LRQ prior
+    # exists for the same name.
+    for record in records:
+        name = record.get("name")
+        if not name:
+            continue
+        entry_key = f"hessian:{name}"
+        if entry_key in families:
+            continue
+        families[entry_key] = {
+            "match": [name],
+            "exact": True,
+            "hessian_trace": record.get("hessian_trace"),
+            "hessian_trace_avg": record.get("hessian_trace_avg"),
+            "hessian_trace_per_tile": list(record.get("hessian_trace_per_tile", [])),
+            "hessian_trace_n_tiles": record.get("n_tiles"),
+            "hessian_trace_method": record.get("method", hessian.get("method")),
+        }
+        matched_keys.add(entry_key)
+    calibration_policy["tensor_families"] = families
+    calibration_policy["hessian_trace"] = hessian
+    return calibration_policy
+
+
+def lrq_policy_for(
+    policy: Optional[dict], tensor_name: str
+) -> Optional[Tuple[int, np.ndarray, np.ndarray, str]]:
+    """Return (rank, U, V, aggregation) for `tensor_name` if the policy has
+    an LRQ entry that matches it, or None when no LRQ data applies.
+
+    The matching rule mirrors ``tensor_policy``: the entry's ``match`` list
+    is checked as a substring unless ``exact`` is set. The caller should
+    prefer this over AWQ when it returns non-None.
+
+    When the policy carries per-entry ``model_role`` tags (the Phase
+    16 unified policy shape), entries are filtered by the tensor's
+    inferred role: a ``trunk`` tensor prefers ``model_role=trunk``
+    entries and falls back to ``shared_embd`` entries. The legacy
+    single-model path (no ``model_role`` metadata) is preserved
+    exactly: the first matching entry wins.
+    """
+    if policy is None:
+        return None
+    families = policy.get("tensor_families", {})
+    has_role_metadata = any(
+        isinstance(entry, dict) and "model_role" in entry
+        for entry in families.values()
+    )
+    tensor_role = _infer_tensor_role(tensor_name)
+    selected = None
+    selected_rank = (-1, -1, -1)
+    for family in families.values():
+        if "lrq_u" not in family or "lrq_v" not in family:
+            continue
+        matches = family.get("match", [])
+        if not matches:
+            continue
+        exact = bool(family.get("exact", False))
+        matched = (
+            tensor_name in matches
+            if exact
+            else any(fragment in tensor_name for fragment in matches)
+        )
+        if not matched:
+            continue
+        rank = int(family.get("lrq_rank", 0))
+        try:
+            u = np.asarray(family["lrq_u"], dtype=np.float32)
+            v = np.asarray(family["lrq_v"], dtype=np.float32)
+        except (TypeError, ValueError):
+            continue
+        if u.ndim != 2 or v.ndim != 2:
+            continue
+        if rank <= 0:
+            rank = min(u.shape[0], v.shape[1])
+        if u.shape[1] != rank or v.shape[0] != rank:
+            # Malformed entry; skip rather than fail the whole quantize call.
+            continue
+        agg = str(family.get("lrq_input_scale_agg", "mean"))
+        if agg not in ("mean", "rms"):
+            agg = "mean"
+        if not has_role_metadata:
+            # Legacy path: return the first valid match.
+            return rank, u, v, agg
+        entry_role = family.get("model_role")
+        if tensor_role is not None and entry_role == tensor_role:
+            role_score = 2
+        elif entry_role == UNIFIED_SHARED_EMBD_ROLE:
+            role_score = 1
+        else:
+            role_score = 0
+        rank_tuple = (
+            role_score,
+            int(exact),
+            max(len(fragment) for fragment in matches),
+        )
+        if rank_tuple > selected_rank:
+            selected = (rank, u, v, agg)
+            selected_rank = rank_tuple
+    return selected
+
+
+def load_pe_qat_policy(path: Optional[str]) -> Optional[dict]:
+    """Load a ``llama.tessera.pe-qat-policy.v1`` JSON from disk.
+
+    Returns None if `path` is None/empty.  Raises if the path is set but
+    the file is unreadable, the JSON is malformed, or the schema is not
+    the PE-QAT schema.  Unlike the calibration policy (which has a
+    family/instance split), the PE-QAT policy is consumed wholesale by
+    ``pe_qat_policy_for`` per tensor.
+    """
+    if not path:
+        return None
+    if not _PE_QAT_AVAILABLE:
+        raise RuntimeError(
+            "--pe-qat-policy requires tools.tessera.pe_qat; the module "
+            "failed to import on this checkout"
+        )
+    with open(path, "r", encoding="utf-8") as source:
+        policy = json.load(source)
+    if policy.get("schema") != PE_QAT_POLICY_SCHEMA:
+        raise ValueError(
+            f"{path}: expected schema {PE_QAT_POLICY_SCHEMA!r}, "
+            f"got {policy.get('schema')!r}"
+        )
+    return policy
+
+
+def pe_qat_policy_for(
+    policy: Optional[dict], tensor_name: str
+) -> Optional[dict]:
+    """Return the PE-QAT entry for `tensor_name`, or None.
+
+    Delegates to ``tools.tessera.pe_qat._pe_qat_policy_for`` so the
+    multi-tensor / single-tensor layout is consistent between the
+    trainer, the demo, and the quantizer.  Kept as a thin wrapper so
+    the rest of quantize_v3.py does not need to know about the
+    internal helper.
+    """
+    if policy is None:
+        return None
+    return _pe_qat_policy_for(policy, tensor_name)
+
+
+# Role names that the unified calibration driver stamps on every
+# per-tensor entry. The Python consumer (this file) uses them to
+# route per-tensor qtype to the right lane when a unified policy
+# carries entries for trunk + dflash + dspark + mtp_nextn +
+# shared_embd. The constants are mirrored from
+# tools/tessera/per_tensor_calibrate.py::MODEL_ROLES so this module
+# has no runtime import dependency.
+UNIFIED_MODEL_ROLES = ("trunk", "dflash", "dspark", "mtp_nextn", "shared_embd")
+UNIFIED_SHARED_EMBD_ROLE = "shared_embd"
+
+
+def _infer_tensor_role(tensor_name: str) -> Optional[str]:
+    """Best-effort role inference for a tensor name.
+
+    The unified arch mixes tensors from multiple components in a
+    single safetensors file. The role of a tensor is determined by
+    the naming convention the loader uses, not by the model arch
+    string. The patterns are conservative: anything that does not
+    match returns ``None``, which signals "no role hint" and the
+    consumer falls back to the legacy single-arch behaviour.
+
+    The patterns are ordered most-specific first so the inference
+    does not need to enumerate every MTP / DSparc / dflash variant
+    explicitly. New patterns can be added here when the loader
+    grows a new component.
+    """
+    if not tensor_name:
+        return None
+    # Embedding / output are always shared between trunk and
+    # dflash (the drafter's tokenizer + output head are aliased to
+    # the trunk's). The shared entry is the worst-of calibration
+    # baked at calibration time; the GGUF writer still picks the
+    # worst-of-the-two per the Phase 16 spec.
+    if tensor_name == "token_embd.weight" or tensor_name.startswith("token_embd."):
+        return UNIFIED_SHARED_EMBD_ROLE
+    if tensor_name == "output.weight" or tensor_name.startswith("output."):
+        return UNIFIED_SHARED_EMBD_ROLE
+    if tensor_name.startswith("dflash.") or tensor_name.startswith("dflash_"):
+        return "dflash"
+    # DSpark heads (DeepSeek-style Markov / sparse heads). The
+    # naming convention is `markov_*` and `head_*` (the latter is
+    # the routed-expert head); both share the dspark calibration
+    # lane.
+    if tensor_name.startswith("markov_") or tensor_name.startswith("head_"):
+        return "dspark"
+    # MTP (Multi-Token Prediction) nextn blocks. The nextn tensors
+    # live under `blk.<N>.nextn.*` and the MTP-specific shared
+    # tensors live under `nextn.*`.
+    if ".nextn." in tensor_name or tensor_name.startswith("nextn."):
+        return "mtp_nextn"
+    # Everything else (blk.<N>.* without the nextn branch, and any
+    # tensor not matching a special pattern) is the trunk.
+    if tensor_name.startswith("blk."):
+        return "trunk"
+    return None
+
+
+def _select_family_for_role(
+    families: dict, tensor_name: str, tensor_role: Optional[str]
+) -> Optional[dict]:
+    """Pick the best per-tensor entry, honouring ``model_role`` when present.
+
+    Selection rules:
+
+    1. **No role metadata**: any entry whose ``match`` field hits
+       is a candidate (legacy single-model behaviour). The
+       highest-ranked match wins (exact > substring, longer
+       substring > shorter).
+    2. **Role metadata present**: prefer an entry whose
+       ``model_role`` matches the tensor's inferred role. If no
+       role-specific entry matches, fall back to ``shared_embd``
+       entries (the worst-of-trunk+dflash shared lane). If neither
+       matches, no entry is returned and the caller falls back to
+       the global defaults.
+
+    The function preserves the existing match-ranking logic so
+    pre-Phase-16 policies (no ``model_role`` field) keep behaving
+    exactly as they did before.
+    """
+    has_role_metadata = any(
+        isinstance(entry, dict) and "model_role" in entry
+        for entry in families.values()
+    )
+    if not has_role_metadata:
+        # Legacy path: any match is a candidate.
+        selected = None
+        selected_rank = (-1, -1)
+        for family in families.values():
+            matches = family.get("match", [])
+            if not matches:
+                continue
+            exact = bool(family.get("exact", False))
+            matched = (
+                tensor_name in matches
+                if exact
+                else any(fragment in tensor_name for fragment in matches)
+            )
+            if not matched:
+                continue
+            rank = (int(exact), max(len(fragment) for fragment in matches))
+            if rank > selected_rank:
+                selected, selected_rank = family, rank
+        return selected
+
+    # Role-aware path: collect every matching entry, score by
+    # (role_match, exact, longest_match_fragment). shared_embd is
+    # the cross-arch fallback when no role-specific entry exists.
+    selected = None
+    selected_rank = (-1, -1, -1)
+    for family in families.values():
+        matches = family.get("match", [])
+        if not matches:
+            continue
+        exact = bool(family.get("exact", False))
+        matched = (
+            tensor_name in matches
+            if exact
+            else any(fragment in tensor_name for fragment in matches)
+        )
+        if not matched:
+            continue
+        entry_role = family.get("model_role")
+        # role_score: 2 = exact role match, 1 = shared_embd
+        # fallback, 0 = other (still considered, but ranked
+        # below). The "other" rank keeps the function total so
+        # pre-Phase-16 entries without model_role still get
+        # considered as a last resort.
+        if tensor_role is not None and entry_role == tensor_role:
+            role_score = 2
+        elif entry_role == UNIFIED_SHARED_EMBD_ROLE:
+            role_score = 1
+        else:
+            role_score = 0
+        rank = (
+            role_score,
+            int(exact),
+            max(len(fragment) for fragment in matches),
+        )
+        if rank > selected_rank:
+            selected, selected_rank = family, rank
+    return selected
+
+
 def tensor_policy(policy: Optional[dict], tensor_name: str,
                   default_fraction: float, default_alpha: Optional[float]) -> Tuple[float, Optional[float], float, bool, float]:
     """Return (outlier_fraction, awq_alpha, awq_clip, exact, ternary_threshold)
@@ -1981,23 +2913,21 @@ def tensor_policy(policy: Optional[dict], tensor_name: str,
     {-1, 0, +1} cutoff. Default 1.0 = legacy tessera behaviour. Set to a
     different value (typically in [0.5, 2.0]) by per-tensor calibration
     produced via tools/tessera/per_tensor_calibrate.py.
+
+    When the policy contains per-entry ``model_role`` tags (the
+    Phase 16 unified policy shape), this function filters entries
+    by the tensor's inferred role: prefer the role-specific entry
+    (e.g. ``trunk`` for ``blk.0.attn_q.weight``) and fall back to
+    ``shared_embd`` for cross-arch tensors (``token_embd``,
+    ``output``). The legacy single-model path (no ``model_role``
+    metadata) is preserved exactly: the highest-ranked match wins.
     """
     if policy is None:
         return default_fraction, default_alpha, 1.0, False, 1.0
-    selected = None
-    selected_rank = (-1, -1)
-    for family in policy.get("tensor_families", {}).values():
-        matches = family.get("match", [])
-        if not matches:
-            continue
-        exact = bool(family.get("exact", False))
-        matched = tensor_name in matches if exact else any(
-            fragment in tensor_name for fragment in matches)
-        if not matched:
-            continue
-        rank = (int(exact), max(len(fragment) for fragment in matches))
-        if rank > selected_rank:
-            selected, selected_rank = family, rank
+    tensor_role = _infer_tensor_role(tensor_name)
+    selected = _select_family_for_role(
+        policy.get("tensor_families", {}), tensor_name, tensor_role
+    )
     if selected is not None:
         exact = bool(selected.get("exact", False))
         fraction = 1.0 if exact else float(selected.get("outlier_fraction", default_fraction))
@@ -2123,6 +3053,20 @@ def main():
     )
     ap.add_argument("--calibration-policy", default=None,
                     help="Acceptance-aware DFlash calibration policy JSON")
+    ap.add_argument(
+        "--hessian-trace-policy",
+        default=None,
+        help=(
+            "Hessian-trace calibration policy (llama.tessera.hessian-trace-policy.v1) "
+            "produced by tools/tessera/l3_hessian_trace.py. The per-tensor "
+            "trace and per-tile trace values are merged into the in-memory "
+            "calibration_policy so downstream consumers (the L5 orchestrator, "
+            "the quantizer's sensitivity scorer) can read them. The parent "
+            "schema is llama.speculative.calibration-policy.v1 so this flag is "
+            "a no-op consumer-side schema-wise; it is the L3 E5 unlock for "
+            "first-class Hessian-trace sensitivity."
+        ),
+    )
     ap.add_argument(
         "--tessera-epoch-receipt",
         default=None,
@@ -2255,8 +3199,149 @@ def main():
         action="store_true",
         help="Validate metadata and tensor mapping without reading or quantizing weights",
     )
+    ap.add_argument(
+        "--permute-channels",
+        "--champq",
+        action="store_true",
+        dest="permute_channels",
+        help=(
+            "Enable CHAMP-Q: permute the input channels of every Tile640 "
+            "weight by L2 activation magnitude (or per-row weight L2 if no "
+            "imatrix is loaded) before quantizing, then fold the inverse "
+            "permutation into the output. The output GGUF is in original "
+            "channel order and is bit-compatible with the non-CHAMP-Q path. "
+            "Calibration-time only; no runtime cost. See "
+            "tools/tessera/champq_permute.py for the algorithm."
+        ),
+    )
+    ap.add_argument(
+        "--champq-policy-out",
+        default=None,
+        help=(
+            "Path to write the per-tensor CHAMP-Q permutation policy JSON. "
+            "Default: derived from --output (champq-policy.json next to the "
+            "GGUF). Set to an empty string to disable the policy file. The "
+            "policy is for debugging / A-B comparison; the GGUF itself does "
+            "not need it because the output is already in original order."
+        ),
+    )
+    ap.add_argument(
+        "--septq",
+        action="store_true",
+        help=(
+            "Use the SEPTQ (KDD 2025) two-step PTQ method instead of the "
+            "standard tessera flow. SEPTQ computes a static global importance "
+            "mask from a Hessian-based criterion, then quantizes only the "
+            "top-k percent elements; the rest are kept at full precision. "
+            "See --septq-hessian-mode for the diagonal / banded choice and "
+            "--septq-ratio for the quantize fraction. Requires --imatrix for "
+            "the Hessian-diagonal importance score; --septq-hessian-mode "
+            "banded additionally requires full calibration activations "
+            "(currently only the synthetic / A/B harness path supplies them)."
+        ),
+    )
+    ap.add_argument(
+        "--septq-ratio",
+        type=float,
+        default=0.5,
+        help=(
+            "Fraction of elements to quantize under SEPTQ. 1.0 = all elements "
+            "(equivalent to RTN); 0.5 = half quantized, half kept full precision. "
+            "Default 0.5. Only used when --septq is set."
+        ),
+    )
+    ap.add_argument(
+        "--septq-iterations",
+        type=int,
+        default=1,
+        help=(
+            "Number of column-by-column passes for SEPTQ. The mask is fixed "
+            "at the first iteration (static global mask per the paper); "
+            "subsequent passes re-ternarize with the same mask. Default 1. "
+            "Only used when --septq is set."
+        ),
+    )
+    ap.add_argument(
+        "--septq-hessian-mode",
+        choices=("diagonal", "banded"),
+        default="banded",
+        help=(
+            "SEPTQ Hessian inverse mode. 'diagonal' (original behaviour) uses "
+            "act_scales[j]^2 as the diagonal of H and skips the cross-column "
+            "update. 'banded' (default) uses the full H = X^T X / n from the "
+            "calibration activations and applies a banded GPTQ-style update "
+            "with bandwidth --septq-hessian-bandwidth. The main quantize "
+            "script does not have the raw calibration activations and "
+            "silently falls back to 'diagonal'; the A/B harness can use the "
+            "banded mode when synthetic activations are available."
+        ),
+    )
+    ap.add_argument(
+        "--septq-hessian-bandwidth",
+        type=int,
+        default=32,
+        help=(
+            "Bandwidth of the banded Cholesky used by the SEPTQ cross-column "
+            "update. Default 32. Only used when --septq and "
+            "--septq-hessian-mode banded."
+        ),
+    )
+    ap.add_argument(
+        "--septq-importance-weight",
+        choices=("quant_error_h", "inv_abs_w", "inv_cdf", "hybrid"),
+        default="quant_error_h",
+        help=(
+            "SEPTQ importance score. 'quant_error_h' (default, v1 behaviour) "
+            "uses (W - Q(W))^2 * h_diag. 'inv_abs_w' divides by (|W| + eps) "
+            "to downweight heavy-tail outliers so the mask focuses on the "
+            "bulk. 'inv_cdf' uses 1 - CDF_per_row(|W|) as the weight "
+            "(most aggressive). 'hybrid' adds lambda * h_diag / (|W| + eps) "
+            "to the original score; --septq-importance-lambda sets lambda. "
+            "Only used when --septq is set."
+        ),
+    )
+    ap.add_argument(
+        "--septq-importance-lambda",
+        type=float,
+        default=0.0,
+        help=(
+            "Lambda for the 'hybrid' importance mode (default 0 = original). "
+            "Only used when --septq and --septq-importance-weight hybrid."
+        ),
+    )
+    ap.add_argument(
+        "--pe-qat-policy",
+        default=None,
+        help=(
+            "Path to a llama.tessera.pe-qat-policy.v1 JSON produced by "
+            "tools/tessera/pe_qat_demo.py (or a production orchestrator). "
+            "When set, the trained LoRA delta is merged into each dense "
+            "weight and the per-input-channel SmoothQuant factors are "
+            "applied before quantization. PE-QAT is checked first in the "
+            "policy precedence order (before LRQ / SEPTQ / imatrix-mse) "
+            "because it carries the trained LoRA. CHAMP-Q permutation is "
+            "skipped on PE-QAT-adjusted weights -- the per-channel s was "
+            "trained against the original channel order. Only the 2D "
+            "weight path is currently wired; the 3D expert path falls "
+            "through to the default quantizer."
+        ),
+    )
     args = ap.parse_args()
     calibration_policy = load_calibration_policy(args.calibration_policy)
+    if args.hessian_trace_policy:
+        trace_policy = load_hessian_trace_policy(args.hessian_trace_policy)
+        if trace_policy is not None:
+            n_tensors = len(trace_policy.get("hessian_trace", {}).get("tensors", []))
+            method = trace_policy.get("hessian_trace", {}).get("method", "unknown")
+            print(
+                f"  hessian-trace: merging {n_tensors} tensor records "
+                f"(method={method}) from {args.hessian_trace_policy}",
+                file=sys.stderr,
+            )
+            calibration_policy = merge_hessian_trace_into_policy(
+                calibration_policy, trace_policy
+            )
+    pe_qat_policy = load_pe_qat_policy(args.pe_qat_policy)
     epoch_receipt = (
         json.loads(Path(args.tessera_epoch_receipt).read_text(encoding="utf-8"))
         if args.tessera_epoch_receipt
@@ -2580,6 +3665,18 @@ def main():
         writer.add_float32("tessera.imatrix_mse.norm", float(args.imatrix_mse_norm))
         writer.add_uint32("tessera.imatrix_mse.grid", int(args.imatrix_mse_grid))
         writer.add_float32("tessera.imatrix_mse.maxshrink", float(args.imatrix_mse_maxshrink))
+    if args.septq:
+        # Record the SEPTQ mode so a future audit can read the quantization
+        # policy back from the GGUF without re-deriving it from the absence
+        # of the standard tessera metadata. The ratio is the fraction of
+        # elements quantized; (1 - ratio) is the residual fraction.
+        writer.add_string("tessera.range_selection", "septq")
+        writer.add_float32("tessera.septq.ratio", float(args.septq_ratio))
+        writer.add_uint32("tessera.septq.iterations", int(args.septq_iterations))
+        writer.add_string("tessera.septq.hessian_mode", str(args.septq_hessian_mode))
+        writer.add_uint32("tessera.septq.hessian_bandwidth", int(args.septq_hessian_bandwidth))
+        writer.add_string("tessera.septq.importance_weight", str(args.septq_importance_weight))
+        writer.add_float32("tessera.septq.importance_lambda", float(args.septq_importance_lambda))
     writer.add_string("tessera.awq_search_target", args.awq_search_target)
     if args.calibration_activations:
         writer.add_string(
@@ -2621,6 +3718,57 @@ def main():
     quant_2d = quant_3d = pass_count = 0
     imatrix_hits = imatrix_misses = 0
     alpha_counts: Dict[float, int] = {}
+
+    # CHAMP-Q policy recording. Populated only when --permute-channels is
+    # set and the helper module is importable. The default output path
+    # sits next to the GGUF; an empty --champq-policy-out disables the
+    # file. The policy is for debugging / A-B comparison; the GGUF does
+    # not need it because the output is already in original channel
+    # order.
+    champq_policy: Optional["CHAMPQPolicy"] = None
+    if args.permute_channels:
+        if not _CHAMPQ_AVAILABLE:
+            raise RuntimeError(
+                "--permute-channels requires tools.tessera.champq_permute; "
+                "the module failed to import on this checkout"
+            )
+        if args.champq_policy_out is None:
+            output_dir = Path(args.output).expanduser().resolve().parent
+            champq_policy_path = output_dir / "champq-policy.json"
+        elif args.champq_policy_out == "":
+            champq_policy_path = None
+        else:
+            champq_policy_path = Path(args.champq_policy_out).expanduser()
+        if champq_policy_path is not None:
+            champq_policy = CHAMPQPolicy()
+            print(
+                f"  CHAMP-Q: permutation policy will be written to "
+                f"{champq_policy_path}",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "  CHAMP-Q: enabled, permutation policy file disabled via "
+                "--champq-policy-out ''",
+                file=sys.stderr,
+            )
+
+    # PE-QAT policy summary. Loaded eagerly above; per-tensor lookups happen
+    # inside the main loop where each tensor name is known. The schema and
+    # the number of entries (multi-tensor: dict size; single-tensor: 1) are
+    # printed here so a misconfigured policy is visible before any
+    # quantization work.
+    if pe_qat_policy is not None:
+        n_entries = 1
+        if isinstance(pe_qat_policy.get("tensors"), dict):
+            n_entries = len(pe_qat_policy["tensors"])
+        rank = pe_qat_policy.get("rank", "?")
+        alpha = pe_qat_policy.get("alpha", "?")
+        print(
+            f"  PE-QAT: policy loaded, rank={rank} alpha={alpha} "
+            f"entries={n_entries}; will merge LoRA + smooth before quantize",
+            file=sys.stderr,
+        )
 
     for done, (wname, shape, dtype, out_name, layer_idx, short) in enumerate(inventory):
         # Find which shard holds this tensor
@@ -2672,12 +3820,126 @@ def main():
                 calibration_policy, out_name, args.outlier_frac, args.awq_alpha
             )
             direct_exact = direct_exact or policy_exact
+            lrq = lrq_policy_for(calibration_policy, out_name) if not direct_exact else None
+            use_lrq = lrq is not None
+            # PE-QAT is checked before LRQ: a trained LoRA is the most
+            # authoritative source for this tensor. direct_exact tensors
+            # (e.g. MoE gates) skip PE-QAT -- the weight is already kept
+            # at full precision downstream so a merge would be wasted work.
+            pe_qat_entry = (
+                pe_qat_policy_for(pe_qat_policy, out_name) if not direct_exact else None
+            )
+            use_pe_qat = pe_qat_entry is not None
             use_imatrix_mse = (
-                args.range_selection == "imatrix-mse"
+                not use_lrq
+                and not use_pe_qat
+                and args.range_selection == "imatrix-mse"
                 and not direct_exact
                 and act_scales is not None
             )
-            if use_imatrix_mse:
+            # CHAMP-Q permute setup. Hoisted before the if/elif so the same
+            # permuted (arr, act_scales) feed all paths. LRQ and PE-QAT are
+            # both authoritative and skip the permute: their policies already
+            # encode the scaling for this tensor, and PE-QAT's per-channel s
+            # was trained against the original channel order. direct_exact
+            # tensors (all-zero ternary) also skip: channel ordering is
+            # irrelevant for them.
+            champq_perm: Optional[np.ndarray] = None
+            if (
+                not use_lrq
+                and not use_pe_qat
+                and args.permute_channels
+                and not direct_exact
+                and _CHAMPQ_AVAILABLE
+                and in_dim > 1
+            ):
+                champq_perm = compute_champq_permutation(arr, act_scales)
+                champq_inverse = invert_champq_permutation(champq_perm)
+                arr = apply_champq_permutation(arr, champq_perm)
+                act_scales = (
+                    act_scales[champq_perm] if act_scales is not None else None
+                )
+
+            # SEPTQ is mutually exclusive with imatrix-mse (both consume the
+            # imatrix differently) and is skipped for exact tensors. SEPTQ
+            # benefits from the imatrix as the Hessian-diagonal proxy; without
+            # one it falls back to uniform column importance (still a valid
+            # mixed-precision scheme but loses the calibration signal).
+            use_septq = (
+                args.septq
+                and not direct_exact
+                and not use_imatrix_mse
+            )
+
+            if use_pe_qat:
+                # PE-QAT-mode: the policy carries a trained LoRA + per-channel
+                # SmoothQuant factors.  Both are merged into the weight before
+                # quantization.  PE-QAT is checked first because the LoRA is
+                # the most authoritative per-tensor adjustment available; LRQ
+                # is a coarser rank-r scale, AWQ is a heuristic, and SEPTQ
+                # / imatrix_mse only refine the range selection.  The clip
+                # threshold c is not applied here -- it is consumed at
+                # quantization time by the per-output-channel quantizer.
+                arr = apply_pe_qat_to_weight(arr, pe_qat_policy, out_name)
+                q = quantize_2d(
+                    arr,
+                    out_dim,
+                    in_dim,
+                    1.0 if direct_exact else policy_frac,
+                    None if direct_exact else act_scales,
+                    0.0 if direct_exact else policy_alpha,
+                    1.0 if direct_exact else policy_clip,
+                    tensor_name=out_name,
+                    ternary_threshold=(1.0 if direct_exact else policy_threshold),
+                )
+                # SmoothQuant split: apply_pe_qat_to_weight multiplied the
+                # weight by s, so the runtime must apply 1/s to the input
+                # to preserve the matmul equivalence (W*s) @ (x/s) = W @ x.
+                # Override the input_scale that quantize_2d set to ones.
+                # direct_exact tensors carry no policy entry (and so no s),
+                # so this is a no-op for them.
+                pe_qat_s = pe_qat_entry.get("per_channel_smooth_s")
+                if pe_qat_s is not None and not direct_exact:
+                    s_arr = np.asarray(pe_qat_s, dtype=np.float32)
+                    if s_arr.ndim == 1 and s_arr.shape[0] == in_dim:
+                        q["input_scale"] = (
+                            1.0 / np.maximum(s_arr, np.float32(1e-6))
+                        ).astype(np.float32)
+            elif use_lrq:
+                # LRQ-mode: the policy carries a rank-r S = U @ V scale. The
+                # AWQ and imatrix_mse paths are bypassed because the policy
+                # is the authoritative source for this tensor.
+                _lrq_rank, _lrq_u, _lrq_v, _lrq_agg = lrq
+                q = quantize_2d(
+                    arr,
+                    out_dim,
+                    in_dim,
+                    1.0 if direct_exact else policy_frac,
+                    None if direct_exact else act_scales,
+                    0.0 if direct_exact else policy_alpha,
+                    1.0 if direct_exact else policy_clip,
+                    tensor_name=out_name,
+                    ternary_threshold=(1.0 if direct_exact else policy_threshold),
+                    lrq_u=_lrq_u,
+                    lrq_v=_lrq_v,
+                    lrq_agg=_lrq_agg,
+                )
+            elif use_septq:
+                q = quantize_2d_septq(
+                    arr,
+                    out_dim,
+                    in_dim,
+                    args.septq_ratio,
+                    act_scales=act_scales,
+                    septq_iterations=args.septq_iterations,
+                    ternary_threshold=policy_threshold,
+                    tensor_name=out_name,
+                    septq_hessian_mode=args.septq_hessian_mode,
+                    septq_hessian_bandwidth=args.septq_hessian_bandwidth,
+                    septq_importance_weight=args.septq_importance_weight,
+                    septq_importance_lambda=args.septq_importance_lambda,
+                )
+            elif use_imatrix_mse:
                 # imatrix_mse range selection: per-row MSE grid search
                 # weighted by per-channel importance. AWQ per-channel scaling
                 # is bypassed because importance is already consumed by the
@@ -2705,6 +3967,42 @@ def main():
                     tensor_name=out_name,
                     ternary_threshold=(1.0 if direct_exact else policy_threshold),
                 )
+            if champq_perm is not None:
+                # CHAMP-Q Option A: decode the permuted quantization to F32,
+                # undo the input-dim permutation, and re-quantize in the
+                # original order. The output Tile640 components are then in
+                # the same channel order as the source weight, so the GGUF
+                # is interchangeable with the non-CHAMP-Q output.
+                w_unpermuted = decode_q_to_weight(q, out_dim, in_dim)
+                w_unpermuted = apply_champq_permutation(
+                    w_unpermuted, champq_inverse
+                )
+                if use_imatrix_mse:
+                    q = quantize_2d_imatrix_mse(
+                        w_unpermuted,
+                        out_dim,
+                        in_dim,
+                        policy_frac,
+                        lookup_acts(wname, imatrix, gguf_n) if imatrix else None,
+                        mse_norm=args.imatrix_mse_norm,
+                        mse_grid=args.imatrix_mse_grid,
+                        mse_maxshrink=args.imatrix_mse_maxshrink,
+                        awq_clip=policy_clip,
+                    )
+                else:
+                    q = quantize_2d(
+                        w_unpermuted,
+                        out_dim,
+                        in_dim,
+                        policy_frac,
+                        lookup_acts(wname, imatrix, gguf_n) if imatrix else None,
+                        policy_alpha,
+                        policy_clip,
+                        tensor_name=out_name,
+                        ternary_threshold=policy_threshold,
+                    )
+                if champq_policy is not None:
+                    champq_policy.add(out_name, champq_perm)
             alpha = float(q["awq_alpha"])
             alpha_counts[alpha] = alpha_counts.get(alpha, 0) + 1
             writer.add_tensor(component_name(out_name, "weight_packed"),       q["packed"])
@@ -2740,6 +4038,44 @@ def main():
                 policy_alpha,
                 policy_clip,
             )
+            # CHAMP-Q for 3D: permute the input channel axis of the expert
+            # bank before quantizing, then fold the inverse permutation
+            # into the output. The permutation is shared across all
+            # experts (the in_dim axis is the same for every expert). See
+            # the 2D path above for the rationale. policy_exact forces
+            # every expert to exact encoding, where the input-channel
+            # ordering is irrelevant, so CHAMP-Q is skipped. PE-QAT, if
+            # present for this tensor, also skips CHAMP-Q for the same
+            # reason as the 2D path -- the per-channel s was trained
+            # against the original channel order. The 3D path itself does
+            # not currently apply the PE-QAT merge (the demo only trains
+            # 2D layers); the gate is here for symmetry / future 3D
+            # support.
+            pe_qat_entry_3d = (
+                pe_qat_policy_for(pe_qat_policy, out_name)
+                if not policy_exact
+                else None
+            )
+            use_pe_qat_3d = pe_qat_entry_3d is not None
+            champq_perm_3d: Optional[np.ndarray] = None
+            if (
+                args.permute_channels
+                and not policy_exact
+                and not use_pe_qat_3d
+                and _CHAMPQ_AVAILABLE
+                and in_dim > 1
+            ):
+                pooled_act: Optional[np.ndarray] = None
+                if act_scales is not None:
+                    if act_scales.ndim == 2:
+                        pooled_act = np.mean(
+                            act_scales, axis=0, dtype=np.float32
+                        )
+                    elif act_scales.shape == (in_dim,):
+                        pooled_act = act_scales
+                champq_perm_3d = compute_champq_permutation(arr, pooled_act)
+                champq_inverse_3d = invert_champq_permutation(champq_perm_3d)
+                arr = apply_champq_permutation(arr, champq_perm_3d)
             # Note: 3D path currently does not route through
             # quantize_2d_imatrix_mse because the expert loop is structured
             # differently (per-expert 2D quantize under quantize_3d). The
@@ -2752,6 +4088,28 @@ def main():
                 0.0 if policy_exact else expert_alphas,
                 1.0 if policy_exact else expert_clips,
             )
+            if champq_perm_3d is not None:
+                # CHAMP-Q Option A: decode each expert's permuted
+                # quantization, undo the input-dim permutation, and
+                # re-quantize the un-permuted expert bank with the
+                # original imatrix. The result is a Tile640 expert bank
+                # in the original channel order, interchangeable with
+                # the non-CHAMP-Q output.
+                w_orig_3d = np.empty_like(arr)
+                for ex in range(n_experts):
+                    w_perm = decode_q_to_weight(qs[ex], out_dim, in_dim)
+                    w_orig_3d[ex] = apply_champq_permutation(
+                        w_perm, champq_inverse_3d
+                    )
+                qs = quantize_3d(
+                    w_orig_3d, n_experts, out_dim, in_dim,
+                    expert_fractions,
+                    imatrix, wname, gguf_n,
+                    expert_alphas,
+                    expert_clips,
+                )
+                if champq_policy is not None:
+                    champq_policy.add(out_name, champq_perm_3d)
             if qs:
                 alpha = float(qs[0]["awq_alpha"])
                 alpha_counts[alpha] = alpha_counts.get(alpha, 0) + 1
@@ -2959,6 +4317,19 @@ def main():
         coverage = 100.0 * imatrix_hits / total_lookups if total_lookups else 0.0
         print(f"AWQ imatrix coverage: {imatrix_hits}/{total_lookups} tensors ({coverage:.1f}%)", file=sys.stderr)
         print(f"AWQ selected alphas: {dict(sorted(alpha_counts.items()))}", file=sys.stderr)
+    if champq_policy is not None and champq_policy.tensors:
+        champq_policy.save(str(champq_policy_path))
+        print(
+            f"  CHAMP-Q: wrote {len(champq_policy.tensors)} permutations "
+            f"to {champq_policy_path}",
+            file=sys.stderr,
+        )
+    elif champq_policy is not None:
+        print(
+            "  CHAMP-Q: enabled but no tensors received a permutation "
+            "(everything was direct_exact); policy file not written",
+            file=sys.stderr,
+        )
     print(f"\nWrote {args.output}", file=sys.stderr)
     print(f"OK: {args.output}", file=sys.stderr)
 

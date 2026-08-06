@@ -1110,29 +1110,10 @@ std::ifstream fs_open_ifstream(const std::string & fname, std::ios_base::openmod
 //
 // TTY utils
 //
-
-bool tty_can_use_colors() {
-    // Check NO_COLOR environment variable (https://no-color.org/)
-    if (const char * no_color = std::getenv("NO_COLOR")) {
-        if (no_color[0] != '\0') {
-            return false;
-        }
-    }
-
-    // Check TERM environment variable
-    if (const char * term = std::getenv("TERM")) {
-        if (std::strcmp(term, "dumb") == 0) {
-            return false;
-        }
-    }
-
-    // Check if stdout and stderr are connected to a terminal
-    // We check both because log messages can go to either
-    bool stdout_is_tty = isatty(fileno(stdout));
-    bool stderr_is_tty = isatty(fileno(stderr));
-
-    return stdout_is_tty || stderr_is_tty;
-}
+// tty_can_use_colors() moved to common/log/log.cpp (llama-log target)
+// so the log library is self-contained. The declaration is still in
+// common.h for backward compatibility.
+//
 
 //
 // Model utils
@@ -1581,6 +1562,7 @@ struct llama_model_params common_model_params_to_llama(common_params & params) {
     mparams.progress_callback           = params.load_progress_callback;
     mparams.progress_callback_user_data = params.load_progress_callback_user_data;
     mparams.no_alloc                    = params.no_alloc;
+    mparams.load_mtp                    = std::find(params.speculative.types.begin(), params.speculative.types.end(), COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params.speculative.types.end();
 
     return mparams;
 }
