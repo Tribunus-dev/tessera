@@ -3,7 +3,7 @@
  * The frame is the visible viewport, anchored in place. Sections
  * translate within the frame as the user scrolls. The page's normal
  * scroll position drives a timeline variable; each section's
- * translation is a linear function of that timeline.
+ * translation is a function of that timeline.
  *
  * Mechanics:
  *   - .scrolly-frame  -- position: fixed, fills the viewport, z-index
@@ -14,17 +14,19 @@
  *   - .scrolly-section -- position: absolute, full frame minus the
  *     header. The JS driver applies transform: translate3d(0, X, 0)
  *     based on the section's index and the current scroll position.
- *   - prefers-reduced-motion: reduce -- the frame is static, sections
- *     flow in normal document order, the sentinel is hidden. The user
- *     gets a normal scrolling page.
+ *   - .scrolly-snap-point -- invisible children of the sentinel at
+ *     100vh intervals. They are the snap targets.
  *
- * Why this is here: the user said "the frame to be static and the
- * scrolling action to bring the elements from one section to the next
- * in and out of frame." This is the implementation.
+ * The scrollbar is hidden when the scrolly frame is active so the
+ * browser chrome does not give away the "literal scroll" perception.
+ * A snap-to-section on scroll-end (JS in
+ * transitions-orchestrator.js) settles the user on a section center,
+ * so the experience reads as "advance state" rather than "scroll
+ * continuously."
  *
- * The header is z-index 50 (sticky); the scrolly-frame is z-index 1.
- * Sections are positioned with top: var(--header-height) so the
- * header overlays the top of the frame cleanly.
+ * prefers-reduced-motion: reduce -- the frame is static, sections
+ * flow in normal document order, the sentinel is hidden. The user
+ * gets a normal scrolling page.
  */
 
 :root {
@@ -40,14 +42,6 @@
 }
 
 .scrolly-sentinel {
-  /* The sentinel provides the scroll range. N * 100vh, where N is the
-   * number of sections in the frame. The user scrolls this distance
-   * to walk through all sections; the JS driver maps scrollY to
-   * per-section translations.
-   *
-   * The sentinel is aria-hidden and pointer-events: none. The user
-   * cannot interact with it; the actual content is the fixed frame.
-   */
   height: calc(5 * 100vh);
   pointer-events: none;
   position: relative;
@@ -61,25 +55,45 @@
   right: 0;
   bottom: 0;
   /* Each section is its own full-frame container. The internal
-   * content is centered vertically and horizontally by the section's
-   * own children (the chapter / hero styles).
+   * content is centered by the section's own children (the chapter
+   * / hero styles). No internal scroll: the section is sized to
+   * the frame; the user advances the timeline with the page
+   * scroll only.
+   *
+   * No CSS transition on transform: the JS driver updates the
+   * transform on every requestAnimationFrame, which gives a 60fps
+   * lockstep between the scroll position and the section position.
+   * A CSS transition would lag the section behind the scroll and
+   * feel sluggish.
    */
-  overflow-y: auto;
-  overflow-x: hidden;
-  /* Will-change: transform is set by the JS driver on first scroll.
-   * Kept off the initial state to avoid always-on layer compositing
-   * for users with reduced motion.
-   */
+  overflow: hidden;
   -webkit-overflow-scrolling: touch;
+  will-change: transform;
+}
+
+/* Hide the browser scrollbar when the scrolly frame is active. The
+ * scrollbar is the visual cue that the user is "scrolling a page";
+ * without it, the perception shifts toward "advancing through
+ * sections." The user can still scroll via trackpad, wheel, or
+ * keyboard; they just do not see the indicator.
+ *
+ * Scoped to pages that have a .scrolly-frame (i.e., the home page).
+ */
+html:has(.scrolly-frame) {
+  scrollbar-width: none;
+}
+html:has(.scrolly-frame) body {
+  -ms-overflow-style: none;
+}
+html:has(.scrolly-frame) ::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 /* When the user prefers reduced motion, the scrolly frame collapses
  * into a normal-flow stack. Sections become static blocks in document
  * order; the sentinel is hidden; the user scrolls normally.
- *
- * This is the fallback for users with vestibular sensitivity, screen
- * reader users who navigate by section landmarks, and anyone who
- * disables smooth scrolling at the OS level.
  */
 @media (prefers-reduced-motion: reduce) {
   :root {
@@ -99,5 +113,6 @@
     bottom: auto;
     transform: none !important;
     overflow: visible;
+    transition: none;
   }
 }
