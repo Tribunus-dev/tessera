@@ -284,19 +284,13 @@ class Qwen3TTSVocoderModel(TextModel):
         if name == f"decoder.decoder.{n_blk + 1}.beta":
             return "c2w.output.beta", 1.0 / (data_torch.exp() + 1e-9)
         if name == f"decoder.decoder.{n_blk + 2}.conv.weight":
-            # The C++ side creates c2w.output with shape { 7, 1, c_last }
-            # (ne[0]=7, ne[1]=1, ne[2]=c_last). ggml_conv_1d interprets the
-            # weight as (K, IC, OC) and the reshape to (IC*K, OC) requires
-            # (K, IC, OC) layout; the C++ here uses (K, OC, IC) which is
-            # the OPPOSITE of every other conv in this graph (pre_conv,
-            # stem, block transconv all use K, IC, OC). To make the GGUF
-            # load cleanly without a C++ patch, the converter permutes the
-            # HF weight (1, c_last, 7) so the on-disk GGUF ne=(7, 1, c_last)
-            # matches the C++ expectation. NOTE: this is a band-aid; the
-            # W3 C++ create_tensor call should be (7, c_last, 1) for the
-            # output conv. See the report for the full mismatch.
-            permuted = data_torch.permute(1, 0, 2).contiguous()
-            return "c2w.output.weight", permuted
+            # The C++ side creates c2w.output with shape { 7, c_last, 1 }
+            # (ne[0]=7, ne[1]=c_last, ne[2]=1): ggml_conv_1d interprets the
+            # weight as (K, IC, OC) with the bias shape [OC]={1}. The HF
+            # weight is (OC=1, IC=c_last, K=7); gguf.Writer reverses the
+            # shape on write, so the on-disk ne = (7, c_last, 1) matches
+            # the C++ expectation as-is. No permutation needed.
+            return "c2w.output.weight", data_torch
         if name == f"decoder.decoder.{n_blk + 2}.conv.bias":
             return "c2w.output.bias", data_torch
 

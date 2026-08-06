@@ -320,7 +320,7 @@ void llama_model_qwen3_tts_code2wav::load_arch_tensors(llama_model_loader & ml) 
 
     c2w_out_snake_a = create_tensor(tn(LLM_TENSOR_C2W_OUT_SNAKE_A, nullptr), { c_last }, 0);
     c2w_out_snake_b = create_tensor(tn(LLM_TENSOR_C2W_OUT_SNAKE_B, nullptr), { c_last }, 0);
-    c2w_output      = create_tensor(tn(LLM_TENSOR_C2W_OUTPUT, "weight"), { 7, 1, c_last }, 0);
+    c2w_output      = create_tensor(tn(LLM_TENSOR_C2W_OUTPUT, "weight"), { 7, c_last, 1 }, 0);
     c2w_output_b    = create_tensor(tn(LLM_TENSOR_C2W_OUTPUT, "bias"),   { 1 }, 0);
 }
 

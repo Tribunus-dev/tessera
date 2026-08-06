@@ -307,7 +307,7 @@ def verify_vocoder(reader: GGUFReader, safetensors_path: str) -> None:
     expect_shape("c2w.block.3.transconv.weight", [6, 96, 192])
     expect_shape("c2w.output.alpha", [96])
     expect_shape("c2w.output.beta", [96])
-    expect_shape("c2w.output.weight", [7, 1, 96])  # permuted to match C++ ne
+    expect_shape("c2w.output.weight", [7, 96, 1])  # matches C++ ne (K, IC, OC)
     expect_shape("c2w.output.bias", [1])
 
     # block / codebook / layer / upsample index ranges
@@ -406,15 +406,19 @@ def verify_vocoder(reader: GGUFReader, safetensors_path: str) -> None:
         check(got.shape == want.shape and bool((got == want).all()),
               f"c2w.block.0.transconv.weight shape {got.shape} (HF {list(hf.shape)} reversed)")
 
-        # output conv: HF (1, 96, 7) was permuted to (96, 1, 7) so the gguf
-        # file ne = (7, 1, 96) matches the W3 C++ create_tensor call (which
-        # we believe is wrong; see report). The numpy layout in the file
-        # is therefore (96, 1, 7) - we compare against the post-permute data.
+        # output conv: HF (1, 96, 7); gguf.Writer reverses the shape on write,
+        # so the on-disk ne = (7, 96, 1) which matches the corrected C++
+        # create_tensor call (K, IC, OC). The raw numpy data layout in the
+        # GGUF is the original HF layout (1, 96, 7) - the shape reversal
+        # is only in the on-disk ne metadata, not in the bytes. No
+        # permute on the converter side.
         hf = f.get_tensor("decoder.decoder.6.conv.weight").float()
-        want = hf.permute(1, 0, 2).contiguous().numpy()
-        got = np.ascontiguousarray(names["c2w.output.weight"].data).astype(np.float32)
-        check(got.shape == want.shape and bool((got == want).all()),
-              f"c2w.output.weight shape {got.shape} (HF {list(hf.shape)} permuted to {list(want.shape)})")
+        want = np.ascontiguousarray(names["c2w.output.weight"].data).astype(np.float32)
+        ne = tuple(int(x) for x in names["c2w.output.weight"].shape)
+        check((ne == (7, 96, 1))
+              and (want.shape == (1, 96, 7))
+              and bool(np.array_equal(want, hf.numpy())),
+              f"c2w.output.weight ne={ne} (HF {list(hf.shape)} -> gguf (7, 96, 1))")
 
         # pre_transformer input_proj: HF Linear (512, 1024) -> gguf (1024, 512)
         hf = f.get_tensor("decoder.pre_transformer.input_proj.weight").float()

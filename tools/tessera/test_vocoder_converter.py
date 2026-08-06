@@ -570,21 +570,27 @@ class TestSyntheticRoundTrip(unittest.TestCase):
         self.assertTrue(bool((got == hf).all()))
 
     def test_output_conv_permute(self) -> None:
-        # the W3 C++ create_tensor has the in/out dims swapped for the
-        # output conv (a known bug; see report). The converter
-        # band-aids this by permuting the HF (1, c_last, 7) weight so
-        # the on-disk GGUF ne=(7, 1, c_last) matches the C++ side.
+        # The C++ create_tensor for c2w.output now matches the file
+        # convention (K, IC, OC) = (7, c_last, 1) for an output conv
+        # that collapses to 1ch PCM. gguf.Writer reverses the shape
+        # on write, so the on-disk ne = (7, c_last, 1) matches the
+        # C++ side without any permute on the converter.
         with _safe_open(str(self.hf_dir / "model.safetensors"),
                         framework="pt") as f:
             n_blk = len(SYN_UPSAMPLE_RATES)
+            c_last = SYN_DECODER_DIM >> n_blk
             hf = f.get_tensor(
                 f"decoder.decoder.{n_blk + 2}.conv.weight").float()
-        want = hf.permute(1, 0, 2).contiguous().numpy()
+        # raw data layout in the GGUF is the original HF layout;
+        # the shape reversal is only in the on-disk ne metadata.
         got = np.ascontiguousarray(
             self.names["c2w.output.weight"].data).astype(np.float32)
-        self.assertEqual(got.shape, want.shape,
-                         f"permute shape {got.shape} != {want.shape}")
-        self.assertTrue(bool((got == want).all()))
+        ne = tuple(int(x) for x in self.names["c2w.output.weight"].shape)
+        self.assertEqual(ne, (7, c_last, 1),
+                         f"c2w.output.weight ne {ne} != (7, {c_last}, 1)")
+        self.assertEqual(got.shape, (1, c_last, 7),
+                         f"c2w.output.weight data shape {got.shape} != (1, {c_last}, 7)")
+        self.assertTrue(bool(np.array_equal(got, hf.numpy())))
 
 
 @unittest.skipUnless(
