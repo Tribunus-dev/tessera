@@ -3,16 +3,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Tessera — Architecture</title>
+<title>Tessera - Architecture. The kernel-fidelity loop, the dispatch policy, the memory wall.</title>
+<meta name="description" content="The full technical depth. The kernel-fidelity loop, the per-tensor GA, the AWQ evolution, the heterogeneous dispatch across CPU/GPU/ANE, the memory wall, and quantization-on-transport.">
 <link rel="canonical" href="https://tessera.tribunus.dev/architecture/">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <meta name="generator" content="tessera-docs-ssg">
-<meta name="build-id" content="bootstrap-001">
-<meta property="og:title" content="Tessera — Architecture">
-<meta property="og:description" content="Calibrate and quantize models with receipts the kernel agrees with.">
+<meta name="build-id" content="regen-002">
+<meta property="og:title" content="Tessera - Architecture. The kernel-fidelity loop, the dispatch policy, the memory wall.">
+<meta property="og:description" content="The full technical depth. The kernel-fidelity loop, the per-tensor GA, the AWQ evolution, the heterogeneous dispatch, the memory wall, quantization-on-transport.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://tessera.tribunus.dev/architecture/">
-<meta name="twitter:card" content="summary">
+<meta property="og:image" content="https://tessera.tribunus.dev/og-image.svg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Tessera - Architecture.">
+<meta name="twitter:description" content="The kernel-fidelity loop, the dispatch policy, the memory wall, quantization-on-transport.">
+<meta name="twitter:image" content="https://tessera.tribunus.dev/og-image.svg">
 <link rel="stylesheet" href="/styles/site.css">
 <script>
 (function(){try{
@@ -30,72 +35,272 @@
 }catch(e){}})();
 </script>
 <script src="/scripts/theme.js" defer></script>
-<script src="/scripts/transitions-orchestrator.js" defer></script>
-<script src="/scripts/selection-controller.js" defer></script>
 </head>
 <body data-prism-route="/architecture/" data-prism-hydrated="false">
 <a href="#top" class="skip-link">Skip to main content</a>
 <header class="site-header">
 <a class="brand" href="/"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tessera</span></a>
 <nav class="site-nav" aria-label="Primary navigation">
+<a class="site-nav-link" href="/studio/">Studio</a>
+<a class="site-nav-link" href="/how-it-works/">How it works</a>
+<a class="site-nav-link" href="/how-tessera-differs/">How Tessera differs</a>
+<a class="site-nav-link" href="/concepts/">Concepts</a>
 <a class="site-nav-link" href="/start/">Start</a>
 <a class="site-nav-link" href="/architecture/" aria-current="page">Architecture</a>
 <a class="site-nav-link" href="/evidence/">Evidence</a>
-<a class="site-nav-link" href="/status/">Status</a>
 <a class="site-nav-link" href="/changelog/">Changelog</a>
 <a class="site-nav-link" rel="external" target="_blank" href="https://github.com/Tribunus-dev/tessera">GitHub</a>
 </nav>
 <button type="button" class="theme-toggle" aria-label="Toggle dark and light theme" data-theme-toggle><span class="theme-toggle-icon" aria-hidden="true"></span><span class="theme-toggle-label">Dark</span></button>
 </header>
+<aside class="standalone-anchor" aria-label="Page context">
+<span class="standalone-anchor-mark">Tessera</span>
+<p class="standalone-anchor-body">You are on <strong>Architecture</strong>, the technical depth. <a href="/">Back to home</a> · <a href="/concepts/">Concepts</a> · <a href="/evidence/">Evidence</a></p>
+</aside>
 <main class="page-body" id="top">
 
 <header class="page-header">
-<span class="page-header-eyebrow">Architecture</span>
-<h1 class="page-header-headline">The pipeline is a chain of typed components.</h1>
-<p class="page-header-blurb">Each stage takes a typed input, applies a transformation, and emits a typed output. The output is durable. The next stage reads it. Nothing is recomputed from raw artifacts downstream.</p>
+<span class="page-header-eyebrow">Technical depth</span>
+<h1 class="page-header-headline">The kernel-fidelity loop. The dispatch policy. The memory wall.</h1>
+<p class="page-header-blurb">The technical depth. The four stages of the pipeline, the dispatch policy across CPU / GPU / ANE, the kernel-fidelity loop in detail, and the memory wall treatment with diagrams. If you have not yet read the <a href="/concepts/">concepts</a>, start there for the analogies.</p>
 </header>
 
-<section class="chapter" id="stage-1">
-<div class="chapter-eyebrow">Stage 1 · Calibration</div>
-<h2 class="chapter-title">The calibrator produces a typed importance matrix.</h2>
-<div class="chapter-body">
-<p><code>per_tensor_calibrate</code> reads the model and a corpus and produces per-tensor statistics: kurtosis, effective rank, outlier density, percentile bounds. The output is a typed component (<code>tensor_stats</code>) keyed by tensor name, model hash, and (in multimodal mode) modality. The calibrator's fitness is offline-Frobenius — the calibrator itself is not the ground truth, but its output is the basis for the GA's search.</p>
-<p>For multimodal models, the calibrator runs once per modality: text, image, audio, mm projector. The unified output is a single <code>tensor_stats</code> table with the modality stamp on every record.</p>
-</div>
+<section class="chapter" id="pipeline">
+<div class="chapter-eyebrow">The pipeline</div>
+<h2 class="chapter-title">A chain of typed components.</h2>
+<p class="chapter-body">The pipeline is four stages. Each stage takes a typed input, applies a transformation, and emits a typed output. The output is durable. The next stage reads it. Nothing is recomputed from raw artifacts downstream.</p>
+
+<article class="feature-card" id="stage-1" style="margin: var(--space-4) 0;">
+<h3 class="feature-card-title">Stage 1 · Calibration</h3>
+<p class="feature-card-body"><code>per_tensor_calibrate</code> reads the model and a corpus and produces per-tensor statistics: kurtosis, effective rank, outlier density, percentile bounds. The output is a typed component (<code>tensor_stats</code>) keyed by tensor name, model hash, and (in multimodal mode) modality. The calibrator's fitness is offline-Frobenius — the calibrator itself is not the ground truth, but its output is the basis for the GA's search. For multimodal models, the calibrator runs once per modality: text, image, audio, mm projector. The unified output is a single <code>tensor_stats</code> table with the modality stamp on every record.</p>
+</article>
+
+<article class="feature-card" id="stage-2" style="margin: var(--space-4) 0;">
+<h3 class="feature-card-title">Stage 2 · AWQ policy search</h3>
+<p class="feature-card-body"><code>awq-evolve</code> reads the <code>tensor_stats</code> and runs an island-model GA. The fitness is the Frobenius distance between the original weight and the kernel's dequant output, evaluated through the exact code path the runtime will use. The GA's search is over continuous reconstruction knobs (per-tensor alpha, clip, ternary threshold, outlier fraction), not discrete bit-widths — no prior quantization work searches this space against the kernel directly. The output is a per-tensor policy: alpha, clip, and a verdict (which quant type to use for this tensor). The policy is a typed component (<code>calibration_policy</code>).</p>
+</article>
+
+<article class="feature-card" id="stage-3" style="margin: var(--space-4) 0;">
+<h3 class="feature-card-title">Stage 3 · Quantization</h3>
+<p class="feature-card-body"><code>llama-quantize --tessera-mode</code> reads the policy, packs each tensor according to its verdict, and writes the GGUF. The policy is embedded in the metadata as a small string (the tensor-family list, not the U/V payloads). The full policy and the GA archive go in a sidecar JSON. SHA-256 in both, for audit. For a multimodal model, the writer absorbs three additional components: vision tower, audio tower, mm projector. The singular-GGUF is the constitutional commitment; the multimodal pipeline does not split the artifact across files.</p>
+</article>
+
+<article class="feature-card" id="stage-4" style="margin: var(--space-4) 0;">
+<h3 class="feature-card-title">Stage 4 · Verification</h3>
+<p class="feature-card-body"><code>tessera-ab-harness</code> re-runs the kernel dequant on the shipped artifact and compares the output to the original weight. The reported t_l² is the same number the GA optimized against. A green receipt is one where the kernel's dequant matches the calibrator's prediction within tolerance. A red receipt is a bug — either in the calibrator, the GA, or the kernel. The receipt is durable. The artifact is the proof. The proof is the claim.</p>
+</article>
 </section>
 
-<section class="chapter" id="stage-2">
-<div class="chapter-eyebrow">Stage 2 · AWQ policy search</div>
-<h2 class="chapter-title">The GA searches per-tensor alpha and clip against the kernel.</h2>
-<div class="chapter-body">
-<p><code>awq-evolve</code> reads the <code>tensor_stats</code> and runs an island-model GA. The fitness is the Frobenius distance between the original weight and the kernel's dequant output, evaluated through the exact code path the runtime will use. The GA's search is over continuous reconstruction knobs (per-tensor alpha and clip), not discrete bit-widths — no prior quantization work searches this space against the kernel directly.</p>
-<p>The output is a per-tensor policy: alpha, clip, and a verdict (which quant type to use for this tensor). The policy is a typed component (<code>calibration_policy</code>).</p>
-</div>
+<section class="chapter" id="kernel-fidelity">
+<div class="chapter-eyebrow">The kernel-fidelity loop</div>
+<h2 class="chapter-title">Measure fitness at the kernel, not the calibrator.</h2>
+<p class="chapter-body">If the run is the artifact, the fitness is the distance between the artifact and the run. The calibrator is a means; the kernel is the ground truth. Tessera's fitness is a Frobenius distance measured after the weight has been dequantized through the exact code path the runtime will use — not a proxy, not an offline estimate, the actual output. The policy is shipped with the artifact. The receipt carries the kernel's hash. A reviewer can re-run the dequant and recover the same number.</p>
+<p class="chapter-body">Concretely: the GA in <code>awq-evolve</code> builds a candidate policy, applies it to the weight tensor, and feeds the result through the production dequant kernel. The kernel output is compared against the original weight. The Frobenius distance (normalized by max weight magnitude) is the fitness. The GA's search converges on a policy whose dequant output matches the original weight to within the calibrated tolerance. No offline proxy. No separate cost model. The same kernel, the same path, the same answer.</p>
+<p class="chapter-aside">See <a href="/concepts/#concept-kernel-fidelity-loop">the concept card with the analogy</a> for the short version.</p>
 </section>
 
-<section class="chapter" id="stage-3">
-<div class="chapter-eyebrow">Stage 3 · Quantization</div>
-<h2 class="chapter-title">The writer emits the GGUF with the policy in the metadata.</h2>
-<div class="chapter-body">
-<p><code>llama-quantize --tessera-mode</code> reads the policy, packs each tensor according to its verdict, and writes the GGUF. The policy is embedded in the metadata as a small string (the tensor-family list, not the U/V payloads). The full policy and the GA archive go in a sidecar JSON. SHA-256 in both, for audit.</p>
-<p>For a multimodal model, the writer absorbs three additional components: vision tower, audio tower, mm projector. The singular-GGUF is the constitutional commitment; the multimodal pipeline does not split the artifact across files.</p>
+<section class="chapter" id="dispatch">
+<div class="chapter-eyebrow">The dispatch policy</div>
+<h2 class="chapter-title">Heterogeneous dynamic execution across CPU, GPU, and ANE.</h2>
+<p class="chapter-body">Apple Silicon has three compute engines: the M-series CPU, the GPU, and the Neural Engine. The right engine depends on the operation. Tessera dispatches <em>dynamically at runtime</em>, not statically at compile time. The dispatch policy is a function of the operation type, the input shape, the prompt length, and the current dispatch table state.</p>
+<div class="table-wrap">
+<table class="tier-table">
+<thead>
+<tr><th>Operation</th><th>Engine</th><th>Why</th></tr>
+</thead>
+<tbody>
+<tr>
+<td>Verifier prefill (long prompts)</td>
+<td>ANE</td>
+<td>Matrix prefill is the ANE's strong suit. The verifier prefill is the bottleneck for the first token latency. ANE prefill is async to the GPU via IOSurface hand-off.</td>
+</tr>
+<tr>
+<td>Verifier decode (single token)</td>
+<td>GPU</td>
+<td>Decode is small-batch matrix work that does not benefit from the ANE's setup overhead. GPU is the right place for it.</td>
+</tr>
+<tr>
+<td>Hybrid drafter prefill + decode</td>
+<td>GPU</td>
+<td>The drafter is a small model with its own KV cache. GPU keeps the drafter close to the verifier's GPU state for the accept / reject handshake.</td>
+</tr>
+<tr>
+<td>Embedding lookup, control flow, sampling</td>
+<td>CPU</td>
+<td>Control flow and serial bookkeeping. CPU is the right place. No reason to round-trip through the GPU.</td>
+</tr>
+<tr>
+<td>Tokenization, detokenization</td>
+<td>CPU</td>
+<td>CPU work. The Apple BPE tokenizer is already on the CPU; Tessera uses it as-is.</td>
+</tr>
+</tbody>
+</table>
 </div>
+<p class="chapter-body">The dispatch table is learned, not hard-coded. The <code>embedding_budget</code> tool and the per-tensor activation capture inform which operations land where; the runtime dispatch picks up the table at startup. As the flywheel improves the model, the dispatch table gets sharper — the engine learns the access patterns the model actually exhibits, not the ones the static dispatch policy assumed.</p>
+<p class="chapter-aside">See <a href="/concepts/#concept-heterogeneous-dynamic-execution">the concept card with the analogy</a> for the short version.</p>
 </section>
 
-<section class="chapter" id="stage-4">
-<div class="chapter-eyebrow">Stage 4 · Verification</div>
-<h2 class="chapter-title">The A/B harness re-dequants through the kernel and reports the same t_l².</h2>
-<div class="chapter-body">
-<p><code>tessera-ab-harness</code> re-runs the kernel dequant on the shipped artifact and compares the output to the original weight. The reported t_l² is the same number the GA optimized against. A green receipt is one where the kernel's dequant matches the calibrator's prediction within tolerance. A red receipt is a bug — either in the calibrator, the GA, or the kernel.</p>
-<p>The receipt is durable. The artifact is the proof. The proof is the claim.</p>
-</div>
+<section class="chapter" id="memory-wall">
+<div class="chapter-eyebrow">The memory wall</div>
+<h2 class="chapter-title">Where inference time actually goes.</h2>
+<p class="chapter-body">The bottleneck in modern local inference is not compute, it is memory bandwidth. The GPU and the ANE can do the math; the question is whether the data is in their caches when they need it. For a 12B model at 4-bit precision, the weights are about 6 GB. For a 12B model at 8-bit, about 12 GB. The compute can finish a token in microseconds; the load takes milliseconds. The math is starving.</p>
+
+<figure class="diagram-block">
+<svg viewBox="0 0 800 280" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="wall-title wall-desc" style="width: 100%; height: auto; max-width: 800px; display: block; margin: var(--space-4) auto;">
+<title id="wall-title">Where inference time goes (typical local 12B model at 4 bits)</title>
+<desc id="wall-desc">A horizontal bar chart. Data movement dominates: loading weights from HBM takes the bulk of the time, compute is small by comparison. The chart shows this asymmetry.</desc>
+<style>
+  .bar-label { font: 14px var(--font-mono, monospace); fill: #ebebf2; }
+  .bar-sub { font: 11px var(--font-mono, monospace); fill: #a0a0b8; }
+  .bar-axis { font: 11px var(--font-mono, monospace); fill: #6c6c84; }
+  .bar-data { fill: #6ad4ff; }
+  .bar-compute { fill: #c56ad4; }
+  .bar-sample { fill: #5fd97a; }
+  .bar-overhead { fill: #6c6c84; }
+  .title { font: 16px sans-serif; fill: #ebebf2; font-weight: 700; }
+</style>
+<text class="title" x="400" y="24" text-anchor="middle">Where inference time goes (12B model, 4-bit, batch 1)</text>
+<g transform="translate(180, 60)">
+  <text class="bar-label" x="-10" y="14" text-anchor="end">Data movement</text>
+  <rect class="bar-data" x="0" y="0" width="540" height="22" rx="2"/>
+  <text class="bar-sub" x="548" y="14">~78%</text>
+</g>
+<g transform="translate(180, 95)">
+  <text class="bar-label" x="-10" y="14" text-anchor="end">Compute</text>
+  <rect class="bar-compute" x="0" y="0" width="110" height="22" rx="2"/>
+  <text class="bar-sub" x="118" y="14">~16%</text>
+</g>
+<g transform="translate(180, 130)">
+  <text class="bar-label" x="-10" y="14" text-anchor="end">Sampling + dispatch</text>
+  <rect class="bar-sample" x="0" y="0" width="30" height="22" rx="2"/>
+  <text class="bar-sub" x="38" y="14">~4%</text>
+</g>
+<g transform="translate(180, 165)">
+  <text class="bar-label" x="-10" y="14" text-anchor="end">Other overhead</text>
+  <rect class="bar-overhead" x="0" y="0" width="14" height="22" rx="2"/>
+  <text class="bar-sub" x="22" y="14">~2%</text>
+</g>
+<g transform="translate(180, 210)">
+  <line x1="0" y1="0" x2="600" y2="0" stroke="#2a2a3e" stroke-width="1"/>
+  <line x1="0" y1="0" x2="0" y2="6" stroke="#2a2a3e" stroke-width="1"/>
+  <line x1="150" y1="0" x2="150" y2="6" stroke="#2a2a3e" stroke-width="1"/>
+  <line x1="300" y1="0" x2="300" y2="6" stroke="#2a2a3e" stroke-width="1"/>
+  <line x1="450" y1="0" x2="450" y2="6" stroke="#2a2a3e" stroke-width="1"/>
+  <line x1="600" y1="0" x2="600" y2="6" stroke="#2a2a3e" stroke-width="1"/>
+  <text class="bar-axis" x="0" y="22" text-anchor="middle">0%</text>
+  <text class="bar-axis" x="150" y="22" text-anchor="middle">25%</text>
+  <text class="bar-axis" x="300" y="22" text-anchor="middle">50%</text>
+  <text class="bar-axis" x="450" y="22" text-anchor="middle">75%</text>
+  <text class="bar-axis" x="600" y="22" text-anchor="middle">100%</text>
+</g>
+<text x="400" y="270" text-anchor="middle" class="bar-sub">Indicative, single batch, no prefetch. Real numbers vary by prompt length and model.</text>
+</svg>
+<figcaption>Indicative breakdown of inference time for a 12B model at 4-bit precision, single batch, no prefetch. The data-movement bar dominates; compute is small by comparison.</figcaption>
+</figure>
+
+<h3 class="chapter-subtitle">Quantization-on-transport shifts the curve</h3>
+<p class="chapter-body">Tessera's answer to the memory wall is <em>quantization-on-transport</em>. Standard quantization is a one-time pre-processing step: the weights are reduced to 4 bits before inference, stored on disk, loaded at startup. The trade-off is fixed at calibration time and applies to the entire inference.</p>
+<p class="chapter-body">Tessera does quantization <em>as data moves between compute stages</em>. The full-precision weight lives in HBM; the 4-bit representation lives in the GPU's cache; the conversion happens in flight, using the compute that would otherwise be idle during the transfer. The kernel that does the runtime conversion is the same kernel that graded the calibration, so the conversion is kernel-aware and effectively lossless for the model's purposes. The next time the data moves, the conversion happens again, with the access pattern the model actually exhibited.</p>
+
+<figure class="diagram-block">
+<svg viewBox="0 0 800 320" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="qot-title qot-desc" style="width: 100%; height: auto; max-width: 800px; display: block; margin: var(--space-4) auto;">
+<title id="qot-title">Quantization-on-transport: how the data path changes</title>
+<desc id="qot-desc">A two-row diagram. The top row is the standard path: HBM stores full precision, GPU fetches full precision, dequant is done in GPU. The bottom row is quantization-on-transport: HBM stores full precision, the transport path dequantizes on the fly using idle compute, the GPU receives the 4-bit representation directly. The 4-bit payload travels through the transport, saving bandwidth.</desc>
+<style>
+  .box { fill: #131320; stroke: #2a2a3e; stroke-width: 1; }
+  .box-hbm { fill: #1c1c2e; stroke: #6ad4ff; }
+  .box-transport { fill: #131320; stroke: #c56ad4; stroke-dasharray: 4 3; }
+  .box-gpu { fill: #1c1c2e; stroke: #6ad4ff; }
+  .lbl { font: 13px sans-serif; fill: #ebebf2; font-weight: 500; }
+  .lbl-mono { font: 12px var(--font-mono, monospace); fill: #a0a0b8; }
+  .lbl-axis { font: 11px var(--font-mono, monospace); fill: #6c6c84; }
+  .lbl-section { font: 13px sans-serif; fill: #c56ad4; font-weight: 700; }
+  .lbl-section-top { font: 13px sans-serif; fill: #6ad4ff; font-weight: 700; }
+  .arr { stroke: #a0a0b8; stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+  .arr-fast { stroke: #5fd97a; stroke-width: 1.5; fill: none; marker-end: url(#arrow-green); }
+  .title { font: 16px sans-serif; fill: #ebebf2; font-weight: 700; }
+</style>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#a0a0b8"/></marker>
+  <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#5fd97a"/></marker>
+</defs>
+<text class="title" x="400" y="24" text-anchor="middle">Two paths for the same inference</text>
+<text class="lbl-section-top" x="20" y="62">Standard path</text>
+<g>
+  <rect class="box-hbm" x="40" y="76" width="120" height="48" rx="3"/>
+  <text class="lbl" x="100" y="98" text-anchor="middle">HBM</text>
+  <text class="lbl-mono" x="100" y="115" text-anchor="middle">FP16 weights</text>
+  <line class="arr" x1="160" y1="100" x2="290" y2="100"/>
+  <text class="lbl-mono" x="225" y="92" text-anchor="middle">load (full)</text>
+  <rect class="box-gpu" x="290" y="76" width="120" height="48" rx="3"/>
+  <text class="lbl" x="350" y="98" text-anchor="middle">GPU cache</text>
+  <text class="lbl-mono" x="350" y="115" text-anchor="middle">FP16 tile</text>
+  <line class="arr" x1="410" y1="100" x2="540" y2="100"/>
+  <text class="lbl-mono" x="475" y="92" text-anchor="middle">dequant (in-GPU)</text>
+  <rect class="box-gpu" x="540" y="76" width="120" height="48" rx="3"/>
+  <text class="lbl" x="600" y="98" text-anchor="middle">Compute</text>
+  <text class="lbl-mono" x="600" y="115" text-anchor="middle">FP16 matmul</text>
+</g>
+<text class="lbl-section" x="20" y="184">Quantization-on-transport</text>
+<g>
+  <rect class="box-hbm" x="40" y="200" width="120" height="48" rx="3"/>
+  <text class="lbl" x="100" y="222" text-anchor="middle">HBM</text>
+  <text class="lbl-mono" x="100" y="239" text-anchor="middle">FP16 weights</text>
+  <line class="arr" x1="160" y1="224" x2="290" y2="224"/>
+  <text class="lbl-mono" x="225" y="216" text-anchor="middle">load (full)</text>
+  <rect class="box-transport" x="290" y="200" width="120" height="48" rx="3"/>
+  <text class="lbl" x="350" y="222" text-anchor="middle">Transport</text>
+  <text class="lbl-mono" x="350" y="239" text-anchor="middle">quantize in flight</text>
+  <line class="arr-fast" x1="410" y1="224" x2="540" y2="224"/>
+  <text class="lbl-mono" x="475" y="216" text-anchor="middle" fill="#5fd97a">4-bit payload</text>
+  <rect class="box-gpu" x="540" y="200" width="120" height="48" rx="3"/>
+  <text class="lbl" x="600" y="222" text-anchor="middle">Compute</text>
+  <text class="lbl-mono" x="600" y="239" text-anchor="middle">4-bit matmul</text>
+</g>
+<text x="400" y="295" text-anchor="middle" class="lbl-mono">Top: standard path. Bottom: quantization-on-transport compresses the GPU-bound leg. Same accuracy, less bandwidth.</text>
+</svg>
+<figcaption>The standard path keeps the FP16 weight in flight end-to-end. Quantization-on-transport compresses the GPU-bound leg to 4 bits. The compression is kernel-aware, so the matmul result is effectively lossless.</figcaption>
+</figure>
+
+<p class="chapter-body">The effect on the wall: the data-movement bar in the chart above shrinks by roughly the compression ratio of the quantization (4-bit vs 16-bit = 4x reduction in transport bandwidth), and the compute bar grows by the dequant cost (which is small relative to the matmul). The net: faster inference at the same accuracy, with the accuracy verified against the production kernel.</p>
+<p class="chapter-aside">See <a href="/concepts/#concept-quantization-on-transport">the concept card</a> for the short version, and <a href="/concepts/#concept-memory-wall">the memory-wall concept card</a> for the analogy.</p>
 </section>
 
-<section class="chapter" id="why-not">
-<div class="chapter-eyebrow">Why this is different</div>
-<h2 class="chapter-title">The fitness is measured against the kernel, not the calibrator.</h2>
-<div class="chapter-body">
-<p>Most quantization pipelines search a proxy (offline Frobenius, a separate cost model, a benchmark) and ship the artifact. Tessera searches against the actual kernel dequant output. The fitness signal and the runtime signal are the same signal. The artifact is the proof of the search; the search is the proof of the artifact.</p>
+<section class="chapter" id="quantization">
+<div class="chapter-eyebrow">Tessera-T640</div>
+<h2 class="chapter-title">The Tile640 encoding, in one section.</h2>
+<p class="chapter-body">Tessera-T640 is the encoding the engine writes. It is a Tile640-aware ternary + outlier representation with AWQ pre-scaling, importance-weighted range selection, and the per-tensor GA. The "T640" means "Tessera, 640-value tile": the encoding carries a balanced ternary core (three values: -1, 0, +1, plus outlier markers), BF16 page scales, INT8 lane-scale codes, and row-sparse F16 residual values for the outliers that the ternary cannot represent.</p>
+<p class="chapter-body">Sensitive tensors — norms, biases, routers, embeddings — remain exact. They do not pass through the ternary core. The decoder detects them by name in the loader and routes them to the conventional passthrough path. This is the constitutional commitment: protected tensors are never quantized.</p>
+<p class="chapter-body">The artifact is a single GGUF. The T640 components live in the same file as the conventional tensors. Vanilla llama.cpp readers see standard GGUF; Tessera-aware readers can recover the policy from the metadata and the sidecar.</p>
+</section>
+
+<section class="chapter" id="calibration-corpus">
+<div class="chapter-eyebrow">The calibration corpus</div>
+<h2 class="chapter-title">A built-in default, and the path to your own.</h2>
+<p class="chapter-body">The default calibration corpus is shipped baked into the binary. It is approximately 1 MB of synthetic text generated by the Tessera procedural pipeline; the goal is to give a small model enough variety to find a per-tensor policy without a download step. For production calibration, you want your own corpus: a representative sample of the kind of text / images / audio the model will see in deployment.</p>
+<p class="chapter-body">For multimodal models, the calibration corpus needs three slices: text, image-text pairs, and audio-text pairs. The Tessera CC0 procedural set covers the text slice; for image and audio, the recommended source sets are <a href="https://huggingface.co/datasets/pixparse/PixelProse">PixelProse</a> (CC BY 4.0) for image-text and <a href="https://huggingface.co/datasets/openslr/librispeech_asr">LibriSpeech test-clean</a> (CC BY 4.0) for audio. Both are license-clean for commercial redistribution.</p>
+</section>
+
+<section class="chapter" id="next-step">
+<div class="chapter-eyebrow">Where to go next</div>
+<h2 class="chapter-title">Pick the question that brought you here.</h2>
+<div class="chapter-grid chapter-grid-3">
+<a class="next-step-card" href="/evidence/">
+<span class="next-step-card-eyebrow">Want the receipts?</span>
+<h3 class="next-step-card-title">Evidence</h3>
+<p class="next-step-card-body">The signed receipts, the eval results, the audit trail.</p>
+</a>
+<a class="next-step-card" href="/concepts/">
+<span class="next-step-card-eyebrow">Need an analogy?</span>
+<h3 class="next-step-card-title">Concepts</h3>
+<p class="next-step-card-body">The ML vocabulary, with concise analogies.</p>
+</a>
+<a class="next-step-card" href="/how-tessera-differs/">
+<span class="next-step-card-eyebrow">Comparing to other projects?</span>
+<h3 class="next-step-card-title">How Tessera differs</h3>
+<p class="next-step-card-body">vs llama.cpp, MLX, and vLLM. The four axes, the technical depth.</p>
+</a>
 </div>
 </section>
 
@@ -104,17 +309,20 @@
 <ul class="secondary-nav-list">
 <li class="secondary-nav-label">Navigate</li>
 <li><a href="/">Home</a></li>
+<li><a href="/studio/">Studio</a></li>
+<li><a href="/how-it-works/">How it works</a></li>
+<li><a href="/how-tessera-differs/">How Tessera differs</a></li>
+<li><a href="/concepts/">Concepts</a></li>
 <li><a href="/start/">Start</a></li>
 <li><a href="/architecture/" aria-current="page">Architecture</a></li>
 <li><a href="/evidence/">Evidence</a></li>
-<li><a href="/status/">Status</a></li>
 <li><a href="/changelog/">Changelog</a></li>
 <li><a href="/colophon/">Colophon</a></li>
 </ul>
 </aside>
 <footer class="site-footer">
 <div class="site-footer-inner">
-<p>Tessera is independently developed by <strong>Julian Torres</strong>. Released under the project's license. <a href="/colophon/">Colophon</a> · <a rel="external" target="_blank" href="https://github.com/Tribunus-dev/tessera">Repository</a></p>
+<p>Tessera is independently developed by <strong>Julian Torres</strong>. Source-available under the Tessera Research and Education License 1.0; trained models under CC BY-NC-SA 4.0. <a href="/colophon/">Colophon</a> · <a rel="external" target="_blank" href="https://github.com/Tribunus-dev/tessera">Repository</a> · <a href="mailto:julian@tribunus.dev">Commercial</a></p>
 <p><a href="https://tessera.tribunus.dev">tessera.tribunus.dev</a></p>
 </div>
 </footer>

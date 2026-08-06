@@ -3,16 +3,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Tessera — Colophon</title>
+<title>Tessera - Colophon. The site, the author, the agreement.</title>
+<meta name="description" content="How Tessera is built, who built it, and the terms under which the engine, models, and docs are shared. The commercial path.">
 <link rel="canonical" href="https://tessera.tribunus.dev/colophon/">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <meta name="generator" content="tessera-docs-ssg">
-<meta name="build-id" content="bootstrap-001">
-<meta property="og:title" content="Tessera — Colophon">
-<meta property="og:description" content="Calibrate and quantize models with receipts the kernel agrees with.">
+<meta name="build-id" content="regen-002">
+<meta property="og:title" content="Tessera - Colophon.">
+<meta property="og:description" content="The site, the author, the agreement. Commercial path: julian@tribunus.dev.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://tessera.tribunus.dev/colophon/">
-<meta name="twitter:card" content="summary">
+<meta property="og:image" content="https://tessera.tribunus.dev/og-image.svg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Tessera - Colophon.">
+<meta name="twitter:description" content="The site, the author, the agreement.">
+<meta name="twitter:image" content="https://tessera.tribunus.dev/og-image.svg">
 <link rel="stylesheet" href="/styles/site.css">
 <script>
 (function(){try{
@@ -30,29 +35,34 @@
 }catch(e){}})();
 </script>
 <script src="/scripts/theme.js" defer></script>
-<script src="/scripts/transitions-orchestrator.js" defer></script>
-<script src="/scripts/selection-controller.js" defer></script>
 </head>
 <body data-prism-route="/colophon/" data-prism-hydrated="false">
 <a href="#top" class="skip-link">Skip to main content</a>
 <header class="site-header">
 <a class="brand" href="/"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tessera</span></a>
 <nav class="site-nav" aria-label="Primary navigation">
+<a class="site-nav-link" href="/studio/">Studio</a>
+<a class="site-nav-link" href="/how-it-works/">How it works</a>
+<a class="site-nav-link" href="/how-tessera-differs/">How Tessera differs</a>
+<a class="site-nav-link" href="/concepts/">Concepts</a>
 <a class="site-nav-link" href="/start/">Start</a>
 <a class="site-nav-link" href="/architecture/">Architecture</a>
 <a class="site-nav-link" href="/evidence/">Evidence</a>
-<a class="site-nav-link" href="/status/">Status</a>
 <a class="site-nav-link" href="/changelog/">Changelog</a>
 <a class="site-nav-link" rel="external" target="_blank" href="https://github.com/Tribunus-dev/tessera">GitHub</a>
 </nav>
 <button type="button" class="theme-toggle" aria-label="Toggle dark and light theme" data-theme-toggle><span class="theme-toggle-icon" aria-hidden="true"></span><span class="theme-toggle-label">Dark</span></button>
 </header>
+<aside class="standalone-anchor" aria-label="Page context">
+<span class="standalone-anchor-mark">Tessera</span>
+<p class="standalone-anchor-body">You are on <strong>Colophon</strong>, the trust page. <a href="/">Back to home</a> · <a href="/how-it-works/">How it works</a> · <a href="/architecture/">Architecture</a></p>
+</aside>
 <main class="page-body" id="top">
 
 <header class="page-header">
 <span class="page-header-eyebrow">Colophon</span>
-<h1 class="page-header-headline">The site, the author, the agreement.</h1>
-<p class="page-header-blurb">How Tessera is built, who built it, and the terms under which the receipts and the pipeline are shared.</p>
+<h1 class="page-header-headline">The site. The author. The agreement.</h1>
+<p class="page-header-blurb">How Tessera is built, who built it, and the terms under which the engine, models, and docs are shared. Commercial path: <a href="mailto:julian@tribunus.dev">julian@tribunus.dev</a>.</p>
 </header>
 
 <section class="chapter" id="the-author">
@@ -76,8 +86,8 @@
 <section class="chapter" id="the-stack">
 <div class="chapter-eyebrow">The stack</div>
 <h2 class="chapter-title">What runs behind this page.</h2>
-<div class="chapter-body">
-<table>
+<div class="table-wrap">
+<table class="tier-table">
 <thead><tr><th>Layer</th><th>Choice</th></tr></thead>
 <tbody>
 <tr><td>Source</td><td>Hand-authored HTML in <code>site/</code> on the <code>feat/docs-bootstrap</code> branch.</td></tr>
@@ -94,9 +104,69 @@
 <section class="chapter" id="the-license">
 <div class="chapter-eyebrow">The license</div>
 <h2 class="chapter-title">The terms under which the work is shared.</h2>
-<div class="chapter-body">
-<p>The Tessera code is released under the project's open-source license. The shipped calibration artifacts (the GGUFs, the sidecar JSONs) are released under the same terms as the model they were quantized from, unless the model is the project's own. The Tessera calibration corpus is CC0 procedural text; the multimodal corpus is CC BY 4.0; see the corpus README for the per-source attribution.</p>
-<p>The contribution path is the repository. Issues, pull requests, and discussion are the surface. The proprietary models remain confidential where an engagement requires it. The receipt is recorded either way.</p>
+<p class="chapter-body">Three tiers. Each is its own agreement. None of them is "open source" by the strict Open Source Initiative definition; the careful term is "source-available" and "open weights."</p>
+<div class="table-wrap">
+<table class="tier-table">
+<thead>
+<tr><th>Tier</th><th>License</th><th>What's in it</th></tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Engine code</strong></td>
+<td>Tessera Research and Education License 1.0 (PolyForm Noncommercial 1.0.0). Source-available, noncommercial.</td>
+<td>The C++ engine, the Python quantizer, the calibration tools, the receipt schema.</td>
+</tr>
+<tr>
+<td><strong>Tessera-trained models</strong></td>
+<td>CC BY-NC-SA 4.0. Open weights, noncommercial, share-alike, attribution.</td>
+<td>Models trained on the Tessera sanitized dataset, with the signed receipt on every artifact.</td>
+</tr>
+<tr>
+<td><strong>Vanilla quants of upstream models</strong></td>
+<td>Upstream model license + attribution, per-quant, derived from the recipe.</td>
+<td>Tessera-quantized versions of upstream models that are not Tessera-locked. Run on stock llama.cpp.</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p class="chapter-body">Commercial use is a separate path. <a href="mailto:julian@tribunus.dev">julian@tribunus.dev</a>. The commercial licensee gets the right to redistribute under their own terms; the community tier does not change.</p>
+</section>
+
+<section class="chapter" id="contact">
+<div class="chapter-eyebrow">Contact</div>
+<h2 class="chapter-title">How to reach the architect.</h2>
+<div class="table-wrap">
+<table class="tier-table">
+<tbody>
+<tr><td><strong>General</strong></td><td><a href="mailto:julian@tribunus.dev">julian@tribunus.dev</a></td></tr>
+<tr><td><strong>Commercial use</strong></td><td><a href="mailto:julian@tribunus.dev">julian@tribunus.dev</a></td></tr>
+<tr><td><strong>Bug or feature request</strong></td><td><a rel="external" target="_blank" href="https://github.com/Tribunus-dev/tessera/issues">GitHub Issues</a></td></tr>
+<tr><td><strong>Discussions</strong></td><td><a rel="external" target="_blank" href="https://github.com/Tribunus-dev/tessera/discussions">GitHub Discussions</a></td></tr>
+<tr><td><strong>Repository</strong></td><td><a rel="external" target="_blank" href="https://github.com/Tribunus-dev/tessera">github.com/Tribunus-dev/tessera</a></td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<section class="chapter" id="next-step">
+<div class="chapter-eyebrow">Where to go next</div>
+<h2 class="chapter-title">Pick the question that brought you here.</h2>
+<div class="chapter-grid chapter-grid-3">
+<a class="next-step-card" href="/how-it-works/">
+<span class="next-step-card-eyebrow">Want to understand the deal?</span>
+<h3 class="next-step-card-title">How it works</h3>
+<p class="next-step-card-body">The flywheel, the privacy contract, the data path.</p>
+</a>
+<a class="next-step-card" href="/start/">
+<span class="next-step-card-eyebrow">Ready to install?</span>
+<h3 class="next-step-card-title">Start</h3>
+<p class="next-step-card-body">Build, run, and load your first model.</p>
+</a>
+<a class="next-step-card" href="/architecture/">
+<span class="next-step-card-eyebrow">Want the technical depth?</span>
+<h3 class="next-step-card-title">Architecture</h3>
+<p class="next-step-card-body">The kernel-fidelity loop, the dispatch policy, the memory wall.</p>
+</a>
 </div>
 </section>
 
@@ -105,17 +175,20 @@
 <ul class="secondary-nav-list">
 <li class="secondary-nav-label">Navigate</li>
 <li><a href="/">Home</a></li>
+<li><a href="/studio/">Studio</a></li>
+<li><a href="/how-it-works/">How it works</a></li>
+<li><a href="/how-tessera-differs/">How Tessera differs</a></li>
+<li><a href="/concepts/">Concepts</a></li>
 <li><a href="/start/">Start</a></li>
 <li><a href="/architecture/">Architecture</a></li>
 <li><a href="/evidence/">Evidence</a></li>
-<li><a href="/status/">Status</a></li>
 <li><a href="/changelog/">Changelog</a></li>
 <li><a href="/colophon/" aria-current="page">Colophon</a></li>
 </ul>
 </aside>
 <footer class="site-footer">
 <div class="site-footer-inner">
-<p>Tessera is independently developed by <strong>Julian Torres</strong>. Released under the project's license. <a href="/colophon/">Colophon</a> · <a rel="external" target="_blank" href="https://github.com/Tribunus-dev/tessera">Repository</a></p>
+<p>Tessera is independently developed by <strong>Julian Torres</strong>. Source-available under the Tessera Research and Education License 1.0; trained models under CC BY-NC-SA 4.0. <a href="/colophon/">Colophon</a> · <a rel="external" target="_blank" href="https://github.com/Tribunus-dev/tessera">Repository</a> · <a href="mailto:julian@tribunus.dev">Commercial</a></p>
 <p><a href="https://tessera.tribunus.dev">tessera.tribunus.dev</a></p>
 </div>
 </footer>

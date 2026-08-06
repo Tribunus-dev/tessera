@@ -3,16 +3,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Tessera — Start</title>
+<title>Tessera - Start. Build, run, load your first model.</title>
+<meta name="description" content="The on-ramp to Tessera. Build the engine from source, run a five-minute smoke test, load a model into Tessera Studio. macOS-first; Linux supported.">
 <link rel="canonical" href="https://tessera.tribunus.dev/start/">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <meta name="generator" content="tessera-docs-ssg">
-<meta name="build-id" content="bootstrap-001">
-<meta property="og:title" content="Tessera — Start">
-<meta property="og:description" content="Calibrate and quantize models with receipts the kernel agrees with.">
+<meta name="build-id" content="regen-002">
+<meta property="og:title" content="Tessera - Start. Build, run, load your first model.">
+<meta property="og:description" content="The on-ramp to Tessera. Build the engine from source, run a five-minute smoke test, load a model into Tessera Studio.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://tessera.tribunus.dev/start/">
-<meta name="twitter:card" content="summary">
+<meta property="og:image" content="https://tessera.tribunus.dev/og-image.svg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Tessera - Start. Build, run, load your first model.">
+<meta name="twitter:description" content="The on-ramp to Tessera. Build, run, load a model.">
+<meta name="twitter:image" content="https://tessera.tribunus.dev/og-image.svg">
 <link rel="stylesheet" href="/styles/site.css">
 <script>
 (function(){try{
@@ -30,62 +35,81 @@
 }catch(e){}})();
 </script>
 <script src="/scripts/theme.js" defer></script>
-<script src="/scripts/transitions-orchestrator.js" defer></script>
-<script src="/scripts/selection-controller.js" defer></script>
 </head>
 <body data-prism-route="/start/" data-prism-hydrated="false">
 <a href="#top" class="skip-link">Skip to main content</a>
 <header class="site-header">
 <a class="brand" href="/"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tessera</span></a>
 <nav class="site-nav" aria-label="Primary navigation">
+<a class="site-nav-link" href="/studio/">Studio</a>
+<a class="site-nav-link" href="/how-it-works/">How it works</a>
+<a class="site-nav-link" href="/how-tessera-differs/">How Tessera differs</a>
+<a class="site-nav-link" href="/concepts/">Concepts</a>
 <a class="site-nav-link" href="/start/" aria-current="page">Start</a>
 <a class="site-nav-link" href="/architecture/">Architecture</a>
 <a class="site-nav-link" href="/evidence/">Evidence</a>
-<a class="site-nav-link" href="/status/">Status</a>
 <a class="site-nav-link" href="/changelog/">Changelog</a>
 <a class="site-nav-link" rel="external" target="_blank" href="https://github.com/Tribunus-dev/tessera">GitHub</a>
 </nav>
 <button type="button" class="theme-toggle" aria-label="Toggle dark and light theme" data-theme-toggle><span class="theme-toggle-icon" aria-hidden="true"></span><span class="theme-toggle-label">Dark</span></button>
 </header>
+<aside class="standalone-anchor" aria-label="Page context">
+<span class="standalone-anchor-mark">Tessera</span>
+<p class="standalone-anchor-body">You are on <strong>Start</strong>, the on-ramp. <a href="/">Back to home</a> · <a href="/studio/">Studio</a> · <a href="/how-it-works/">How it works</a></p>
+</aside>
 <main class="page-body" id="top">
 
 <header class="page-header">
-<span class="page-header-eyebrow">Start</span>
-<h1 class="page-header-headline">A five-minute first pass.</h1>
-<p class="page-header-blurb">Build the pipeline, calibrate a tiny model, and read the receipt. The whole loop is a single <code>llama-quantize</code> invocation.</p>
+<span class="page-header-eyebrow">On-ramp</span>
+<h1 class="page-header-headline">Build. Run. Load your first model.</h1>
+<p class="page-header-blurb">A five-minute first pass. macOS first, Linux supported. The full engine is a single CMake build. The Studio app downloads separately.</p>
 </header>
+
+<section class="chapter" id="pick-your-path">
+<div class="chapter-eyebrow">Step 0</div>
+<h2 class="chapter-title">Pick your path.</h2>
+<p class="chapter-body">There are two on-ramps. Most people start with Tessera Studio, the app; you can drop a model in and use it. If you want to <a class="gloss" href="/concepts/#concept-quantization">quantize</a> your own model, you want the engine on top.</p>
+<div class="chapter-grid chapter-grid-2">
+<article class="feature-card">
+<h3 class="feature-card-title">Just run models.</h3>
+<p class="feature-card-body">Download <a href="/studio/">Tessera Studio</a> from the App Store. The model library has Gemma 4 12B unified, Qwen 3 TTS, and a small set of Tessera-trained models. Pick one. Chat. Done.</p>
+</article>
+<article class="feature-card">
+<h3 class="feature-card-title">Quantize your own model.</h3>
+<p class="feature-card-body">Build the engine from source, calibrate on a corpus, write a Tessera-T640 GGUF. The pipeline runs end to end with one command. This is the on-ramp for engineers and researchers.</p>
+</article>
+</div>
+</section>
 
 <section class="chapter" id="prerequisites">
 <div class="chapter-eyebrow">Prerequisites</div>
-<h2 class="chapter-title">What you need before you start.</h2>
-<div class="chapter-body">
-<ul>
-<li>A C++17 or later toolchain (clang or gcc).</li>
-<li>CMake 3.20+.</li>
+<h2 class="chapter-title">What you need on the machine.</h2>
+<p class="chapter-body">For the engine build:</p>
+<ul class="chapter-body">
+<li>macOS 14+ on Apple Silicon (M1 / M2 / M3 / M4). The ANE prefill needs M-series; Intel macs fall back to the CPU path.</li>
+<li>Linux x86_64 or aarch64 with CUDA 12+ for GPU, ROCm 6+ for AMD GPU, or CPU-only. <a class="gloss" href="/concepts/#concept-ane">ANE</a> is macOS-only.</li>
+<li>CMake 3.20+, a C++17 toolchain (clang on macOS, gcc 11+ on Linux).</li>
 <li>Python 3.10+ for the calibration pipeline.</li>
 <li>A small model to calibrate against (a 1.1B parameter Llama is enough for the smoke test).</li>
-<li>A small calibration corpus. The Tessera CC0 procedural set is shipped baked into the binary; you do not need to download a corpus for the first run.</li>
 </ul>
-</div>
+<p class="chapter-body">For the Studio app: macOS 14+ on Apple Silicon. iOS 17+ on A14+ (iPad Pro M-series or iPhone 12+).</p>
 </section>
 
 <section class="chapter" id="build">
-<div class="chapter-eyebrow">Build</div>
-<h2 class="chapter-title">Build the pipeline.</h2>
-<div class="chapter-body">
+<div class="chapter-eyebrow">Step 1</div>
+<h2 class="chapter-title">Build the engine.</h2>
+<p class="chapter-body">Clone the repo and build <code>llama-quantize</code>. The Tessera pipeline is the default mode; opt back to stock K-quants with <code>--tessera-mode=off</code>.</p>
 <pre><code>git clone https://github.com/Tribunus-dev/tessera
 cd tessera
-cmake -B build -DGGML_METAL=ON -DGGML_OPENBLAS=ON
+cmake -B build -DGGML_METAL=ON
 cmake --build build --target llama-quantize -j</code></pre>
-<p>The output binary is <code>build/bin/llama-quantize</code>. The Tessera C++ pipeline is in the same binary as the upstream quantizer. The default mode is Tessera; opt back to stock K-quants with <code>--tessera-mode=off</code>.</p>
-</div>
+<p class="chapter-body">The output binary is <code>build/bin/llama-quantize</code>. Linux builds additionally need OpenBLAS for the AWQ-Evolve GA inner loop; the build will print the install command for your distro if it is missing.</p>
 </section>
 
 <section class="chapter" id="calibrate">
-<div class="chapter-eyebrow">Calibrate</div>
+<div class="chapter-eyebrow">Step 2</div>
 <h2 class="chapter-title">Calibrate, then quantize.</h2>
-<div class="chapter-body">
-<p>Pass a model to <code>llama-quantize</code> with a Tessera type and let the pipeline run end to end:</p>
+<p class="chapter-body">Pass a model to <code>llama-quantize</code> with a Tessera type and let the pipeline run end to end:</p>
 <pre><code>build/bin/llama-quantize \
   --tessera-mode=on \
   --tessera-policy=auto \
@@ -94,32 +118,46 @@ cmake --build build --target llama-quantize -j</code></pre>
   models/tinyllama-1.1b.gguf \
   models/tinyllama-1.1b.tessera-t640.gguf \
   TESSERA_T640</code></pre>
-<p>The pipeline runs three stages: calibration (the built-in corpus), AWQ policy search (the GA), and quantization (the writer). Each stage writes its output to the sidecar. The final artifact is the GGUF; the receipt is in the sidecar.</p>
-</div>
+<p class="chapter-body">The pipeline runs three stages: calibration (the built-in CC0 corpus, no download step), AWQ policy search (the per-tensor GA), and quantization (the writer). Each stage writes its output to the sidecar. The final artifact is the GGUF; the <a class="gloss" href="/concepts/#concept-receipt">signed receipt</a> is in the sidecar.</p>
 </section>
 
 <section class="chapter" id="verify">
-<div class="chapter-eyebrow">Verify</div>
+<div class="chapter-eyebrow">Step 3</div>
 <h2 class="chapter-title">Read the receipt.</h2>
-<div class="chapter-body">
-<p>Run the A/B harness to re-dequantize the artifact through the kernel and compare against the original:</p>
+<p class="chapter-body">Run the A/B harness to re-dequantize the artifact through the kernel and compare against the original:</p>
 <pre><code>python3 tools/tessera/tessera-ab-harness.py \
   --baseline models/tinyllama-1.1b.gguf \
   --candidate models/tinyllama-1.1b.tessera-t640.gguf \
   --metric t_l2</code></pre>
-<p>The harness reports the per-tensor t_l² and the aggregate. The t_l² is the Frobenius distance between the original weight and the kernel's dequant output, normalized by the max weight magnitude. A green receipt is one where the t_l² matches what the policy predicted.</p>
-</div>
+<p class="chapter-body">The harness reports the per-tensor t_l² and the aggregate. The t_l² is the Frobenius distance between the original weight and the kernel's dequant output, normalized by the max weight magnitude. A green receipt is one where the t_l² matches what the policy predicted.</p>
 </section>
 
-<section class="chapter" id="next">
-<div class="chapter-eyebrow">Next</div>
-<h2 class="chapter-title">Where to go from here.</h2>
-<div class="chapter-body">
-<ul>
-<li><a href="/architecture/">The architecture</a> — what the pipeline is doing under the hood.</li>
-<li><a href="/evidence/">The evidence</a> — receipts from the most recent runs.</li>
-<li><a href="/changelog/">The changelog</a> — what shipped, in order.</li>
-</ul>
+<section class="chapter" id="install-studio">
+<div class="chapter-eyebrow">Step 4 (optional)</div>
+<h2 class="chapter-title">Install Tessera Studio.</h2>
+<p class="chapter-body">If you just want to run models and skip the quantization pipeline, install Tessera Studio from the App Store. The app ships with a model library you can browse without building anything.</p>
+<p class="chapter-body">Once installed, open the app, drop into the Library, pick a model, and start chatting. The app handles dispatch (CPU / GPU / ANE), the agent loop, and the <a class="gloss" href="/concepts/#concept-hybrid-drafters">hybrid drafters</a> automatically. The flywheel is opt-in; turn it on in Settings if you want your usage to help improve the next model.</p>
+</section>
+
+<section class="chapter" id="next-step">
+<div class="chapter-eyebrow">Where to go next</div>
+<h2 class="chapter-title">Pick the question that brought you here.</h2>
+<div class="chapter-grid chapter-grid-3">
+<a class="next-step-card" href="/architecture/">
+<span class="next-step-card-eyebrow">Want to know what the engine is doing?</span>
+<h3 class="next-step-card-title">Architecture</h3>
+<p class="next-step-card-body">The kernel-fidelity loop, the dispatch policy, the memory wall.</p>
+</a>
+<a class="next-step-card" href="/concepts/">
+<span class="next-step-card-eyebrow">Hit a term you don't know?</span>
+<h3 class="next-step-card-title">Concepts</h3>
+<p class="next-step-card-body">The ML vocabulary, with concise analogies.</p>
+</a>
+<a class="next-step-card" href="/how-it-works/">
+<span class="next-step-card-eyebrow">Want to understand the deal?</span>
+<h3 class="next-step-card-title">How it works</h3>
+<p class="next-step-card-body">The flywheel, the privacy contract, the data path.</p>
+</a>
 </div>
 </section>
 
@@ -128,17 +166,20 @@ cmake --build build --target llama-quantize -j</code></pre>
 <ul class="secondary-nav-list">
 <li class="secondary-nav-label">Navigate</li>
 <li><a href="/">Home</a></li>
+<li><a href="/studio/">Studio</a></li>
+<li><a href="/how-it-works/">How it works</a></li>
+<li><a href="/how-tessera-differs/">How Tessera differs</a></li>
+<li><a href="/concepts/">Concepts</a></li>
 <li><a href="/start/" aria-current="page">Start</a></li>
 <li><a href="/architecture/">Architecture</a></li>
 <li><a href="/evidence/">Evidence</a></li>
-<li><a href="/status/">Status</a></li>
 <li><a href="/changelog/">Changelog</a></li>
 <li><a href="/colophon/">Colophon</a></li>
 </ul>
 </aside>
 <footer class="site-footer">
 <div class="site-footer-inner">
-<p>Tessera is independently developed by <strong>Julian Torres</strong>. Released under the project's license. <a href="/colophon/">Colophon</a> · <a rel="external" target="_blank" href="https://github.com/Tribunus-dev/tessera">Repository</a></p>
+<p>Tessera is independently developed by <strong>Julian Torres</strong>. Source-available under the Tessera Research and Education License 1.0; trained models under CC BY-NC-SA 4.0. <a href="/colophon/">Colophon</a> · <a rel="external" target="_blank" href="https://github.com/Tribunus-dev/tessera">Repository</a> · <a href="mailto:julian@tribunus.dev">Commercial</a></p>
 <p><a href="https://tessera.tribunus.dev">tessera.tribunus.dev</a></p>
 </div>
 </footer>

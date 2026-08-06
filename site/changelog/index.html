@@ -3,16 +3,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Tessera — Changelog</title>
+<title>Tessera - Changelog. Releases, dated entries, status.</title>
+<meta name="description" content="The release log for Tessera. The status table at the top shows what is shipped, what is qualifying, and what is on the runway. Dated entries below, oldest first.">
 <link rel="canonical" href="https://tessera.tribunus.dev/changelog/">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <meta name="generator" content="tessera-docs-ssg">
-<meta name="build-id" content="bootstrap-001">
-<meta property="og:title" content="Tessera — Changelog">
-<meta property="og:description" content="Calibrate and quantize models with receipts the kernel agrees with.">
+<meta name="build-id" content="regen-002">
+<meta property="og:title" content="Tessera - Changelog.">
+<meta property="og:description" content="The release log. Status table at the top, dated entries below.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://tessera.tribunus.dev/changelog/">
-<meta name="twitter:card" content="summary">
+<meta property="og:image" content="https://tessera.tribunus.dev/og-image.svg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Tessera - Changelog.">
+<meta name="twitter:description" content="Releases, dated entries, status.">
+<meta name="twitter:image" content="https://tessera.tribunus.dev/og-image.svg">
 <link rel="stylesheet" href="/styles/site.css">
 <script>
 (function(){try{
@@ -30,45 +35,107 @@
 }catch(e){}})();
 </script>
 <script src="/scripts/theme.js" defer></script>
-<script src="/scripts/transitions-orchestrator.js" defer></script>
-<script src="/scripts/selection-controller.js" defer></script>
 </head>
 <body data-prism-route="/changelog/" data-prism-hydrated="false">
 <a href="#top" class="skip-link">Skip to main content</a>
 <header class="site-header">
 <a class="brand" href="/"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tessera</span></a>
 <nav class="site-nav" aria-label="Primary navigation">
+<a class="site-nav-link" href="/studio/">Studio</a>
+<a class="site-nav-link" href="/how-it-works/">How it works</a>
+<a class="site-nav-link" href="/how-tessera-differs/">How Tessera differs</a>
+<a class="site-nav-link" href="/concepts/">Concepts</a>
 <a class="site-nav-link" href="/start/">Start</a>
 <a class="site-nav-link" href="/architecture/">Architecture</a>
 <a class="site-nav-link" href="/evidence/">Evidence</a>
-<a class="site-nav-link" href="/status/">Status</a>
 <a class="site-nav-link" href="/changelog/" aria-current="page">Changelog</a>
 <a class="site-nav-link" rel="external" target="_blank" href="https://github.com/Tribunus-dev/tessera">GitHub</a>
 </nav>
 <button type="button" class="theme-toggle" aria-label="Toggle dark and light theme" data-theme-toggle><span class="theme-toggle-icon" aria-hidden="true"></span><span class="theme-toggle-label">Dark</span></button>
 </header>
+<aside class="standalone-anchor" aria-label="Page context">
+<span class="standalone-anchor-mark">Tessera</span>
+<p class="standalone-anchor-body">You are on <strong>Changelog</strong>, the release log. <a href="/">Back to home</a> · <a href="/evidence/">Evidence</a> · <a href="/concepts/">Concepts</a></p>
+</aside>
 <main class="page-body" id="top">
 
 <header class="page-header">
-<span class="page-header-eyebrow">Changelog</span>
-<h1 class="page-header-headline">What shipped, in order.</h1>
-<p class="page-header-blurb">Each entry is one release, named for the user-visible change, with the receipts that produced it linked from the evidence page.</p>
+<span class="page-header-eyebrow">Changelog · Status</span>
+<h1 class="page-header-headline">What is shipped. What is qualifying. What is on the runway.</h1>
+<p class="page-header-blurb">The status table at the top is the live view of the project. Dated entries below, oldest first. The <a href="/evidence/">evidence page</a> carries the signed receipts for each release.</p>
 </header>
 
-<section class="chapter" id="bootstrap">
-<div class="chapter-eyebrow">Bootstrap</div>
-<h2 class="chapter-title">The site goes live.</h2>
-<div class="chapter-body">
-<p>The <code>tessera.tribunus.dev</code> docs site is bootstrapped on the <code>feat/docs-bootstrap</code> branch. Hand-authored HTML, Observatory design language, GitHub Pages deploy on push to <code>main</code>. The first public changelog is a backfill of the receipts that produced the pipeline as it stands today.</p>
+<section class="chapter" id="status">
+<div class="chapter-eyebrow">Status</div>
+<h2 class="chapter-title">Where Tessera is, in plain text.</h2>
+
+<h3 class="chapter-subtitle">Shipped</h3>
+<div class="table-wrap">
+<table class="tier-table">
+<thead>
+<tr><th>Component</th><th>State</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>per_tensor_calibrate</code></td><td>Released</td><td>Offline Frobenius; multimodal extension in qualifying.</td></tr>
+<tr><td><code>awq-evolve</code></td><td>Released</td><td>Island GA; fitness against the kernel dequant output.</td></tr>
+<tr><td><code>llama-quantize --tessera-mode</code></td><td>Released</td><td>End-to-end pipeline; opt back to stock with <code>--tessera-mode=off</code>.</td></tr>
+<tr><td><code>l5_orchestrator</code></td><td>Released</td><td>Iterative requant with family-aware bit allocation.</td></tr>
+<tr><td><code>unified_calibrate</code></td><td>Released</td><td>Co-calibrate trunk + drafters (DFlash, DSPark, MTP) in one pass.</td></tr>
+<tr><td><code>embedding_budget</code></td><td>Released</td><td>Size-envelope producer for shared embedding tensors.</td></tr>
+<tr><td><code>tessera-ab-harness</code></td><td>Released</td><td>Per-tensor t_l² against the kernel dequant output.</td></tr>
+<tr><td>Tessera-T640 encoding</td><td>Released</td><td>Tile640-aware ternary + outlier, AWQ pre-scaling, schema-versioned evidence.</td></tr>
+<tr><td>Schema-versioned evidence</td><td>Released</td><td>Per-artifact policy JSON, SHA-256, sidecar audit trail.</td></tr>
+<tr><td>Heterogeneous dynamic dispatch</td><td>Released</td><td>CPU / GPU / ANE dispatch with IOSurface async hand-off.</td></tr>
+</tbody>
+</table>
 </div>
+
+<h3 class="chapter-subtitle">Qualifying</h3>
+<div class="table-wrap">
+<table class="tier-table">
+<thead>
+<tr><th>Component</th><th>State</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>multimodal_calibrate</code></td><td>Qualifying</td><td>v1 forward-pass is synthetic; C++ mtmd capture wired.</td></tr>
+<tr><td><code>clip-capture</code></td><td>Qualifying</td><td>True batching, dead-node detection, audio decode wired.</td></tr>
+<tr><td>Tessera Studio</td><td>Qualifying</td><td>macOS / iOS agent app; Phase 1 + 2 complete (workflow data model + graph editor).</td></tr>
+<tr><td>AION (Apple Intelligence annotations)</td><td>Qualifying</td><td>Mac-only in v1; iOS v2 when Apple ships the surface.</td></tr>
+<tr><td>Data flywheel</td><td>Qualifying</td><td>Sanitization pipeline contract landed; full flywheel is Phase 3 of the docs plan.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3 class="chapter-subtitle">Not yet</h3>
+<ul class="chapter-body">
+<li>Auto-build calibration corpus from the user's own usage (privacy-preserving; CC BY 4.0 license, scrubber-first).</li>
+<li>Self-improving drafter training (Qwen-class trunk + DFlash + DSpark, regime-routed; the MVP is the multi-dimensional behavioral eval + capability archive).</li>
+<li>Hardware-backend reach beyond Apple Silicon (Tessera is macOS / iOS first; the pipeline is backend-agnostic but the runtime is Apple-targeted today).</li>
+</ul>
 </section>
 
-<section class="chapter" id="backfill">
-<div class="chapter-eyebrow">Backfill</div>
-<h2 class="chapter-title">The pipeline as it stands today.</h2>
-<div class="chapter-body">
-<p>The receipts for the recent waves are in the <a href="/evidence/">evidence</a> page. Each entry below is the user-visible change the wave produced; the receipt carries the per-tensor t_l² and the kernel's hash.</p>
-<table>
+<section class="chapter" id="changelog-entries">
+<div class="chapter-eyebrow">Changelog</div>
+<h2 class="chapter-title">Releases, in order.</h2>
+<p class="chapter-body">Each entry is one release, named for the user-visible change, with the receipts that produced it linked from the evidence page.</p>
+
+<article class="feature-card" id="2026-08-05" style="margin: var(--space-4) 0;">
+<h3 class="feature-card-title">2026-08-05 · Site regeneration (Phase 1)</h3>
+<p class="feature-card-body">The docs site regenerates against the privacy + flywheel framing. New pages: <code>/studio/</code>, <code>/how-it-works/</code>, <code>/how-tessera-differs/</code>, <code>/concepts/</code>. The architecture page gains the memory wall and the dispatch policy sections. The status table moves to the top of the changelog (no more separate <code>/status/</code> route). Tier 1 concept cards ship with concise analogies. Inline glossing on L0 / L1 pages. The three-tier property regime is surfaced on the home page with the runnability table. <a href="/how-tessera-differs/">The comparison page</a> is the second-most-important entry point after the home page.</p>
+</article>
+
+<article class="feature-card" id="2026-08-05-bootstrap" style="margin: var(--space-4) 0;">
+<h3 class="feature-card-title">2026-08-05 · Site bootstrap</h3>
+<p class="feature-card-body">The <code>tessera.tribunus.dev</code> docs site is bootstrapped on the <code>feat/docs-bootstrap</code> branch. Hand-authored HTML, Observatory design language, GitHub Pages deploy on push to <code>main</code>. Six routes initially: home, start, architecture, evidence, status, changelog, colophon.</p>
+</article>
+
+<article class="feature-card" id="backfill" style="margin: var(--space-4) 0;">
+<h3 class="feature-card-title">Backfill · The pipeline as it stands today</h3>
+<p class="feature-card-body">The receipts for the recent waves are in the <a href="/evidence/">evidence</a> page. Each entry below is the user-visible change the wave produced; the receipt carries the per-tensor t_l² and the kernel's hash.</p>
+</article>
+
+<div class="table-wrap">
+<table class="tier-table">
 <thead>
 <tr><th>Wave</th><th>User-visible change</th><th>Receipt</th></tr>
 </thead>
@@ -108,22 +175,47 @@
 </div>
 </section>
 
+<section class="chapter" id="next-step">
+<div class="chapter-eyebrow">Where to go next</div>
+<h2 class="chapter-title">Pick the question that brought you here.</h2>
+<div class="chapter-grid chapter-grid-3">
+<a class="next-step-card" href="/evidence/">
+<span class="next-step-card-eyebrow">Want the receipts?</span>
+<h3 class="next-step-card-title">Evidence</h3>
+<p class="next-step-card-body">The signed receipts, the eval results, the audit trail.</p>
+</a>
+<a class="next-step-card" href="/architecture/">
+<span class="next-step-card-eyebrow">Want the technical depth?</span>
+<h3 class="next-step-card-title">Architecture</h3>
+<p class="next-step-card-body">The kernel-fidelity loop, the dispatch policy, the memory wall.</p>
+</a>
+<a class="next-step-card" href="/colophon/">
+<span class="next-step-card-eyebrow">Need to reach the architect?</span>
+<h3 class="next-step-card-title">Colophon</h3>
+<p class="next-step-card-body">Contact, license, commercial path.</p>
+</a>
+</div>
+</section>
+
 </main>
 <aside class="secondary-nav">
 <ul class="secondary-nav-list">
 <li class="secondary-nav-label">Navigate</li>
 <li><a href="/">Home</a></li>
+<li><a href="/studio/">Studio</a></li>
+<li><a href="/how-it-works/">How it works</a></li>
+<li><a href="/how-tessera-differs/">How Tessera differs</a></li>
+<li><a href="/concepts/">Concepts</a></li>
 <li><a href="/start/">Start</a></li>
 <li><a href="/architecture/">Architecture</a></li>
 <li><a href="/evidence/">Evidence</a></li>
-<li><a href="/status/">Status</a></li>
 <li><a href="/changelog/" aria-current="page">Changelog</a></li>
 <li><a href="/colophon/">Colophon</a></li>
 </ul>
 </aside>
 <footer class="site-footer">
 <div class="site-footer-inner">
-<p>Tessera is independently developed by <strong>Julian Torres</strong>. Released under the project's license. <a href="/colophon/">Colophon</a> · <a rel="external" target="_blank" href="https://github.com/Tribunus-dev/tessera">Repository</a></p>
+<p>Tessera is independently developed by <strong>Julian Torres</strong>. Source-available under the Tessera Research and Education License 1.0; trained models under CC BY-NC-SA 4.0. <a href="/colophon/">Colophon</a> · <a rel="external" target="_blank" href="https://github.com/Tribunus-dev/tessera">Repository</a> · <a href="mailto:julian@tribunus.dev">Commercial</a></p>
 <p><a href="https://tessera.tribunus.dev">tessera.tribunus.dev</a></p>
 </div>
 </footer>

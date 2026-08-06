@@ -1,17 +1,99 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "archetype": "observatory",
   "site_title": "Tessera",
-  "site_tagline": "LLM calibration with runtime-verifiable fitness.",
+  "site_tagline": "Private local AI that gets better the more people use it.",
   "canonical_origin": "https://tessera.tribunus.dev",
-  "home_hero_headline": "Calibrate and quantize models with receipts the kernel agrees with.",
-  "home_hero_blurb": "Most quantization pipelines produce bit-exact artifacts and bit-divergent runtime behavior. The calibrator optimizes a proxy. The kernel dispatches a different code path. The user sees a green benchmark and a hallucinated answer. Tessera closes the gap: the fitness is measured against the actual kernel dequant output, the policy is shipped with the artifact, and every release is auditable end-to-end.",
+  "description": "Tessera is calibrated and audited quantization for llama.cpp, with ANE prefill on Apple Silicon and first-class speculative decoding. Tessera Studio runs Gemma 4 12B on your Mac for text, vision, audio, and speech. Your data never leaves the device. As more people use Tessera, the model gets smarter, the drafters get more accurate, and the engine gets faster. The recipe and the signed receipt are public; the data method is private. The improved model ships to every Tessera user.",
+  "og_image": "/og-image.svg",
+  "og_image_width": 1280,
+  "og_image_height": 640,
+  "twitter_card": "summary_large_image",
+  "commercial_contact": "julian@tribunus.dev",
+  "home_hero": {
+    "headline": "Private local AI that gets better the more people use it.",
+    "subhead": "Tessera Studio runs Gemma 4 12B on your Mac. Text, vision, audio, and speech. Your data never leaves the device. As more people use Tessera, the model reasons better on harder problems, the drafters get more accurate, the engine gets faster, and next-token prediction sharpens. The recipe and the signed receipt are public; the data method is private. The improved model ships to every Tessera user, not just whoever paid for it.",
+    "primary_cta": { "label": "Install Tessera Studio", "path": "/start/" },
+    "secondary_cta": { "label": "How it works", "path": "/how-it-works/" }
+  },
+  "what_you_get": [
+    {
+      "title": "Local, private, on your Mac.",
+      "body": "Text, vision, audio, and speech. Your data stays on your device. No cloud, no telemetry that can identify you, no model that phones home.",
+      "icon": "device"
+    },
+    {
+      "title": "It gets better the more people use it.",
+      "body": "Better reasoning on harder problems, sharper hybrid drafters, faster engine, SOTA-class next-token prediction. The flywheel runs on a sanitized baseline during idle time.",
+      "icon": "flywheel"
+    },
+    {
+      "title": "A model you can trust is improving.",
+      "body": "The recipe is public. The signed receipt is on every release. The sanitization method is private; the audit trail is not.",
+      "icon": "receipt"
+    },
+    {
+      "title": "Free, with a clear path for commercial use.",
+      "body": "Source-available engine. CC BY-NC-SA 4.0 trained models. Commercial licensing is a conversation, not a paywall.",
+      "icon": "license"
+    }
+  ],
+  "audiences": {
+    "primary": {
+      "label": "Privacy-conscious individuals",
+      "description": "You don't want cloud AI. You want local, on your machine, on your data. Tessera Studio is the on-ramp."
+    },
+    "adjacent": [
+      {
+        "label": "Apple Silicon power users",
+        "description": "You want the ANE prefill, the IOSurface hand-off, the on-device throughput. Tessera dispatches across CPU, GPU, and ANE dynamically."
+      },
+      {
+        "label": "Inference engineers",
+        "description": "You run llama.cpp and want calibrated quantization with receipts. Tessera is a fork of llama.cpp that adds the kernel-fidelity loop."
+      }
+    ],
+    "peripheral": {
+      "label": "Quant researchers",
+      "description": "You want the evolutionary AWQ, the per-tensor GA, the regime-routed archive. That's on the architecture page."
+    },
+    "not_for": "If you don't care about local inference, this isn't for you. If you need bit-for-bit drop-in compatibility with stock llama.cpp for Tessera-quantized artifacts, this isn't for you (vanilla quants work anywhere; Tessera-locked artifacts need the Tessera runtime)."
+  },
+  "three_tiers": {
+    "lede": "Three tiers. One of which you'll almost certainly be in.",
+    "rows": [
+      {
+        "tier": "Community",
+        "license": "Source-available engine, free for non-commercial use",
+        "contents": "Tessera engine, Tessera Studio, recipes, vanilla quants of upstream models, documentation, concepts. The Tessera Research and Education License 1.0 (PolyForm Noncommercial 1.0.0) applies to the engine code.",
+        "audience": "Researchers, hobbyists, contributors, anyone who evaluates locally"
+      },
+      {
+        "tier": "Tessera-trained",
+        "license": "CC BY-NC-SA 4.0 (non-commercial, share-alike, attribution)",
+        "contents": "Models trained on the Tessera sanitized dataset. Available for download. Inspectable everywhere; runnable on Tessera. The signed receipt on each artifact proves what data and policy produced it.",
+        "audience": "Anyone using Tessera Studio; commercial use requires a license"
+      },
+      {
+        "tier": "Commercial",
+        "license": "Separate commercial agreement",
+        "contents": "Any of the above, used commercially. The license is a relationship, not a different artifact. The commercial licensee gets the right to redistribute under their own terms.",
+        "audience": "Business partners, production users, custom development"
+      }
+    ],
+    "runnability": [
+      { "artifact": "Vanilla GGUF (upstream quant)", "stock_llama_cpp": "Yes", "tessera": "Yes", "note": "Standard GGUF types, no Tessera-specific tensors" },
+      { "artifact": "Tessera-quantized model (T640 / T640_3D)", "stock_llama_cpp": "No", "tessera": "Yes", "note": "Tessera-specific GGUF types require the Tessera dequant kernel" },
+      { "artifact": "Tessera-trained model", "stock_llama_cpp": "No", "tessera": "Yes", "note": "Trained and quantized via Tessera, so Tessera-locked at the dequant layer" }
+    ],
+    "contact": "julian@tribunus.dev"
+  },
   "author": {
     "name": "Julian Torres",
     "role": "Architect and sole developer of Tessera"
   },
   "build_identity": {
     "ssg": "tessera-docs-ssg (bootstrap: hand-authored)",
-    "recorded_at": "2026-08-05T19:30:00Z"
+    "recorded_at": "2026-08-05T22:35:00Z"
   }
 }

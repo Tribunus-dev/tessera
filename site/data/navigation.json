@@ -1,25 +1,31 @@
 {
   "primary": [
+    { "label": "Studio", "path": "/studio/" },
+    { "label": "How it works", "path": "/how-it-works/" },
+    { "label": "How Tessera differs", "path": "/how-tessera-differs/" },
+    { "label": "Concepts", "path": "/concepts/" },
     { "label": "Start", "path": "/start/" },
     { "label": "Architecture", "path": "/architecture/" },
     { "label": "Evidence", "path": "/evidence/" },
-    { "label": "Status", "path": "/status/" },
     { "label": "Changelog", "path": "/changelog/" },
     { "label": "GitHub", "path": "https://github.com/Tribunus-dev/tessera", "external": true }
   ],
   "secondary": [
     { "label": "Home", "path": "/", "from": "global" },
-    { "label": "Concepts", "path": "/architecture/", "from": "start" },
-    { "label": "Calibration", "path": "/architecture/", "from": "architecture" },
-    { "label": "Tessera Studio", "path": "/colophon/", "from": "architecture" },
-    { "label": "Run", "path": "/evidence/", "from": "evidence" },
-    { "label": "Roadmap", "path": "/status/", "from": "status" },
-    { "label": "Releases", "path": "/changelog/", "from": "changelog" },
+    { "label": "Tessera Studio", "path": "/studio/", "from": "global" },
+    { "label": "How it works", "path": "/how-it-works/", "from": "global" },
+    { "label": "How Tessera differs", "path": "/how-tessera-differs/", "from": "global" },
+    { "label": "Concepts", "path": "/concepts/", "from": "global" },
+    { "label": "Install", "path": "/start/", "from": "global" },
+    { "label": "Architecture", "path": "/architecture/", "from": "start" },
+    { "label": "Evidence", "path": "/evidence/", "from": "global" },
+    { "label": "Changelog", "path": "/changelog/", "from": "global" },
     { "label": "Colophon", "path": "/colophon/", "from": "global" }
   ],
   "footer": {
     "canonical_origin": "https://tessera.tribunus.dev",
-    "license": "See repository LICENSE",
+    "license": "Source-available under the Tessera Research and Education License 1.0",
+    "commercial_contact": "julian@tribunus.dev",
     "author": {
       "name": "Julian Torres",
       "role": "Architect and sole developer"

@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tessera Studio - Local AI for your Mac.</title>
+<meta name="description" content="Tessera Studio is the Mac and iOS app that runs Tessera-quantized models locally. Library, Playground, and Runs. Eight tools. An agent loop with approval levels. The flywheel runs on a sanitized baseline during idle time.">
+<link rel="canonical" href="https://tessera.tribunus.dev/studio/">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta name="generator" content="tessera-docs-ssg">
+<meta name="build-id" content="regen-002">
+<meta property="og:title" content="Tessera Studio - Local AI for your Mac.">
+<meta property="og:description" content="The Mac and iOS app that runs Tessera-quantized models locally. Library, Playground, and Runs. Eight tools. An agent loop with approval levels.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://tessera.tribunus.dev/studio/">
+<meta property="og:image" content="https://tessera.tribunus.dev/og-image.svg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Tessera Studio - Local AI for your Mac.">
+<meta name="twitter:description" content="The Mac and iOS app that runs Tessera-quantized models locally. Library, Playground, and Runs.">
+<meta name="twitter:image" content="https://tessera.tribunus.dev/og-image.svg">
+<link rel="stylesheet" href="/styles/site.css">
+<script>
+(function(){try{
+  var k='tessera-theme';
+  var v=null;
+  try{v=localStorage.getItem(k);}catch(e){}
+  if(v!=='dark'&&v!=='light'){
+    try{
+      if(window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches){v='light';}
+      else{v='dark';}
+    }catch(e){v='dark';}
+  }
+  document.documentElement.setAttribute('data-theme',v);
+  try{document.documentElement.style.colorScheme=v;}catch(e){}
+}catch(e){}})();
+</script>
+<script src="/scripts/theme.js" defer></script>
+</head>
+<body data-prism-route="/studio/" data-prism-hydrated="false">
+<a href="#top" class="skip-link">Skip to main content</a>
+<header class="site-header">
+<a class="brand" href="/"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tessera</span></a>
+<nav class="site-nav" aria-label="Primary navigation">
+<a class="site-nav-link" href="/studio/" aria-current="page">Studio</a>
+<a class="site-nav-link" href="/how-it-works/">How it works</a>
+<a class="site-nav-link" href="/how-tessera-differs/">How Tessera differs</a>
+<a class="site-nav-link" href="/concepts/">Concepts</a>
+<a class="site-nav-link" href="/start/">Start</a>
+<a class="site-nav-link" href="/architecture/">Architecture</a>
+<a class="site-nav-link" href="/evidence/">Evidence</a>
+<a class="site-nav-link" href="/changelog/">Changelog</a>
+<a class="site-nav-link" rel="external" target="_blank" href="https://github.com/Tribunus-dev/tessera">GitHub</a>
+</nav>
+<button type="button" class="theme-toggle" aria-label="Toggle dark and light theme" data-theme-toggle><span class="theme-toggle-icon" aria-hidden="true"></span><span class="theme-toggle-label">Dark</span></button>
+</header>
+<aside class="standalone-anchor" aria-label="Page context">
+<span class="standalone-anchor-mark">Tessera</span>
+<p class="standalone-anchor-body">You are on <strong>Tessera Studio</strong>, the product page. <a href="/">Back to home</a> · <a href="/how-it-works/">How it works</a> · <a href="/start/">Install</a></p>
+</aside>
+<main class="page-body" id="top">
+
+<header class="page-header">
+<span class="page-header-eyebrow">Product · v1</span>
+<h1 class="page-header-headline">Tessera Studio. Local AI for your Mac.</h1>
+<p class="page-header-blurb">A native Mac and iOS app that runs Tessera-quantized models on your device. Text, vision, audio, and speech. The data never leaves. The agent loop keeps you in control. The flywheel runs while you don't.</p>
+</header>
+
+<section class="chapter">
+<div class="chapter-eyebrow">The product surface</div>
+<h2 class="chapter-title">Three destinations. Eight tools. One app.</h2>
+<p class="chapter-body">Tessera Studio is a single window with three destinations and a registry of eight tools that the agent loop can call. The destinations are not menus; they are different working modes for different things you might be doing with the model.</p>
+<div class="chapter-grid chapter-grid-3">
+<article class="feature-card">
+<h3 class="feature-card-title">Library</h3>
+<p class="feature-card-body">The model browser. Browse Tessera-trained models and vanilla GGUFs side by side. Inspect the <a class="gloss" href="/concepts/#concept-schema-versioned-evidence">signed receipt</a> on any artifact. Load a model into the Playground or a Run.</p>
+</article>
+<article class="feature-card">
+<h3 class="feature-card-title">Playground</h3>
+<p class="feature-card-body">The chat surface. Single-turn and multi-turn. Streaming, cancellation, observable. The agent loop runs here when the model decides to call a tool, and the <a class="gloss" href="/concepts/#concept-heterogeneous-dynamic-execution">ANE prefill</a> kicks in for long prompts.</p>
+</article>
+<article class="feature-card">
+<h3 class="feature-card-title">Runs</h3>
+<p class="feature-card-body">The instrumented surface. Every model call is logged with timing, dispatch (CPU / GPU / ANE), token counts, and a snapshot of the per-tensor activation that ran. Calibrate, evolve, quantize, and evaluate from here.</p>
+</article>
+</div>
+</section>
+
+<section class="chapter">
+<div class="chapter-eyebrow">The eight tools</div>
+<h2 class="chapter-title">What the agent can do.</h2>
+<p class="chapter-body">The agent loop in Tessera Studio can call any tool in the registry. Each tool is a typed component with a JSON Schema, a streaming or one-shot contract, and an approval level. The default approval level is <em>notify</em>: the agent runs the tool, you see a system message about what it did.</p>
+<div class="table-wrap">
+<table class="tier-table">
+<thead>
+<tr><th>Tool</th><th>What it does</th><th>Stage</th></tr>
+</thead>
+<tbody>
+<tr><td><code>list_models</code></td><td>Browse the local model library, filtered by modality and quantization policy.</td><td>Library</td></tr>
+<tr><td><code>load_model</code></td><td>Load a model into the active context, validate the <a class="gloss" href="/concepts/#concept-receipt">signed receipt</a>, warm the dispatch tables.</td><td>Library</td></tr>
+<tr><td><code>inspect_sidecar</code></td><td>Read the calibration sidecar JSON, the per-tensor policy, and the eval results from a Tessera artifact.</td><td>Runs</td></tr>
+<tr><td><code>calibrate</code></td><td>Run <code>per_tensor_calibrate</code> on a corpus. Output: a per-tensor policy JSON.</td><td>Calibration</td></tr>
+<tr><td><code>evolve</code></td><td>Run the AWQ-evolve GA. Islands, MAP-Elites, regime-indexed archive. Output: a per-tensor <code>(ternary_threshold, outlier_fraction, awq_alpha, awq_clip)</code>.</td><td>Calibration</td></tr>
+<tr><td><code>quantize</code></td><td>Apply the policy and write a Tessera-T640 GGUF. Appends the signed receipt.</td><td>Quantization</td></tr>
+<tr><td><code>convert</code></td><td>Convert an HF safetensors checkpoint to GGUF with the Tessera-aware components attached.</td><td>Quantization</td></tr>
+<tr><td><code>evaluate</code></td><td>Run the eval suite, compare to the F16 reference, surface the deltas (perplexity, MMLU, multimodal coherence).</td><td>Verification</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<section class="chapter">
+<div class="chapter-eyebrow">The agent loop</div>
+<h2 class="chapter-title">A full agent app, not a chatbot.</h2>
+<p class="chapter-body">Tessera Studio is built on a real agent loop with cancellation, observable state, and an <strong>approval engine</strong>. The approval engine has four levels:</p>
+<ul class="chapter-body">
+<li><strong>auto</strong> — the tool runs without any surface signal (read-only tools like <code>inspect_sidecar</code>)</li>
+<li><strong>notify</strong> — the tool runs, you see a system message about what it did (default for most tools)</li>
+<li><strong>prompt</strong> — you get a confirmation dialog before the tool runs (default for <code>quantize</code>, <code>convert</code>, <code>evolve</code>)</li>
+<li><strong>denied</strong> — the tool cannot run from the loop (e.g. <code>rm -rf</code> shell escape, never wired)</li>
+</ul>
+<p class="chapter-body">The chat journal is SwiftData; every run, every tool call, every approval decision is recorded. The journal is local. It does not sync to anything.</p>
+</section>
+
+<section class="chapter">
+<div class="chapter-eyebrow">Apple Intelligence annotations</div>
+<h2 class="chapter-title">AION. On-device annotations, Mac only in v1.</h2>
+<p class="chapter-body">AION (Apple Intelligence On-device Notes) is the v1 mediator between the agent and the model. It runs Apple Intelligence on the same Mac the model runs on, and uses the on-device model to annotate long outputs with sections, code blocks, and key terms. AION is Mac-only in v1; the iOS build will pick it up in v2 when Apple ships the same surface to iPhone.</p>
+<p class="chapter-body">AION never sees data that the model hasn't already seen. The annotation happens on the model's output, in the same process.</p>
+</section>
+
+<section class="chapter">
+<div class="chapter-eyebrow">The flywheel</div>
+<h2 class="chapter-title">While you're not using it.</h2>
+<p class="chapter-body">Tessera Studio is opt-in for the flywheel. When you opt in, the app runs a small training job during idle time (laptop plugged in, on Wi-Fi, screen off, app backgrounded) on a <em>sanitized baseline</em> derived from your recent usage. The sanitized baseline is the result of the Tessera data pipeline; the raw inputs never leave the device. The trained delta is shipped to the Calibration Commons with your consent. The next Tessera release carries your delta's contribution. <a href="/how-it-works/">Full details on how the flywheel works.</a></p>
+</section>
+
+<section class="chapter" id="next-step">
+<div class="chapter-eyebrow">Where to go next</div>
+<h2 class="chapter-title">Pick the question that brought you here.</h2>
+<div class="chapter-grid chapter-grid-3">
+<a class="next-step-card" href="/how-it-works/">
+<span class="next-step-card-eyebrow">Want the privacy contract?</span>
+<h3 class="next-step-card-title">How it works</h3>
+<p class="next-step-card-body">The flywheel, the data path, the recipe, the signed receipt.</p>
+</a>
+<a class="next-step-card" href="/start/">
+<span class="next-step-card-eyebrow">Ready to install?</span>
+<h3 class="next-step-card-title">Start</h3>
+<p class="next-step-card-body">Build, run, and load your first model. The on-ramp.</p>
+</a>
+<a class="next-step-card" href="/concepts/">
+<span class="next-step-card-eyebrow">Hit a term you don't know?</span>
+<h3 class="next-step-card-title">Concepts</h3>
+<p class="next-step-card-body">The ML vocabulary, with concise analogies.</p>
+</a>
+</div>
+</section>
+
+</main>
+<aside class="secondary-nav">
+<ul class="secondary-nav-list">
+<li class="secondary-nav-label">Navigate</li>
+<li><a href="/">Home</a></li>
+<li><a href="/studio/" aria-current="page">Studio</a></li>
+<li><a href="/how-it-works/">How it works</a></li>
+<li><a href="/how-tessera-differs/">How Tessera differs</a></li>
+<li><a href="/concepts/">Concepts</a></li>
+<li><a href="/start/">Start</a></li>
+<li><a href="/architecture/">Architecture</a></li>
+<li><a href="/evidence/">Evidence</a></li>
+<li><a href="/changelog/">Changelog</a></li>
+<li><a href="/colophon/">Colophon</a></li>
+</ul>
+</aside>
+<footer class="site-footer">
+<div class="site-footer-inner">
+<p>Tessera is independently developed by <strong>Julian Torres</strong>. Source-available under the Tessera Research and Education License 1.0; trained models under CC BY-NC-SA 4.0. <a href="/colophon/">Colophon</a> · <a rel="external" target="_blank" href="https://github.com/Tribunus-dev/tessera">Repository</a> · <a href="mailto:julian@tribunus.dev">Commercial</a></p>
+<p><a href="https://tessera.tribunus.dev">tessera.tribunus.dev</a></p>
+</div>
+</footer>
+</body>
+</html>
