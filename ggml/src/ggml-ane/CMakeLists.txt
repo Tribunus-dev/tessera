@@ -14,6 +14,7 @@ message(STATUS "ANE (Core ML) backend enabled")
 
 ggml_add_backend_library(ggml-ane
                          ggml-ane.mm
+                         gguf_weight_stream.mm
                         )
 
 target_link_libraries(ggml-ane PRIVATE
