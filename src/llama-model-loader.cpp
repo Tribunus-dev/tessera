@@ -1063,6 +1063,18 @@ static bool weight_buft_supported(const llama_hparams & hparams, ggml_tensor * w
                 ggml_tensor * b = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, n_embd_inp, w->ne[1], 1, 1);
                 op_tensor = ggml_im2col(ctx, w, b, 1, 0, 0, 0, 1, 0, false, GGML_TYPE_F16);
             } break;
+        case GGML_OP_CONV_TRANSPOSE_1D:
+            {
+                // W8: c2w's upsample + per-block transposed convs use this
+                // op. ggml's conv_transpose_1d asserts a->ne[2] == b->ne[1]
+                // (the input's second dim must match the weight's third
+                // dim = IC). Pick a small probe with the right shape.
+                const int64_t n_tokens = 4;
+                ggml_tensor * b = ggml_new_tensor_3d(ctx, GGML_TYPE_F32,
+                                                     n_tokens, w->ne[2], 1);
+                op_tensor = ggml_conv_transpose_1d(ctx, w, b, /*stride=*/1,
+                                                   /*p0=*/0, /*dilation=*/1);
+            } break;
         case GGML_OP_SCALE:
             {
                 op_tensor = ggml_scale(ctx, w, 1.0f);

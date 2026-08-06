@@ -618,7 +618,12 @@ static const std::map<llm_tensor, const char *> LLM_TENSOR_NAMES = {
     { LLM_TENSOR_DSPARK_MARKOV_W1,                       "markov_w1" },
     { LLM_TENSOR_DSPARK_MARKOV_W2,                       "markov_w2" },
     { LLM_TENSOR_DSPARK_CONF_PROJ,                       "conf_proj" },
-    { LLM_TENSOR_C2W_CODEBOOK_EMBD,                      "c2w.codebook_embd.%d" },
+    // The c2w codebook names are c2w.codebook_embd.{cid}.weight on disk,
+    // but the LLM_TN_IMPL format is name + "." + suffix. Encode the cid
+    // in the suffix (matching the talker's cp_codec_embd / cp_head
+    // pattern) so the bid can stay -1 and the loader doesn't trip the
+    // LAYER_REPEATING vs LAYER_INPUT layer-number check.
+    { LLM_TENSOR_C2W_CODEBOOK_EMBD,                      "c2w.codebook_embd" },
     { LLM_TENSOR_C2W_VQ_FIRST_PROJ,                      "c2w.vq_first_proj" },
     { LLM_TENSOR_C2W_VQ_REST_PROJ,                       "c2w.vq_rest_proj" },
     { LLM_TENSOR_C2W_PRE_CONV,                           "c2w.pre_conv" },
@@ -926,7 +931,14 @@ static const std::map<llm_tensor, llm_tensor_info> LLM_TENSOR_INFOS = {
     {LLM_TENSOR_DSPARK_MARKOV_W2,           {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL_MAT}},
     {LLM_TENSOR_DSPARK_CONF_PROJ,           {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL_MAT}},
     // qwen3-tts-code2wav
-    {LLM_TENSOR_C2W_CODEBOOK_EMBD,          {LLM_TENSOR_LAYER_REPEATING, GGML_OP_GET_ROWS}},
+    // qwen3-tts-code2wav: the 16 codebook tables are model-level (not
+    // per-layer), so LAYER_INPUT, not LAYER_REPEATING. The %d in
+    // "c2w.codebook_embd.%d" indexes the 16 codebooks, not the 8
+    // transformer layers; the loader's create_tensor uses bid for
+    // pimpl->dev_layer.at(bid), which is sized to n_layer_all — a
+    // LAYER_REPEATING classification would throw std::out_of_range
+    // on cid >= n_layer (e.g. cid=8 with n_layer=8).
+    {LLM_TENSOR_C2W_CODEBOOK_EMBD,          {LLM_TENSOR_LAYER_INPUT,     GGML_OP_GET_ROWS}},
     {LLM_TENSOR_C2W_VQ_FIRST_PROJ,          {LLM_TENSOR_LAYER_INPUT,     GGML_OP_MUL_MAT}},
     {LLM_TENSOR_C2W_VQ_REST_PROJ,           {LLM_TENSOR_LAYER_INPUT,     GGML_OP_MUL_MAT}},
     {LLM_TENSOR_C2W_PRE_CONV,               {LLM_TENSOR_LAYER_INPUT,     GGML_OP_IM2COL}},

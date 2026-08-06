@@ -1724,6 +1724,7 @@ struct llama_model_qwen3_tts_code2wav : public llama_model_base {
 
     // arch config from GGUF metadata
     uint32_t n_codebooks    = 0;
+    uint32_t codec_vocab    = 0;   // codebook entry count (2048 in W3/W5c, distinct from the talker's 3072)
     uint32_t vq_dim         = 0;   // codebook embedding width
     uint32_t latent_dim     = 0;   // pre_conv output / upsample width
     uint32_t decoder_dim    = 0;   // stem output / first block width

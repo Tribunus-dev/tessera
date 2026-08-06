@@ -384,11 +384,21 @@ llama_model_qwen3tts_talker::graph::graph(const llama_model & model, const llm_g
 
     // codebook-0 logits over the codec vocab (the codec vocab is 3072 in
     // the W2 GGUF; cp codebooks have a SEPARATE 2048-entry vocab)
+    //
+    // W8 follow-up: t_logits is INTENTIONALLY NOT exposed here. The
+    // framework's standard decode path reads n_vocab (=151936 text
+    // vocab) floats from t_logits, but the codec_head output is
+    // n_codec_vocab=3072 floats; setting res->t_logits to the codec
+    // matmul causes an out-of-bounds read at ggml_backend_tensor_get.
+    // The W5 CLI computes codec_head(embd) externally from t_embd
+    // (the post-norm backbone hidden), so dropping the t_logits
+    // exposure is the right call. The graph still includes the matmul
+    // for forward verification.
     {
         ggml_tensor * logits = ggml_mul_mat(ctx0, m.codec_head, cur);
         cb(logits, "codec0_logits", -1);
-        res->t_logits = logits;
         ggml_build_forward_expand(gf, logits);
+        // res->t_logits intentionally not set; see comment above.
     }
 
     // ---- code predictor (blk.28..32) ----

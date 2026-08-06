@@ -315,6 +315,14 @@ target_include_directories(test-dspark-markov-head PRIVATE ${PROJECT_SOURCE_DIR}
 llama_build(test-qwen3tts-talker.cpp)
 llama_test(test-qwen3tts-talker)
 target_include_directories(test-qwen3tts-talker PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
+# W8: real-weight forward parity test for the qwen3-tts-talker C++ class.
+# Loads the BF16 W2 talker GGUF and the F32 W5c code2wav GGUF, runs
+# llama_decode / llama_encode, and asserts the output shapes + ranges
+# are well-formed. argv[1] = talker, argv[2] = code2wav.
+llama_build(test-qwen3tts-w8-parity.cpp)
+llama_test(test-qwen3tts-w8-parity)
+target_include_directories(test-qwen3tts-w8-parity PRIVATE ${PROJECT_SOURCE_DIR}/src)
 llama_build(test-telemetry-record.cpp ${PROJECT_SOURCE_DIR}/tools/imatrix/telemetry-record.cpp)
 target_include_directories(test-telemetry-record PRIVATE ${PROJECT_SOURCE_DIR}/tools/imatrix)
 llama_test(test-telemetry-record)
