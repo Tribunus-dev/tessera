@@ -128,11 +128,12 @@ final class WorkflowRoundTripTests: XCTestCase {
             "expected parameter key 'n_tokens', got: \(str)")
     }
 
-    func testDefaultRegistryHasFiveNodes() {
+    func testDefaultRegistryHasSixNodes() {
+        // W6: the speak_text node joined the default registry.
         let reg = WorkflowNodeRegistry.default
         XCTAssertEqual(reg.allTypeIds.sorted(), [
             "calibrate", "evaluate", "inspect_sidecar",
-            "load_model", "quantize",
+            "load_model", "quantize", "speak_text",
         ])
     }
 
