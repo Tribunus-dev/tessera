@@ -134,7 +134,23 @@ add_library(${TARGET}
     # bulk insert. Used for the unified tessera.duckdb schema (ga_evaluations,
     # tensor_stats, l3/l4/l5/ple summary tables).
     tessera/tessera-db-buffer.cpp
+    # W5: per-utterance s2s record append hook (s2s design 4.1). Pulls in
+    # system zlib for the codes compression. Linked into the FFI surface
+    # transitively so the Swift TesseraS2SRecord producer can call
+    # tessera_rt_s2s_append later.
+    ../../common/tessera-s2s-capture.cpp
 )
+
+# W5: zlib is required by tessera-s2s-capture.cpp (compress2 / uncompress).
+# macOS SDK provides libz in the default link line; Linux finds it via
+# find_package(ZLIB). The capture source itself is the only consumer in
+# this library, so the dependency is local.
+if(APPLE)
+    # libz is part of the macOS SDK; no extra link line needed.
+else()
+    find_package(ZLIB REQUIRED)
+    target_link_libraries(${TARGET} PUBLIC ZLIB::ZLIB)
+endif()
 set_target_properties(${TARGET} PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
 
 target_include_directories(${TARGET} PUBLIC
@@ -307,6 +323,34 @@ if(LLAMA_TOOLS_INSTALL)
     install(TARGETS ${TARGET} RUNTIME)
 endif()
 
+# tessera-s2s-cli: native Route A end-to-end CLI (s2s design 3.3, 4.1).
+# Text in -> 16-codebook frames -> Qwen3-TTS code2wav GGUF -> 24 kHz
+# 16-bit PCM stream, with a per-utterance s2s record appended to
+# --trace-out. The talker C++ graph is the next-wave deliverable; in
+# this wave the CLI detects the missing arch and returns exit 3 (GGUF
+# load failure) with a precise, named error, and the --talker-mode skip
+# + --codes-in path exercises the code2wav + capture pipeline end to
+# end. See docs/tessera-s2s-design.md.
+
+set(TARGET tessera-s2s-cli)
+
+add_executable(${TARGET} tessera/tessera-s2s-cli.cpp)
+target_link_libraries(${TARGET} PRIVATE llama-quantize-impl)
+# zlib for tessera-s2s-capture.cpp (compress2 / uncompress). macOS
+# provides libz at /usr/lib/libz.dylib but it is NOT auto-linked by the
+# compiler driver; pass -lz explicitly. On Linux find_package(ZLIB)
+# above exposes ZLIB::ZLIB.
+if(APPLE)
+    target_link_libraries(${TARGET} PRIVATE -lz)
+else()
+    target_link_libraries(${TARGET} PRIVATE ZLIB::ZLIB)
+endif()
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
+if(LLAMA_TOOLS_INSTALL)
+    install(TARGETS ${TARGET} RUNTIME)
+endif()
+
 # tessera-metal: standalone correctness test for the Metal acceleration path.
 # Compares the three Metal kernels (scale_clip_ternarize, awq_grid_search,
 # dequant_mse_recon) against the CPU reference. macOS-only; the test exits 0
@@ -465,6 +509,25 @@ if(LLAMA_BUILD_TESTS)
     set(TARGET test-unified-writer)
     add_executable(${TARGET} tessera/test_unified_writer.cpp)
     target_link_libraries(${TARGET} PRIVATE llama-quantize-impl)
+    target_compile_features(${TARGET} PRIVATE cxx_std_17)
+    add_test(NAME ${TARGET} COMMAND ${TARGET})
+
+    # W5: tessera_rt_s2s_append + the standalone zlib+base64 codes
+    # codec. Exercises the s2s record schema, the codes round-trip, the
+    # provenance stamp (s2s design 5 golden parity Tests 2 + 3), the
+    # multi-append ordering, and the fail-closed null-arg path.
+    # Standalone binary: it links the capture source directly so the
+    # test is independent of the full quantize-impl graph and runs in
+    # <0.1 s.
+    set(TARGET test-tessera-s2s-capture)
+    add_executable(${TARGET} tessera/test_tessera_s2s_capture.cpp
+                                  ../../common/tessera-s2s-capture.cpp)
+    target_link_libraries(${TARGET} PRIVATE llama-common ${CMAKE_THREAD_LIBS_INIT})
+    if(APPLE)
+        target_link_libraries(${TARGET} PRIVATE -lz)
+    else()
+        target_link_libraries(${TARGET} PRIVATE ZLIB::ZLIB)
+    endif()
     target_compile_features(${TARGET} PRIVATE cxx_std_17)
     add_test(NAME ${TARGET} COMMAND ${TARGET})
 endif()
