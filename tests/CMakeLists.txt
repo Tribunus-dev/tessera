@@ -315,6 +315,10 @@ target_include_directories(test-dspark-markov-head PRIVATE ${PROJECT_SOURCE_DIR}
 llama_build(test-qwen3tts-talker.cpp)
 llama_test(test-qwen3tts-talker)
 target_include_directories(test-qwen3tts-talker PRIVATE ${PROJECT_SOURCE_DIR}/src)
+# unified-tts round-trip stage: the test drives the real ts_unified_writer
+# (defined in tools/quantize, added later; CMake resolves the target at
+# generate time) and loads the unified file back via component_prefix.
+target_link_libraries(test-qwen3tts-talker PRIVATE llama-quantize-impl)
 
 # W8: real-weight forward parity test for the qwen3-tts-talker C++ class.
 # Loads the BF16 W2 talker GGUF and the F32 W5c code2wav GGUF, runs

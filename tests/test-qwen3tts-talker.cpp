@@ -38,6 +38,8 @@
 #include "../src/llama-model-saver.h"
 #include "../src/models/models.h"
 
+#include "tessera-unified-writer.h"
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -370,10 +372,16 @@ std::string build_synthetic_talker_gguf() {
 // aborts at ggml_backend_sched_split_graph. The device whitelist is the
 // only place that removes ANE from the scheduler. test-export-graph-ops
 // uses the same pattern.
-struct llama_model * load_talker_gguf(const std::string & path) {
+//
+// component_prefix scopes the loader's KV + tensor namespace (unified-tts
+// plan 1.5): "tts." reads the talker's view out of a unified
+// gemma4-assistant GGUF; nullptr keeps the standalone-file path.
+struct llama_model * load_talker_gguf(const std::string & path,
+                                      const char * component_prefix = nullptr) {
     llama_model_params model_params = llama_model_default_params();
     model_params.progress_callback = [](float, void *) { return true; };
     model_params.n_gpu_layers = 0;  // CPU-only path
+    model_params.component_prefix = component_prefix;
     static ggml_backend_dev_t cpu_only[2] = {
         nullptr,
         nullptr,
@@ -641,6 +649,139 @@ void check_real_weight_forward(const std::string & path) {
     std::printf("test-qwen3tts-talker: real-weight smoke OK (load + hparams + per-cid + backbone ctx init)\n");
 }
 
+// ---------------------------------------------------------------------------
+// unified-tts (integration plan Phase 1.5 / 1.6): the talker loads its view
+// back OUT OF a unified gemma4-assistant GGUF via component_prefix = "tts.".
+//
+// The unified file is written by the real ts_unified_writer from:
+//   * a minimal synthetic gemma4 trunk whose tensor NAMES collide with the
+//     talker's (blk.0.attn_q.weight, token_embd.weight) but whose shapes
+//     are deliberately different - so any mis-binding of a trunk tensor
+//     into the talker view trips the shape asserts below;
+//   * the synthetic talker GGUF (the same artifact the standalone path
+//     loads). The writer prefix-routes the talker's tensors under "tts."
+//     and sidecar-copies its KV namespace under the same prefix.
+//
+// The talker must then load the unified file with the SAME arch/hparams/
+// tensor-state/forward-graph invariants as the standalone file.
+// ---------------------------------------------------------------------------
+
+constexpr uint32_t TRUNK_DIM = 16;   // != N_EMBD so mis-binding is caught
+
+std::string build_synthetic_trunk_gguf() {
+    gguf_context_ptr gguf(gguf_init_empty());
+    TEST_ASSERT(gguf.get() != nullptr);
+    ggml_init_params gp = { /*.mem_size=*/ 4 * 1024 * 1024,
+                            /*.mem_buffer=*/ nullptr,
+                            /*.no_alloc=*/ false };
+    ggml_context_ptr gctx(ggml_init(gp));
+    TEST_ASSERT(gctx.get() != nullptr);
+
+    gguf_set_val_str(gguf.get(), "general.architecture", "gemma4");
+    gguf_set_val_u32(gguf.get(), "gemma4.block_count", 1);
+
+    // colliding names, distinct shapes, zeroed data
+    ggml_tensor * q = ggml_new_tensor_2d(gctx.get(), GGML_TYPE_F16, TRUNK_DIM, 8);
+    ggml_format_name(q, "%s", "blk.0.attn_q.weight");
+    std::memset(q->data, 0, ggml_nbytes(q));
+    gguf_add_tensor(gguf.get(), q);
+    ggml_tensor * e = ggml_new_tensor_2d(gctx.get(), GGML_TYPE_F16, TRUNK_DIM, 8);
+    ggml_format_name(e, "%s", "token_embd.weight");
+    std::memset(e->data, 0, ggml_nbytes(e));
+    gguf_add_tensor(gguf.get(), e);
+
+    char path[] = "/tmp/test-qwen3tts-talker-trunk-XXXXXX.gguf";
+    int fd = mkstemps(path, /*suffix_len=*/5);
+    TEST_ASSERT(fd >= 0);
+    ::close(fd);
+    TEST_ASSERT(gguf_write_to_file(gguf.get(), path, /*only_meta=*/false));
+    return std::string(path);
+}
+
+void check_unified_tts_roundtrip() {
+    std::printf("test-qwen3tts-talker: unified-tts round-trip (writer + component_prefix load)\n");
+
+    const std::string talker_path = build_synthetic_talker_gguf();
+    const std::string trunk_path  = build_synthetic_trunk_gguf();
+
+    char dst[] = "/tmp/test-qwen3tts-talker-unified-XXXXXX.gguf";
+    int fd = mkstemps(dst, /*suffix_len=*/5);
+    TEST_ASSERT(fd >= 0);
+    ::close(fd);
+    const std::string unified_path = dst;
+
+    // Minimal gemma-side hparams: the writer requires n_layer > 0 and
+    // emits the gemma4-assistant KV header from them. The gemma view is
+    // never loaded in this test; only the tts view matters.
+    ts_unified_hparams hp;
+    hp.n_layer           = 1;
+    hp.n_embd            = TRUNK_DIM;
+    hp.n_head            = 2;
+    hp.n_head_kv         = 1;
+    hp.n_embd_head_k     = 8;
+    hp.n_embd_head_v     = 8;
+    hp.n_embd_head_k_swa = 8;
+    hp.n_embd_head_v_swa = 8;
+    hp.n_ff              = 32;
+    hp.n_vocab           = 8;
+    hp.f_norm_rms_eps    = 1e-6f;
+    hp.is_swa_impl       = {1};
+    ts_unified_dflash_hparams  dh{};
+    ts_unified_dspark_hparams  ds{};
+    ts_unified_mmproj_hparams  mp{};
+    ts_unified_meta            meta{"test-qwen3tts-talker unified round-trip", ""};
+
+    std::vector<ts_unified_component> comps = {
+        {trunk_path,  "trunk"},
+        {talker_path, "tts_talker"},
+    };
+    std::string err;
+    ts_unified_writer w(unified_path, comps, /*policy=*/{}, hp, dh, ds, mp, meta, &err);
+    TEST_ASSERT(err.empty());
+    int rc = w.write_all(&err);
+    if (rc != 0) {
+        std::fprintf(stderr, "test-qwen3tts-talker: unified write_all failed: %s\n", err.c_str());
+        std::abort();
+    }
+    const auto & stats = w.get_stats();
+    TEST_ASSERT(stats.n_tensors_by_role.count("trunk")      && stats.n_tensors_by_role.at("trunk")      == 2);
+    TEST_ASSERT(stats.n_tensors_by_role.count("tts_talker") && stats.n_tensors_by_role.at("tts_talker") > 0);
+    TEST_ASSERT(stats.n_kv_copied > 0);
+    ::unlink(trunk_path.c_str());
+    ::unlink(talker_path.c_str());
+
+    // The parity contract: the talker loads the tts view out of the
+    // unified file with the SAME invariants as the standalone GGUF.
+    struct llama_model * model = load_talker_gguf(unified_path, "tts.");
+    if (model == nullptr) {
+        std::fprintf(stderr,
+            "test-qwen3tts-talker: FAIL - unified tts view load returned null for %s\n"
+            "  The writer sidecar-copies the talker KV under 'tts.'; the loader\n"
+            "  resolves every key through component_prefix. Likely causes:\n"
+            "    - a talker KV key the sidecar did not prefix (check tts.* in the file)\n"
+            "    - a tensor the writer did not route under 'tts.'\n"
+            "    - the trunk's colliding names leaking into the tts view\n",
+            unified_path.c_str());
+        std::abort();
+    }
+    check_arch_hparams(model);
+    check_tensor_state(model);
+    check_forward_graph(model);
+
+    // Explicit mis-binding pins: the trunk carries same-named tensors
+    // with TRUNK_DIM shapes; the talker view must have bound the tts
+    // copies (N_EMBD / N_TEXT_VOCAB shapes).
+    TEST_ASSERT(model->tok_embd != nullptr);
+    TEST_ASSERT(model->tok_embd->ne[0] == (int64_t) N_EMBD);
+    TEST_ASSERT(model->tok_embd->ne[1] == (int64_t) N_TEXT_VOCAB);
+    TEST_ASSERT(model->layers[0].wq != nullptr);
+    TEST_ASSERT(model->layers[0].wq->ne[0] == (int64_t) N_EMBD);
+
+    llama_model_free(model);
+    ::unlink(unified_path.c_str());
+    std::printf("test-qwen3tts-talker: unified-tts round-trip OK\n");
+}
+
 }  // namespace
 
 int main(int argc, char ** argv) {
@@ -674,6 +815,10 @@ int main(int argc, char ** argv) {
     check_forward_graph(model);
 
     llama_model_free(model);
+
+    // unified-tts (plan Phase 1.5 / 1.6): the talker loads its view back
+    // out of a unified gemma4-assistant GGUF via component_prefix.
+    check_unified_tts_roundtrip();
 
     // Real-weight verification (optional). If TESSERA_QWEN3TTS_TALKER_GGUF
     // (or argv[1]) points at a real W2 talker GGUF, run the smoke test.
