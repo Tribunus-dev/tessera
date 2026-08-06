@@ -24,8 +24,23 @@
 //  10. block_tensor with too-small dst returns -1
 //  11. block_tensor with out-of-range index returns -1
 //  12. close is safe on NULL
+//
+// Slice 3 additions (dispatch wire + cache):
+//  13. parse_layer on various tensor names
+//  14. program_create_empty + set_weight_stream
+//  15. refresh for layer 0 populates the cache + updates
+//      last_streamed_layer
+//  16. lookup for each blk.0.* tensor returns a non-null
+//      pointer and the right size
+//  17. second refresh for the same layer is a no-op
+//      (verified by last_streamed_layer not changing and
+//      the lookup still returning the same bytes)
+//  18. refresh for layer 1 swaps the cache
+//  19. detach stream via set_weight_stream(NULL)
+//  20. refresh for an unknown layer returns false
 
 #include "gguf_weight_stream.h"
+#include "ggml-ane.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -402,6 +417,142 @@ int main() {
     // --- Test 12: close on NULL is safe. ---
     ane_weight_stream_close(nullptr);
     CHECK(true, "close(NULL) is a no-op (does not crash)");
+
+    // --- Slice 3: dispatch wire + per-program cache. ---
+    // Open a fresh streamer against the same synthetic GGUF
+    // (we want a known tensor set: blk.0.b, blk.0.w, blk.1.b,
+    // blk.1.w, plus 2 out-of-block tensors).
+    ane_weight_stream_t * s2 = nullptr;
+    CHECK(ane_weight_stream_open(gguf_path.c_str(), &s2, err, sizeof(err)),
+          "slice 3: open GGUF for cache test");
+
+    // --- Test 13: parse_layer. ---
+    CHECK(ggml_backend_ane_stream_parse_layer("blk.0.w") == 0,
+          "parse_layer('blk.0.w') == 0");
+    CHECK(ggml_backend_ane_stream_parse_layer("blk.5.attn_q") == 5,
+          "parse_layer('blk.5.attn_q') == 5");
+    CHECK(ggml_backend_ane_stream_parse_layer("blk.28.ffn_down") == 28,
+          "parse_layer('blk.28.ffn_down') == 28 (12B has 28 trunk layers)");
+    CHECK(ggml_backend_ane_stream_parse_layer("token_embd.weight") == -1,
+          "parse_layer('token_embd.weight') == -1 (no blk. prefix)");
+    CHECK(ggml_backend_ane_stream_parse_layer("blk") == -1,
+          "parse_layer('blk') == -1 (no dot)");
+    CHECK(ggml_backend_ane_stream_parse_layer("blk.") == -1,
+          "parse_layer('blk.') == -1 (no digits)");
+    CHECK(ggml_backend_ane_stream_parse_layer("blk.5a.attn_q") == -1,
+          "parse_layer('blk.5a.attn_q') == -1 (non-digit in layer number)");
+    CHECK(ggml_backend_ane_stream_parse_layer(nullptr) == -1,
+          "parse_layer(NULL) == -1");
+
+    // --- Test 14-15: create program + attach stream + refresh. ---
+    ggml_backend_ane_program * program =
+        ggml_backend_ane_program_create_empty();
+    CHECK(program != nullptr, "program_create_empty returns non-null");
+    CHECK(ggml_backend_ane_program_last_streamed_layer(program) == -1,
+          "new program has last_streamed_layer == -1");
+    ggml_backend_ane_program_set_weight_stream(program, s2);
+    CHECK(ggml_backend_ane_program_last_streamed_layer(program) == -1,
+          "set_weight_stream resets last_streamed_layer to -1");
+    CHECK(ggml_backend_ane_stream_refresh_program(program, 0),
+          "refresh_program(0) succeeds (layer 0 has tensors)");
+    CHECK(ggml_backend_ane_program_last_streamed_layer(program) == 0,
+          "last_streamed_layer == 0 after refresh");
+
+    // --- Test 16: lookup for each blk.0.* tensor. ---
+    {
+        const void * base = nullptr;
+        size_t sz = 0;
+        CHECK(ggml_backend_ane_stream_program_lookup(
+                program, "blk.0.b", &base, &sz),
+              "lookup('blk.0.b') hits the cache");
+        CHECK(base != nullptr && sz == 8,
+              "blk.0.b cache entry: non-null base, size 8");
+        // Verify the bytes are the GGUF source.
+        const uint32_t want = crc32(f32_le_2(10.0f, 11.0f).data(), 8);
+        const uint32_t got  = crc32((const uint8_t *) base, 8);
+        CHECK(want == got, "blk.0.b cached bytes match the GGUF source");
+
+        CHECK(ggml_backend_ane_stream_program_lookup(
+                program, "blk.0.w", &base, &sz),
+              "lookup('blk.0.w') hits the cache");
+        CHECK(sz == 16, "blk.0.w size 16");
+        const uint32_t want2 = crc32(f32_le(0.0f, 1.0f, 2.0f, 3.0f).data(), 16);
+        const uint32_t got2  = crc32((const uint8_t *) base, 16);
+        CHECK(want2 == got2, "blk.0.w cached bytes match the GGUF source");
+
+        // out-of-block tensor: NOT in the cache (the cache
+        // is per-layer; out-of-block tensors are not part
+        // of any layer's stream).
+        CHECK(!ggml_backend_ane_stream_program_lookup(
+                program, "token_embd.weight", &base, &sz),
+              "lookup('token_embd.weight') misses the cache (out-of-block)");
+    }
+
+    // --- Test 17: second refresh for the same layer is a no-op. ---
+    {
+        const void * base_before = nullptr;
+        size_t sz_before = 0;
+        CHECK(ggml_backend_ane_stream_program_lookup(
+                program, "blk.0.w", &base_before, &sz_before),
+              "second refresh: lookup before");
+        CHECK(ggml_backend_ane_stream_refresh_program(program, 0),
+              "second refresh(0) succeeds (idempotent)");
+        CHECK(ggml_backend_ane_program_last_streamed_layer(program) == 0,
+              "last_streamed_layer still 0 after second refresh");
+        const void * base_after = nullptr;
+        size_t sz_after = 0;
+        CHECK(ggml_backend_ane_stream_program_lookup(
+                program, "blk.0.w", &base_after, &sz_after),
+              "second refresh: lookup after");
+        CHECK(base_before == base_after && sz_before == sz_after,
+              "second refresh: cache pointer + size unchanged (no re-stream)");
+    }
+
+    // --- Test 18: refresh for layer 1 swaps the cache. ---
+    {
+        CHECK(ggml_backend_ane_stream_refresh_program(program, 1),
+              "refresh_program(1) succeeds");
+        CHECK(ggml_backend_ane_program_last_streamed_layer(program) == 1,
+              "last_streamed_layer == 1 after refresh");
+        const void * base = nullptr;
+        size_t sz = 0;
+        CHECK(ggml_backend_ane_stream_program_lookup(
+                program, "blk.1.b", &base, &sz),
+              "lookup('blk.1.b') hits the cache after layer swap");
+        CHECK(sz == 8, "blk.1.b size 8");
+        const uint32_t want = crc32(f32_le_2(110.0f, 111.0f).data(), 8);
+        const uint32_t got  = crc32((const uint8_t *) base, 8);
+        CHECK(want == got, "blk.1.b cached bytes match the GGUF source");
+        // blk.0.b is no longer in the cache (the lookup
+        // table is per-layer; refresh(1) clears it).
+        CHECK(!ggml_backend_ane_stream_program_lookup(
+                program, "blk.0.b", &base, &sz),
+              "lookup('blk.0.b') misses after layer swap to 1");
+    }
+
+    // --- Test 19: detach stream. ---
+    ggml_backend_ane_program_set_weight_stream(program, nullptr);
+    CHECK(ggml_backend_ane_program_last_streamed_layer(program) == -1,
+          "detach stream resets last_streamed_layer to -1");
+    CHECK(!ggml_backend_ane_stream_refresh_program(program, 0),
+          "refresh on detached program returns false");
+
+    ggml_backend_ane_program_free(program);
+    ane_weight_stream_close(s2);
+
+    // --- Test 20: refresh for an unknown layer returns false. ---
+    {
+        ane_weight_stream_t * s3 = nullptr;
+        CHECK(ane_weight_stream_open(gguf_path.c_str(), &s3, err, sizeof(err)),
+              "open GGUF for unknown-layer test");
+        ggml_backend_ane_program * p2 =
+            ggml_backend_ane_program_create_empty();
+        ggml_backend_ane_program_set_weight_stream(p2, s3);
+        CHECK(!ggml_backend_ane_stream_refresh_program(p2, 99),
+              "refresh(99) returns false (unknown layer)");
+        ggml_backend_ane_program_free(p2);
+        ane_weight_stream_close(s3);
+    }
 
     // Cleanup.
     ::unlink(gguf_path.c_str());

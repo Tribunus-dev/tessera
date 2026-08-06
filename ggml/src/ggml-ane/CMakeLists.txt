@@ -25,6 +25,12 @@ target_link_libraries(ggml-ane PRIVATE
                       ${ACCELERATE_FRAMEWORK}
                       )
 
+# Phase 2: gguf_weight_stream.h lives alongside the .mm in
+# this directory. The public ggml-ane.h includes it, so the
+# include path must be visible to both the .mm compilation
+# and any consumer that includes ggml-ane.h.
+target_include_directories(ggml-ane PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
 # Smoke test: builds a tiny graph of supported ops and checks the output
 # against a CPU reference. Also exercises the Core ML program loader when
 # --bundle <mlmodelc dir> is passed.

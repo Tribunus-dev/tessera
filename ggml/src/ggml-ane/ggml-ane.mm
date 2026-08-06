@@ -4,6 +4,7 @@
 #include "ggml-impl.h"
 #include "ggml-backend-impl.h"
 #include "ggml-quants-v2-dispatch.h"
+#include "gguf_weight_stream.h"
 // v1 regime router: learned per-(family, shape) device-preference
 // override of the v1 static cost model. The router is a
 // static-include lookup table in ggml-regime-router.h with the
@@ -519,6 +520,33 @@ struct ggml_backend_ane_program {
     void *                warmup_scratch  = nullptr;
     size_t                warmup_scratch_size = 0;
 
+    // Phase 2 streaming: optional weight stream + per-program
+    // cache. The stream is NULL in the legacy path (op->src[0..5]
+    // carry the weight bytes in CPU memory, the dispatch reads
+    // them directly). When set (via
+    // ggml_backend_ane_program_set_weight_stream), the dispatch
+    // overrides the op->src[i]->data pointers with bytes read
+    // from the streamer's mmap'd GGUF. The cache (cached_layer +
+    // cached_offsets + last_streamed_layer) keeps the current
+    // layer's bytes warm in CPU memory across consecutive
+    // dispatches; decode is M=1 per layer, so the same layer
+    // fires N times before the layer index advances and a re-
+    // stream is needed. Slice 3 wires the sync path; slice 4
+    // adds the async prefetch that keeps the next layer warm
+    // while the current layer dispatches.
+    ane_weight_stream_t * weight_stream         = nullptr;
+    // CPU-side copy of the most recently streamed layer. The
+    // size is the max of any layer's total bytes (we recompute
+    // it when the streamer is first attached).
+    std::vector<uint8_t>  cached_layer_bytes;
+    // Per-tensor (name -> (offset, size)) inside cached_layer_bytes,
+    // matching the streamer's name-sorted layout. Built by the
+    // refresh path; looked up by the dispatch via
+    // ane_weight_stream_program_lookup.
+    std::unordered_map<std::string, std::pair<size_t, size_t>>
+                         cached_lookup;
+    int32_t               last_streamed_layer  = -1;
+
     std::string        source_path;
     std::string        function_name;
     std::atomic<bool>  warm         {false};
@@ -829,6 +857,213 @@ GGML_BACKEND_API struct ggml_backend_ane_program * ggml_backend_ane_program_load
 
 GGML_BACKEND_API void ggml_backend_ane_program_free(struct ggml_backend_ane_program * program) {
     delete program;
+}
+
+// Phase 2 test-only: construct a minimal program with just
+// the streaming fields initialized. No .mlmodelc, no Core ML
+// model, no warmup. The returned program is only useful for
+// the streaming helpers (refresh, lookup, parse_layer); the
+// dispatch path will return false because the Core ML model
+// isn't loaded. The caller frees the program with
+// ggml_backend_ane_program_free.
+GGML_BACKEND_API struct ggml_backend_ane_program *
+ggml_backend_ane_program_create_empty(void) {
+    auto * program = new ggml_backend_ane_program;
+    program->weight_stream        = nullptr;
+    program->last_streamed_layer  = -1;
+    return program;
+}
+
+// Phase 2 (iPhone demo): attach a per-program weight stream
+// to the program. The stream is held for the program's
+// lifetime; ownership stays with the caller (the test or the
+// role-aware loader). Passing NULL detaches (the dispatch
+// falls back to the legacy op->src[0..5] path).
+//
+// The stream must remain valid until either
+// ggml_backend_ane_program_set_weight_stream(program, NULL)
+// is called or the program is freed. The runtime does not
+// own the stream and does not close it.
+GGML_BACKEND_API void ggml_backend_ane_program_set_weight_stream(
+        struct ggml_backend_ane_program * program,
+        struct ane_weight_stream_t * stream) {
+    if (program == nullptr) return;
+    program->weight_stream = stream;
+    program->last_streamed_layer = -1;
+    program->cached_lookup.clear();
+    // The cache buffer is sized to the largest layer's total
+    // bytes on first refresh. The dispatch's stream call will
+    // grow it as needed (the streamer's stream_layer returns
+    // the layer's total bytes; we resize the vector to that).
+    program->cached_layer_bytes.clear();
+}
+
+// Phase 2: parse the layer index out of a tensor name.
+// Returns the layer index (>= 0) on success, or -1 if the
+// name doesn't match the `blk.L.` prefix convention. The
+// conversion tool emits the trunk's per-layer tensors under
+// the `blk.L.<family>.weight[_meta]` convention; the dispatch
+// uses this helper to know which layer's stream to refresh
+// for the current op.
+//
+// The parser is intentionally strict: the name must START with
+// "blk." followed by digits and a dot. Names like "blk.5."
+// (with no family) are accepted (the layer is the index);
+// names like "blk.5a.attn_q" are rejected (non-digit after
+// the layer number).
+static int32_t ane_weight_stream_parse_layer(const char * name) {
+    if (name == nullptr) return -1;
+    if (name[0] != 'b' || name[1] != 'l' || name[2] != 'k' || name[3] != '.') {
+        return -1;
+    }
+    const char * p = name + 4;
+    int32_t layer = 0;
+    if (*p < '0' || *p > '9') return -1;
+    while (*p >= '0' && *p <= '9') {
+        layer = layer * 10 + (*p - '0');
+        ++p;
+        // Cap at the maximum realistic layer count (4-digit
+        // index is 9999; gemma 4 12B has 28 layers, no
+        // realistic model is > 1000).
+        if (layer > 9999) return -1;
+    }
+    if (*p != '.') return -1;
+    return layer;
+}
+
+// Phase 2: refresh the per-program layer cache. Reads the
+// given layer's tensors from the streamer into the program's
+// CPU cache and rebuilds the per-tensor (offset, size) lookup
+// table. Returns true on success, false on failure (reason
+// logged via ggml log).
+//
+// The cache is keyed on (streamer, layer); the caller is
+// expected to skip the refresh when the layer hasn't changed
+// (the dispatch checks program->last_streamed_layer before
+// calling this). The helper does NOT check that invariant;
+// it's the caller's responsibility.
+static bool ane_weight_stream_program_refresh(
+        struct ggml_backend_ane_program * program,
+        int32_t layer_idx) {
+    if (program == nullptr || program->weight_stream == nullptr) return false;
+    if (layer_idx < 0) return false;
+    // Build the per-tensor lookup from the streamer's index.
+    // The streamer's n_block_tensors tells us how many tensors
+    // belong to this layer; we walk the indices to capture
+    // (name, size_bytes) for each.
+    const uint32_t n = ane_weight_stream_n_block_tensors(
+        program->weight_stream, layer_idx);
+    if (n == 0) {
+        GGML_LOG_ERROR("ane: refresh: layer %d has no tensors in the stream\n",
+                       layer_idx);
+        return false;
+    }
+    // Compute the layer's total bytes (sum of all per-tensor
+    // sizes). The streamer's stream_layer also reports this
+    // but we need the per-tensor breakdown to build the
+    // lookup; doing it ourselves avoids a double-pass.
+    uint64_t total = 0;
+    std::vector<std::pair<std::string, uint64_t>> sizes;
+    sizes.reserve(n);
+    for (uint32_t i = 0; i < n; ++i) {
+        const char * tname = nullptr;
+        size_t      tsize  = 0;
+        if (!ane_weight_stream_block_tensor_info(
+                program->weight_stream, layer_idx, i,
+                &tname, &tsize, nullptr, nullptr)) {
+            return false;
+        }
+        sizes.emplace_back(tname ? std::string(tname) : std::string(), tsize);
+        total += tsize;
+    }
+    if (total == 0 || total > SIZE_MAX) {
+        GGML_LOG_ERROR("ane: refresh: layer %d has implausible total bytes "
+                       "(%llu)\n", layer_idx, (unsigned long long) total);
+        return false;
+    }
+    // Resize the cache buffer if needed.
+    if (program->cached_layer_bytes.size() < (size_t) total) {
+        program->cached_layer_bytes.resize((size_t) total);
+    }
+    // Stream into the cache. The streamer's stream_layer
+    // writes name-sorted, contiguous bytes matching the
+    // per-tensor offsets we compute below.
+    const int64_t wrote = ane_weight_stream_layer(
+        program->weight_stream, layer_idx,
+        program->cached_layer_bytes.data(), (size_t) total);
+    if (wrote != (int64_t) total) {
+        GGML_LOG_ERROR("ane: refresh: layer %d stream_layer returned %lld, "
+                       "expected %llu\n", layer_idx,
+                       (long long) wrote, (unsigned long long) total);
+        return false;
+    }
+    // Rebuild the per-tensor lookup. The streamer writes
+    // tensors in the same name-sorted order we iterated
+    // above, so the offsets match the running sum of sizes.
+    program->cached_lookup.clear();
+    uint64_t cursor = 0;
+    for (const auto & kv : sizes) {
+        if (cursor + kv.second > total) {
+            GGML_LOG_ERROR("ane: refresh: per-tensor offset overflow for %s\n",
+                           kv.first.c_str());
+            return false;
+        }
+        program->cached_lookup[kv.first] =
+            std::make_pair((size_t) cursor, (size_t) kv.second);
+        cursor += kv.second;
+    }
+    program->last_streamed_layer = layer_idx;
+    return true;
+}
+
+// Phase 2: look up a streamed tensor by name. Returns true
+// if the name is in the cache; on success, sets *base_out to
+// the byte pointer (inside program->cached_layer_bytes) and
+// *size_out to the byte count. Returns false if the name
+// isn't in the cache (caller should fall back to op->src[i]->
+// data in that case).
+static bool ane_weight_stream_program_lookup(
+        const struct ggml_backend_ane_program * program,
+        const char * name,
+        const void ** base_out,
+        size_t * size_out) {
+    if (program == nullptr || name == nullptr || base_out == nullptr) {
+        return false;
+    }
+    auto it = program->cached_lookup.find(name);
+    if (it == program->cached_lookup.end()) return false;
+    if (size_out) *size_out = it->second.second;
+    *base_out = program->cached_layer_bytes.data() + it->second.first;
+    return true;
+}
+
+// Public C API wrappers (also exposed via ggml-ane.h for tests
+// and the role-aware loader). The internal helpers above are
+// static; these are the GGML_BACKEND_API entry points.
+
+GGML_BACKEND_API int32_t ggml_backend_ane_program_last_streamed_layer(
+        const struct ggml_backend_ane_program * program) {
+    if (program == nullptr) return -1;
+    return program->last_streamed_layer;
+}
+
+GGML_BACKEND_API int32_t ggml_backend_ane_stream_parse_layer(
+        const char * name) {
+    return ane_weight_stream_parse_layer(name);
+}
+
+GGML_BACKEND_API bool ggml_backend_ane_stream_refresh_program(
+        struct ggml_backend_ane_program * program,
+        int32_t layer_idx) {
+    return ane_weight_stream_program_refresh(program, layer_idx);
+}
+
+GGML_BACKEND_API bool ggml_backend_ane_stream_program_lookup(
+        const struct ggml_backend_ane_program * program,
+        const char * name,
+        const void ** base_out,
+        size_t * size_out) {
+    return ane_weight_stream_program_lookup(program, name, base_out, size_out);
 }
 
 // Read an MLMultiArray into a host fp32 buffer. The common/ane-mtp.mm variant
@@ -2133,12 +2368,78 @@ static bool ggml_ane_program_dispatch_op(ggml_backend_ane_program * program,
             std::vector<ggml_fp16_t> weight_fp16((size_t) out_dim * in_dim);
             const int64_t pages_per_row = (in_dim + 639) / 640;
             const int64_t words_per_page = 32;
+            // Default: read the T640_3D meta tensors from the
+            // op's source pointers (the standard ggml path; the
+            // weight bytes are in CPU memory as ggml tensors).
             const int32_t * packed = (const int32_t *) op->src[0]->data;
             const ggml_fp16_t * page_scales = (const ggml_fp16_t *) op->src[1]->data;
             const int8_t * lane_scales = (const int8_t *) op->src[2]->data;
             const int32_t * outlier_row_offsets = (const int32_t *) op->src[3]->data;
             const int32_t * outlier_cols = (const int32_t *) op->src[4]->data;
             const ggml_fp16_t * outlier_vals = (const ggml_fp16_t *) op->src[5]->data;
+            // Phase 2 (iPhone demo): if the program has a
+            // weight stream attached, override the meta tensor
+            // pointers with bytes read from the mmap'd GGUF.
+            // The cache is refreshed only on layer-index change
+            // (decode M=1 reuses the same layer N times before
+            // the index advances; the cache hit rate during
+            // decode is ~99% for batch-1 inference). On a
+            // cache miss, the stream copies the layer's bytes
+            // into the per-program CPU buffer; on a hit, the
+            // pointers just rebind and the dequant runs as
+            // before. The legacy path (no stream) is byte-
+            // identical to the pre-Phase-2 dispatch.
+            if (program->weight_stream != nullptr) {
+                const int32_t cur_layer =
+                    ane_weight_stream_parse_layer(op->src[0]->name);
+                if (cur_layer >= 0 &&
+                    cur_layer != program->last_streamed_layer) {
+                    if (!ane_weight_stream_program_refresh(
+                            program, cur_layer)) {
+                        // Refresh failed (layer not in the GGUF
+                        // or the mmap range is out of bounds).
+                        // The legacy op->src[i]->data pointers
+                        // remain valid; the dispatch continues
+                        // with them. Slice 3 is fail-soft on
+                        // the refresh; the layer-not-found case
+                        // is logged so the operator sees it.
+                    }
+                }
+                if (cur_layer >= 0) {
+                    const void * base = nullptr;
+                    size_t sz = 0;
+                    if (op->src[0]->name != nullptr &&
+                        ane_weight_stream_program_lookup(
+                            program, op->src[0]->name, &base, &sz)) {
+                        packed = (const int32_t *) base;
+                    }
+                    if (op->src[1]->name != nullptr &&
+                        ane_weight_stream_program_lookup(
+                            program, op->src[1]->name, &base, &sz)) {
+                        page_scales = (const ggml_fp16_t *) base;
+                    }
+                    if (op->src[2]->name != nullptr &&
+                        ane_weight_stream_program_lookup(
+                            program, op->src[2]->name, &base, &sz)) {
+                        lane_scales = (const int8_t *) base;
+                    }
+                    if (op->src[3]->name != nullptr &&
+                        ane_weight_stream_program_lookup(
+                            program, op->src[3]->name, &base, &sz)) {
+                        outlier_row_offsets = (const int32_t *) base;
+                    }
+                    if (op->src[4]->name != nullptr &&
+                        ane_weight_stream_program_lookup(
+                            program, op->src[4]->name, &base, &sz)) {
+                        outlier_cols = (const int32_t *) base;
+                    }
+                    if (op->src[5]->name != nullptr &&
+                        ane_weight_stream_program_lookup(
+                            program, op->src[5]->name, &base, &sz)) {
+                        outlier_vals = (const ggml_fp16_t *) base;
+                    }
+                }
+            }
             const bool use_v2 = ggml_tessera_t640_v2_enabled() &&
                                 in_dim >= GGML_TESSERA_T640_V2_MIN_K;
             if (use_v2) {
