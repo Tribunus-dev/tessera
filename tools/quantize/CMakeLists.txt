@@ -306,6 +306,38 @@ if(LLAMA_TOOLS_INSTALL)
     install(TARGETS ${TARGET} RUNTIME)
 endif()
 
+# calibrate_regime_router: v1 regime router calibration runner.
+# Sweeps (family, shape_bucket) for a given shape set, picks
+# the v2 vs C ref winner per cell, and emits
+# ggml/src/ggml-regime-router.gen.h. The committed .gen.h is
+# the source of truth; the runner is `make regime-router-regen`
+# (the custom target below) when the model fixtures change.
+# Links llama-quantize-impl for the TILE640 v2 functions
+# (apply_outlier_addback_v2, decode_per_row_meta_v2) + the
+# L1-on-ANE proxy (ts_higgs_proxy_measure_l1).
+set(TARGET calibrate_regime_router)
+add_executable(${TARGET} tessera/calibrate_regime_router.cpp)
+target_link_libraries(${TARGET} PRIVATE llama-quantize-impl)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+target_include_directories(${TARGET} PRIVATE
+    ${PROJECT_SOURCE_DIR}/ggml/src)
+if(LLAMA_TOOLS_INSTALL)
+    install(TARGETS ${TARGET} RUNTIME)
+endif()
+
+# regime-router-regen: custom target that regenerates the
+# .gen.h with the pinned seed. The committed .gen.h is the
+# source of truth; the custom target is for the model-fixture
+# refresh path. The seed is hard-coded in the runner so the
+# bytes are bit-stable across re-runs.
+add_custom_target(regime-router-regen
+    COMMAND $<TARGET_FILE:calibrate_regime_router>
+        --out ${PROJECT_SOURCE_DIR}/ggml/src/ggml-regime-router.gen.h
+        --shape gemma4-12b-trunk
+    DEPENDS calibrate_regime_router
+    COMMENT "Regenerating ggml-regime-router.gen.h from gemma 4 12B trunk shapes"
+    VERBATIM)
+
 # tessera-train-dflash: native DFlash / D-PACE block-drafter training driver.
 # Reads llama.tessera.dflash-block.v1 records (from tessera-dataset
 # --tessera-dataset-mode dflash) and trains a drafter with weighted
