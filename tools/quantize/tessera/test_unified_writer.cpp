@@ -27,6 +27,12 @@
 //      main(); the test exercises the same paths the CLI uses but
 //      in-process.
 //
+// Later sections extend the same shape: 6 hparams JSON round-trip,
+// 7 worst-of end-to-end, 8 budget-aware reconciliation, 9-10 M0a
+// mmproj components + hparams KV, 11 unified-tts (tts_talker /
+// tts_code2wav routing, name-collision isolation, KV sidecar
+// round-trip).
+//
 // Builds standalone against llama-quantize-impl (which transitively
 // pulls in duckdb-amalgamation). Run with no args; uses /tmp for
 // scratch files. Exit 0 on success, non-zero on failure.
@@ -47,6 +53,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <random>
 #include <string>
@@ -64,6 +71,14 @@ static void check(bool cond, const char * msg) {
         g_fail++;
         std::printf("FAIL %s\n", msg);
     }
+}
+
+// Per-role tensor count from the writer's stats map (plan 1.2: the
+// named per-role fields were replaced by n_tensors_by_role). Absent
+// role reads as 0.
+static int role_count(const ts_unified_writer::stats & s, const std::string & role) {
+    auto it = s.n_tensors_by_role.find(role);
+    return it == s.n_tensors_by_role.end() ? 0 : it->second;
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +156,53 @@ static int write_synth_gguf(const std::string & path,
         // The data must be 256-byte aligned (GGUF default). Heap
         // malloc returns at least 16-byte aligned; for the test
         // we accept the misalignment and rely on gguf's tolerance.
+        g->data = (void *)t.data.data();
+        gguf_add_tensor(ctx, g);
+    }
+    if (!gguf_write_to_file(ctx, path.c_str(), /*only_meta=*/false)) {
+        if (err) *err = "gguf_write_to_file failed for " + path;
+        ggml_free(gctx); gguf_free(ctx);
+        return 1;
+    }
+    ggml_free(gctx);
+    gguf_free(ctx);
+    return 0;
+}
+
+// Same as write_synth_gguf, but with a caller-supplied KV hook so the
+// unified-tts tests can author a talker / code2wav source GGUF whose KV
+// namespace carries the full type range (the plain builder only emits
+// i32=0 placeholders). The arch is written by the hook itself.
+static int write_synth_gguf_kv(const std::string & path,
+                               const std::function<void(gguf_context *)> & kv_hook,
+                               const std::vector<synth_tensor> & tensors,
+                               std::string * err) {
+    gguf_context * ctx = gguf_init_empty();
+    if (ctx == nullptr) {
+        if (err) *err = "gguf_init_empty failed";
+        return 1;
+    }
+    ggml_init_params ip = { /*mem_size=*/ 16 * 1024 * 1024, /*mem_buffer=*/ nullptr, /*no_alloc=*/ true };
+    ggml_context * gctx = ggml_init(ip);
+    if (gctx == nullptr) {
+        if (err) *err = "ggml_init failed";
+        gguf_free(ctx);
+        return 1;
+    }
+    kv_hook(ctx);
+    for (const auto & t : tensors) {
+        int n_dims = (int)t.ne.size();
+        ggml_tensor * g = nullptr;
+        if (n_dims == 1) g = ggml_new_tensor_1d(gctx, t.type, t.ne[0]);
+        else if (n_dims == 2) g = ggml_new_tensor_2d(gctx, t.type, t.ne[0], t.ne[1]);
+        else if (n_dims == 3) g = ggml_new_tensor_3d(gctx, t.type, t.ne[0], t.ne[1], t.ne[2]);
+        else                   g = ggml_new_tensor_4d(gctx, t.type, t.ne[0], t.ne[1], t.ne[2], t.ne[3]);
+        if (g == nullptr) {
+            if (err) *err = "ggml_new_tensor failed for " + t.name;
+            ggml_free(gctx); gguf_free(ctx);
+            return 1;
+        }
+        ggml_format_name(g, "%s", t.name.c_str());
         g->data = (void *)t.data.data();
         gguf_add_tensor(ctx, g);
     }
@@ -469,11 +531,11 @@ int main(int argc, char ** argv) {
             check(rc == 0, "write_all");
             if (rc != 0) std::printf("  writer err: %s\n", err.c_str());
             const auto & s = w.get_stats();
-            check(s.n_tensors_trunk == 6,       "stats: 6 trunk tensors");
-            check(s.n_tensors_dflash == 3,      "stats: 3 dflash tensors");
-            check(s.n_tensors_dspark == 3,      "stats: 3 dspark tensors");
-            check(s.n_tensors_mtp_nextn == 4,   "stats: 4 mtp_nextn tensors");
-            check(s.n_tensors_shared_embd == 1, "stats: 1 shared_embd tensor");
+            check(role_count(s, "trunk")       == 6, "stats: 6 trunk tensors");
+            check(role_count(s, "dflash")      == 3, "stats: 3 dflash tensors");
+            check(role_count(s, "dspark")      == 3, "stats: 3 dspark tensors");
+            check(role_count(s, "mtp_nextn")   == 4, "stats: 4 mtp_nextn tensors");
+            check(role_count(s, "shared_embd") == 1, "stats: 1 shared_embd tensor");
             check(s.n_qtype_overrides == 3,     "stats: 3 qtype overrides (trunk.attn_q + dflash.fc + dflash.blk.0.attn_q inherited from trunk)");
         } else {
             std::printf("FAIL writer construct: %s\n", err.c_str());
@@ -713,7 +775,7 @@ int main(int argc, char ** argv) {
                 return;
             }
             const auto & s = w.get_stats();
-            check(s.n_tensors_shared_embd == 1,
+            check(role_count(s, "shared_embd") == 1,
                   ("worst-of stats shared_embd==1 " + tag).c_str());
             // Reopen and read back the qtype.
             ggml_context * rin_ctx = nullptr;
@@ -1130,14 +1192,14 @@ int main(int argc, char ** argv) {
             check(rc == 0, ("9 write_all " + err).c_str());
             if (rc != 0) std::printf("  writer err: %s\n", err.c_str());
             const auto & s = w.get_stats();
-            check(s.n_tensors_vision_tower == 3, "9 stats n_tensors_vision_tower == 3");
-            check(s.n_tensors_mm_projector == 1, "9 stats n_tensors_mm_projector == 1");
-            check(s.n_tensors_trunk       == 0, "9 stats n_tensors_trunk == 0");
-            check(s.n_tensors_dflash      == 0, "9 stats n_tensors_dflash == 0");
-            check(s.n_tensors_dspark      == 0, "9 stats n_tensors_dspark == 0");
-            check(s.n_tensors_mtp_nextn   == 0, "9 stats n_tensors_mtp_nextn == 0");
-            check(s.n_tensors_shared_embd == 0, "9 stats n_tensors_shared_embd == 0");
-            check(s.n_tensors_audio_tower == 0, "9 stats n_tensors_audio_tower == 0");
+            check(role_count(s, "vision_tower") == 3, "9 stats vision_tower == 3");
+            check(role_count(s, "mm_projector") == 1, "9 stats mm_projector == 1");
+            check(role_count(s, "trunk")        == 0, "9 stats trunk == 0");
+            check(role_count(s, "dflash")       == 0, "9 stats dflash == 0");
+            check(role_count(s, "dspark")       == 0, "9 stats dspark == 0");
+            check(role_count(s, "mtp_nextn")    == 0, "9 stats mtp_nextn == 0");
+            check(role_count(s, "shared_embd")  == 0, "9 stats shared_embd == 0");
+            check(role_count(s, "audio_tower")  == 0, "9 stats audio_tower == 0");
             // Reopen and verify tensor names landed unchanged.
             ggml_context * rin_ctx = nullptr;
             gguf_init_params ip = { /*no_alloc=*/ false, /*ctx=*/ &rin_ctx };
@@ -1222,8 +1284,8 @@ int main(int argc, char ** argv) {
             check(rc == 0, ("9.4 write_all " + err).c_str());
             if (rc == 0) {
                 const auto & s = w.get_stats();
-                check(s.n_tensors_vision_tower == 1, "9.4 stats vt == 1");
-                check(s.n_tensors_mm_projector == 0,
+                check(role_count(s, "vision_tower") == 1, "9.4 stats vt == 1");
+                check(role_count(s, "mm_projector") == 0,
                       "9.4 stats mp == 0 (second writer's data dropped: first-writer-wins)");
                 check(s.n_tensors_skipped == 1,
                       "9.4 n_tensors_skipped == 1 (duplicate dst name)");
@@ -1444,6 +1506,258 @@ int main(int argc, char ** argv) {
                 check(gguf_find_key(zin, "gemma4-assistant.mm.projector_dim") < 0,
                       "10 zero: no mm.projector_dim");
                 gguf_free(zin);
+            }
+        }
+    }
+
+    // ---- Test 11: unified-tts writer (plan Phase 1.1 / 1.4 / 1.6) ----
+    //
+    // 11.1 prefix routing: talker tensors land under "tts.", code2wav
+    //      under "tts.c2w.", trunk names untouched; per-role stats map.
+    // 11.2 name-collision isolation: trunk and talker BOTH carry
+    //      blk.0.attn_q.weight with DIFFERENT policy verdicts; each
+    //      tensor must get its OWN verdict (the tts_ namespace never
+    //      folds into the trunk's worst-of). A role-less legacy entry
+    //      still matches both namespaces.
+    // 11.3 KV sidecar round-trip: the talker's / c2w's full KV
+    //      namespaces re-emitted under the destination prefixes, every
+    //      gguf KV type covered, gemma-side keys untouched.
+    {
+        const std::string tts_trunk_path  = std::string(tmpdir) + "/test_unified_writer_tts_trunk.gguf";
+        const std::string tts_talker_path = std::string(tmpdir) + "/test_unified_writer_tts_talker.gguf";
+        const std::string tts_c2w_path    = std::string(tmpdir) + "/test_unified_writer_tts_c2w.gguf";
+        const std::string tts_dst_path    = std::string(tmpdir) + "/test_unified_writer_tts_dst.gguf";
+        for (const auto & p : {tts_trunk_path, tts_talker_path, tts_c2w_path, tts_dst_path}) {
+            std::remove(p.c_str());
+        }
+
+        // Trunk: blk.0.attn_q.weight (pattern 0x10) + blk.0.attn_k.weight
+        // (pattern 0x20). 256 cols: valid row for Q4_K / Q5_K / Q8_0.
+        std::vector<std::vector<uint8_t>> tts_hold;   // keep data alive
+        {
+            std::vector<int64_t> ne = {256, 4};
+            size_t n = (size_t)nbytes_for(ne, GGML_TYPE_F16);
+            tts_hold.emplace_back(n);
+            for (size_t i = 0; i < n; i++) tts_hold.back()[i] = (uint8_t)(0x10 + (i & 0x0F));
+            tts_hold.emplace_back(n);
+            for (size_t i = 0; i < n; i++) tts_hold.back()[i] = (uint8_t)(0x20 + (i & 0x0F));
+            std::vector<synth_tensor> ts;
+            ts.push_back({"blk.0.attn_q.weight", GGML_TYPE_F16, ne, tts_hold[0]});
+            ts.push_back({"blk.0.attn_k.weight", GGML_TYPE_F16, ne, tts_hold[1]});
+            std::string err;
+            check(write_synth_gguf(tts_trunk_path, "gemma4", {}, ts, &err) == 0,
+                  ("11 write tts trunk: " + err).c_str());
+        }
+        // Talker: same tensor NAMES as the trunk, different data
+        // (patterns 0x50 / 0x60) + tts-only tensors. The KV namespace
+        // covers every gguf KV type the sidecar must copy.
+        {
+            std::vector<int64_t> ne = {256, 4};
+            size_t n = (size_t)nbytes_for(ne, GGML_TYPE_F16);
+            tts_hold.emplace_back(n);
+            for (size_t i = 0; i < n; i++) tts_hold.back()[i] = (uint8_t)(0x50 + (i & 0x0F));
+            tts_hold.emplace_back(n);
+            for (size_t i = 0; i < n; i++) tts_hold.back()[i] = (uint8_t)(0x60 + (i & 0x0F));
+            std::vector<int64_t> ne_small = {256, 2};
+            size_t n_small = (size_t)nbytes_for(ne_small, GGML_TYPE_F16);
+            tts_hold.emplace_back(n_small);
+            for (size_t i = 0; i < n_small; i++) tts_hold.back()[i] = (uint8_t)(0x70 + (i & 0x0F));
+            std::vector<synth_tensor> ts;
+            ts.push_back({"blk.0.attn_q.weight", GGML_TYPE_F16, ne,        tts_hold[2]});
+            ts.push_back({"blk.0.attn_k.weight", GGML_TYPE_F16, ne,        tts_hold[3]});
+            ts.push_back({"codec_embd.weight",   GGML_TYPE_F16, ne_small,  tts_hold[4]});
+            ts.push_back({"cp_head.0.weight",    GGML_TYPE_F16, ne_small,  tts_hold[4]});
+            auto kv_hook = [](gguf_context * ctx) {
+                gguf_set_val_str(ctx, "general.architecture", "qwen3-tts-talker");
+                gguf_set_val_str(ctx, "general.name", "synthetic-talker");
+                gguf_set_val_u32(ctx, "qwen3-tts-talker.block_count", 3);
+                gguf_set_val_u32(ctx, "qwen3-tts-talker.embedding_length", 256);
+                gguf_set_val_u32(ctx, "qwen3-tts-talker.vocab_size", 4);
+                gguf_set_val_u32(ctx, "qwen3-tts-talker.codec_bos_id", 1);
+                gguf_set_val_f32(ctx, "qwen3-tts-talker.attention.layer_norm_rms_epsilon", 1e-6f);
+                gguf_set_val_f32(ctx, "qwen3-tts-talker.rope.freq_base", 10000.0f);
+                const char * lang_names[] = {"en", "zh", "jp"};
+                gguf_set_arr_str(ctx, "qwen3-tts-talker.codec_language_names", lang_names, 3);
+                const int32_t lang_ids[] = {0, 1, 2};
+                gguf_set_arr_data(ctx, "qwen3-tts-talker.codec_language_ids", GGUF_TYPE_INT32, lang_ids, 3);
+                gguf_set_val_bool(ctx, "qwen3-tts-talker.use_parallel", true);
+                gguf_set_val_u64(ctx, "qwen3-tts-talker.train_tokens", 123456789ull);
+                gguf_set_val_i64(ctx, "qwen3-tts-talker.train_steps", -42);
+                gguf_set_val_f64(ctx, "qwen3-tts-talker.train_lr", 3e-4);
+            };
+            std::string err;
+            check(write_synth_gguf_kv(tts_talker_path, kv_hook, ts, &err) == 0,
+                  ("11 write tts talker: " + err).c_str());
+        }
+        // code2wav: one conv weight + a minimal KV namespace.
+        {
+            std::vector<int64_t> ne = {8, 4};
+            size_t n = (size_t)nbytes_for(ne, GGML_TYPE_F16);
+            tts_hold.emplace_back(n);
+            for (size_t i = 0; i < n; i++) tts_hold.back()[i] = (uint8_t)(0x90 + (i & 0x0F));
+            std::vector<synth_tensor> ts;
+            ts.push_back({"conv.pre.weight", GGML_TYPE_F16, ne, tts_hold.back()});
+            auto kv_hook = [](gguf_context * ctx) {
+                gguf_set_val_str(ctx, "general.architecture", "qwen3-tts-code2wav");
+                gguf_set_val_u32(ctx, "qwen3-tts-code2wav.block_count", 2);
+            };
+            std::string err;
+            check(write_synth_gguf_kv(tts_c2w_path, kv_hook, ts, &err) == 0,
+                  ("11 write tts c2w: " + err).c_str());
+        }
+
+        // Policy: DIFFERENT verdicts for the colliding name, plus one
+        // role-less legacy entry on the second colliding name.
+        ts_unified_policy tts_policy;
+        tts_policy.entries.push_back({"trunk",      "blk.0.attn_q.weight", "Q4_K"});
+        tts_policy.entries.push_back({"tts_talker", "blk.0.attn_q.weight", "Q8_0"});
+        tts_policy.entries.push_back({"",           "blk.0.attn_k.weight", "Q5_K"});
+
+        ts_unified_hparams tts_hp;
+        tts_hp.n_layer               = 2;
+        tts_hp.n_embd                = 256;
+        tts_hp.n_head                = 2;
+        tts_hp.n_head_kv             = 2;
+        tts_hp.n_embd_head_k         = 4;
+        tts_hp.n_embd_head_v         = 4;
+        tts_hp.n_embd_head_k_swa     = 4;
+        tts_hp.n_embd_head_v_swa     = 4;
+        tts_hp.n_ff                  = 256;
+        tts_hp.n_vocab               = 4;
+        tts_hp.n_embd_out            = 256;
+        tts_hp.n_swa                 = 64;
+        tts_hp.rope_freq_base_train_swa = 10000.0f;
+        tts_hp.f_norm_rms_eps        = 1e-6f;
+        tts_hp.is_swa_impl           = {1, 1};
+        ts_unified_dflash_hparams tts_dh{};
+        ts_unified_dspark_hparams tts_ds{};
+        ts_unified_mmproj_hparams tts_mp{};
+        ts_unified_meta tts_meta{"unified-tts writer test", "test_tip"};
+
+        std::vector<ts_unified_component> tts_comps = {
+            {tts_trunk_path,  "trunk"},
+            {tts_talker_path, "tts_talker"},
+            {tts_c2w_path,    "tts_code2wav"},
+        };
+        std::string err;
+        ts_unified_writer w(tts_dst_path, tts_comps, tts_policy,
+                            tts_hp, tts_dh, tts_ds, tts_mp, tts_meta, &err);
+        check(err.empty(), ("11 writer construct " + err).c_str());
+        int rc = w.write_all(&err);
+        check(rc == 0, ("11 write_all " + err).c_str());
+        if (rc == 0) {
+            const auto & s = w.get_stats();
+            check(role_count(s, "trunk")        == 2, "11 stats trunk == 2");
+            check(role_count(s, "tts_talker")   == 4, "11 stats tts_talker == 4");
+            check(role_count(s, "tts_code2wav") == 1, "11 stats tts_code2wav == 1");
+            check(s.n_kv_copied == 16, "11 stats n_kv_copied == 16 (14 talker + 2 c2w)");
+
+            ggml_context * rin_ctx = nullptr;
+            gguf_init_params ip = { /*no_alloc=*/ false, /*ctx=*/ &rin_ctx };
+            gguf_context * rin = gguf_init_from_file(tts_dst_path.c_str(), ip);
+            check(rin != nullptr, "11 reopen dst");
+            if (rin != nullptr) {
+                // 11.1 routing: every destination name lands.
+                check(gguf_find_tensor(rin, "blk.0.attn_q.weight")        >= 0, "11 trunk blk.0.attn_q.weight present");
+                check(gguf_find_tensor(rin, "blk.0.attn_k.weight")        >= 0, "11 trunk blk.0.attn_k.weight present");
+                check(gguf_find_tensor(rin, "tts.blk.0.attn_q.weight")    >= 0, "11 tts.blk.0.attn_q.weight present");
+                check(gguf_find_tensor(rin, "tts.blk.0.attn_k.weight")    >= 0, "11 tts.blk.0.attn_k.weight present");
+                check(gguf_find_tensor(rin, "tts.codec_embd.weight")      >= 0, "11 tts.codec_embd.weight present");
+                check(gguf_find_tensor(rin, "tts.cp_head.0.weight")       >= 0, "11 tts.cp_head.0.weight present");
+                check(gguf_find_tensor(rin, "tts.c2w.conv.pre.weight")    >= 0, "11 tts.c2w.conv.pre.weight present");
+                check(gguf_find_tensor(rin, "tts.c2w.blk.0.attn_q.weight") < 0, "11 no cross-prefixed leak");
+
+                // 11.2 collision isolation: each colliding name keeps its
+                // OWN verdict. A broken fold (worst-of across namespaces)
+                // would bump the trunk's Q4_K up to Q8_0.
+                int64_t t_q = gguf_find_tensor(rin, "blk.0.attn_q.weight");
+                check(t_q >= 0 && gguf_get_tensor_type(rin, t_q) == GGML_TYPE_Q4_K,
+                      "11 trunk blk.0.attn_q.weight == Q4_K (no tts fold)");
+                int64_t s_q = gguf_find_tensor(rin, "tts.blk.0.attn_q.weight");
+                check(s_q >= 0 && gguf_get_tensor_type(rin, s_q) == GGML_TYPE_Q8_0,
+                      "11 tts.blk.0.attn_q.weight == Q8_0 (own verdict)");
+                // Role-less legacy entry matches BOTH namespaces.
+                int64_t t_k = gguf_find_tensor(rin, "blk.0.attn_k.weight");
+                check(t_k >= 0 && gguf_get_tensor_type(rin, t_k) == GGML_TYPE_Q5_K,
+                      "11 trunk blk.0.attn_k.weight == Q5_K (legacy entry)");
+                int64_t s_k = gguf_find_tensor(rin, "tts.blk.0.attn_k.weight");
+                check(s_k >= 0 && gguf_get_tensor_type(rin, s_k) == GGML_TYPE_Q5_K,
+                      "11 tts.blk.0.attn_k.weight == Q5_K (legacy entry)");
+
+                // Data integrity: the colliding tensors carry DIFFERENT
+                // bytes (trunk 0x10 pattern, talker 0x50 pattern).
+                ggml_tensor * trunk_q = ggml_get_tensor(rin_ctx, "blk.0.attn_q.weight");
+                ggml_tensor * talk_q  = ggml_get_tensor(rin_ctx, "tts.blk.0.attn_q.weight");
+                check(trunk_q != nullptr && talk_q != nullptr, "11 colliding tensors loaded");
+                if (trunk_q != nullptr && talk_q != nullptr) {
+                    check(((const uint8_t *)trunk_q->data)[0] == 0x10, "11 trunk data pattern");
+                    check(((const uint8_t *)talk_q->data)[0]  == 0x50, "11 talker data pattern");
+                    check(memcmp(trunk_q->data, talk_q->data, ggml_nbytes(trunk_q)) != 0,
+                          "11 colliding tensors are distinct weights");
+                }
+
+                // 11.3 KV sidecar: talker namespace under "tts.".
+                int64_t k_arch = gguf_find_key(rin, "tts.general.architecture");
+                check(k_arch >= 0, "11 tts.general.architecture present");
+                if (k_arch >= 0) {
+                    check(std::string(gguf_get_val_str(rin, k_arch)) == "qwen3-tts-talker",
+                          "11 tts.general.architecture == qwen3-tts-talker");
+                }
+                int64_t k_bc = gguf_find_key(rin, "tts.qwen3-tts-talker.block_count");
+                check(k_bc >= 0 && gguf_get_val_u32(rin, k_bc) == 3u,
+                      "11 tts.qwen3-tts-talker.block_count == 3");
+                int64_t k_el = gguf_find_key(rin, "tts.qwen3-tts-talker.embedding_length");
+                check(k_el >= 0 && gguf_get_val_u32(rin, k_el) == 256u,
+                      "11 tts.qwen3-tts-talker.embedding_length == 256");
+                int64_t k_eps = gguf_find_key(rin, "tts.qwen3-tts-talker.attention.layer_norm_rms_epsilon");
+                check(k_eps >= 0 && gguf_get_val_f32(rin, k_eps) == 1e-6f,
+                      "11 tts rms eps == 1e-6");
+                int64_t k_rope = gguf_find_key(rin, "tts.qwen3-tts-talker.rope.freq_base");
+                check(k_rope >= 0 && gguf_get_val_f32(rin, k_rope) == 10000.0f,
+                      "11 tts rope.freq_base == 10000");
+                int64_t k_lang = gguf_find_key(rin, "tts.qwen3-tts-talker.codec_language_names");
+                check(k_lang >= 0, "11 tts codec_language_names present");
+                if (k_lang >= 0) {
+                    check(gguf_get_arr_n(rin, k_lang) == 3, "11 tts language_names n == 3");
+                    check(std::string(gguf_get_arr_str(rin, k_lang, 0)) == "en", "11 tts language_names[0] == en");
+                    check(std::string(gguf_get_arr_str(rin, k_lang, 2)) == "jp", "11 tts language_names[2] == jp");
+                }
+                int64_t k_ids = gguf_find_key(rin, "tts.qwen3-tts-talker.codec_language_ids");
+                check(k_ids >= 0, "11 tts codec_language_ids present");
+                if (k_ids >= 0) {
+                    check(gguf_get_arr_type(rin, k_ids) == GGUF_TYPE_INT32, "11 tts language_ids arr type i32");
+                    const int32_t * ids = (const int32_t *)gguf_get_arr_data(rin, k_ids);
+                    check(gguf_get_arr_n(rin, k_ids) == 3 && ids[1] == 1, "11 tts language_ids[1] == 1");
+                }
+                int64_t k_bool = gguf_find_key(rin, "tts.qwen3-tts-talker.use_parallel");
+                check(k_bool >= 0 && gguf_get_val_bool(rin, k_bool) == true, "11 tts use_parallel == true");
+                int64_t k_u64 = gguf_find_key(rin, "tts.qwen3-tts-talker.train_tokens");
+                check(k_u64 >= 0 && gguf_get_val_u64(rin, k_u64) == 123456789ull, "11 tts train_tokens u64");
+                int64_t k_i64 = gguf_find_key(rin, "tts.qwen3-tts-talker.train_steps");
+                check(k_i64 >= 0 && gguf_get_val_i64(rin, k_i64) == -42, "11 tts train_steps i64");
+                int64_t k_f64 = gguf_find_key(rin, "tts.qwen3-tts-talker.train_lr");
+                check(k_f64 >= 0 && gguf_get_val_f64(rin, k_f64) == 3e-4, "11 tts train_lr f64");
+
+                // c2w namespace under "tts.c2w.".
+                int64_t k_c_arch = gguf_find_key(rin, "tts.c2w.general.architecture");
+                check(k_c_arch >= 0 &&
+                      std::string(gguf_get_val_str(rin, k_c_arch)) == "qwen3-tts-code2wav",
+                      "11 tts.c2w.general.architecture == qwen3-tts-code2wav");
+                int64_t k_c_bc = gguf_find_key(rin, "tts.c2w.qwen3-tts-code2wav.block_count");
+                check(k_c_bc >= 0 && gguf_get_val_u32(rin, k_c_bc) == 2u,
+                      "11 tts.c2w block_count == 2");
+
+                // The gemma side is untouched: top-level arch stays
+                // gemma4-assistant and NO unprefixed talker KV leaked.
+                int64_t k_top = gguf_find_key(rin, "general.architecture");
+                check(k_top >= 0 &&
+                      std::string(gguf_get_val_str(rin, k_top)) == "gemma4-assistant",
+                      "11 top-level arch unchanged");
+                check(gguf_find_key(rin, "qwen3-tts-talker.block_count") < 0,
+                      "11 no unprefixed talker KV leak");
+
+                ggml_free(rin_ctx);
+                gguf_free(rin);
             }
         }
     }

@@ -811,8 +811,13 @@ static int ts_cli_unified_writer(const common_tessera_params & tp) {
     add_component(tp.unified_vision_tower, "vision_tower");
     add_component(tp.unified_audio_tower,  "audio_tower");
     add_component(tp.unified_mm_projector, "mm_projector");
+    // unified-tts: the qwen3-tts talker + code2wav vocoder. The writer
+    // prefix-routes their tensors (tts.* / tts.c2w.*) and sidecar-copies
+    // each source's KV namespace under the same prefix.
+    add_component(tp.unified_tts_talker,   "tts_talker");
+    add_component(tp.unified_tts_code2wav, "tts_code2wav");
     if (components.empty()) {
-        fprintf(stderr, "error: `unified-writer` requires at least one --{trunk,dflash,dspark,mtp,shared-embd,vision-tower,audio-tower,mm-projector} flag\n");
+        fprintf(stderr, "error: `unified-writer` requires at least one --{trunk,dflash,dspark,mtp,shared-embd,vision-tower,audio-tower,mm-projector,tts-talker,tts-code2wav} flag\n");
         return 1;
     }
 
@@ -993,17 +998,16 @@ static int ts_cli_unified_writer(const common_tessera_params & tp) {
     const auto & s = w.get_stats();
     printf("unified-writer: %s -> %s\n", tp.unified_out.c_str(),
            "ok");
-    printf("  tensors: trunk=%d dflash=%d dspark=%d mtp_nextn=%d shared_embd=%d\n",
-           s.n_tensors_trunk, s.n_tensors_dflash, s.n_tensors_dspark,
-           s.n_tensors_mtp_nextn, s.n_tensors_shared_embd);
-    // Phase M0a: include the three new mmproj counters in the
-    // summary so the CLI consumer (operator or a downstream log
-    // scraper) can confirm the multimodal component was actually
-    // absorbed. Zero values are still printed (the operator is
-    // expected to know whether they passed --vision-tower / etc.).
-    printf("  tensors (M0a mmproj): vision_tower=%d audio_tower=%d mm_projector=%d\n",
-           s.n_tensors_vision_tower, s.n_tensors_audio_tower,
-           s.n_tensors_mm_projector);
+    // Per-role tensor counts (plan 1.2: the stats struct carries a
+    // role -> count map, so role additions do not touch this summary).
+    // std::map iterates in sorted role order; the output is stable.
+    printf("  tensors by role:\n");
+    for (const auto & kv : s.n_tensors_by_role) {
+        printf("    %-14s %d\n", kv.first.c_str(), kv.second);
+    }
+    if (s.n_kv_copied > 0) {
+        printf("  tts KV sidecar keys: %d\n", s.n_kv_copied);
+    }
     printf("  qtype overrides: %d (per-tensor calibration policy)\n",
            s.n_qtype_overrides);
     if (s.n_budget_relaxed > 0 || s.n_budget_enforced > 0) {

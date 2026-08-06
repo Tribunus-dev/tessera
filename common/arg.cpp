@@ -4638,6 +4638,32 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             tessera_params.unified_mmproj_hparams = value;
         }
     ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_UNIFIED_WRITER}));
+    // unified-tts: qwen3-tts components. The writer routes talker
+    // tensors under "tts." and code2wav tensors under "tts.c2w.", and
+    // re-emits each source's KV namespace under the same prefix
+    // (tts.general.architecture, tts.qwen3-tts-talker.*, ...), so the
+    // talker / code2wav loaders read the unified file back via
+    // component_prefix. The source GGUF's KV is the hparams source;
+    // there is no tts hparams JSON.
+    add_opt(common_arg(
+        {"--tts-talker"}, "PATH",
+        "Tessera (unified-tts): path to the qwen3-tts talker's\n"
+        "per-component GGUF. The talker's blk.N.* names collide with\n"
+        "the trunk's by convention, so the writer prefixes them 'tts.'\n"
+        "and copies the talker's KV namespace under the same prefix.",
+        [](common_params &, const std::string & value) {
+            tessera_params.unified_tts_talker = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_UNIFIED_WRITER}));
+    add_opt(common_arg(
+        {"--tts-code2wav"}, "PATH",
+        "Tessera (unified-tts): path to the qwen3-tts code2wav\n"
+        "vocoder's per-component GGUF. Tensors route under 'tts.c2w.';\n"
+        "the vocoder's KV namespace is copied under the same prefix.",
+        [](common_params &, const std::string & value) {
+            tessera_params.unified_tts_code2wav = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_UNIFIED_WRITER}));
 
     // ----- `evolve` subcommand -----
     add_opt(common_arg(

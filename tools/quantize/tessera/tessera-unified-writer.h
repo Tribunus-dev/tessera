@@ -54,7 +54,7 @@ struct ggml_tensor;
 // matches the model_role column in tensor_stats; see
 // ts_tessera_db_unified_policy_entry.model_role.
 //
-// The 8 recognized values are:
+// The 10 recognized values are:
 //   * "trunk"        - the gemma4-12B trunk (the dominant compute).
 //   * "dflash"       - the dflash drafter (EAGLE-style feature-conditioned
 //                      block drafter). The writer prefixes tensors with
@@ -80,6 +80,16 @@ struct ggml_tensor;
 //                      uses the same name-based worst-of lookup that
 //                      token_embd.weight uses across trunk / dflash /
 //                      shared_embd.
+//   * "tts_talker"   - unified-tts: the qwen3-tts talker. Source tensors
+//                      are named blk.N.* (identical to trunk names but
+//                      unrelated weights); the writer prefixes them with
+//                      "tts." and copies the source's KV namespace under
+//                      the same prefix (tts.general.architecture,
+//                      tts.qwen3-tts-talker.*) so the talker loads the
+//                      unified file via component_prefix = "tts.".
+//   * "tts_code2wav" - unified-tts: the qwen3-tts code2wav vocoder.
+//                      Tensors route under "tts.c2w."; the source KV
+//                      namespace is copied under the same prefix.
 //
 // The path is the path to a GGUF on disk. The writer opens it via
 // gguf_init_from_file and reads its tensors by data pointer.
@@ -283,21 +293,18 @@ public:
 
     // Stats on what was written. Populated by write_all; useful
     // for the CLI's stderr summary.
+    //
+    // Per-role tensor counts live in n_tensors_by_role so adding a
+    // component role is a routing-table change only (unified-tts
+    // plan 1.2); the CLI and tests read the map instead of named
+    // fields.
     struct stats {
-        int32_t  n_tensors_trunk        = 0;
-        int32_t  n_tensors_dflash       = 0;
-        int32_t  n_tensors_dspark       = 0;
-        int32_t  n_tensors_mtp_nextn    = 0;
-        int32_t  n_tensors_shared_embd  = 0;
-        int32_t  n_tensors_vision_tower = 0;   // Phase M0a: multimodal
-        int32_t  n_tensors_audio_tower  = 0;   // Phase M0a: multimodal
-        int32_t  n_tensors_mm_projector = 0;   // Phase M0a: multimodal
-        int32_t  n_tensors_tts_talker   = 0;   // unified-tts: qwen3-tts talker
-        int32_t  n_tensors_tts_code2wav = 0;   // unified-tts: qwen3-tts vocoder
+        std::map<std::string, int32_t> n_tensors_by_role; // role -> count copied
         int32_t  n_tensors_skipped      = 0;   // unknown / unsupported names
         int32_t  n_qtype_overrides      = 0;   // policy changed source qtype
         int32_t  n_budget_relaxed       = 0;   // Phase 16.8: constraints relaxed
         int32_t  n_budget_enforced      = 0;   // Phase 16.8: budgets capped qtype
+        int32_t  n_kv_copied            = 0;   // unified-tts: prefixed KV keys copied
         int64_t  total_bytes            = 0;
     };
     const stats & get_stats() const { return stats_; }
