@@ -53,7 +53,7 @@
   color: var(--color-fg-subtle);
   margin-bottom: var(--space-2);
 }
-.chapter-eyebrow::before { content: "§ "; opacity: 0.6; }
+.chapter-eyebrow::before { content: "\00A7 "; opacity: 0.6; }
 
 .chapter-title {
   font-size: var(--font-size-xl);

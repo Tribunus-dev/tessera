@@ -38,16 +38,76 @@
 }
 @media (min-width: 1024px) {
   .stage-demo {
-    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    grid-template-columns: minmax(0, 6fr) minmax(0, 6fr);
     gap: var(--space-7);
   }
+}
+
+/* Atmosphere + layering for the stage surfaces. The glow is
+ * atmosphere, not imagery: one radial tint per stage, zero
+ * requests, both themes. */
+.stage-demo,
+.stage-terminal {
+  position: relative;
+  background: radial-gradient(
+    56rem 30rem at 68% 38%,
+    rgba(106, 212, 255, 0.07),
+    transparent 70%
+  );
+}
+
+/* Ghost stage numeral: the stop number, oversized, behind the
+ * copy. Painted, not read. */
+.stage-numeral {
+  position: absolute;
+  top: calc(-1 * var(--space-6));
+  left: var(--gutter);
+  z-index: 0;
+  font-family: var(--font-mono);
+  font-size: clamp(5rem, 12vw, 9.5rem);
+  font-weight: var(--font-weight-bold);
+  line-height: 1;
+  letter-spacing: -0.04em;
+  color: color-mix(in srgb, var(--color-fg) 6%, transparent);
+  user-select: none;
+  pointer-events: none;
+}
+
+/* Scroll cue, first stage only. Static by doctrine: no pulsing,
+ * no time-based autonomous motion. */
+.scroll-cue {
+  position: absolute;
+  bottom: var(--space-3);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  max-width: none;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--color-fg-subtle);
+}
+.scroll-cue::after {
+  content: "";
+  width: 1px;
+  height: 26px;
+  background: linear-gradient(to bottom, var(--color-rule-strong), transparent);
 }
 
 /* ------------------------------------------------------------------ *
  * Caption.
  * ------------------------------------------------------------------ */
 
-.demo-copy { min-width: 0; }
+.demo-copy {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+}
 
 .demo-eyebrow {
   display: inline-block;
@@ -64,7 +124,7 @@
 }
 
 .demo-title {
-  font-size: clamp(1.6rem, 1.2rem + 1.8vw, 2.4rem);
+  font-size: clamp(1.75rem, 1.3rem + 1.6vw, 2.6rem);
   font-weight: var(--font-weight-bold);
   line-height: var(--line-height-tight);
   letter-spacing: var(--letter-spacing-tight);
@@ -73,8 +133,9 @@
   max-width: 30rem;
 }
 .demo-title-lede {
-  font-size: clamp(1.9rem, 1.4rem + 2.2vw, 2.9rem);
-  max-width: 34rem;
+  font-size: var(--font-size-display);
+  line-height: 1.08;
+  max-width: 36rem;
 }
 
 .demo-body {
@@ -111,20 +172,24 @@
 }
 .demo-cta-primary {
   display: inline-block;
-  padding: var(--space-2) var(--space-5);
+  padding: var(--space-3) var(--space-5);
   background: var(--color-accent);
   color: var(--color-bg);
   font-weight: var(--font-weight-medium);
   letter-spacing: var(--letter-spacing-wide);
   text-transform: uppercase;
   font-size: var(--font-size-sm);
-  border-radius: var(--radius-sm);
+  border-radius: 6px;
   text-decoration: none;
-  transition: filter var(--motion-fast) var(--motion-ease);
+  transition: filter var(--motion-fast) var(--motion-ease),
+              transform var(--motion-fast) var(--motion-ease),
+              box-shadow var(--motion-fast) var(--motion-ease);
 }
 .demo-cta-primary:hover {
   color: var(--color-bg);
-  filter: brightness(1.1);
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+  box-shadow: 0 10px 28px rgba(106, 212, 255, 0.28);
   text-decoration: none;
 }
 .demo-cta-secondary {
@@ -150,12 +215,24 @@
 .studio-mock {
   margin: 0;
   min-width: 0;
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
   background: var(--color-surface-1);
   border: 1px solid var(--color-rule-strong);
   border-radius: var(--radius-lg);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+  /* Four layers so the ECS active-glow state interpolates
+   * smoothly: inset highlight, contact shadow, drop shadow,
+   * ambient halo (off until the stage is live). */
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 1px 2px rgba(0, 0, 0, 0.4),
+    0 32px 80px rgba(0, 0, 0, 0.45),
+    0 0 90px rgba(106, 212, 255, 0);
   overflow: hidden;
-  transition: opacity var(--motion-base) var(--motion-ease);
+  transition: opacity var(--motion-base) var(--motion-ease),
+              box-shadow var(--motion-slow) var(--motion-ease);
 }
 
 .mock-chrome {
@@ -163,15 +240,19 @@
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-3) var(--space-4);
-  background: var(--color-surface-2);
+  background: linear-gradient(to bottom, var(--color-surface-3), var(--color-surface-2));
   border-bottom: 1px solid var(--color-rule);
 }
 .mock-dot {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: var(--color-rule-strong);
 }
+/* macOS traffic lights, slightly muted. The app is a Mac; the
+ * chrome should read as one. */
+.mock-dot:nth-child(1) { background: rgba(255, 95, 87, 0.9); }
+.mock-dot:nth-child(2) { background: rgba(254, 188, 46, 0.9); }
+.mock-dot:nth-child(3) { background: rgba(40, 200, 64, 0.9); }
 .mock-chrome-title {
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
@@ -185,6 +266,7 @@
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   min-height: 0;
+  flex: 1;
 }
 @media (max-width: 640px) {
   .mock-body { grid-template-columns: minmax(0, 1fr); }
@@ -232,10 +314,10 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  padding: var(--space-4);
+  padding: var(--space-5);
   background: var(--color-bg);
   justify-content: center;
-  min-height: 13rem;
+  min-height: clamp(14rem, 36vh, 22rem);
 }
 
 .mock-pane-title {
@@ -250,9 +332,9 @@
 /* Chat pane. */
 .mock-msg {
   max-width: 88%;
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-3);
   border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-base);
   line-height: var(--line-height-snug);
   color: var(--color-fg);
   margin: 0;
@@ -260,11 +342,13 @@
 .mock-msg-user {
   align-self: flex-end;
   background: var(--color-surface-3);
+  border-radius: var(--radius-md) var(--radius-md) var(--radius-sm) var(--radius-md);
 }
 .mock-msg-model {
   align-self: flex-start;
   background: var(--color-surface-1);
   border-left: 2px solid var(--color-accent);
+  border-radius: var(--radius-sm) var(--radius-md) var(--radius-md) var(--radius-md);
   color: var(--color-fg-muted);
 }
 .mock-chip {
@@ -370,6 +454,16 @@
 html[data-ecs="on"] .stage[data-active="false"] .studio-mock {
   opacity: 0.55;
 }
+/* The live stage's mock picks up the accent halo (fourth shadow
+ * layer lights up; the list lengths match, so the transition
+ * interpolates instead of jumping). */
+html[data-ecs="on"] .stage[data-active="true"] .studio-mock {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 1px 2px rgba(0, 0, 0, 0.4),
+    0 32px 80px rgba(0, 0, 0, 0.5),
+    0 0 90px rgba(106, 212, 255, 0.12);
+}
 
 /* Live-mock choreography: one-shot reveals keyed to stage
  * activation (user-paced, triggered by the reader's scroll, never
@@ -419,6 +513,11 @@ html[data-ecs="on"] .studio-mock[data-live="true"] .mock-progress-fill {
   color: var(--color-fg-muted);
   max-width: var(--max-prose);
   margin: var(--space-5) 0 0 0;
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-rule);
+  border-left: 3px solid var(--color-accent-warm);
+  border-radius: var(--radius-sm);
 }
 .tour-tiers a { color: var(--color-accent); }
 

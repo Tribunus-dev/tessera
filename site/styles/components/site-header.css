@@ -102,7 +102,7 @@
   transform: scaleX(1);
 }
 .site-nav-link[rel="external"]::before {
-  content: "↗";
+  content: "\2197";
   display: inline-block;
   margin-right: 0.3em;
   opacity: 0.6;
