@@ -14,8 +14,8 @@
 @import url("/styles/foundation/layout.css");
 
 @import url("/styles/components/site-header.css");
-@import url("/styles/components/hero.css");
 @import url("/styles/components/page.css");
 @import url("/styles/components/chapter.css");
+@import url("/styles/components/home-demo.css");
 @import url("/styles/components/scrolly.css");
 @import url("/styles/components/footer.css");

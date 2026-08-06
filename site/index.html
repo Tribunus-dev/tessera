@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="dark" data-ent="root" data-has="theme">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -8,7 +8,7 @@
 <link rel="canonical" href="https://tessera.tribunus.dev/">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <meta name="generator" content="tessera-docs-ssg">
-<meta name="build-id" content="regen-002">
+<meta name="build-id" content="ecs-001">
 <meta property="og:title" content="Tessera - Private local AI that gets better the more people use it.">
 <meta property="og:description" content="Tessera Studio runs Gemma 4 12B on your Mac. Text, vision, audio, and speech. Your data never leaves the device. The recipe and the signed receipt are public; the data method is private.">
 <meta property="og:type" content="website">
@@ -36,13 +36,11 @@
   try{document.documentElement.style.colorScheme=v;}catch(e){}
 }catch(e){}})();
 </script>
-<script src="/scripts/theme.js" defer></script>
-<script src="/scripts/chapter-stack.js" defer></script>
-<script src="/scripts/selection-controller.js" defer></script>
+<script type="module" src="/scripts/boot.js"></script>
 </head>
-<body data-prism-route="/" data-prism-hydrated="false">
+<body>
 <a href="#top" class="skip-link">Skip to main content</a>
-<header class="site-header">
+<header class="site-header" data-ent="site-header" data-has="measure">
 <a class="brand" href="/"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tessera</span></a>
 <nav class="site-nav" aria-label="Primary navigation">
 <a class="site-nav-link" href="/studio/">Studio</a>
@@ -58,133 +56,117 @@
 <button type="button" class="theme-toggle" aria-label="Toggle dark and light theme" data-theme-toggle><span class="theme-toggle-icon" aria-hidden="true"></span><span class="theme-toggle-label">Dark</span></button>
 </header>
 <main class="page-body" id="top">
-<div class="chapter-stack">
+<div class="chapter-stack" data-ent="home" data-has="demo" data-demo-step="1">
 
-<section class="hero hero-home stage" id="hero">
-<span class="hero-eyebrow">Tessera · v1 · 2026-08-05</span>
-<h1 class="hero-headline">Private local AI that gets better the more people use it.</h1>
-<p class="hero-blurb">Tessera Studio runs Gemma 4 12B on your Mac. Text, vision, audio, and speech. Your data never leaves the device. As more people use Tessera, the model reasons better on harder problems, the drafters get more accurate, the engine gets faster, and next-token prediction sharpens. The recipe and the signed receipt are public; the data method is private. The improved model ships to every Tessera user, not just whoever paid for it.</p>
-<div class="hero-cta">
-<a class="hero-cta-primary" href="/start/">Install Tessera Studio</a>
-<a class="hero-cta-secondary" href="/how-it-works/">How it works</a>
+<section class="stage" id="tour-open" data-ent="stage-1" data-has="stage" data-stage-index="1">
+<div class="stage-demo">
+<div class="demo-copy">
+<span class="demo-eyebrow">Guided tour · Stop 01 of 04 · Open the app</span>
+<h1 class="demo-title demo-title-lede">Private local AI that gets better the more people use it.</h1>
+<p class="demo-body">This is Tessera Studio, the app that runs Tessera on your Mac. Two models on the shelf: one for text, vision, and audio, one for speech. Your data never leaves the device. Scroll, and the app does the talking.</p>
+<div class="demo-cta">
+<a class="demo-cta-primary" href="/start/">Install Tessera Studio</a>
+<a class="demo-cta-secondary" href="/how-it-works/">How it works</a>
+</div>
+</div>
+<figure class="studio-mock" aria-hidden="true">
+<div class="mock-chrome"><span class="mock-dot"></span><span class="mock-dot"></span><span class="mock-dot"></span><span class="mock-chrome-title">Tessera Studio</span></div>
+<div class="mock-body">
+<div class="mock-shelf">
+<div class="mock-model" data-loaded="true">
+<span class="mock-model-name">Gemma 4 12B unified</span>
+<span class="mock-model-tags">text · vision · audio</span>
+</div>
+<div class="mock-model">
+<span class="mock-model-name">Qwen 3 TTS</span>
+<span class="mock-model-tags">speech-to-speech</span>
+</div>
+</div>
+<div class="mock-pane mock-chat">
+<p class="mock-hint">Ask anything. Type it, drop a photo, or say it out loud.</p>
+</div>
+</div>
+<p class="mock-status"><span class="mock-status-dot"></span>on device · nothing leaves this Mac</p>
+</figure>
 </div>
 </section>
 
-<section class="chapter stage" id="what-you-get">
-<div class="chapter-eyebrow">What you get</div>
-<h2 class="chapter-title">Four things, in plain language.</h2>
-<div class="chapter-grid chapter-grid-2">
-<article class="feature-card">
-<h3 class="feature-card-title">Local, private, on your Mac.</h3>
-<p class="feature-card-body">Text, vision, audio, and speech. Your data stays on your device. No cloud, no telemetry that can identify you, no model that phones home.</p>
-</article>
-<article class="feature-card">
-<h3 class="feature-card-title">It gets better the more people use it.</h3>
-<p class="feature-card-body">Better reasoning on harder problems, sharper hybrid drafters, faster engine, SOTA-class next-token prediction. The flywheel runs on a sanitized baseline during idle time.</p>
-</article>
-<article class="feature-card">
-<h3 class="feature-card-title">A model you can trust is improving.</h3>
-<p class="feature-card-body">The recipe is public. The signed receipt is on every release. The sanitization method is private; the audit trail is not.</p>
-</article>
-<article class="feature-card">
-<h3 class="feature-card-title">Free, with a clear path for commercial use.</h3>
-<p class="feature-card-body">Source-available engine. CC BY-NC-SA 4.0 trained models. Commercial licensing is a conversation, not a paywall. <a href="mailto:julian@tribunus.dev">julian@tribunus.dev</a></p>
-</article>
+<section class="stage" id="tour-ask" data-ent="stage-2" data-has="stage" data-stage-index="2">
+<div class="stage-demo">
+<div class="demo-copy">
+<span class="demo-eyebrow">Guided tour · Stop 02 of 04 · Ask it anything</span>
+<h2 class="demo-title">One conversation, three modalities. Privately.</h2>
+<p class="demo-body">A photo, your voice, plain text - the unified model takes all three in one conversation and answers on the spot. No account, no cloud, no telemetry that can identify you. The prompt and the answer stay on your machine.</p>
+<a class="demo-route" href="/studio/">Inside the Playground →</a>
+</div>
+<figure class="studio-mock" aria-hidden="true">
+<div class="mock-chrome"><span class="mock-dot"></span><span class="mock-dot"></span><span class="mock-dot"></span><span class="mock-chrome-title">Tessera Studio — Playground</span></div>
+<div class="mock-body">
+<div class="mock-pane mock-chat">
+<p class="mock-msg mock-msg-user"><span class="mock-chip">photo</span>What am I looking at, and what should I ask about it?</p>
+<p class="mock-msg mock-msg-model">A handwritten menu, three dishes. The local one is the nettle soup - it is listed with foraged ingredients.</p>
+<p class="mock-msg mock-msg-user"><span class="mock-chip">voice · 0:06</span>Now explain it like I am five.</p>
+<p class="mock-msg mock-msg-model">Someone wrote what they cook today. The soup is made from plants they picked themselves.</p>
+</div>
+</div>
+<p class="mock-status"><span class="mock-status-dot"></span>Gemma 4 12B unified · on device</p>
+</figure>
 </div>
 </section>
 
-<section class="chapter stage" id="who-this-is-for">
-<div class="chapter-eyebrow">Who this is for</div>
-<h2 class="chapter-title">One primary audience. Two adjacent. One peripheral.</h2>
-<div class="chapter-grid chapter-grid-2">
-<article class="audience-card audience-card-primary">
-<span class="audience-card-label">Primary</span>
-<h3 class="audience-card-title">Privacy-conscious individuals</h3>
-<p class="audience-card-body">You don't want cloud AI. You want local, on your machine, on your data. Tessera Studio is the on-ramp.</p>
-</article>
-<article class="audience-card">
-<span class="audience-card-label">Adjacent</span>
-<h3 class="audience-card-title">Apple Silicon power users</h3>
-<p class="audience-card-body">You want the ANE prefill, the IOSurface hand-off, the on-device throughput. Tessera dispatches across CPU, GPU, and ANE dynamically.</p>
-</article>
-<article class="audience-card">
-<span class="audience-card-label">Adjacent</span>
-<h3 class="audience-card-title">Inference engineers</h3>
-<p class="audience-card-body">You run llama.cpp and want calibrated quantization with receipts. Tessera is a fork of llama.cpp that adds the kernel-fidelity loop.</p>
-</article>
-<article class="audience-card audience-card-peripheral">
-<span class="audience-card-label">Peripheral</span>
-<h3 class="audience-card-title">Quant researchers</h3>
-<p class="audience-card-body">You want the evolutionary AWQ, the per-tensor GA, the regime-routed archive. That's on the architecture page.</p>
-</article>
+<section class="stage" id="tour-idle" data-ent="stage-3" data-has="stage" data-stage-index="3">
+<div class="stage-demo">
+<div class="demo-copy">
+<span class="demo-eyebrow">Guided tour · Stop 03 of 04 · Leave it running</span>
+<h2 class="demo-title">It improves while you sleep.</h2>
+<p class="demo-body">Opt in once. While your machine idles - plugged in, on Wi-Fi, screen off - Tessera trains on a sanitized baseline of your usage. The raw inputs never leave. Your delta ships with your consent, and the improved model ships to every Tessera user.</p>
+<a class="demo-route" href="/how-it-works/">The flywheel, in detail →</a>
 </div>
-<p class="chapter-aside">If you don't care about local inference, this isn't for you. If you need bit-for-bit drop-in compatibility with stock llama.cpp for Tessera-quantized artifacts, this isn't for you (vanilla quants work anywhere; Tessera-locked artifacts need the Tessera runtime).</p>
+<figure class="studio-mock" aria-hidden="true">
+<div class="mock-chrome"><span class="mock-dot"></span><span class="mock-dot"></span><span class="mock-dot"></span><span class="mock-chrome-title">Tessera Studio — Idle</span></div>
+<div class="mock-body">
+<div class="mock-pane mock-flywheel">
+<p class="mock-pane-title">Idle training</p>
+<div class="mock-progress"><div class="mock-progress-fill"></div></div>
+<p class="mock-row"><span>baseline</span><span>sanitized from recent usage</span></p>
+<p class="mock-row"><span>raw inputs</span><span>never leave this Mac</span></p>
+<p class="mock-row"><span>delta</span><span>ships with your consent</span></p>
+<p class="mock-conditions">plugged in · on Wi-Fi · screen off</p>
+</div>
+</div>
+<p class="mock-status"><span class="mock-status-dot"></span>flywheel opt-in · idle</p>
+</figure>
+</div>
 </section>
 
-<section class="chapter chapter-bleed stage" id="the-three-tiers">
-<div class="chapter-eyebrow">Property regime</div>
-<h2 class="chapter-title">Three tiers. One of which you'll almost certainly be in.</h2>
-<div class="table-wrap">
-<table class="tier-table">
-<thead>
-<tr><th>Tier</th><th>License</th><th>What's in it</th><th>Who uses it</th></tr>
-</thead>
-<tbody>
-<tr>
-<td><strong>Community</strong></td>
-<td>Source-available engine, free for non-commercial use</td>
-<td>Tessera engine, Tessera Studio, recipes, vanilla quants of upstream models, documentation, concepts. The Tessera Research and Education License 1.0 (PolyForm Noncommercial 1.0.0) applies to the engine code.</td>
-<td>Researchers, hobbyists, contributors, anyone who evaluates locally</td>
-</tr>
-<tr>
-<td><strong>Tessera-trained</strong></td>
-<td>CC BY-NC-SA 4.0 (non-commercial, share-alike, attribution)</td>
-<td>Models trained on the Tessera sanitized dataset. Available for download. Inspectable everywhere; runnable on Tessera. The signed receipt on each artifact proves what data and policy produced it.</td>
-<td>Anyone using Tessera Studio; commercial use requires a license</td>
-</tr>
-<tr>
-<td><strong>Commercial</strong></td>
-<td>Separate commercial agreement</td>
-<td>Any of the above, used commercially. The license is a relationship, not a different artifact. The commercial licensee gets the right to redistribute under their own terms.</td>
-<td>Business partners, production users, custom development</td>
-</tr>
-</tbody>
-</table>
+<section class="stage" id="tour-receipt" data-ent="stage-4" data-has="stage" data-stage-index="4">
+<div class="stage-demo">
+<div class="demo-copy">
+<span class="demo-eyebrow">Guided tour · Stop 04 of 04 · Audit everything</span>
+<h2 class="demo-title">Nothing ships without receipts.</h2>
+<p class="demo-body">Every Tessera model is calibrated and audited quantization: the recipe and the eval results are public on every release, signed into the artifact itself. The sanitization method stays private. The contract is public; the method is not.</p>
+<a class="demo-route" href="/evidence/">Read the evidence →</a>
 </div>
-<h3 class="chapter-subtitle">Runnability</h3>
-<p class="chapter-body">A note on which artifacts run where. <a class="gloss" href="/concepts/#concept-gguf">GGUF</a> models quantized by Tessera use Tessera-specific types that only the Tessera dequant kernel can read. Vanilla GGUFs (standard quantizations of upstream models) work on both stock llama.cpp and Tessera.</p>
-<div class="table-wrap">
-<table class="tier-table">
-<thead>
-<tr><th>Artifact</th><th>Stock llama.cpp</th><th>Tessera</th><th>Why</th></tr>
-</thead>
-<tbody>
-<tr>
-<td>Vanilla GGUF (upstream quant)</td>
-<td>Yes</td>
-<td>Yes</td>
-<td>Standard GGUF types, no Tessera-specific tensors</td>
-</tr>
-<tr>
-<td>Tessera-quantized model (T640 / T640_3D)</td>
-<td>No</td>
-<td>Yes</td>
-<td>Tessera-specific GGUF types require the Tessera dequant kernel</td>
-</tr>
-<tr>
-<td>Tessera-trained model</td>
-<td>No</td>
-<td>Yes</td>
-<td>Trained and quantized via Tessera, so Tessera-locked at the dequant layer</td>
-</tr>
-</tbody>
-</table>
+<figure class="studio-mock" aria-hidden="true">
+<div class="mock-chrome"><span class="mock-dot"></span><span class="mock-dot"></span><span class="mock-dot"></span><span class="mock-chrome-title">Tessera Studio — Receipt</span></div>
+<div class="mock-body">
+<div class="mock-pane mock-receipt">
+<p class="mock-pane-title">Signed receipt</p>
+<p class="mock-receipt-row"><span>artifact</span><span>gemma-4-12b-unified.gguf</span></p>
+<p class="mock-receipt-row"><span>recipe</span><span>sha256 9f3c1e7a</span></p>
+<p class="mock-receipt-row"><span>calibration</span><span>per-tensor policy</span></p>
+<p class="mock-receipt-row"><span>eval</span><span>deltas within contract</span></p>
+<p class="mock-receipt-row"><span>signature</span><span class="mock-receipt-ok">verified</span></p>
 </div>
-<p class="chapter-aside">Tessera-locked isn't a liability — it's the receipt. The artifact is shaped to the kernel that graded it; the kernel ships in the fork; the fork is source-available.</p>
+</div>
+<p class="mock-status"><span class="mock-status-dot"></span>receipt verified · gemma-4-12b-unified</p>
+</figure>
+</div>
 </section>
 
-<section class="chapter stage" id="next-step">
-<div class="chapter-eyebrow">Where to go next</div>
+<section class="stage" id="next-step" data-ent="stage-5" data-has="stage" data-stage-index="5">
+<div class="stage-terminal">
+<div class="chapter-eyebrow">End of tour</div>
 <h2 class="chapter-title">Pick the question that brought you here.</h2>
 <div class="chapter-grid chapter-grid-3">
 <a class="next-step-card" href="/how-it-works/">
@@ -202,6 +184,9 @@
 <h3 class="next-step-card-title">Start</h3>
 <p class="next-step-card-body">Build, run, and load your first model. The on-ramp.</p>
 </a>
+</div>
+<p class="tour-tiers">Free for personal use. The engine is source-available; Tessera-trained models are open weights under CC BY-NC-SA 4.0 (non-commercial). Commercial licensing is a conversation, not a paywall: <a href="mailto:julian@tribunus.dev">julian@tribunus.dev</a> · <a href="/colophon/">the full terms</a>.</p>
+<p class="chapter-aside">Vanilla GGUFs run anywhere, including Tessera. Tessera-quantized artifacts run on Tessera: shaped to the kernel that graded them. <a class="gloss" href="/concepts/#concept-gguf">What is GGUF?</a></p>
 </div>
 </section>
 

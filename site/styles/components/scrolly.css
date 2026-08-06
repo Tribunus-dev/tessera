@@ -13,9 +13,10 @@
  *
  * No scroll input is captured or rewritten. No scroll listener,
  * no idle-timer snap, no fixed wrapper, no sentinel element. The
- * one script on the page (chapter-stack.js) measures the header
- * on load and resize so the stage clears the wrapping header
- * exactly; the CSS default below covers no-JS.
+ * site's ECS world (scripts/boot.js) contributes one measurement
+ * system, which reads the header height on load and resize so the
+ * stage clears the wrapping header exactly; the CSS default below
+ * covers no-JS.
  *
  * Structure (index.html):
  *   .chapter-stack      -- wrapper around the five stages and the

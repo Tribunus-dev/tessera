@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="dark" data-ent="root" data-has="theme">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -34,11 +34,11 @@
   try{document.documentElement.style.colorScheme=v;}catch(e){}
 }catch(e){}})();
 </script>
-<script src="/scripts/theme.js" defer></script>
+<script type="module" src="/scripts/boot.js"></script>
 </head>
-<body data-prism-route="/how-it-works/" data-prism-hydrated="false">
+<body>
 <a href="#top" class="skip-link">Skip to main content</a>
-<header class="site-header">
+<header class="site-header" data-ent="site-header" data-has="measure">
 <a class="brand" href="/"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tessera</span></a>
 <nav class="site-nav" aria-label="Primary navigation">
 <a class="site-nav-link" href="/studio/">Studio</a>
