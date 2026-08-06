@@ -128,6 +128,10 @@ class Qwen3TTSVocoderModel(TextModel):
         self.gguf_writer.add_tokenizer_model("none")
         self.gguf_writer.add_token_list(tokens)
         self.gguf_writer.add_token_types(toktypes)
+        # the "none" tokenizer loads its dummy tokens from <arch>.vocab_size;
+        # without it the vocab stays empty and llama_encode rejects every
+        # codec id at batch validation time
+        self.gguf_writer.add_vocab_size(n_vocab)
 
     def set_gguf_parameters(self) -> None:
         # the base TextModel writes block_count, context_length, embedding_length,
