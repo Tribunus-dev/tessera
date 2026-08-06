@@ -667,6 +667,20 @@ if (NOT GGML_BACKEND_DL)
         target_include_directories(test-ane-tile640-dispatch PRIVATE
             ${PROJECT_SOURCE_DIR}/ggml/src)
     endif()
+    # Phase 2 (iPhone demo): GGUF -> IOSurface weight streamer
+    # unit test. Validates open/close, header parse, per-tensor
+    # accessors, and stream_layer against a synthetic 6-tensor
+    # GGUF (2 layers x 2 F32 tensors + 2 out-of-block tensors).
+    # The real-12B end-to-end test is gated on the
+    # TEST_TESSERA_UNIFIED_GGUF_PATH env var; this unit test
+    # runs unconditionally and runs in <100 ms.
+    llama_build_and_test(test-ane-gguf-stream.cpp)
+    if (TARGET test-ane-gguf-stream)
+        target_include_directories(test-ane-gguf-stream PRIVATE
+            ${PROJECT_SOURCE_DIR}/ggml/src
+            ${PROJECT_SOURCE_DIR}/ggml/src/ggml-ane)
+        target_link_libraries(test-ane-gguf-stream PRIVATE ggml-ane)
+    endif()
     # v1 regime router test. With the empty .gen.h baseline
     # (Commit 1) the test asserts the FALLBACK CONTRACT: every
     # (family, shape_bucket) lookup returns the v1 static

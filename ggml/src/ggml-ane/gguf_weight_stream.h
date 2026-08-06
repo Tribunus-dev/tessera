@@ -81,28 +81,71 @@ void ane_weight_stream_close(ane_weight_stream_t * stream);
 // in the GGUF), layer is larger than the destination, or the
 // mmap is missing the tensor's data region.
 //
-// Slice 1: stubbed; always returns -1 with a "not implemented"
-// log. Slice 2 implements the read path; Slice 3 wires it
-// into the dispatch.
+// The tensors are written in name-sorted order (the
+// std::map iteration order), one after the other with no
+// padding. The dispatch in ggml-ane.mm (slice 3) uses the
+// per-tensor accessors below to write into the specific
+// IOSurface slot for each meta tensor; this layer-level
+// helper is the test-facing API and a convenience for the
+// "whole layer as one slot" case.
 int64_t ane_weight_stream_layer(ane_weight_stream_t * stream,
                                 int32_t layer_idx,
                                 void * dst_buffer,
                                 size_t dst_size_bytes);
 
-// Diagnostic: file size in bytes of the mmapped GGUF.
-// Returns 0 if the stream is NULL.
-size_t ane_weight_stream_file_size(const ane_weight_stream_t * stream);
+// Per-tensor accessors. The dispatch in ggml-ane.mm reads
+// each blk.L.* tensor into its corresponding IOSurface slot
+// (one slot per meta tensor: w / page_scales / lane_scales /
+// outlier_row_offsets / outlier_cols / outlier_vals +
+// per-layer alpha). The per-tensor path is the production
+// entry point; the layer-level helper above is for tests
+// and for callers that want the whole layer in one buffer.
 
-// Diagnostic: number of `blk.L.*` tensors registered at open.
-// Useful for tests asserting the streamer found the expected
+// Number of `blk.L.*` tensors registered at open. Useful
+// for tests asserting the streamer found the expected
 // per-layer tensor count (e.g. 16 tensors per transformer
 // layer for the gemma 4 12B trunk: attn_q/k/v/output,
 // ffn_gate/up/down, attn_norm/ffn_norm + per-layer alpha +
 // per-row page_scales + per-row lane_scales + per-row
 // outlier_row_offsets + per-row outlier_cols +
-// per-row outlier_vals). Returns 0 if stream is NULL.
+// per-row outlier_vals). Returns 0 if stream is NULL or
+// the layer has no registered tensors.
 uint32_t ane_weight_stream_n_block_tensors(const ane_weight_stream_t * stream,
                                            int32_t layer_idx);
+
+// Per-tensor info lookup. The index ranges over the
+// name-sorted set of `blk.L.*` tensors; it matches the
+// order ane_weight_stream_n_block_tensors() counts in.
+// `name_out` (if non-null) receives a pointer to the
+// stream's internal name buffer; the pointer is valid for
+// the stream's lifetime. Returns true on success, false if
+// `index` is out of range or the layer is empty.
+bool ane_weight_stream_block_tensor_info(
+        const ane_weight_stream_t * stream,
+        int32_t layer_idx,
+        uint32_t index,
+        const char ** name_out,
+        size_t * size_bytes_out,
+        uint32_t * n_dim_out,
+        uint64_t * shape_out);
+
+// Stream one blk.L.* tensor by index (the same indexing
+// the info accessor above uses). Writes tensor.size_bytes
+// bytes from the mmap into `dst`. Returns the number of
+// bytes written on success, or -1 on failure (reason
+// logged). The caller is responsible for sizing `dst` to
+// at least the tensor's on-disk byte count; the check is
+// enforced here.
+int64_t ane_weight_stream_block_tensor(
+        ane_weight_stream_t * stream,
+        int32_t layer_idx,
+        uint32_t index,
+        void * dst,
+        size_t dst_size_bytes);
+
+// Diagnostic: file size in bytes of the mmapped GGUF.
+// Returns 0 if the stream is NULL.
+size_t ane_weight_stream_file_size(const ane_weight_stream_t * stream);
 
 #ifdef __cplusplus
 }

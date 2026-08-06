@@ -45,6 +45,7 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <vector>
 
 // GGUF v3 constants. Magic is 'GGUF' little-endian (= 0x46554747).
 // The names are ANE-prefixed to avoid colliding with the
@@ -289,12 +290,12 @@ static bool parse_gguf_header(ane_weight_stream_t * stream,
         std::string name;
         if (!read_gguf_string(base, stream->mmap_size, &pos, &name)) {
             if (error_out) snprintf(error_out, error_out_size,
-                "failed to read tensor name at %zu", i);
+                "failed to read tensor name at %llu", (unsigned long long) i);
             return false;
         }
         if (pos + 4 > stream->mmap_size) {
             if (error_out) snprintf(error_out, error_out_size,
-                "tensor name at %zu truncated", i);
+                "tensor name at %llu truncated", (unsigned long long) i);
             return false;
         }
         ti.n_dim = read_u32(base + pos); pos += 4;
@@ -435,25 +436,100 @@ size_t ane_weight_stream_file_size(const ane_weight_stream_t * stream) {
     return stream->mmap_size;
 }
 
-uint32_t ane_weight_stream_n_block_tensors(const ane_weight_stream_t * stream,
-                                           int32_t layer_idx) {
+// Internal helper: collect the sorted-map iterators for
+// layer `layer_idx`'s tensors. Fills `indices_out` (if
+// non-null) with the iterators and returns the count. The
+// iterators point into `stream->tensors`; the caller must
+// not modify the map while the iterators are live. The
+// layer-level and per-tensor public APIs both go through
+// this helper so the "what counts as blk.L.*" rule is
+// defined exactly once.
+static uint32_t collect_block_tensor_indices(
+        const ane_weight_stream_t * stream,
+        int32_t layer_idx,
+        std::vector<std::map<std::string, ane_gguf_tensor_info>::const_iterator> * indices_out) {
     if (stream == nullptr) return 0;
     char prefix[32];
     const int n = std::snprintf(prefix, sizeof(prefix), "blk.%d.", layer_idx);
     if (n <= 0 || (size_t) n >= sizeof(prefix)) return 0;
+    auto begin = stream->tensors.lower_bound(prefix);
     uint32_t count = 0;
-    // Linear scan over the sorted map. The map size is
-    // small (16 tensors per layer * 12 layers for the
-    // gemma 4 9B mini test fixture; ~192 tensors for the
-    // 12B trunk). The prefix is "blk.L." which sorts
-    // before "blk.L.<next>" alphabetically; the lower_bound
-    // is the first entry whose name is >= the prefix.
-    auto it = stream->tensors.lower_bound(prefix);
-    for (; it != stream->tensors.end(); ++it) {
+    for (auto it = begin; it != stream->tensors.end(); ++it) {
         if (it->first.compare(0, (size_t) n, prefix) != 0) break;
+        if (indices_out) indices_out->push_back(it);
         ++count;
     }
     return count;
+}
+
+uint32_t ane_weight_stream_n_block_tensors(const ane_weight_stream_t * stream,
+                                           int32_t layer_idx) {
+    return collect_block_tensor_indices(stream, layer_idx, nullptr);
+}
+
+bool ane_weight_stream_block_tensor_info(
+        const ane_weight_stream_t * stream,
+        int32_t layer_idx,
+        uint32_t index,
+        const char ** name_out,
+        size_t * size_bytes_out,
+        uint32_t * n_dim_out,
+        uint64_t * shape_out) {
+    if (stream == nullptr) return false;
+    std::vector<std::map<std::string, ane_gguf_tensor_info>::const_iterator> indices;
+    const uint32_t n = collect_block_tensor_indices(stream, layer_idx, &indices);
+    if (index >= n) return false;
+    const auto & it = indices[index];
+    if (name_out)       *name_out       = it->first.c_str();
+    if (size_bytes_out) *size_bytes_out = (size_t) it->second.size_bytes;
+    if (n_dim_out)      *n_dim_out      = it->second.n_dim;
+    if (shape_out) {
+        for (uint32_t d = 0; d < 4; ++d) {
+            shape_out[d] = d < it->second.n_dim
+                ? it->second.shape[d] : 0;
+        }
+    }
+    return true;
+}
+
+int64_t ane_weight_stream_block_tensor(
+        ane_weight_stream_t * stream,
+        int32_t layer_idx,
+        uint32_t index,
+        void * dst,
+        size_t dst_size_bytes) {
+    if (stream == nullptr || dst == nullptr) {
+        GGML_LOG_ERROR("ane: stream_block_tensor: null stream or dst\n");
+        return -1;
+    }
+    std::vector<std::map<std::string, ane_gguf_tensor_info>::const_iterator> indices;
+    const uint32_t n = collect_block_tensor_indices(stream, layer_idx, &indices);
+    if (index >= n) {
+        GGML_LOG_ERROR("ane: stream_block_tensor: index %u out of range "
+                       "(layer %d has %u tensors)\n", index, layer_idx, n);
+        return -1;
+    }
+    const auto & it = indices[index];
+    const ane_gguf_tensor_info & ti = it->second;
+    if (ti.size_bytes > dst_size_bytes) {
+        GGML_LOG_ERROR("ane: stream_block_tensor: dst %zu bytes < tensor %s "
+                       "size %llu\n", dst_size_bytes, it->first.c_str(),
+                       (unsigned long long) ti.size_bytes);
+        return -1;
+    }
+    // Bounds check on the mmap'd region.
+    const uint64_t file_pos = stream->data_section_offset + ti.offset;
+    if (file_pos + ti.size_bytes > stream->mmap_size) {
+        GGML_LOG_ERROR("ane: stream_block_tensor: %s file range "
+                       "[%llu, %llu) past EOF %zu\n", it->first.c_str(),
+                       (unsigned long long) file_pos,
+                       (unsigned long long) (file_pos + ti.size_bytes),
+                       stream->mmap_size);
+        return -1;
+    }
+    const uint8_t * src = (const uint8_t *) stream->mmap_base + file_pos;
+    std::memcpy(dst, src, (size_t) ti.size_bytes);
+    return (int64_t) ti.size_bytes;
 }
 
 int64_t ane_weight_stream_layer(ane_weight_stream_t * stream,
@@ -464,12 +540,43 @@ int64_t ane_weight_stream_layer(ane_weight_stream_t * stream,
         GGML_LOG_ERROR("ane: stream_layer: null stream or dst_buffer\n");
         return -1;
     }
-    // Slice 1: stub. The sorted map is built; the read path
-    // is implemented in slice 2 (per-tensor memcpy from
-    // mmap into the IOSurface slot, gated by per-tensor
-    // size and the layer's tensor prefix).
-    (void) layer_idx;
-    (void) dst_size_bytes;
-    GGML_LOG_ERROR("ane: stream_layer: not yet implemented (slice 1 stub)\n");
-    return -1;
+    // Layout: name-sorted, contiguous, no padding. The
+    // dispatch in slice 3 uses the per-tensor API above for
+    // production (each meta tensor into its own IOSurface
+    // slot); this layer-level helper is the test-facing API
+    // and a convenience for "whole layer in one buffer" use.
+    std::vector<std::map<std::string, ane_gguf_tensor_info>::const_iterator> indices;
+    const uint32_t n = collect_block_tensor_indices(stream, layer_idx, &indices);
+    if (n == 0) {
+        GGML_LOG_ERROR("ane: stream_layer: layer %d has no tensors in the GGUF\n",
+                       layer_idx);
+        return -1;
+    }
+    // Compute total bytes + per-tensor offsets.
+    std::vector<uint64_t> offsets;
+    offsets.reserve(n);
+    uint64_t cursor = 0;
+    for (uint32_t i = 0; i < n; ++i) {
+        offsets.push_back(cursor);
+        cursor += indices[i]->second.size_bytes;
+    }
+    if (cursor > dst_size_bytes) {
+        GGML_LOG_ERROR("ane: stream_layer: layer %d total %llu bytes > dst %zu\n",
+                       layer_idx, (unsigned long long) cursor, dst_size_bytes);
+        return -1;
+    }
+    // Copy each tensor.
+    for (uint32_t i = 0; i < n; ++i) {
+        const auto & it = indices[i];
+        const ane_gguf_tensor_info & ti = it->second;
+        const uint64_t file_pos = stream->data_section_offset + ti.offset;
+        if (file_pos + ti.size_bytes > stream->mmap_size) {
+            GGML_LOG_ERROR("ane: stream_layer: %s file range past EOF\n",
+                           it->first.c_str());
+            return -1;
+        }
+        const uint8_t * src = (const uint8_t *) stream->mmap_base + file_pos;
+        std::memcpy((uint8_t *) dst_buffer + offsets[i], src, (size_t) ti.size_bytes);
+    }
+    return (int64_t) cursor;
 }
