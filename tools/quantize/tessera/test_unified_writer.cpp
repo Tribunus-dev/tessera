@@ -223,6 +223,30 @@ int main(int argc, char ** argv) {
     check(ts_unified_writer_worst_of(GGML_TYPE_Q2_K, GGML_TYPE_Q8_0) == GGML_TYPE_Q8_0,
           "worst_of(Q2_K, Q8_0) == Q8_0 (extreme K-quant spread)");
 
+    // roles_reconcile: the namespace predicate that gates the
+    // name-based worst-of fold. The gemma-side roles keep the full
+    // cross-fold (the pre-tts contract); tts_ roles are isolated.
+    check(ts_unified_writer_roles_reconcile("", "trunk"),
+          "roles_reconcile('', trunk) (role-less legacy entry matches all)");
+    check(ts_unified_writer_roles_reconcile("trunk", ""),
+          "roles_reconcile(trunk, '') (commutative)");
+    check(ts_unified_writer_roles_reconcile("trunk", "dflash"),
+          "roles_reconcile(trunk, dflash) (gemma-side cross-fold)");
+    check(ts_unified_writer_roles_reconcile("trunk", "shared_embd"),
+          "roles_reconcile(trunk, shared_embd) (shared token_embd case)");
+    check(ts_unified_writer_roles_reconcile("vision_tower", "mm_projector"),
+          "roles_reconcile(vision_tower, mm_projector)");
+    check(ts_unified_writer_roles_reconcile("tts_talker", "tts_talker"),
+          "roles_reconcile(tts_talker, tts_talker) (same role always folds)");
+    check(!ts_unified_writer_roles_reconcile("tts_talker", "trunk"),
+          "roles_reconcile(tts_talker, trunk) == false (name-collision isolation)");
+    check(!ts_unified_writer_roles_reconcile("trunk", "tts_talker"),
+          "roles_reconcile(trunk, tts_talker) == false (commutative)");
+    check(!ts_unified_writer_roles_reconcile("tts_talker", "tts_code2wav"),
+          "roles_reconcile(tts_talker, tts_code2wav) == false (distinct pipelines)");
+    check(!ts_unified_writer_roles_reconcile("tts_code2wav", "shared_embd"),
+          "roles_reconcile(tts_code2wav, shared_embd) == false");
+
     // ---- Test 2: policy JSON round-trip ----
     ts_unified_policy pol_in;
     pol_in.entries.push_back({"trunk",     "blk.0.attn_q.weight",  "Q4_K"});

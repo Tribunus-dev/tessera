@@ -292,6 +292,8 @@ public:
         int32_t  n_tensors_vision_tower = 0;   // Phase M0a: multimodal
         int32_t  n_tensors_audio_tower  = 0;   // Phase M0a: multimodal
         int32_t  n_tensors_mm_projector = 0;   // Phase M0a: multimodal
+        int32_t  n_tensors_tts_talker   = 0;   // unified-tts: qwen3-tts talker
+        int32_t  n_tensors_tts_code2wav = 0;   // unified-tts: qwen3-tts vocoder
         int32_t  n_tensors_skipped      = 0;   // unknown / unsupported names
         int32_t  n_qtype_overrides      = 0;   // policy changed source qtype
         int32_t  n_budget_relaxed       = 0;   // Phase 16.8: constraints relaxed
@@ -360,6 +362,21 @@ int ts_unified_writer_qtype_bits(int qtype);
 // sentinel for "no entry" is GGML_TYPE_COUNT and must be
 // checked before calling worst_of.
 int ts_unified_writer_worst_of(int a, int b);
+
+// Namespace reconciliation predicate for the worst-of qtype lookup.
+// Two model roles reconcile when a same-named policy entry from one
+// may fold into the other's per-tensor verdict. An empty role (a
+// legacy role-less sidecar entry) reconciles with every role. Roles
+// with the "tts_" prefix (the qwen3-tts calibration pipeline) are
+// name-isolated: their tensors collide BY NAME with the gemma-side
+// trunk (both use blk.N.attn_q.weight etc.) but are unrelated
+// weights, so a tts_ role only reconciles with itself. Every
+// non-tts_ pair keeps the Phase 16.6 name-based cross-fold (the
+// speculative-consistency coupling: drafter and verifier must agree
+// on shared-tensor quantization), which preserves the pre-tts
+// artifact contract byte-identically.
+bool ts_unified_writer_roles_reconcile(const std::string & a,
+                                       const std::string & b);
 
 // Sentinel for "no qtype verdict" that matches GGML_TYPE_COUNT without
 // dragging ggml.h into this header (the writer's .cpp static_asserts

@@ -576,7 +576,9 @@ bool copy_tile640_cluster(
     // Cluster sub-tensor defs (n_dims / ne for the destination; the
     // outlier_cols / outlier_vals read the source's ne[0] for the
     // real size).
-    cluster_member_def members[] = {
+    // Capacity 7: the six static members plus the optional
+    // weight_act_scale appended below when the source carries it.
+    cluster_member_def members[7] = {
         { "weight_packed",              GGML_TYPE_I32, 2, { pages * TS_WORDS_PER_PAGE, out_dim, 1, 1 } },
         { "weight_page_scales",         GGML_TYPE_F16, 2, { pages,                    out_dim, 1, 1 } },
         { "weight_lane_scales",         GGML_TYPE_I8,  2, { pages * TS_WORDS_PER_PAGE, out_dim, 1, 1 } },
@@ -585,10 +587,7 @@ bool copy_tile640_cluster(
         { "weight_outlier_vals",        GGML_TYPE_F16, 1, { 0,                          0, 0, 0 } }, // size from source
     };
     if (has_act_scale) {
-        cluster_member_def act = {
-            "weight_act_scale", GGML_TYPE_F16, 1, { in_dim, 1, 1, 1 }
-        };
-        members[6] = act;
+        members[6] = { "weight_act_scale", GGML_TYPE_F16, 1, { in_dim, 1, 1, 1 } };
     }
     const size_t n_members = has_act_scale ? 7 : 6;
 
@@ -855,12 +854,40 @@ static std::string route_destination_name(const std::string & component_role,
     if (component_role == "dflash") {
         return "dflash." + src_name;
     }
+    // unified-tts: the talker's source tensors are named blk.N.* -
+    // byte-identical to the trunk's names but unrelated weights -
+    // so the talker is prefix-routed like dflash. The code2wav
+    // source names are conv/upsampler blocks that do not collide
+    // with the trunk either, but they route under their own tts
+    // sub-namespace so the loader's component_prefix can scope the
+    // whole qwen3-tts side with one prefix family.
+    if (component_role == "tts_talker") {
+        return "tts." + src_name;
+    }
+    if (component_role == "tts_code2wav") {
+        return "tts.c2w." + src_name;
+    }
     // trunk / dspark / mtp_nextn / shared_embd / vision_tower /
     // audio_tower / mm_projector: copy as-is. The mmproj source
     // GGUFs already namespace their tensors with "v.", "a.", and
     // "mm." prefixes (see the per-component comment above), so the
     // destination names are byte-identical to the source names.
     return src_name;
+}
+
+bool ts_unified_writer_roles_reconcile(const std::string & a,
+                                       const std::string & b) {
+    // A role-less entry is a legacy sidecar record; it matches every
+    // component (the pre-tts name-only contract).
+    if (a.empty() || b.empty()) return true;
+    if (a == b) return true;
+    // The tts_ prefix marks the qwen3-tts calibration pipeline. Its
+    // tensor names collide with the gemma-side trunk by pure naming
+    // coincidence (blk.N.attn_q.weight on both), never by shared
+    // weight, so a tts_ role folds verdicts only with itself.
+    const bool a_tts = a.rfind("tts_", 0) == 0;
+    const bool b_tts = b.rfind("tts_", 0) == 0;
+    return !a_tts && !b_tts;
 }
 
 // --- Phase 16.6 worst-of qtype resolution ------------------------------------
@@ -889,16 +916,26 @@ static std::string route_destination_name(const std::string & component_role,
 // side keeps the destination tensors distinct even when the
 // source names collide.
 //
+// Role-awareness (unified-tts plan 1.3): the name-based fold is
+// gated by ts_unified_writer_roles_reconcile(entry.role, src_role).
+// The gemma-side roles keep the full cross-fold (unchanged); the
+// tts_* roles are name-isolated so the talker's blk.N.* verdicts
+// never fold into the trunk's identically-named tensors. src_role
+// is the role of the component whose source tensor is being
+// copied; a role-less (legacy) entry matches every src_role.
+//
 // Returns GGML_TYPE_COUNT (== 45) when no entry matches; the
 // caller treats that as "no override" and copies the source's
 // qtype as-is.
 static int qtype_for_tensor(
     const std::string & name,
-    const std::vector<ts_unified_policy_entry> & entries) {
+    const std::vector<ts_unified_policy_entry> & entries,
+    const std::string & src_role) {
     int result = GGML_TYPE_COUNT;
     for (const auto & e : entries) {
         if (e.name != name) continue;
         if (e.dtype.empty()) continue;
+        if (!ts_unified_writer_roles_reconcile(e.model_role, src_role)) continue;
         int q = ts_unified_qtype_from_string(e.dtype);
         if (q == GGML_TYPE_COUNT) continue;   // unknown dtype, skip
         if (result == GGML_TYPE_COUNT) {
@@ -921,17 +958,22 @@ static int qtype_for_tensor(
 static int resolve_tensor_qtype(
     const std::string & name,
     const ts_unified_policy & policy,
-    std::vector<ts_unified_budget_event> * events) {
+    std::vector<ts_unified_budget_event> * events,
+    const std::string & src_role) {
     // Fast path: no budgets -> plain worst-of (pre-16.8 contract).
     if (policy.role_budgets.empty()) {
-        return qtype_for_tensor(name, policy.entries);
+        return qtype_for_tensor(name, policy.entries, src_role);
     }
     // Collect per-role verdicts, folding duplicates within a role via
-    // worst-of (a role may emit more than one entry for the same name).
+    // worst-of (a role may emit more than one entry for the same
+    // name). Entries from non-reconciling namespaces (the tts_
+    // isolation rule) never enter the verdict set of a foreign
+    // component's tensor.
     std::map<std::string, int> role_qtype;
     for (const auto & e : policy.entries) {
         if (e.name != name) continue;
         if (e.dtype.empty()) continue;
+        if (!ts_unified_writer_roles_reconcile(e.model_role, src_role)) continue;
         int q = ts_unified_qtype_from_string(e.dtype);
         if (q == GGML_TYPE_COUNT) continue;   // unknown dtype, skip
         auto it = role_qtype.find(e.model_role);
@@ -945,7 +987,7 @@ static int resolve_tensor_qtype(
     if (role_qtype.size() < 2) {
         // Single owning role: cross-role budget propagation cannot
         // happen, so keep the plain worst-of result.
-        return qtype_for_tensor(name, policy.entries);
+        return qtype_for_tensor(name, policy.entries, src_role);
     }
     // Build the verdict list with each role's budget + weight attached.
     std::vector<ts_unified_role_verdict> verdicts;
@@ -1057,7 +1099,8 @@ int ts_unified_writer::write_all(std::string * err) {
             ggml_type src_type = gguf_get_tensor_type(src.ctx, ti);
 
             int override_qtype = resolve_tensor_qtype(src_name, p_->policy,
-                                                       &p_->budget_events);
+                                                       &p_->budget_events,
+                                                       comp.model_role);
             if (override_qtype != GGML_TYPE_COUNT) {
                 // Only count as an override when the policy's
                 // resolved qtype actually differs from the
@@ -1146,14 +1189,16 @@ int ts_unified_writer::write_all(std::string * err) {
                 n_copied++;
             }
 
-            if      (comp.model_role == "trunk")        stats_.n_tensors_trunk++;
-            else if (comp.model_role == "dflash")       stats_.n_tensors_dflash++;
-            else if (comp.model_role == "dspark")       stats_.n_tensors_dspark++;
-            else if (comp.model_role == "mtp_nextn")    stats_.n_tensors_mtp_nextn++;
-            else if (comp.model_role == "shared_embd")  stats_.n_tensors_shared_embd++;
-            else if (comp.model_role == "vision_tower") stats_.n_tensors_vision_tower++;
-            else if (comp.model_role == "audio_tower")  stats_.n_tensors_audio_tower++;
-            else if (comp.model_role == "mm_projector") stats_.n_tensors_mm_projector++;
+            if      (comp.model_role == "trunk")          stats_.n_tensors_trunk++;
+            else if (comp.model_role == "dflash")         stats_.n_tensors_dflash++;
+            else if (comp.model_role == "dspark")         stats_.n_tensors_dspark++;
+            else if (comp.model_role == "mtp_nextn")      stats_.n_tensors_mtp_nextn++;
+            else if (comp.model_role == "shared_embd")    stats_.n_tensors_shared_embd++;
+            else if (comp.model_role == "vision_tower")   stats_.n_tensors_vision_tower++;
+            else if (comp.model_role == "audio_tower")    stats_.n_tensors_audio_tower++;
+            else if (comp.model_role == "mm_projector")   stats_.n_tensors_mm_projector++;
+            else if (comp.model_role == "tts_talker")     stats_.n_tensors_tts_talker++;
+            else if (comp.model_role == "tts_code2wav")   stats_.n_tensors_tts_code2wav++;
         }
     }
     stats_.n_tensors_skipped = n_skipped;
