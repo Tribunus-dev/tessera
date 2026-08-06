@@ -265,6 +265,37 @@ public struct InspectSidecarNode: WorkflowNodeType {
     }
 }
 
+/// W6 (s2s design section 3 + 4): `SpeakTextTool` as a workflow
+/// node. Required inputs: `text`, `model_path`. Parameters (side
+/// panel): `voice_preset`, `code2wav_model_path`, `ref_hash`
+/// (always refused: cloning on indefinite hold, s2s design 3.1/7).
+///
+/// The node is the W6 speech node. Its `execute` body is the
+/// producer seam (s2s design section 3.2): the TesseraToolNode
+/// helper delegates to ``SpeakTextTool``, which runs the
+/// Talker + Code2Wav pass and writes a `llama.tessera.s2s.v1`
+/// record to the trace store right after the producer returns.
+public struct SpeakTextNode: WorkflowNodeType {
+    public static let typeId = "speak_text"
+    public static let displayName = TesseraToolNode.humanName("speak_text")
+    public static let summary = "Run the Talker + Code2Wav pass on a sentence and capture an s2s trace record."
+    public static let tool: any TesseraTool = SpeakTextTool()
+    public static let inputs: [WorkflowPort] = TesseraToolNode
+        .splitSchema(tool.parameters).0
+    public static let outputs: [WorkflowPort] = TesseraToolNode.resultPort
+    public static let parameterSchema: JSONSchema = TesseraToolNode
+        .splitSchema(tool.parameters).1
+
+    public static func execute(
+        parameters: [String: JSONValue],
+        inputs: [String: WorkflowPortValue],
+        context: WorkflowExecutionContext
+    ) async throws -> [String: WorkflowPortValue] {
+        try await TesseraToolNode.execute(
+            tool: tool, parameters: parameters, inputs: inputs, context: context)
+    }
+}
+
 // MARK: - Default registry
 
 extension WorkflowNodeRegistry {
@@ -279,6 +310,7 @@ extension WorkflowNodeRegistry {
             QuantizeNode.self,
             EvaluateNode.self,
             InspectSidecarNode.self,
+            SpeakTextNode.self,
         ])
     }
 }
