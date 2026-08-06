@@ -659,6 +659,18 @@ if (NOT GGML_BACKEND_DL)
         target_include_directories(test-ane-tile640-dispatch PRIVATE
             ${PROJECT_SOURCE_DIR}/ggml/src)
     endif()
+    # v1 regime router test. With the empty .gen.h baseline
+    # (Commit 1) the test asserts the FALLBACK CONTRACT: every
+    # (family, shape_bucket) lookup returns the v1 static
+    # helper's bool. The same test stays green as the .gen.h
+    # grows in Commit 3+ (it only ever asserts fallback
+    # contract; the per-(family, shape) coverage test is in
+    # the dispatch test, not here).
+    llama_build_and_test(test-regime-router.cpp)
+    if (TARGET test-regime-router)
+        target_include_directories(test-regime-router PRIVATE
+            ${PROJECT_SOURCE_DIR}/ggml/src)
+    endif()
 endif()
 
 # libmtmd
