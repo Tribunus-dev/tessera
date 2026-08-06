@@ -2802,18 +2802,18 @@ static enum ggml_status ggml_backend_ane_graph_compute(ggml_backend_t backend, g
         // No bundle mapping: fall through to the elementwise Accelerate path.
         // This covers the compute-shaped ANE-NATIVE ops (ADD, MUL, SCALE,
         // CLAMP, REPEAT, LEAKY_RELU, and the UNARY variants SILU/SIGMOID/
-        // TANH/RELU/EXP/LOG/ABS/NEG/STEP/SQR/SQRT). Layout ops that we
-        // advertise as supported are handled as no-ops over contiguous data.
-        // GGML_OP_NONE marks leaf/data tensors (weights); no compute.
+        // TANH/RELU/EXP/LOG/ABS/NEG/STEP/SQR/SQRT). View ops are no-ops:
+        // they set view_src and alias the source buffer, so no data
+        // movement is needed. GGML_OP_NONE marks leaf/data tensors
+        // (weights); no compute. CONT is NOT a view (no view_src, own
+        // buffer) and is not advertised; if it ever reaches here it falls
+        // through to the loud "no compute path" error below instead of
+        // being silently skipped.
         if (node->op == GGML_OP_NONE ||
             node->op == GGML_OP_RESHAPE ||
             node->op == GGML_OP_VIEW ||
             node->op == GGML_OP_TRANSPOSE ||
-            node->op == GGML_OP_PERMUTE ||
-            node->op == GGML_OP_CONT) {
-            // ggml tensors carry their own shape/stride metadata; views are
-            // already resolved by the graph builder, so the underlying buffer
-            // is shared and no data movement is needed.
+            node->op == GGML_OP_PERMUTE) {
             continue;
         }
 
@@ -3090,12 +3090,17 @@ static bool ggml_backend_ane_device_supports_op(ggml_backend_dev_t dev, const gg
             return ggml_ane_elementwise_servable(op);
 
         // ANE-NATIVE layout ops. Views and reshapes carry their own
-        // metadata and share the source buffer, so no compute is needed.
+        // metadata and share the source buffer (ggml sets view_src for
+        // them and the allocator aliases the buffer), so no compute is
+        // needed. CONT is deliberately NOT here: it has no view_src, so
+        // the allocator gives it its own buffer, and it needs a real
+        // strided copy to fill it. Advertising it without a copy path
+        // leaves that buffer unwritten and silently corrupts every
+        // consumer (CPU-GLUE in the deep-study op table; CPU runs it).
         case GGML_OP_RESHAPE:
         case GGML_OP_VIEW:
         case GGML_OP_TRANSPOSE:
         case GGML_OP_PERMUTE:
-        case GGML_OP_CONT:
             return true;
 
         // Type conversion is expressed via CPY on the host-mapped arena
