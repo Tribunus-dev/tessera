@@ -1,118 +1,133 @@
-/* Tessera Observatory v1 -- scrollytelling frame.
+/* Tessera Observatory v1 -- scrollytelling home page.
  *
- * The frame is the visible viewport, anchored in place. Sections
- * translate within the frame as the user scrolls. The page's normal
- * scroll position drives a timeline variable; each section's
- * translation is a function of that timeline.
+ * Pattern: sticky stacking with native scroll snap. Zero JS in the
+ * scroll path. Each stage is position: sticky; it pins below the
+ * site header while the next stage scrolls up over it and covers
+ * it. The reader perceives a fixed frame in which chapters
+ * exchange in place, while the browser owns the scroll: native
+ * momentum, native scrollbar, keyboard, anchor links. Mandatory
+ * snap settles every gesture on an exact chapter boundary, so
+ * every rest state is a complete chapter. Dwell, transition,
+ * dwell -- that rhythm is what distinguishes scrollytelling from
+ * document scrolling.
  *
- * Mechanics:
- *   - .scrolly-frame  -- position: fixed, fills the viewport, z-index
- *     above the rest of the page. The frame is the "stage."
- *   - .scrolly-sentinel -- a normal-flow element whose height is
- *     (N * 100vh). Provides the scroll range; the user thinks they
- *     are scrolling a tall page.
- *   - .scrolly-section -- position: absolute, full frame minus the
- *     header. The JS driver applies transform: translate3d(0, X, 0)
- *     based on the section's index and the current scroll position.
- *   - .scrolly-snap-point -- invisible children of the sentinel at
- *     100vh intervals. They are the snap targets.
+ * No scroll input is captured or rewritten. No scroll listener,
+ * no idle-timer snap, no fixed wrapper, no sentinel element. The
+ * one script on the page (chapter-stack.js) measures the header
+ * on load and resize so the stage clears the wrapping header
+ * exactly; the CSS default below covers no-JS.
  *
- * The scrollbar is hidden when the scrolly frame is active so the
- * browser chrome does not give away the "literal scroll" perception.
- * A snap-to-section on scroll-end (JS in
- * transitions-orchestrator.js) settles the user on a section center,
- * so the experience reads as "advance state" rather than "scroll
- * continuously."
+ * Structure (index.html):
+ *   .chapter-stack      -- wrapper around the five stages and the
+ *                          terminal block. Its bottom edge is the
+ *                          sticky pin limit of the last stage.
+ *   .stage              -- one chapter: sticky, one small-viewport
+ *                          tall minus the header, opaque, snap
+ *                          target. Later stages paint above
+ *                          earlier ones, so covering works.
+ *   .home-terminal      -- secondary nav + footer, inside the
+ *                          wrapper, arriving as the final layer
+ *                          over the pinned last chapter.
  *
- * prefers-reduced-motion: reduce -- the frame is static, sections
- * flow in normal document order, the sentinel is hidden. The user
- * gets a normal scrolling page.
+ * prefers-reduced-motion: reduce -- snap settling and pinning
+ * collapse to a plain stacked document. Nothing is hidden.
  */
 
 :root {
+  /* Single-row header default. The nav wraps at narrow widths;
+   * chapter-stack.js refines this from the real offsetHeight. */
   --header-height: 64px;
 }
 
-.scrolly-frame {
-  position: fixed;
-  inset: 0;
-  overflow: hidden;
-  z-index: 1;
-  pointer-events: auto;
+/* Native snap, scoped to the scrollytelling page. scroll-padding
+ * pulls the snap line down to just below the sticky header so each
+ * stage lands exactly where it pins. The scrollbar stays visible:
+ * it is the reader's progress affordance across chapters. Thin and
+ * quiet, never invisible. */
+html:has(.chapter-stack) {
+  scroll-snap-type: y mandatory;
+  scroll-padding-top: var(--header-height);
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-rule-strong) transparent;
 }
 
-.scrolly-sentinel {
-  height: calc(5 * 100vh);
-  pointer-events: none;
+html:has(.chapter-stack) ::-webkit-scrollbar {
+  width: 8px;
+}
+html:has(.chapter-stack) ::-webkit-scrollbar-thumb {
+  background: var(--color-rule-strong);
+  border-radius: 4px;
+}
+html:has(.chapter-stack) ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.chapter-stack {
   position: relative;
-  z-index: 0;
 }
 
-.scrolly-section {
-  position: absolute;
+.stage {
+  position: sticky;
   top: var(--header-height);
-  left: 0;
-  right: 0;
-  bottom: 0;
-  /* Each section is its own full-frame container. The internal
-   * content is centered by the section's own children (the chapter
-   * / hero styles). No internal scroll: the section is sized to
-   * the frame; the user advances the timeline with the page
-   * scroll only.
-   *
-   * No CSS transition on transform: the JS driver updates the
-   * transform on every requestAnimationFrame, which gives a 60fps
-   * lockstep between the scroll position and the section position.
-   * A CSS transition would lag the section behind the scroll and
-   * feel sluggish.
-   */
+  height: 100vh;
+  height: calc(100svh - var(--header-height)); /* svh: 100vh lies on mobile */
   overflow: hidden;
-  -webkit-overflow-scrolling: touch;
-  will-change: transform;
+  background: var(--color-bg); /* opaque: covers the pinned stage below */
+  scroll-snap-align: start;
+  scroll-snap-stop: always; /* one chapter per gesture, no fly-through */
 }
 
-/* Hide the browser scrollbar when the scrolly frame is active. The
- * scrollbar is the visual cue that the user is "scrolling a page";
- * without it, the perception shifts toward "advancing through
- * sections." The user can still scroll via trackpad, wheel, or
- * keyboard; they just do not see the indicator.
+/* The terminal block arrives as the final layer over the pinned
+ * last chapter. Keeping it inside .chapter-stack extends the last
+ * stage's sticky pin range to exactly the document's end of
+ * scroll, so the last chapter stays put while the terminal slides
+ * over it. Its end edge aligns with the end of the document, so
+ * the browser can rest there under mandatory snap. */
+.home-terminal {
+  position: relative;
+  background: var(--color-bg);
+  scroll-snap-align: end;
+}
+.home-terminal .secondary-nav {
+  margin-top: 0;
+}
+
+/* Entrance choreography for the incoming stage, only where
+ * scroll-driven animations ship (Chromium 115+, Safari 26+).
+ * Firefox keeps the plain stack: correct, unadorned.
  *
- * Scoped to pages that have a .scrolly-frame (i.e., the home page).
- */
-html:has(.scrolly-frame) {
-  scrollbar-width: none;
-}
-html:has(.scrolly-frame) body {
-  -ms-overflow-style: none;
-}
-html:has(.scrolly-frame) ::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-  display: none;
+ * Opacity only. A transform on a sticky snap target breaks
+ * mandatory snap settling in Chromium 140: gestures rest
+ * off-boundary and later scroll deltas become unstable
+ * (A/B verified against an identical stack without the
+ * transform). Never add transform to this animation. */
+@supports (animation-timeline: view()) {
+  html:has(.chapter-stack) .stage {
+    animation: stage-enter linear both;
+    animation-timeline: view();
+    animation-range: entry 0% entry 100%;
+  }
+  @keyframes stage-enter {
+    from { opacity: 0.6; }
+    to   { opacity: 1; }
+  }
 }
 
-/* When the user prefers reduced motion, the scrolly frame collapses
- * into a normal-flow stack. Sections become static blocks in document
- * order; the sentinel is hidden; the user scrolls normally.
- */
+/* Reduced motion: plain stacked document. No snap settling, no
+ * pinning, no entrance animation. Content is never hidden. */
 @media (prefers-reduced-motion: reduce) {
-  :root {
-    --header-height: 0px;
+  html:has(.chapter-stack) {
+    scroll-snap-type: none;
   }
-  .scrolly-frame {
-    position: static;
-    inset: auto;
-    overflow: visible;
-  }
-  .scrolly-sentinel { display: none; }
-  .scrolly-section {
-    position: static;
+  .stage {
+    position: relative;
     top: auto;
-    left: auto;
-    right: auto;
-    bottom: auto;
-    transform: none !important;
+    height: auto;
     overflow: visible;
-    transition: none;
+    scroll-snap-align: none;
+    animation: none;
+  }
+  .home-terminal {
+    scroll-snap-align: none;
   }
 }

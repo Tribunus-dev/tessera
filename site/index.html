@@ -37,7 +37,7 @@
 }catch(e){}})();
 </script>
 <script src="/scripts/theme.js" defer></script>
-<script src="/scripts/transitions-orchestrator.js" defer></script>
+<script src="/scripts/chapter-stack.js" defer></script>
 <script src="/scripts/selection-controller.js" defer></script>
 </head>
 <body data-prism-route="/" data-prism-hydrated="false">
@@ -58,9 +58,9 @@
 <button type="button" class="theme-toggle" aria-label="Toggle dark and light theme" data-theme-toggle><span class="theme-toggle-icon" aria-hidden="true"></span><span class="theme-toggle-label">Dark</span></button>
 </header>
 <main class="page-body" id="top">
-<div class="scrolly-frame">
+<div class="chapter-stack">
 
-<section class="hero hero-home scrolly-section">
+<section class="hero hero-home stage" id="hero">
 <span class="hero-eyebrow">Tessera · v1 · 2026-08-05</span>
 <h1 class="hero-headline">Private local AI that gets better the more people use it.</h1>
 <p class="hero-blurb">Tessera Studio runs Gemma 4 12B on your Mac. Text, vision, audio, and speech. Your data never leaves the device. As more people use Tessera, the model reasons better on harder problems, the drafters get more accurate, the engine gets faster, and next-token prediction sharpens. The recipe and the signed receipt are public; the data method is private. The improved model ships to every Tessera user, not just whoever paid for it.</p>
@@ -70,7 +70,7 @@
 </div>
 </section>
 
-<section class="chapter scrolly-section" id="what-you-get">
+<section class="chapter stage" id="what-you-get">
 <div class="chapter-eyebrow">What you get</div>
 <h2 class="chapter-title">Four things, in plain language.</h2>
 <div class="chapter-grid chapter-grid-2">
@@ -93,7 +93,7 @@
 </div>
 </section>
 
-<section class="chapter scrolly-section" id="who-this-is-for">
+<section class="chapter stage" id="who-this-is-for">
 <div class="chapter-eyebrow">Who this is for</div>
 <h2 class="chapter-title">One primary audience. Two adjacent. One peripheral.</h2>
 <div class="chapter-grid chapter-grid-2">
@@ -121,7 +121,7 @@
 <p class="chapter-aside">If you don't care about local inference, this isn't for you. If you need bit-for-bit drop-in compatibility with stock llama.cpp for Tessera-quantized artifacts, this isn't for you (vanilla quants work anywhere; Tessera-locked artifacts need the Tessera runtime).</p>
 </section>
 
-<section class="chapter chapter-bleed scrolly-section" id="the-three-tiers">
+<section class="chapter chapter-bleed stage" id="the-three-tiers">
 <div class="chapter-eyebrow">Property regime</div>
 <h2 class="chapter-title">Three tiers. One of which you'll almost certainly be in.</h2>
 <div class="table-wrap">
@@ -183,7 +183,7 @@
 <p class="chapter-aside">Tessera-locked isn't a liability — it's the receipt. The artifact is shaped to the kernel that graded it; the kernel ships in the fork; the fork is source-available.</p>
 </section>
 
-<section class="chapter scrolly-section" id="next-step">
+<section class="chapter stage" id="next-step">
 <div class="chapter-eyebrow">Where to go next</div>
 <h2 class="chapter-title">Pick the question that brought you here.</h2>
 <div class="chapter-grid chapter-grid-3">
@@ -205,9 +205,7 @@
 </div>
 </section>
 
-</div><!-- /.scrolly-frame -->
-<div class="scrolly-sentinel" aria-hidden="true"></div>
-</main>
+<div class="home-terminal">
 <aside class="secondary-nav">
 <ul class="secondary-nav-list">
 <li class="secondary-nav-label">Navigate</li>
@@ -229,5 +227,8 @@
 <p><a href="https://tessera.tribunus.dev">tessera.tribunus.dev</a></p>
 </div>
 </footer>
+</div><!-- /.home-terminal -->
+</div><!-- /.chapter-stack -->
+</main>
 </body>
 </html>
