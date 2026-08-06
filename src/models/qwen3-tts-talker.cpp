@@ -42,15 +42,25 @@ void llama_model_qwen3tts_talker::load_arch_hparams(llama_model_loader & ml) {
     // llama_model_loader)
     const std::string kv = std::string(llm_arch_name(arch)) + ".";
 
-    // n_layer_nextn carries the cp block depth so the standard backbone
-    // loop (n_layer() = n_layer_all - n_layer_nextn) iterates 0..n_layer-1
+    // W2 GGUF schema: block_count is the BACKBONE count only (28 in W2),
+    // NOT the total layer count. The cp block lives at
+    // blk.{block_count..block_count + predictor_layers - 1} (= blk.28..32 in
+    // W2). The standard loader reads block_count into n_layer_all, so we
+    // extend n_layer_all by n_pred_layers here to make the standard
+    // n_layer() / n_layer_all / n_layer_nextn triple point at the right
+    // ranges: n_layer() = n_layer_all - n_layer_nextn = backbone count,
+    // and the cp block layers sit at blk.{n_layer()..n_layer_all-1}.
+    //
+    // This matches the MTP convention (LLM_KV_NEXTN_PREDICT_LAYERS in
+    // deepseek32) but uses a separate metadata key (predictor_layers) since
+    // the W2 spec deliberately distinguishes "code predictor sub-talker"
+    // from "MTP drafter" — see conversion/qwen3tts.py docstring + W2
+    // verify tool.
     if (ml.get_key(kv + "predictor_layers", n_pred_layers, false)) {
         GGML_ASSERT(n_pred_layers > 0);
-        GGML_ASSERT(hparams.n_layer_all >= n_pred_layers && "talker: block_count + cp must be loadable");
-        // cp block layers sit at blk.{n_layer()..n_layer_all-1}; require
-        // at least one backbone layer so the standard LM forward has
-        // somewhere to start
-        GGML_ASSERT(hparams.n_layer_all > n_pred_layers && "talker: block_count must be > n_pred_layers (at least one backbone layer required)");
+        // extend n_layer_all to include the cp block (block_count is
+        // backbone-only in the W2 GGUF)
+        hparams.n_layer_all += n_pred_layers;
         hparams.n_layer_nextn = n_pred_layers;
     } else {
         // no predictor layers declared: backbone-only mode (the cp block

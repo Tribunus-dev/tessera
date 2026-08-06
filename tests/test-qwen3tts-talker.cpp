@@ -84,8 +84,16 @@ constexpr uint32_t N_EMBD          = 32;       // synthetic backbone hidden
 constexpr uint32_t N_HEAD          = 4;        // synthetic backbone heads
 constexpr uint32_t N_HEAD_KV       = 2;        // synthetic backbone KV heads
 constexpr uint32_t N_FF            = 64;       // synthetic backbone FF
-constexpr uint32_t N_LAYER         = 3;        // synthetic backbone block_count (W2: 28); must be > N_PRED_LAYERS
+// W2 GGUF schema: block_count is the BACKBONE count only (W2: 28); the cp
+// block lives at blk.{block_count..block_count + predictor_layers - 1}
+// (W2: blk.28..32). The loader extends n_layer_all by n_pred_layers so
+// n_layer() = n_layer_all - n_layer_nextn = backbone count, and the cp
+// block is at blk.{n_layer()..n_layer_all-1}. The synthetic mirrors this:
+// N_BACKBONE = what block_count is; N_LAYER = N_BACKBONE + N_PRED_LAYERS
+// is the loader's n_layer_all.
+constexpr uint32_t N_BACKBONE      = 3;        // synthetic backbone block_count (W2: 28)
 constexpr uint32_t N_PRED_LAYERS   = 2;        // synthetic cp block depth (W2: 5)
+constexpr uint32_t N_LAYER         = N_BACKBONE + N_PRED_LAYERS;  // = 5; loader's n_layer_all
 constexpr uint32_t N_CP_EMBD       = 16;       // synthetic cp block hidden (W2: 1024)
 constexpr uint32_t N_CP_HEAD       = 2;        // synthetic cp block heads (W2: 16); chosen so n_cp_embd_head matches n_embd_head
 constexpr uint32_t N_CP_HEAD_KV    = 1;        // synthetic cp block KV heads (W2: 8)
@@ -162,7 +170,7 @@ void add_talker_kv(llama_model_saver & ms) {
     // standard LLM_KV entries
     ms.add_kv(LLM_KV_CONTEXT_LENGTH,              uint32_t(32768));
     ms.add_kv(LLM_KV_EMBEDDING_LENGTH,            N_EMBD);
-    ms.add_kv(LLM_KV_BLOCK_COUNT,                 N_LAYER);
+    ms.add_kv(LLM_KV_BLOCK_COUNT,                 N_BACKBONE);
     ms.add_kv(LLM_KV_FEED_FORWARD_LENGTH,         N_FF);
     ms.add_kv(LLM_KV_ATTENTION_HEAD_COUNT,        N_HEAD);
     ms.add_kv(LLM_KV_ATTENTION_HEAD_COUNT_KV,     N_HEAD_KV);
@@ -212,11 +220,8 @@ void add_talker_kv(llama_model_saver & ms) {
 
 // backbone (blk.0..n_layer()-1 in the loader's view): standard
 // Qwen3-style 11-tensor per layer. The test writes N_BACKBONE tensors
-// here, matching what the loader reads as n_layer() = N_LAYER -
-// N_PRED_LAYERS (which is the backbone depth only).
-constexpr uint32_t N_BACKBONE = N_LAYER - N_PRED_LAYERS;
-static_assert(N_BACKBONE >= 1, "test requires at least one backbone layer");
-
+// here, matching what the loader reads as n_layer() (which equals the
+// backbone depth after the W5b cpufix extends n_layer_all by n_pred_layers).
 void add_backbone_layers(ggml_context * ggml_ctx, gguf_context * gguf_ctx) {
     for (uint32_t il = 0; il < N_BACKBONE; ++il) {
         char name[64];
@@ -357,10 +362,25 @@ std::string build_synthetic_talker_gguf() {
 // Load a talker GGUF (via file path; the in-memory gguf_context path
 // does not populate the loader's weights_map, see test-dflash-loader
 // for the same caveat).
+//
+// devices is constrained to {cpu, nullptr} so the loader does NOT register
+// the ANE/METAL backends. n_gpu_layers=0 alone is not enough on the
+// architect's M1 base: ggml_backend_sched still sees ANE in its backend
+// list, then routes token_embd.weight (NONE op) to the ANE buffer and
+// aborts at ggml_backend_sched_split_graph. The device whitelist is the
+// only place that removes ANE from the scheduler. test-export-graph-ops
+// uses the same pattern.
 struct llama_model * load_talker_gguf(const std::string & path) {
     llama_model_params model_params = llama_model_default_params();
     model_params.progress_callback = [](float, void *) { return true; };
     model_params.n_gpu_layers = 0;  // CPU-only path
+    static ggml_backend_dev_t cpu_only[2] = {
+        nullptr,
+        nullptr,
+    };
+    cpu_only[0] = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+    TEST_ASSERT(cpu_only[0] != nullptr);
+    model_params.devices = cpu_only;
     return llama_model_load_from_file(path.c_str(), model_params);
 }
 
@@ -526,9 +546,104 @@ void check_forward_graph(struct llama_model * model) {
     llama_free(ctx);
 }
 
+// Optional real-weight verification. When TESSERA_QWEN3TTS_TALKER_GGUF
+// points at a real W2 talker GGUF (e.g. the 3.6GB BF16 artifact on
+// /Volumes/Julian T7), load it, confirm the W2-spec arch + hparams + the
+// per-cp-codebook tensor set, and run a single text-token forward. This
+// is the W5b-followup verification gate: the synthetic test pins the
+// schema, but only real-weight forward tells us whether the loader is
+// weight-shape-clean against the W2 output. cp pass is skipped (W5b
+// scope); this is a load + backbone-forward smoke test.
+void check_real_weight_forward(const std::string & path) {
+    std::printf("test-qwen3tts-talker: real-weight smoke test on %s\n", path.c_str());
+
+    struct llama_model * model = load_talker_gguf(path);
+    if (model == nullptr) {
+        std::fprintf(stderr,
+            "test-qwen3tts-talker: FAIL — real-weight load returned null for %s\n"
+            "  This is the first W5b follow-up surface. Likely causes:\n"
+            "    - schema mismatch in the W2 GGUF (verify_qwen3tts_gguf.py is oracle)\n"
+            "    - raw TTS metadata key not in the loader's ml.get_key path\n"
+            "    - layer count off (W2 = 28 backbone + 5 cp = n_layer_all=33)\n",
+            path.c_str());
+        std::abort();
+    }
+
+    // W2-spec arch + hparams: real GGUF has block_count=28 backbone,
+    // n_layer_nextn=5, n_embd=2048, n_head=16, n_head_kv=8, n_rot=128,
+    // mrope sections [24,20,20,0], codec_vocab=3072, n_cp_per_codebook=2048,
+    // n_codebooks=15. The loader casts to llama_model_qwen3tts_talker for
+    // the arch-specific fields.
+    TEST_ASSERT(model->arch == LLM_ARCH_QWEN3TTS_TALKER);
+    TEST_ASSERT((uint32_t) model->hparams.n_layer()     == 28);
+    TEST_ASSERT((uint32_t) model->hparams.n_layer_all   == 33);
+    TEST_ASSERT((uint32_t) model->hparams.n_layer_nextn == 5);
+    TEST_ASSERT((uint32_t) model->hparams.n_embd        == 2048);
+    TEST_ASSERT((uint32_t) model->hparams.n_head()      == 16);
+    TEST_ASSERT((uint32_t) model->hparams.n_head_kv()   == 8);
+    TEST_ASSERT((uint32_t) model->hparams.n_rot_full    == 128);
+    TEST_ASSERT((uint32_t) model->hparams.rope_sections[0] == 24);
+    TEST_ASSERT((uint32_t) model->hparams.rope_sections[1] == 20);
+    TEST_ASSERT((uint32_t) model->hparams.rope_sections[2] == 20);
+    TEST_ASSERT((uint32_t) model->hparams.rope_sections[3] == 0);
+    TEST_ASSERT(model->hparams.use_mrope());
+
+    auto * m = static_cast<struct llama_model_qwen3tts_talker *>(model);
+    TEST_ASSERT(m->n_codec_vocab     == 3072);
+    TEST_ASSERT(m->n_cp_per_codebook == 2048);
+    TEST_ASSERT(m->n_pred_layers   == 5);
+    TEST_ASSERT(m->n_cp_embd       == 1024);
+    TEST_ASSERT(m->n_cp_head       == 16);
+    TEST_ASSERT(m->n_cp_head_kv    == 8);
+    // 15 codebooks for cids 0..14 (W2 spec). Wave 8 needs to verify
+    // whether real W2 GGUF has cid.15 too and either add the 16th or
+    // assert 15 is the cap.
+    TEST_ASSERT(m->cp_codec_embd.size() == 15);
+    TEST_ASSERT(m->cp_head      .size() == 15);
+    for (uint32_t cid = 0; cid < 15; ++cid) {
+        TEST_ASSERT(m->cp_codec_embd[cid] != nullptr);
+        TEST_ASSERT(m->cp_head[cid]       != nullptr);
+        // W2 verify tool's expect_shape: cp_codec_embd.{cid}.weight ne
+        // = [n_embd=2048, n_cp_per_codebook=2048], cp_head.{cid}.weight
+        // ne = [n_cp_embd=1024, n_cp_per_codebook=2048].
+        TEST_ASSERT(m->cp_codec_embd[cid]->ne[0] == 2048);
+        TEST_ASSERT(m->cp_codec_embd[cid]->ne[1] == 2048);
+        TEST_ASSERT(m->cp_head[cid]->ne[0]       == 1024);
+        TEST_ASSERT(m->cp_head[cid]->ne[1]       == 2048);
+    }
+    TEST_ASSERT(m->codec_head != nullptr);
+    TEST_ASSERT(m->codec_head->ne[0] == 2048);
+    TEST_ASSERT(m->codec_head->ne[1] == 3072);
+
+    // backbone forward: 1 text token through 28 blocks. cp pass skipped
+    // (W5b scope; cp is a separate forward step driven by per-frame
+    // mrope + separate kv cache, both W5b gap items deferred to W8).
+    llama_context_params cp = llama_context_default_params();
+    cp.n_ctx      = 64;
+    cp.n_batch    = 1;
+    cp.n_ubatch   = 1;
+    cp.no_perf    = true;
+    cp.embeddings = true;
+    llama_context * ctx = llama_init_from_model(model, cp);
+    if (ctx == nullptr) {
+        std::fprintf(stderr,
+            "test-qwen3tts-talker: FAIL — real-weight context init returned null\n"
+            "  The model loaded but llama_init_from_model failed. Most likely cause:\n"
+            "    - ANE/METAL scheduler tried to claim a NONE op (cpufix path\n"
+            "      used devices={cpu, nullptr} on model_params; if the model\n"
+            "      was loaded with a different devices list, that load path\n"
+            "      bypassed the cpu-only constraint)\n");
+        std::abort();
+    }
+    llama_free(ctx);
+    llama_model_free(model);
+
+    std::printf("test-qwen3tts-talker: real-weight smoke OK (load + hparams + per-cid + backbone ctx init)\n");
+}
+
 }  // namespace
 
-int main() {
+int main(int argc, char ** argv) {
     // surface loader errors to stderr (default callback is silent for
     // non-error levels; we want the load failure to be visible)
     llama_log_set([](ggml_log_level level, const char * text, void *) {
@@ -559,6 +674,17 @@ int main() {
     check_forward_graph(model);
 
     llama_model_free(model);
+
+    // Real-weight verification (optional). If TESSERA_QWEN3TTS_TALKER_GGUF
+    // (or argv[1]) points at a real W2 talker GGUF, run the smoke test.
+    // This is the W5b follow-up verification gate.
+    const char * env_real = std::getenv("TESSERA_QWEN3TTS_TALKER_GGUF");
+    std::string real_path = (argc >= 2) ? std::string(argv[1])
+                  : (env_real        ? std::string(env_real)
+                                     : std::string());
+    if (!real_path.empty()) {
+        check_real_weight_forward(real_path);
+    }
 
     std::printf("test-qwen3tts-talker: all tests OK\n");
     return 0;
