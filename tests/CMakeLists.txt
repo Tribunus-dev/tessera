@@ -670,6 +670,19 @@ if (NOT GGML_BACKEND_DL)
     if (TARGET test-regime-router)
         target_include_directories(test-regime-router PRIVATE
             ${PROJECT_SOURCE_DIR}/ggml/src)
+        # The determinism test re-runs the calibration
+        # runner and asserts the .gen.h bytes are stable.
+        # The runner is in tools/quantize/, so wire the
+        # path via a compile definition. The runner target
+        # is added in tools/quantize/CMakeLists.txt AFTER
+        # tests/ is processed (add_subdirectory order), so
+        # we use a hard-coded path to the expected binary
+        # location instead of $<TARGET_FILE:...>. The test
+        # SKIPs the determinism check if the file is not
+        # present (e.g. on a build that didn't build the
+        # tools).
+        target_compile_definitions(test-regime-router PRIVATE
+            "TS_REGIME_ROUTER_RUNNER=\"${CMAKE_BINARY_DIR}/bin/calibrate_regime_router\"")
     endif()
 endif()
 

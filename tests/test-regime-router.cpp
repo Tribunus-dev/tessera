@@ -1,20 +1,9 @@
 // test-regime-router
 //
-// Commit 1 baseline test for the v1 regime router
-// (ggml/src/ggml-regime-router.h). The router is a
-// static-include lookup table; the .gen.h is currently
-// EMPTY (zero entries), so the test asserts the FALLBACK
-// CONTRACT: every (family, shape_bucket) lookup must
-// return the same bool as the v1 static helpers
-// (ts_v2_dispatch_should_use_v2_outlier /
-// ts_v2_dispatch_should_use_v2_meta).
-//
-// The fallback contract is the architectural invariant:
-// when the calibration runner has not yet produced any
-// entries, the dispatch in ggml-ane.mm must behave
-// EXACTLY as it does on main without the router. The
-// router is a strict no-op until Commit 3 populates
-// the .gen.h with the gemma 4 12B tensor coverage.
+// Test for the v1 regime router (ggml/src/ggml-regime-router.h).
+// The router is a static-include lookup table; the .gen.h
+// is committed and the calibration runner regenerates it on
+// demand (make regime-router-regen).
 //
 // What the test asserts:
 //   1. Family classifier: known suffixes map to the
@@ -24,17 +13,21 @@
 //   2. Shape bucket: in_dim -> bucket boundaries
 //      (128 -> tiny, 129 -> small, 512 -> small,
 //      1024 -> medium, 4096 -> large, 8192 -> xlarge).
-//   3. Fallback contract: every (family, shape_bucket)
-//      lookup with the empty .gen.h returns the v1
-//      static helper's bool, sweep across a representative
-//      grid of n_total and n_rows/n_pages values.
-//   4. Family "other" is the deliberate fallback: even
-//      if a future entry exists for the other family,
-//      the router's "other" branch returns the v1
-//      static result without consulting the table.
-//   5. Out-of-range family / shape_bucket values are
-//      rejected and routed to the v1 static helpers
-//      (defence against bad input from a future caller).
+//   3. Fallback contract (FAM_OTHER + out-of-range): the
+//      router's OTHER family branch always falls back to
+//      the v1 static helpers, even when the table is
+//      non-empty. Out-of-range family / shape_bucket
+//      values are also rejected and routed to the v1
+//      static helpers (defence against bad input from a
+//      future caller).
+//   4. Table-driven lookup: for known (fam, bucket) pairs
+//      that have an entry, the lookup returns the table's
+//      value, NOT the v1 static result. This is the
+//      architectural point of the router: the table
+//      overrides the static threshold for known shapes.
+//   5. Gen.h invariants: the table is well-formed, all
+//      entries are in valid family + bucket ranges, no
+//      duplicates.
 
 #include "ggml.h"
 #include "ggml-common.h"
@@ -48,6 +41,131 @@
 #include <cstdio>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <string>
+#include <vector>
+
+// SHA-256 of the committed .gen.h. The determinism test
+// re-runs the calibration runner to /tmp/regime.test.gen.h
+// and asserts the bytes match (after SHA-256). The
+// committed bytes are the source of truth; the runner
+// exists to regenerate them when the model fixtures
+// change. If the runner's output diverges, the .gen.h
+// must be updated and re-committed.
+#ifndef TS_REGIME_ROUTER_RUNNER
+#define TS_REGIME_ROUTER_RUNNER ""
+#endif
+
+// Simple SHA-256. Standard, public-domain implementation
+// (Brad Conte's; widely used in test scaffolding). The
+// test doesn't need cryptographic strength, just a stable
+// 256-bit hash for byte equality.
+struct Sha256Ctx {
+    uint8_t  data[64];
+    uint32_t datalen;
+    uint64_t bitlen;
+    uint32_t state[8];
+};
+
+static const uint32_t SHA256_K[64] = {
+    0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+    0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+    0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+    0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+    0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+    0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+    0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+    0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2,
+};
+
+static inline uint32_t rotr(uint32_t x, uint32_t n) { return (x >> n) | (x << (32 - n)); }
+
+void sha256_transform(Sha256Ctx * ctx, const uint8_t data[]) {
+    uint32_t a, b, c, d, e, f, g, h, t1, t2, m[64];
+    int i, j;
+    for (i = 0, j = 0; i < 16; ++i, j += 4)
+        m[i] = (data[j] << 24) | (data[j + 1] << 16) | (data[j + 2] << 8) | (data[j + 3]);
+    for ( ; i < 64; ++i)
+        m[i] = rotr(m[i - 2], 17) ^ rotr(m[i - 2], 19) ^ (m[i - 2] >> 10);
+    a = ctx->state[0]; b = ctx->state[1]; c = ctx->state[2]; d = ctx->state[3];
+    e = ctx->state[4]; f = ctx->state[5]; g = ctx->state[6]; h = ctx->state[7];
+    for (i = 0; i < 64; ++i) {
+        t1 = h + (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) + ((e & f) ^ (~e & g)) + SHA256_K[i] + m[i];
+        t2 = (rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c));
+        h = g; g = f; f = e; e = d + t1; d = c; c = b; b = a; a = t1 + t2;
+    }
+    ctx->state[0] += a; ctx->state[1] += b; ctx->state[2] += c; ctx->state[3] += d;
+    ctx->state[4] += e; ctx->state[5] += f; ctx->state[6] += g; ctx->state[7] += h;
+}
+
+void sha256_init(Sha256Ctx * ctx) {
+    ctx->datalen = 0; ctx->bitlen = 0;
+    ctx->state[0] = 0x6a09e667; ctx->state[1] = 0xbb67ae85;
+    ctx->state[2] = 0x3c6ef372; ctx->state[3] = 0xa54ff53a;
+    ctx->state[4] = 0x510e527f; ctx->state[5] = 0x9b05688c;
+    ctx->state[6] = 0x1f83d9ab; ctx->state[7] = 0x5be0cd19;
+}
+
+void sha256_update(Sha256Ctx * ctx, const uint8_t * data, size_t len) {
+    for (size_t i = 0; i < len; ++i) {
+        ctx->data[ctx->datalen] = data[i];
+        ctx->datalen++;
+        if (ctx->datalen == 64) {
+            sha256_transform(ctx, ctx->data);
+            ctx->bitlen += 512;
+            ctx->datalen = 0;
+        }
+    }
+}
+
+void sha256_final(Sha256Ctx * ctx, uint8_t hash[32]) {
+    uint32_t i = ctx->datalen;
+    if (ctx->datalen < 56) {
+        ctx->data[i++] = 0x80;
+        while (i < 56) ctx->data[i++] = 0x00;
+    } else {
+        ctx->data[i++] = 0x80;
+        while (i < 64) ctx->data[i++] = 0x00;
+        sha256_transform(ctx, ctx->data);
+        std::memset(ctx->data, 0, 56);
+    }
+    ctx->bitlen += (uint64_t) ctx->datalen * 8;
+    ctx->data[63] = (uint8_t) (ctx->bitlen);
+    ctx->data[62] = (uint8_t) (ctx->bitlen >> 8);
+    ctx->data[61] = (uint8_t) (ctx->bitlen >> 16);
+    ctx->data[60] = (uint8_t) (ctx->bitlen >> 24);
+    ctx->data[59] = (uint8_t) (ctx->bitlen >> 32);
+    ctx->data[58] = (uint8_t) (ctx->bitlen >> 40);
+    ctx->data[57] = (uint8_t) (ctx->bitlen >> 48);
+    ctx->data[56] = (uint8_t) (ctx->bitlen >> 56);
+    sha256_transform(ctx, ctx->data);
+    for (i = 0; i < 4; ++i) {
+        hash[i]      = (ctx->state[0] >> (24 - i * 8)) & 0xff;
+        hash[i + 4]  = (ctx->state[1] >> (24 - i * 8)) & 0xff;
+        hash[i + 8]  = (ctx->state[2] >> (24 - i * 8)) & 0xff;
+        hash[i + 12] = (ctx->state[3] >> (24 - i * 8)) & 0xff;
+        hash[i + 16] = (ctx->state[4] >> (24 - i * 8)) & 0xff;
+        hash[i + 20] = (ctx->state[5] >> (24 - i * 8)) & 0xff;
+        hash[i + 24] = (ctx->state[6] >> (24 - i * 8)) & 0xff;
+        hash[i + 28] = (ctx->state[7] >> (24 - i * 8)) & 0xff;
+    }
+}
+
+std::string sha256_of_file(const std::string & path) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return std::string();
+    std::vector<uint8_t> data((std::istreambuf_iterator<char>(f)),
+                              std::istreambuf_iterator<char>());
+    Sha256Ctx ctx;
+    uint8_t hash[32];
+    sha256_init(&ctx);
+    sha256_update(&ctx, data.data(), data.size());
+    sha256_final(&ctx, hash);
+    char hex[65];
+    for (int i = 0; i < 32; i++) std::snprintf(hex + i * 2, 3, "%02x", hash[i]);
+    return std::string(hex, 64);
+}
 
 namespace {
 
@@ -127,42 +245,41 @@ int test_shape_bucket(void) {
 }
 
 int test_fallback_outlier(void) {
-    printf("fallback contract (outlier):\n");
+    printf("fallback contract (outlier, FAM_OTHER + oor):\n");
     int failures = 0;
-    // Sweep n_total and a representative (family, shape_bucket)
-    // grid. With an empty .gen.h every lookup must return
-    // ts_v2_dispatch_should_use_v2_outlier(n_total) exactly.
+    // The router's FALLBACK contract: FAM_OTHER is the
+    // deliberate fallback family. Even if a future entry
+    // exists for the other family, the router's "other"
+    // branch returns the v1 static result without
+    // consulting the table. This is the contract that
+    // makes the router a strict no-op for tensors with
+    // unrecognised suffixes (the v1 static threshold
+    // remains the safe default).
     int64_t n_total_cases[] = { 0, 51, 204, 409, 1024, 1025, 3264, 52224, 208896 };
-    int      family_cases[] = {
-        TS_REGIME_FAM_ATTN_Q, TS_REGIME_FAM_ATTN_K, TS_REGIME_FAM_ATTN_V,
-        TS_REGIME_FAM_ATTN_OUTPUT, TS_REGIME_FAM_FFN_GATE, TS_REGIME_FAM_FFN_UP,
-        TS_REGIME_FAM_FFN_DOWN, TS_REGIME_FAM_TOKEN_EMBD, TS_REGIME_FAM_OUTPUT,
-        TS_REGIME_FAM_PATCH_EMBD, TS_REGIME_FAM_POSITION_EMBD,
-        TS_REGIME_FAM_MM_UP, TS_REGIME_FAM_MM_GATE, TS_REGIME_FAM_MM_INPUT_PROJECTION,
-        TS_REGIME_FAM_OTHER,
-    };
     int      shape_cases[] = {
         TS_REGIME_SHAPE_TINY, TS_REGIME_SHAPE_SMALL, TS_REGIME_SHAPE_MEDIUM,
         TS_REGIME_SHAPE_LARGE, TS_REGIME_SHAPE_XLARGE,
     };
     for (int64_t n_total : n_total_cases) {
         const bool expected = ts_v2_dispatch_should_use_v2_outlier(n_total);
-        for (int fam : family_cases) {
-            for (int shape : shape_cases) {
-                const bool got = ts_regime_router_lookup_outlier(fam, shape, n_total);
-                if (got != expected) {
-                    failures++;
-                    printf("  FAIL n_total=%-7lld fam=%-18s shape=%-7s got=%s expected=%s\n",
-                           (long long) n_total, ts_regime_family_label(fam),
-                           ts_regime_shape_label(shape),
-                           got ? "v2" : "C ref",
-                           expected ? "v2" : "C ref");
-                }
+        for (int shape : shape_cases) {
+            const bool got = ts_regime_router_lookup_outlier(
+                TS_REGIME_FAM_OTHER, shape, n_total);
+            if (got != expected) {
+                failures++;
+                printf("  FAIL n_total=%-7lld fam=other            shape=%-7s got=%s expected=%s\n",
+                       (long long) n_total, ts_regime_shape_label(shape),
+                       got ? "v2" : "C ref",
+                       expected ? "v2" : "C ref");
             }
         }
     }
     // Out-of-range family / shape must also fall back to v1
-    // static (defence against bad input).
+    // static (defence against bad input from a future
+    // caller; the dispatch's call site feeds the family
+    // and shape derived from the tensor name, so a bug in
+    // ts_regime_infer_family / ts_regime_shape_bucket_*
+    // could feed garbage).
     for (int64_t n_total : n_total_cases) {
         const bool expected = ts_v2_dispatch_should_use_v2_outlier(n_total);
         const bool got_bad_fam  = ts_regime_router_lookup_outlier(-1,  TS_REGIME_SHAPE_MEDIUM, n_total);
@@ -170,21 +287,18 @@ int test_fallback_outlier(void) {
         if (got_bad_fam != expected) failures++;
         if (got_bad_shp != expected) failures++;
     }
-    printf("  swept %d n_total values x %d family x %d shape + 2 oor cases; failures=%d\n",
+    printf("  swept %d n_total values x 5 shape (FAM_OTHER) + 2 oor cases; failures=%d\n",
            (int)(sizeof(n_total_cases) / sizeof(n_total_cases[0])),
-           (int)(sizeof(family_cases) / sizeof(family_cases[0])),
-           (int)(sizeof(shape_cases) / sizeof(shape_cases[0])),
            failures);
     return failures;
 }
 
 int test_fallback_meta(void) {
-    printf("fallback contract (meta):\n");
+    printf("fallback contract (meta, FAM_OTHER):\n");
     int failures = 0;
-    // Sweep (n_rows, n_pages) combinations that span the v1
-    // static threshold at n_total_pages = 4096. With the
-    // empty .gen.h every lookup must return the v1 static
-    // helper's bool exactly.
+    // Same contract for the meta lookup. The FAM_OTHER
+    // branch returns the v1 static result, regardless of
+    // the (family, bucket) grid.
     struct { int64_t n_rows; int64_t n_pages; } cases[] = {
         {  1,   1 }, {  1,  16 }, {  1,  64 },
         { 16,  16 }, { 16,  64 }, { 64,  16 },
@@ -192,35 +306,78 @@ int test_fallback_meta(void) {
         {256,  64 }, {1024, 16 }, {1024, 64 },
         {  0,  16 },
     };
-    int      family_cases[] = {
-        TS_REGIME_FAM_ATTN_Q, TS_REGIME_FAM_FFN_GATE, TS_REGIME_FAM_FFN_DOWN,
-        TS_REGIME_FAM_OTHER,
-    };
     int      shape_cases[] = {
         TS_REGIME_SHAPE_TINY, TS_REGIME_SHAPE_SMALL, TS_REGIME_SHAPE_MEDIUM,
         TS_REGIME_SHAPE_LARGE, TS_REGIME_SHAPE_XLARGE,
     };
     for (const auto & c : cases) {
         const bool expected = ts_v2_dispatch_should_use_v2_meta(c.n_rows, c.n_pages);
-        for (int fam : family_cases) {
-            for (int shape : shape_cases) {
-                const bool got = ts_regime_router_lookup_meta(fam, shape, c.n_rows, c.n_pages);
-                if (got != expected) {
-                    failures++;
-                    printf("  FAIL n_rows=%-4lld n_pages=%-3lld fam=%-18s shape=%-7s got=%s expected=%s\n",
-                           (long long) c.n_rows, (long long) c.n_pages,
-                           ts_regime_family_label(fam), ts_regime_shape_label(shape),
-                           got ? "v2" : "C ref",
-                           expected ? "v2" : "C ref");
-                }
+        for (int shape : shape_cases) {
+            const bool got = ts_regime_router_lookup_meta(
+                TS_REGIME_FAM_OTHER, shape, c.n_rows, c.n_pages);
+            if (got != expected) {
+                failures++;
+                printf("  FAIL n_rows=%-4lld n_pages=%-3lld fam=other            shape=%-7s got=%s expected=%s\n",
+                       (long long) c.n_rows, (long long) c.n_pages,
+                       ts_regime_shape_label(shape),
+                       got ? "v2" : "C ref",
+                       expected ? "v2" : "C ref");
             }
         }
     }
-    printf("  swept %d (n_rows, n_pages) x %d family x %d shape; failures=%d\n",
+    printf("  swept %d (n_rows, n_pages) x 5 shape (FAM_OTHER); failures=%d\n",
            (int)(sizeof(cases) / sizeof(cases[0])),
-           (int)(sizeof(family_cases) / sizeof(family_cases[0])),
-           (int)(sizeof(shape_cases) / sizeof(shape_cases[0])),
            failures);
+    return failures;
+}
+
+int test_table_lookup(void) {
+    printf("table-driven lookup (known fam, bucket):\n");
+    int failures = 0;
+    // For each entry in the .gen.h, assert the lookup
+    // returns the table's value (not the v1 static
+    // result). This is the architectural point of the
+    // router: the table overrides the static threshold
+    // for known (family, shape_bucket) pairs.
+    for (int i = 0; i < kRegimePolicyCount; i++) {
+        const int fam = kRegimePolicy[i].family;
+        const int shape = kRegimePolicy[i].shape_bucket;
+        // Use a representative n_total and (n_rows,
+        // n_pages) for the v1 static comparison. The
+        // v1 static is shape-independent, so any
+        // (n_total, n_rows, n_pages) gives the same
+        // static result; the values below are at the
+        // boundary of the static threshold (n_total=512,
+        // n_total_pages=2048) so the static gives a
+        // mix of true/false and the table's value is
+        // observable as an override.
+        const int64_t n_total = 512;
+        const int64_t n_rows  = 256;
+        const int64_t n_pages = 8;
+        const bool expected_outlier =
+            kRegimePolicy[i].use_v2_outlier;
+        const bool expected_meta =
+            kRegimePolicy[i].use_v2_meta;
+        const bool got_outlier =
+            ts_regime_router_lookup_outlier(fam, shape, n_total);
+        const bool got_meta =
+            ts_regime_router_lookup_meta(fam, shape, n_rows, n_pages);
+        if (got_outlier != expected_outlier) {
+            failures++;
+            printf("  FAIL [%d] fam=%-18s shape=%-7s outlier got=%s expected=%s\n",
+                   i, ts_regime_family_label(fam), ts_regime_shape_label(shape),
+                   got_outlier ? "v2" : "C ref",
+                   expected_outlier ? "v2" : "C ref");
+        }
+        if (got_meta != expected_meta) {
+            failures++;
+            printf("  FAIL [%d] fam=%-18s shape=%-7s meta    got=%s expected=%s\n",
+                   i, ts_regime_family_label(fam), ts_regime_shape_label(shape),
+                   got_meta ? "v2" : "C ref",
+                   expected_meta ? "v2" : "C ref");
+        }
+    }
+    printf("  %d entries checked; failures=%d\n", kRegimePolicyCount, failures);
     return failures;
 }
 
@@ -235,8 +392,94 @@ int test_gen_h_invariants(void) {
         printf("  FAIL kRegimePolicy is null but count=%d\n", kRegimePolicyCount);
         failures++;
     }
-    printf("  kRegimePolicyCount=%d (Commit 1 baseline: must be 0)\n", kRegimePolicyCount);
+    // All entries must have valid family + bucket values.
+    // No duplicates (the runner emits one entry per
+    // (fam, bucket); the test catches future runner bugs
+    // that would emit duplicates).
+    bool seen[TS_REGIME_FAM_COUNT][TS_REGIME_SHAPE_COUNT] = {};
+    for (int i = 0; i < kRegimePolicyCount; i++) {
+        const int fam   = kRegimePolicy[i].family;
+        const int shape = kRegimePolicy[i].shape_bucket;
+        if (fam   < 0 || fam   >= TS_REGIME_FAM_COUNT) {
+            printf("  FAIL [%d] family=%d out of range\n", i, fam);
+            failures++;
+        }
+        if (shape < 0 || shape >= TS_REGIME_SHAPE_COUNT) {
+            printf("  FAIL [%d] shape=%d out of range\n", i, shape);
+            failures++;
+        }
+        if (fam == TS_REGIME_FAM_OTHER) {
+            // The OTHER family is a fallback; the
+            // runner must NEVER emit an entry for it
+            // (the lookup explicitly routes OTHER to
+            // v1 static without consulting the table).
+            printf("  FAIL [%d] entry for FAM_OTHER (must not exist)\n", i);
+            failures++;
+        }
+        if (fam >= 0 && fam < TS_REGIME_FAM_COUNT &&
+            shape >= 0 && shape < TS_REGIME_SHAPE_COUNT) {
+            if (seen[fam][shape]) {
+                printf("  FAIL [%d] duplicate (fam=%d, shape=%d)\n", i, fam, shape);
+                failures++;
+            }
+            seen[fam][shape] = true;
+        }
+    }
+    printf("  kRegimePolicyCount=%d, no duplicates, no FAM_OTHER entries; failures=%d\n",
+           kRegimePolicyCount, failures);
     return failures;
+}
+
+int test_determinism(void) {
+    printf("determinism (runner SHA-256 stable):\n");
+    if (TS_REGIME_ROUTER_RUNNER[0] == '\0') {
+        printf("  SKIP (calibrate_regime_router not built)\n");
+        return 0;
+    }
+    // The runner's bytes must be stable across runs
+    // (the .gen.h is committed; the runner is the
+    // regeneration path; if the runner's output
+    // diverges, the .gen.h must be updated and
+    // re-committed). We re-run the runner to a temp
+    // file and assert the SHA matches the committed
+    // .gen.h. The committed .gen.h is the source of
+    // truth.
+    //
+    // The .gen.h is regenerated by the runner, so we
+    // copy the committed .gen.h to a temp file, hash
+    // it, run the runner, hash the runner's output,
+    // and assert equality. This catches any divergence
+    // between the committed bytes and the runner's
+    // output (e.g. due to a runner bug, a non-pinned
+    // seed, or a header comment change).
+    const char * gen_h_path = "ggml/src/ggml-regime-router.gen.h";
+    std::string sha_committed = sha256_of_file(gen_h_path);
+    if (sha_committed.empty()) {
+        printf("  FAIL could not read %s (run from repo root)\n", gen_h_path);
+        return 1;
+    }
+    // Re-run the runner.
+    const std::string tmp_out = "/tmp/regime.test.gen.h";
+    std::string cmd = std::string(TS_REGIME_ROUTER_RUNNER) +
+                      " --out " + tmp_out +
+                      " --shape gemma4-12b-trunk > /tmp/regime.test.out 2>&1";
+    const int rc = std::system(cmd.c_str());
+    if (rc != 0) {
+        printf("  FAIL runner exited %d\n", rc);
+        return 1;
+    }
+    std::string sha_runner = sha256_of_file(tmp_out);
+    if (sha_runner.empty()) {
+        printf("  FAIL could not read runner output %s\n", tmp_out.c_str());
+        return 1;
+    }
+    const bool ok = (sha_committed == sha_runner);
+    printf("  committed SHA: %s\n", sha_committed.c_str());
+    printf("  runner SHA:    %s\n", sha_runner.c_str());
+    printf("  %s\n", ok ? "OK (runner output is bit-identical to committed .gen.h)" : "FAIL");
+    std::remove(tmp_out.c_str());
+    std::remove("/tmp/regime.test.out");
+    return ok ? 0 : 1;
 }
 
 }  // namespace
@@ -251,7 +494,9 @@ int main(void) {
     rc |= test_shape_bucket();
     rc |= test_fallback_outlier();
     rc |= test_fallback_meta();
+    rc |= test_table_lookup();
     rc |= test_gen_h_invariants();
+    rc |= test_determinism();
     if (rc == 0) printf("OK\n");
     return rc;
 }
