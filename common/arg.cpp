@@ -958,7 +958,13 @@ static bool common_params_parse_ex(int argc, char ** argv, common_params_context
             || tessera_active_sc == TESSERA_SC_DATASET
             || tessera_active_sc == TESSERA_SC_DPACE
             || tessera_active_sc == TESSERA_SC_L2
-            || tessera_active_sc == TESSERA_SC_UNIFIED_WRITER;
+            || tessera_active_sc == TESSERA_SC_UNIFIED_WRITER
+            // The legacy quantize path (no subcommand) takes the input
+            // model from the positional argv, not --model. Guarded on the
+            // tessera example: tessera_active_sc defaults to NONE for
+            // every binary, so an unguarded check would drop the model
+            // requirement for llama-cli and friends.
+            || (ctx_arg.ex == LLAMA_EXAMPLE_TESSERA && tessera_active_sc == TESSERA_SC_NONE);
         if (!can_skip_model && params.model.path.empty()) {
             throw std::invalid_argument("error: --model is required\n");
         }
