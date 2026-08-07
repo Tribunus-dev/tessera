@@ -78,20 +78,25 @@ void ts_gguf_write_tensor_cluster(struct gguf_context * ctx,
 
     struct ggml_tensor * t;
 
-    // weight_packed: i32 [out_dim, pages_per_row * 32]
-    t = ggml_new_tensor_2d(gctx, GGML_TYPE_I32, packed_cols, out_dim);
+    // The cluster members are stored FLAT (1D): ggml_tile640_matmul derives
+    // out_dim from page_scales->ne[0] / pages_per_row and asserts
+    // packed->ne[0] == out_dim * pages_per_row * 32, and the loader-side
+    // create_tensor_or_tile640 declares the same 1D shapes.
+
+    // weight_packed: i32 [out_dim * pages_per_row * 32]
+    t = ggml_new_tensor_1d(gctx, GGML_TYPE_I32, out_dim * packed_cols);
     ggml_format_name(t, "%s.weight_packed", base);
     t->data = (void *)res->packed.data();
     gguf_add_tensor(ctx, t);
 
-    // weight_page_scales: f16 [out_dim, pages_per_row]
-    t = ggml_new_tensor_2d(gctx, GGML_TYPE_F16, pages_per_row, out_dim);
+    // weight_page_scales: f16 [out_dim * pages_per_row]
+    t = ggml_new_tensor_1d(gctx, GGML_TYPE_F16, out_dim * pages_per_row);
     ggml_format_name(t, "%s.weight_page_scales", base);
     t->data = (void *)res->page_scales.data();
     gguf_add_tensor(ctx, t);
 
-    // weight_lane_scales: i8 [out_dim, pages_per_row * 32]
-    t = ggml_new_tensor_2d(gctx, GGML_TYPE_I8, lane_cols, out_dim);
+    // weight_lane_scales: i8 [out_dim * pages_per_row * 32]
+    t = ggml_new_tensor_1d(gctx, GGML_TYPE_I8, out_dim * lane_cols);
     ggml_format_name(t, "%s.weight_lane_scales", base);
     t->data = (void *)res->lane_scales.data();
     gguf_add_tensor(ctx, t);

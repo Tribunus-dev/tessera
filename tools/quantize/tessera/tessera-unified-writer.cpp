@@ -578,10 +578,12 @@ bool copy_tile640_cluster(
     // real size).
     // Capacity 7: the six static members plus the optional
     // weight_act_scale appended below when the source carries it.
+    // Cluster members are flat 1D (the ggml_tile640 ops derive out_dim from
+    // page_scales->ne[0] / pages_per_row); the source's ne[] is authoritative.
     cluster_member_def members[7] = {
-        { "weight_packed",              GGML_TYPE_I32, 2, { pages * TS_WORDS_PER_PAGE, out_dim, 1, 1 } },
-        { "weight_page_scales",         GGML_TYPE_F16, 2, { pages,                    out_dim, 1, 1 } },
-        { "weight_lane_scales",         GGML_TYPE_I8,  2, { pages * TS_WORDS_PER_PAGE, out_dim, 1, 1 } },
+        { "weight_packed",              GGML_TYPE_I32, 1, { out_dim * pages * TS_WORDS_PER_PAGE, 1, 1, 1 } },
+        { "weight_page_scales",         GGML_TYPE_F16, 1, { out_dim * pages,                     1, 1, 1 } },
+        { "weight_lane_scales",         GGML_TYPE_I8,  1, { out_dim * pages * TS_WORDS_PER_PAGE, 1, 1, 1 } },
         { "weight_outlier_row_offsets", GGML_TYPE_I32, 1, { out_dim + 1,                1, 1, 1 } },
         { "weight_outlier_cols",        GGML_TYPE_I32, 1, { 0,                          0, 0, 0 } }, // size from source
         { "weight_outlier_vals",        GGML_TYPE_F16, 1, { 0,                          0, 0, 0 } }, // size from source
