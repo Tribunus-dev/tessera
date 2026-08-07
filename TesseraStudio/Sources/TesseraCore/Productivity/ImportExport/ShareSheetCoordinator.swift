@@ -206,11 +206,12 @@ public enum SlackMrkdwnFormatter {
         var out = markdown
         // 1) links: [text](url) -> <url|text>
         out = _linkReplacing(in: out)
-        // 2) bold: **text** -> *text*
-        out = _boldReplacing(in: out)
-        // 3) italic: *text* -> _text_  (but only the single-asterisk
-        //    form; double-asterisks are already converted)
+        // 2) italic: *text* -> _text_  (run BEFORE bold so the
+        //    bold step's `*text*` output doesn't get re-matched
+        //    as italic)
         out = _italicReplacing(in: out)
+        // 3) bold: **text** -> *text*
+        out = _boldReplacing(in: out)
         // 4) strikethrough: ~~text~~ -> ~text~
         out = _strikeReplacing(in: out)
         // 5) headings: # ... ###### -> *...*

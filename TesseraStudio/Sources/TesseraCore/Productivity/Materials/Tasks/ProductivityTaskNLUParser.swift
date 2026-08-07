@@ -94,7 +94,7 @@ public struct ProductivityTaskNLUParser: Sendable {
 
     /// Contact lookup. The parser passes the candidate
     /// noun through here to find a matching `Contact.id`.
-    public let contacts: ContactsAdapter?
+    public let contacts: TaskContactsAdapter?
 
     /// Document lookup. The parser passes the candidate
     /// noun through here to find a matching document's id.
@@ -105,7 +105,7 @@ public struct ProductivityTaskNLUParser: Sendable {
     public var now: () -> Date
 
     public init(
-        contacts: ContactsAdapter? = nil,
+        contacts: TaskContactsAdapter? = nil,
         documents: DocumentStoreNLU? = nil,
         now: @escaping () -> Date = { Date() }
     ) {
@@ -662,7 +662,7 @@ public struct ProductivityTaskNLUParser: Sendable {
 /// display name (case-insensitive). The adapter is
 /// responsible for resolving the multi-word problem (e.g.,
 /// the contact "John Doe" should match the candidate "John").
-public protocol ContactsAdapter: Sendable {
+public protocol TaskContactsAdapter: Sendable {
     func find(matchingAny candidates: [String]) -> Contact?
 }
 
@@ -688,6 +688,6 @@ public protocol DocumentStoreNLU: Sendable {
     /// Returns a document stub when any of the candidate
     /// words appears in the document's title
     /// (case-insensitive). Same matching model as
-    /// ``ContactsAdapter``.
+    /// ``TaskContactsAdapter``.
     func findStub(matchingAny candidates: [String]) -> DocumentStub?
 }

@@ -8,7 +8,7 @@ import Foundation
 /// use ``StaticContactsAdapter``. Sync on purpose: the
 /// parser is a pure rule engine and must stay testable
 /// without async plumbing.
-public protocol ContactsAdapter: Sendable {
+public protocol CalendarContactsAdapter: Sendable {
     /// Contacts whose display name or first name matches
     /// `name` (case-insensitive prefix or substring).
     func contacts(matching name: String) -> [Contact]
@@ -50,7 +50,7 @@ public protocol LocationResolver: Sendable {
 
 /// In-memory contacts adapter for tests and for the
 /// snapshot the view model preloads.
-public struct StaticContactsAdapter: ContactsAdapter {
+public struct StaticContactsAdapter: CalendarContactsAdapter {
     public var contacts: [Contact]
 
     public init(contacts: [Contact] = []) {
@@ -175,7 +175,7 @@ public struct ParsedEvent: Codable, Sendable, Equatable {
 ///     (Foundation). The detector handles "tomorrow",
 ///     "next monday", "2pm-4pm", "noon", "jan 1 3pm".
 ///  3. **Attendees** come from the "with <names>" span,
-///     resolved against the ``ContactsAdapter``.
+///     resolved against the ``CalendarContactsAdapter``.
 ///  4. **Location** comes from the trailing "in / at / @
 ///     <place>" span, geocoded against the
 ///     ``LocationResolver`` cache.
@@ -214,7 +214,7 @@ public struct CalendarNLUParser: Sendable {
         }
     }
 
-    private let contacts: ContactsAdapter
+    private let contacts: CalendarContactsAdapter
     private let documents: DocumentResolver
     private let locations: LocationResolver
     private let defaults: Defaults
@@ -224,7 +224,7 @@ public struct CalendarNLUParser: Sendable {
     private let referenceDate: Date
 
     public init(
-        contacts: ContactsAdapter,
+        contacts: CalendarContactsAdapter,
         documents: DocumentResolver,
         locations: LocationResolver,
         defaults: Defaults = Defaults(),

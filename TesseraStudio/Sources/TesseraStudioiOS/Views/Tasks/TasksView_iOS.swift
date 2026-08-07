@@ -16,7 +16,7 @@ public struct TasksView_iOS: View {
     public init(
         store: ProductivityTaskStore,
         userID: UserID = UUID(),
-        contacts: ContactsAdapter? = nil,
+        contacts: TaskContactsAdapter? = nil,
         documents: DocumentStoreNLU? = nil
     ) {
         self.store = store
@@ -27,7 +27,7 @@ public struct TasksView_iOS: View {
 
     private let store: ProductivityTaskStore
     private let userID: UserID
-    private let contacts: ContactsAdapter?
+    private let contacts: TaskContactsAdapter?
     private let documents: DocumentStoreNLU?
 
     @State private var allTasks: [ProductivityTask] = []
@@ -229,7 +229,7 @@ private struct TaskRow_iOS: View {
 private struct TaskInputSheet: View {
     let store: ProductivityTaskStore
     let userID: UserID
-    let contacts: ContactsAdapter?
+    let contacts: TaskContactsAdapter?
     let documents: DocumentStoreNLU?
     let onAdded: () -> Void
 
