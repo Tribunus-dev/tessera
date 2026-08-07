@@ -313,13 +313,33 @@ int main(int argc, char ** argv) {
 
     // ---- MUL_MAT suite ----------------------------------------------------
     // k must be multiple of QK_K=256
+    // Covers three Metal dispatch paths for TQ2_0:
+    //   n==1         -> kernel_mul_mv_tq2_0_f32
+    //   2<=n<=8      -> kernel_mul_mv_ext_tq2_0_f32
+    //   n>8          -> kernel_mul_mm_tq2_0_f32
     const struct { int m,n,k; int bs0,bs1; } mul_cases[] = {
         {32, 32, 256, 1,1},
         {64, 32, 512, 1,1},
-        {128, 1, 256, 1,1},   // vec-like
         {32, 32, 256, 2,2},   // batched
         {16, 16, 1024, 1,1},
         {8,  32, 256, 1,1},
+        // vec (n=1) — single-token decode, kernel_mul_mv_tq2_0_f32
+        {128, 1, 256, 1,1},
+        {1,   1, 256, 1,1},   // single row (tail)
+        {7,   1, 256, 1,1},   // not divisible by N_R0=8
+        {8,   1, 256, 1,1},   // exactly N_R0
+        {9,   1, 256, 1,1},   // N_R0+1 (tail)
+        {15,  1, 512, 1,1},   // 2*N_R0-1
+        {16,  1, 512, 1,1},   // 2*N_R0
+        {31,  1, 256, 1,1},   // small prime-ish
+        {64,  1, 1024,1,1},   // larger K
+        {128, 1, 1024,1,1},
+        {256, 1, 2048,1,1},   // LLM hidden-ish
+        // small-batch (2<=n<=8) — kernel_mul_mv_ext_tq2_0_f32
+        {32,  2, 256, 1,1},
+        {32,  4, 256, 1,1},
+        {32,  8, 256, 1,1},
+        {64,  5, 512, 1,1},
     };
     for (auto c : mul_cases) {
         ggml_init_params p = { ggml_tensor_overhead()*128 + ggml_graph_overhead(), nullptr, true };
