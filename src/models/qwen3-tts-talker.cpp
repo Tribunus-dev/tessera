@@ -27,6 +27,47 @@
 
 #include <cmath>
 
+// Tile640 graph helpers (same shape as gemma4.cpp / qwen35.cpp): the T640
+// artifact stores every 2D weight as a six-part cluster, which the loader
+// registers in model.tile640_tensors; the graph consumes them through
+// dequant / get_rows / matmul ops instead of the plain tensors.
+
+static ggml_tensor * talker_tile640_dequant(
+        ggml_context * ctx,
+        const llama_tile640_tensor * tensor) {
+    GGML_ASSERT(tensor && tensor->valid());
+    return ggml_tile640_dequant(
+        ctx, tensor->packed, tensor->page_scales, tensor->lane_scales,
+        tensor->outlier_row_offsets, tensor->outlier_cols, tensor->outlier_vals,
+        tensor->ne[0], tensor->ne[1], tensor->ne[2], tensor->ne[3]);
+}
+
+static ggml_tensor * talker_tile640_get_rows(
+        ggml_context * ctx,
+        const llama_tile640_tensor * tensor,
+        ggml_tensor * ids) {
+    GGML_ASSERT(tensor && tensor->valid());
+    return ggml_tile640_get_rows(
+        ctx, tensor->packed, tensor->page_scales, tensor->lane_scales,
+        tensor->outlier_row_offsets, tensor->outlier_cols, tensor->outlier_vals,
+        ids, (int32_t) tensor->ne[0]);
+}
+
+ggml_tensor * llama_model_qwen3tts_talker::graph::tile640_mul_mat(
+        const llama_tile640_tensor * tensor,
+        ggml_tensor * input) const {
+    GGML_ASSERT(tensor && tensor->valid());
+    return build_tile640_lora_mm(
+        tensor->packed,
+        tensor->page_scales,
+        tensor->lane_scales,
+        tensor->outlier_row_offsets,
+        tensor->outlier_cols,
+        tensor->outlier_vals,
+        tensor->act_scale,
+        input);
+}
+
 void llama_model_qwen3tts_talker::load_arch_hparams(llama_model_loader & ml) {
     type = LLM_TYPE_UNKNOWN;
 
@@ -115,18 +156,25 @@ void llama_model_qwen3tts_talker::load_arch_tensors(llama_model_loader & ml) {
     GGML_UNUSED(n_embd_v_gqa);
     GGML_UNUSED(n_embd_gqa);
 
+    // helper: does this logical weight exist as a Tile640 cluster
+    // (<name>_packed)? The T640 artifact stores every 2D weight as the
+    // six-part cluster and keeps 1D norms/biases plain.
+    auto has_tile640 = [&](const std::string & weight_name) {
+        return ml.get_tensor_meta((weight_name + "_packed").c_str()) != nullptr;
+    };
+
     // ---- text-side embeddings + final norm ----
 
     // the text token embedding (151,936 entries in the W2 GGUF) is the
     // standard tok_embd; the standard output (lm_head) is NOT used by
     // the talker (the codec_head replaces it for codebook-0 prediction)
-    tok_embd     = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
-    output_norm  = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
+    tok_embd     = create_tensor_or_tile640(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
+    output_norm  = create_tensor_or_tile640(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
 
     // ---- codec-side embeddings + codebook-0 head (separate from text) ----
 
-    codec_embd   = create_tensor(tn(LLM_TENSOR_TTS_CODEC_EMBD, "weight"), {n_embd, n_codec_vocab}, 0);
-    codec_head   = create_tensor(tn(LLM_TENSOR_TTS_CODEC_HEAD, "weight"), {n_embd, n_codec_vocab}, 0);
+    codec_embd   = create_tensor_or_tile640(tn(LLM_TENSOR_TTS_CODEC_EMBD, "weight"), {n_embd, n_codec_vocab}, 0);
+    codec_head   = create_tensor_or_tile640(tn(LLM_TENSOR_TTS_CODEC_HEAD, "weight"), {n_embd, n_codec_vocab}, 0);
 
     // text projection MLP: a 2-layer SiLU gated MLP that lifts the
     // backbone hidden through a non-linearity before the codec
@@ -134,13 +182,15 @@ void llama_model_qwen3tts_talker::load_arch_tensors(llama_model_loader & ml) {
     {
         const std::string name = tn(LLM_TENSOR_TTS_TEXT_PROJ_1, "weight");
         const struct ggml_tensor * meta = ml.get_tensor_meta(name.c_str());
-        GGML_ASSERT(meta != nullptr && "missing text_proj_1");
-        GGML_ASSERT(meta->ne[0] == (int64_t) n_embd);
-        GGML_ASSERT(meta->ne[1] == (int64_t) n_embd);
+        GGML_ASSERT((meta != nullptr || has_tile640(name)) && "missing text_proj_1");
+        if (meta) {
+            GGML_ASSERT(meta->ne[0] == (int64_t) n_embd);
+            GGML_ASSERT(meta->ne[1] == (int64_t) n_embd);
+        }
     }
-    text_proj_1   = create_tensor(tn(LLM_TENSOR_TTS_TEXT_PROJ_1, "weight"), {n_embd, n_embd}, 0);
+    text_proj_1   = create_tensor_or_tile640(tn(LLM_TENSOR_TTS_TEXT_PROJ_1, "weight"), {n_embd, n_embd}, 0);
     text_proj_1_b = create_tensor(tn(LLM_TENSOR_TTS_TEXT_PROJ_1, "bias"),   {n_embd},       0);
-    text_proj_2   = create_tensor(tn(LLM_TENSOR_TTS_TEXT_PROJ_2, "weight"), {n_embd, n_embd}, 0);
+    text_proj_2   = create_tensor_or_tile640(tn(LLM_TENSOR_TTS_TEXT_PROJ_2, "weight"), {n_embd, n_embd}, 0);
     text_proj_2_b = create_tensor(tn(LLM_TENSOR_TTS_TEXT_PROJ_2, "bias"),   {n_embd},       0);
 
     // ---- backbone: blk.0..27 (28 standard Qwen3-style layers) ----
@@ -148,18 +198,20 @@ void llama_model_qwen3tts_talker::load_arch_tensors(llama_model_loader & ml) {
     for (int i = 0; i < n_layer; ++i) {
         auto & layer = layers[i];
 
-        layer.attn_norm = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0);
+        layer.attn_norm = create_tensor_or_tile640(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0);
 
-        create_tensor_qkv(layer, i, n_embd, n_embd_head_k*n_head, n_embd_gqa, n_embd_gqa, 0);
-        layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd_head_k*n_head, n_embd}, 0);
+        layer.wq = create_tensor_or_tile640(tn(LLM_TENSOR_ATTN_Q, "weight", i), {n_embd, n_embd_head_k*n_head}, 0);
+        layer.wk = create_tensor_or_tile640(tn(LLM_TENSOR_ATTN_K, "weight", i), {n_embd, n_embd_gqa}, 0);
+        layer.wv = create_tensor_or_tile640(tn(LLM_TENSOR_ATTN_V, "weight", i), {n_embd, n_embd_gqa}, 0);
+        layer.wo = create_tensor_or_tile640(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd_head_k*n_head, n_embd}, 0);
 
-        layer.attn_k_norm = create_tensor(tn(LLM_TENSOR_ATTN_K_NORM, "weight", i), {n_embd_head_k}, 0);
-        layer.attn_q_norm = create_tensor(tn(LLM_TENSOR_ATTN_Q_NORM, "weight", i), {n_embd_head_k}, 0);
+        layer.attn_k_norm = create_tensor_or_tile640(tn(LLM_TENSOR_ATTN_K_NORM, "weight", i), {n_embd_head_k}, 0);
+        layer.attn_q_norm = create_tensor_or_tile640(tn(LLM_TENSOR_ATTN_Q_NORM, "weight", i), {n_embd_head_k}, 0);
 
-        layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
-        layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd, n_ff}, 0);
-        layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
-        layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd, n_ff}, 0);
+        layer.ffn_norm = create_tensor_or_tile640(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
+        layer.ffn_gate = create_tensor_or_tile640(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd, n_ff}, 0);
+        layer.ffn_down = create_tensor_or_tile640(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
+        layer.ffn_up   = create_tensor_or_tile640(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd, n_ff}, 0);
     }
 
     // ---- code predictor bridge (backbone hidden 2048 -> cp 1024) ----
@@ -168,14 +220,16 @@ void llama_model_qwen3tts_talker::load_arch_tensors(llama_model_loader & ml) {
         {
             const std::string name = tn(LLM_TENSOR_TTS_CP_PROJ, "weight");
             const struct ggml_tensor * meta = ml.get_tensor_meta(name.c_str());
-            GGML_ASSERT(meta != nullptr && "missing cp_proj");
-            // ggml ne is reversed vs torch: weight [n_cp_embd, n_embd] -> ne [n_embd, n_cp_embd]
-            GGML_ASSERT(meta->ne[0] == (int64_t) n_embd);
-            GGML_ASSERT(meta->ne[1] == (int64_t) n_cp_embd);
+            GGML_ASSERT((meta != nullptr || has_tile640(name)) && "missing cp_proj");
+            if (meta) {
+                // ggml ne is reversed vs torch: weight [n_cp_embd, n_embd] -> ne [n_embd, n_cp_embd]
+                GGML_ASSERT(meta->ne[0] == (int64_t) n_embd);
+                GGML_ASSERT(meta->ne[1] == (int64_t) n_cp_embd);
+            }
         }
-        cp_proj   = create_tensor(tn(LLM_TENSOR_TTS_CP_PROJ, "weight"), {n_embd, n_cp_embd}, 0);
+        cp_proj   = create_tensor_or_tile640(tn(LLM_TENSOR_TTS_CP_PROJ, "weight"), {n_embd, n_cp_embd}, 0);
         cp_proj_b = create_tensor(tn(LLM_TENSOR_TTS_CP_PROJ, "bias"),   {n_cp_embd},         0);
-        cp_norm   = create_tensor(tn(LLM_TENSOR_TTS_CP_NORM, "weight"), {n_cp_embd},         0);
+        cp_norm   = create_tensor_or_tile640(tn(LLM_TENSOR_TTS_CP_NORM, "weight"), {n_cp_embd},         0);
 
         // ---- code predictor block: blk.{block_count + 0..n_pred_layers - 1} ----
         //
@@ -201,7 +255,7 @@ void llama_model_qwen3tts_talker::load_arch_tensors(llama_model_loader & ml) {
             GGML_ASSERT((size_t) cp_bid < layers.size());
             auto & layer = layers[cp_bid];
 
-            layer.attn_norm = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", cp_bid), {n_cp_embd}, 0);
+            layer.attn_norm = create_tensor_or_tile640(tn(LLM_TENSOR_ATTN_NORM, "weight", cp_bid), {n_cp_embd}, 0);
 
             // CP Q/K/V: same shape pattern as a standard Qwen3 block at
             // n_cp_embd/n_cp_head/n_cp_head_kv. The W2 verify confirms
@@ -212,18 +266,18 @@ void llama_model_qwen3tts_talker::load_arch_tensors(llama_model_loader & ml) {
             // through a single forward pass with a single cp position; the
             // exact cross-graph MTP pattern (Q from backbone hidden, output
             // to backbone hidden) is the Wave-8 golden-parity decision.
-            layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q, "weight", cp_bid), {n_cp_embd, n_cp_embd_attn},   0);
-            layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K, "weight", cp_bid), {n_cp_embd, n_cp_embd_kv_gqa}, 0);
-            layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V, "weight", cp_bid), {n_cp_embd, n_cp_embd_kv_gqa}, 0);
-            layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", cp_bid), {n_cp_embd_attn, n_cp_embd},   0);
+            layer.wq = create_tensor_or_tile640(tn(LLM_TENSOR_ATTN_Q, "weight", cp_bid), {n_cp_embd, n_cp_embd_attn},   0);
+            layer.wk = create_tensor_or_tile640(tn(LLM_TENSOR_ATTN_K, "weight", cp_bid), {n_cp_embd, n_cp_embd_kv_gqa}, 0);
+            layer.wv = create_tensor_or_tile640(tn(LLM_TENSOR_ATTN_V, "weight", cp_bid), {n_cp_embd, n_cp_embd_kv_gqa}, 0);
+            layer.wo = create_tensor_or_tile640(tn(LLM_TENSOR_ATTN_OUT, "weight", cp_bid), {n_cp_embd_attn, n_cp_embd},   0);
 
-            layer.attn_k_norm = create_tensor(tn(LLM_TENSOR_ATTN_K_NORM, "weight", cp_bid), {n_cp_embd_head}, 0);
-            layer.attn_q_norm = create_tensor(tn(LLM_TENSOR_ATTN_Q_NORM, "weight", cp_bid), {n_cp_embd_head}, 0);
+            layer.attn_k_norm = create_tensor_or_tile640(tn(LLM_TENSOR_ATTN_K_NORM, "weight", cp_bid), {n_cp_embd_head}, 0);
+            layer.attn_q_norm = create_tensor_or_tile640(tn(LLM_TENSOR_ATTN_Q_NORM, "weight", cp_bid), {n_cp_embd_head}, 0);
 
-            layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", cp_bid), {n_cp_embd},    0);
-            layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", cp_bid), {n_cp_embd, n_cp_ff}, 0);
-            layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", cp_bid), {  n_cp_ff, n_cp_embd}, 0);
-            layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", cp_bid), {n_cp_embd, n_cp_ff}, 0);
+            layer.ffn_norm = create_tensor_or_tile640(tn(LLM_TENSOR_FFN_NORM, "weight", cp_bid), {n_cp_embd},    0);
+            layer.ffn_gate = create_tensor_or_tile640(tn(LLM_TENSOR_FFN_GATE, "weight", cp_bid), {n_cp_embd, n_cp_ff}, 0);
+            layer.ffn_down = create_tensor_or_tile640(tn(LLM_TENSOR_FFN_DOWN, "weight", cp_bid), {  n_cp_ff, n_cp_embd}, 0);
+            layer.ffn_up   = create_tensor_or_tile640(tn(LLM_TENSOR_FFN_UP,   "weight", cp_bid), {n_cp_embd, n_cp_ff}, 0);
         }
 
         // ---- per-codebook embeddings + heads (codebooks 1..15, cids 0..14) ----
@@ -249,22 +303,37 @@ void llama_model_qwen3tts_talker::load_arch_tensors(llama_model_loader & ml) {
             const std::string head_name = tn(LLM_TENSOR_TTS_CP_HEAD,       cid_str.c_str(), -1);
             const struct ggml_tensor * embd_meta = ml.get_tensor_meta(embd_name.c_str());
             const struct ggml_tensor * head_meta = ml.get_tensor_meta(head_name.c_str());
-            GGML_ASSERT(embd_meta != nullptr && "missing cp_codec_embd.{cid}");
-            GGML_ASSERT(head_meta != nullptr && "missing cp_head.{cid}");
+            GGML_ASSERT((embd_meta != nullptr || has_tile640(embd_name)) && "missing cp_codec_embd.{cid}");
+            GGML_ASSERT((head_meta != nullptr || has_tile640(head_name)) && "missing cp_head.{cid}");
             // ggml ne layout (matches the W2 verify tool's expect_shape):
             //   cp_codec_embd.{cid}.weight: ne[0] = n_embd,        ne[1] = n_cp_per_codebook
             //   cp_head.{cid}.weight:       ne[0] = n_cp_embd,     ne[1] = n_cp_per_codebook
-            if (n_cp_per_codebook == 0) {
-                n_cp_per_codebook = embd_meta->ne[1];
+            if (embd_meta) {
+                if (n_cp_per_codebook == 0) {
+                    n_cp_per_codebook = embd_meta->ne[1];
+                } else {
+                    GGML_ASSERT((uint32_t) embd_meta->ne[1] == n_cp_per_codebook);
+                }
+                GGML_ASSERT(embd_meta->ne[0] == (int64_t) n_embd);
             } else {
-                GGML_ASSERT((uint32_t) embd_meta->ne[1] == n_cp_per_codebook);
+                // Tile640: the row count is the CSR offset length minus one
+                // (outlier_row_offsets is I32[n_rows + 1] for every cluster)
+                const struct ggml_tensor * oro = ml.get_tensor_meta((embd_name + "_outlier_row_offsets").c_str());
+                GGML_ASSERT(oro != nullptr && oro->ne[0] > 1);
+                const uint32_t rows = (uint32_t) (oro->ne[0] - 1);
+                if (n_cp_per_codebook == 0) {
+                    n_cp_per_codebook = rows;
+                } else {
+                    GGML_ASSERT(rows == n_cp_per_codebook);
+                }
             }
-            GGML_ASSERT(embd_meta->ne[0] == (int64_t) n_embd);
-            GGML_ASSERT(head_meta->ne[0] == (int64_t) n_cp_embd);
-            GGML_ASSERT(head_meta->ne[1] == (int64_t) n_cp_per_codebook);
+            if (head_meta) {
+                GGML_ASSERT(head_meta->ne[0] == (int64_t) n_cp_embd);
+                GGML_ASSERT(head_meta->ne[1] == (int64_t) n_cp_per_codebook);
+            }
 
-            cp_codec_embd[cid] = create_tensor(LLM_TN_IMPL(arch, LLM_TENSOR_TTS_CP_CODEC_EMBD, cid_str.c_str(), -1, 0), {n_embd, n_cp_per_codebook}, 0);
-            cp_head[cid]       = create_tensor(LLM_TN_IMPL(arch, LLM_TENSOR_TTS_CP_HEAD,       cid_str.c_str(), -1, 0), {n_cp_embd, n_cp_per_codebook}, 0);
+            cp_codec_embd[cid] = create_tensor_or_tile640(LLM_TN_IMPL(arch, LLM_TENSOR_TTS_CP_CODEC_EMBD, cid_str.c_str(), -1, 0), {n_embd, n_cp_per_codebook}, 0);
+            cp_head[cid]       = create_tensor_or_tile640(LLM_TN_IMPL(arch, LLM_TENSOR_TTS_CP_HEAD,       cid_str.c_str(), -1, 0), {n_cp_embd, n_cp_per_codebook}, 0);
         }
         GGML_ASSERT(n_cp_per_codebook > 0);
     }
@@ -292,10 +361,30 @@ llama_model_qwen3tts_talker::graph::graph(const llama_model & model, const llm_g
     // codec embeddings are looked up via ggml_get_rows against codec_embd
     // by the cp sub-graph (the cp sub-graph reads the codec ids from a
     // separate inp_codes tensor when n_pred_layers > 0).
+    const LLM_TN qtn(model.arch);
+
     ggml_tensor * cur;
     ggml_tensor * inpL;
 
-    inpL = build_inp_embd(model.tok_embd);
+    if (const auto * q = model.get_tile640_tensor(qtn(LLM_TENSOR_TOKEN_EMBD, "weight").str())) {
+        // Tile640 token embedding: row lookup on the packed cluster
+        // (mirrors build_inp_embd's dual token/embd input structure)
+        auto inp = std::make_unique<llm_graph_input_embd>(hparams.n_embd);
+        inp->tokens = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, ubatch.n_tokens);
+        cb(inp->tokens, "inp_tokens", -1);
+        ggml_set_input(inp->tokens);
+        res->t_inp_tokens = inp->tokens;
+        inp->embd = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, hparams.n_embd, ubatch.n_tokens);
+        cb(inp->embd, "inp_embd", -1);
+        ggml_set_input(inp->embd);
+        std::array<ggml_tensor *, 2> inps = { talker_tile640_get_rows(ctx0, q, inp->tokens), inp->embd };
+        inpL = ggml_build_forward_select(gf, inps.data(), inps.size(), ubatch.token ? 0 : 1);
+        res->t_inp_embd = inpL;
+        res->add_input(std::move(inp));
+        ggml_build_forward_expand(gf, inpL);
+    } else {
+        inpL = build_inp_embd(model.tok_embd);
+    }
 
     ggml_tensor * inp_pos = build_inp_pos();
 
@@ -308,17 +397,46 @@ llama_model_qwen3tts_talker::graph::graph(const llama_model & model, const llm_g
     for (int il = 0; il < n_layer; ++il) {
         ggml_tensor * inpSA = inpL;
 
+        ggml_tensor * attn_norm_w = model.layers[il].attn_norm;
+        if (const auto * q = model.get_tile640_tensor(qtn(LLM_TENSOR_ATTN_NORM, "weight", il).str())) {
+            attn_norm_w = talker_tile640_dequant(ctx0, q);
+        }
         cur = build_norm(inpL,
-                model.layers[il].attn_norm, NULL,
+                attn_norm_w, NULL,
                 LLM_NORM_RMS, il);
         cb(cur, "attn_norm", il);
 
         // self-attention with mrope
         {
-            auto [Qcur, Kcur, Vcur] = build_qkv(model.layers[il], cur,
-                    n_embd_head, n_head, n_head_kv, il);
+            // separate Q/K/V projections, each optionally Tile640-packed
+            ggml_tensor * Qcur, * Kcur, * Vcur;
+            if (const auto * q = model.get_tile640_tensor(qtn(LLM_TENSOR_ATTN_Q, "weight", il).str())) {
+                Qcur = tile640_mul_mat(q, cur);
+            } else {
+                Qcur = build_lora_mm(model.layers[il].wq, cur, model.layers[il].wq_s);
+            }
+            cb(Qcur, "Qcur", il);
+            if (const auto * q = model.get_tile640_tensor(qtn(LLM_TENSOR_ATTN_K, "weight", il).str())) {
+                Kcur = tile640_mul_mat(q, cur);
+            } else {
+                Kcur = build_lora_mm(model.layers[il].wk, cur, model.layers[il].wk_s);
+            }
+            cb(Kcur, "Kcur", il);
+            if (const auto * q = model.get_tile640_tensor(qtn(LLM_TENSOR_ATTN_V, "weight", il).str())) {
+                Vcur = tile640_mul_mat(q, cur);
+            } else {
+                Vcur = build_lora_mm(model.layers[il].wv, cur, model.layers[il].wv_s);
+            }
+            cb(Vcur, "Vcur", il);
+            Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head,    n_tokens);
+            Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens);
+            Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, n_head_kv, n_tokens);
 
-            Qcur = build_norm(Qcur, model.layers[il].attn_q_norm, NULL, LLM_NORM_RMS, il);
+            ggml_tensor * q_norm_w = model.layers[il].attn_q_norm;
+            if (const auto * q = model.get_tile640_tensor(qtn(LLM_TENSOR_ATTN_Q_NORM, "weight", il).str())) {
+                q_norm_w = talker_tile640_dequant(ctx0, q);
+            }
+            Qcur = build_norm(Qcur, q_norm_w, NULL, LLM_NORM_RMS, il);
             cb(Qcur, "Qcur_normed", il);
 
             Qcur = ggml_rope_multi(
@@ -327,7 +445,11 @@ llama_model_qwen3tts_talker::graph::graph(const llama_model & model, const llm_g
                     ext_factor, attn_factor, beta_fast, beta_slow
                     );
 
-            Kcur = build_norm(Kcur, model.layers[il].attn_k_norm, NULL, LLM_NORM_RMS, il);
+            ggml_tensor * k_norm_w = model.layers[il].attn_k_norm;
+            if (const auto * q = model.get_tile640_tensor(qtn(LLM_TENSOR_ATTN_K_NORM, "weight", il).str())) {
+                k_norm_w = talker_tile640_dequant(ctx0, q);
+            }
+            Kcur = build_norm(Kcur, k_norm_w, NULL, LLM_NORM_RMS, il);
             cb(Kcur, "Kcur_normed", il);
 
             Kcur = ggml_rope_multi(
@@ -340,9 +462,14 @@ llama_model_qwen3tts_talker::graph::graph(const llama_model & model, const llm_g
             cb(Kcur, "Kcur", il);
             cb(Vcur, "Vcur", il);
 
+            const auto * wo_q = model.get_tile640_tensor(qtn(LLM_TENSOR_ATTN_OUT, "weight", il).str());
             cur = build_attn(inp_attn,
-                    model.layers[il].wo, model.layers[il].wo_b, model.layers[il].wo_s,
+                    wo_q ? nullptr : model.layers[il].wo, model.layers[il].wo_b,
+                    wo_q ? nullptr : model.layers[il].wo_s,
                     Qcur, Kcur, Vcur, nullptr, nullptr, nullptr, 1.0f/sqrtf(float(n_embd_head)), il);
+            if (wo_q) {
+                cur = tile640_mul_mat(wo_q, cur);
+            }
         }
 
         if (il == n_layer - 1 && inp_out_ids) {
@@ -352,17 +479,32 @@ llama_model_qwen3tts_talker::graph::graph(const llama_model & model, const llm_g
         ggml_tensor * ffn_inp = ggml_add(ctx0, cur, inpSA);
         cb(ffn_inp, "ffn_inp", il);
 
+        ggml_tensor * ffn_norm_w = model.layers[il].ffn_norm;
+        if (const auto * q = model.get_tile640_tensor(qtn(LLM_TENSOR_FFN_NORM, "weight", il).str())) {
+            ffn_norm_w = talker_tile640_dequant(ctx0, q);
+        }
         cur = build_norm(ffn_inp,
-                model.layers[il].ffn_norm, NULL,
+                ffn_norm_w, NULL,
                 LLM_NORM_RMS, il);
         cb(cur, "ffn_norm", il);
 
-        cur = build_ffn(cur,
-                model.layers[il].ffn_up,   NULL, model.layers[il].ffn_up_s,
-                model.layers[il].ffn_gate, NULL, model.layers[il].ffn_gate_s,
-                model.layers[il].ffn_down, NULL, model.layers[il].ffn_down_s,
-                NULL,
-                LLM_FFN_SILU, LLM_FFN_PAR, il);
+        const auto * gate_q = model.get_tile640_tensor(qtn(LLM_TENSOR_FFN_GATE, "weight", il).str());
+        const auto * up_q   = model.get_tile640_tensor(qtn(LLM_TENSOR_FFN_UP,   "weight", il).str());
+        const auto * down_q = model.get_tile640_tensor(qtn(LLM_TENSOR_FFN_DOWN, "weight", il).str());
+        if (gate_q && up_q && down_q) {
+            // dense SiLU-gated MLP on Tile640 clusters:
+            // down(silu(gate(x)) * up(x))
+            ggml_tensor * gate = ggml_silu(ctx0, tile640_mul_mat(gate_q, cur));
+            ggml_tensor * up   = tile640_mul_mat(up_q, cur);
+            cur = tile640_mul_mat(down_q, ggml_mul(ctx0, gate, up));
+        } else {
+            cur = build_ffn(cur,
+                    model.layers[il].ffn_up,   NULL, model.layers[il].ffn_up_s,
+                    model.layers[il].ffn_gate, NULL, model.layers[il].ffn_gate_s,
+                    model.layers[il].ffn_down, NULL, model.layers[il].ffn_down_s,
+                    NULL,
+                    LLM_FFN_SILU, LLM_FFN_PAR, il);
+        }
         cb(cur, "ffn_out", il);
 
         cur = ggml_add(ctx0, cur, ffn_inp);
@@ -376,8 +518,12 @@ llama_model_qwen3tts_talker::graph::graph(const llama_model & model, const llm_g
 
     // ---- backbone head: output_norm -> codec_head (codebook-0 logits) ----
 
+    ggml_tensor * output_norm_w = model.output_norm;
+    if (const auto * q = model.get_tile640_tensor(qtn(LLM_TENSOR_OUTPUT_NORM, "weight").str())) {
+        output_norm_w = talker_tile640_dequant(ctx0, q);
+    }
     cur = build_norm(cur,
-            model.output_norm, NULL,
+            output_norm_w, NULL,
             LLM_NORM_RMS, -1);
     cb(cur, "result_norm", -1);
     res->t_embd = cur;
@@ -395,7 +541,12 @@ llama_model_qwen3tts_talker::graph::graph(const llama_model & model, const llm_g
     // exposure is the right call. The graph still includes the matmul
     // for forward verification.
     {
-        ggml_tensor * logits = ggml_mul_mat(ctx0, m.codec_head, cur);
+        ggml_tensor * logits;
+        if (const auto * q = model.get_tile640_tensor(qtn(LLM_TENSOR_TTS_CODEC_HEAD, "weight").str())) {
+            logits = tile640_mul_mat(q, cur);
+        } else {
+            logits = ggml_mul_mat(ctx0, m.codec_head, cur);
+        }
         cb(logits, "codec0_logits", -1);
         ggml_build_forward_expand(gf, logits);
         // res->t_logits intentionally not set; see comment above.
@@ -447,9 +598,13 @@ llama_model_qwen3tts_talker::graph::graph(const llama_model & model, const llm_g
         cb(cp_in, "cp_in_backbone", -1);
 
         // cp_proj: [n_cp_embd, n_embd] -> h = cp_in @ W^T + b
-        ggml_tensor * cp_h = ggml_add(ctx0,
-                ggml_mul_mat(ctx0, m.cp_proj, cp_in),
-                m.cp_proj_b);
+        ggml_tensor * cp_mm;
+        if (const auto * q = model.get_tile640_tensor(qtn(LLM_TENSOR_TTS_CP_PROJ, "weight").str())) {
+            cp_mm = tile640_mul_mat(q, cp_in);
+        } else {
+            cp_mm = ggml_mul_mat(ctx0, m.cp_proj, cp_in);
+        }
+        ggml_tensor * cp_h = ggml_add(ctx0, cp_mm, m.cp_proj_b);
         cb(cp_h, "cp_h0", -1);
 
         // Skip the cp block attention + FFN in the structural test path;
@@ -488,7 +643,11 @@ llama_model_qwen3tts_talker::graph::graph(const llama_model & model, const llm_g
         (void) n_head;
 
         // cp final norm
-        cp_h = build_norm(cp_h, m.cp_norm, NULL, LLM_NORM_RMS, -1);
+        ggml_tensor * cp_norm_w = m.cp_norm;
+        if (const auto * q = model.get_tile640_tensor(qtn(LLM_TENSOR_TTS_CP_NORM, "weight").str())) {
+            cp_norm_w = talker_tile640_dequant(ctx0, q);
+        }
+        cp_h = build_norm(cp_h, cp_norm_w, NULL, LLM_NORM_RMS, -1);
         cb(cp_h, "cp_h_normed", -1);
 
         // ---- per-cid heads: cp_head.{cid} (1024 -> n_cp_per_codebook=2048) ----
@@ -507,7 +666,13 @@ llama_model_qwen3tts_talker::graph::graph(const llama_model & model, const llm_g
         {
             ggml_tensor * cat = nullptr;
             for (int cid = 0; cid < (int) m.cp_codec_embd.size(); ++cid) {
-                ggml_tensor * head_logits = ggml_mul_mat(ctx0, m.cp_head[cid], cp_h);
+                const std::string cid_str = std::to_string(cid) + ".weight";
+                ggml_tensor * head_logits;
+                if (const auto * q = model.get_tile640_tensor(qtn(LLM_TENSOR_TTS_CP_HEAD, cid_str.c_str(), -1).str())) {
+                    head_logits = tile640_mul_mat(q, cp_h);
+                } else {
+                    head_logits = ggml_mul_mat(ctx0, m.cp_head[cid], cp_h);
+                }
                 cb(head_logits, "cp_head_logits", cid);
                 cat = cat ? ggml_concat(ctx0, cat, head_logits, 1) : head_logits;
             }

@@ -1643,6 +1643,10 @@ struct llama_model_qwen3tts_talker : public llama_model_base {
 
     struct graph : public llm_graph_context {
         graph(const llama_model & model, const llm_graph_params & params);
+
+        ggml_tensor * tile640_mul_mat(
+            const llama_tile640_tensor * tensor,
+            ggml_tensor * input) const;
     };
 
     std::unique_ptr<llm_graph_context> build_arch_graph(const llm_graph_params & params) const override;
