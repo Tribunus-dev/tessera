@@ -3152,8 +3152,17 @@ static bool ggml_backend_ane_device_supports_op(ggml_backend_dev_t dev, const gg
 }
 
 static bool ggml_backend_ane_device_supports_buft(ggml_backend_dev_t dev, ggml_backend_buffer_type_t buft) {
+    // The IOSurface type is portable (buft->device == nullptr): the ANE
+    // program consumes its bytes through the weight-stream/host paths, so
+    // accepting it here keeps scheduler-visible tensors on the shared
+    // buffer instead of forcing a CPY into the ANE buft.
+    if (buft == ggml_backend_ane_iosurface_buffer_type()) {
+        return true;
+    }
     return buft->device == dev &&
            buft->iface.get_name == ggml_backend_ane_buffer_type_get_name;
+
+    GGML_UNUSED(dev);
 }
 
 static ggml_backend_device_i ggml_backend_ane_device_i = {
@@ -3271,10 +3280,12 @@ GGML_BACKEND_DL_IMPL(ggml_backend_ane_reg)
 // Cross-backend IOSurface buffer (the data plane for lock-free CPU/Metal/ANE
 // dispatch). Distinct from `ggml_backend_ane_buffer_context` (above) which
 // is owned by the ANE backend. This buffer is portable across all three
-// backends: ggml_backend_supports_buft returns true for the CPU, Metal, and
-// ANE backends (the latter is via the same buffer type the ANE backend
-// registers; CPU/Metal support it because the base is locked CVPixelBuffer
-// memory and IOSurface-backed MTLBuffer is a public Apple primitive).
+// backends: CPU and BLAS accept it because is_host reports the locked base
+// truthfully, Metal accepts it and wraps the surface as an MTLBuffer at
+// encode time (ggml_metal_get_buffer_id), and the ANE device accepts it in
+// supports_buft. With every consumer advertising the type,
+// ggml_backend_sched places tensors here without inserting cross-backend
+// CPY/DUP nodes.
 ////////////////////////////////////////////////////////////////////////////////
 
 struct ggml_backend_ane_iosurface_buffer_context {
@@ -3413,14 +3424,17 @@ static size_t ggml_backend_ane_iosurface_buffer_type_get_max_size(ggml_backend_b
 }
 
 static bool ggml_backend_ane_iosurface_buffer_type_is_host(ggml_backend_buffer_type_t buft) {
-    // The IOSurface is process-shared, not strictly host memory. The
-    // scheduler treats it as off-host for placement decisions.
-    return false;
+    // Truthful: the IOSurface base address is locked for the buffer's
+    // lifetime (IOSurfaceLock in alloc_buffer) and directly
+    // readable/writable from the CPU. Reporting host memory is what lets
+    // the CPU and BLAS backends accept the type from supports_buft and
+    // operate on it in place.
+    return true;
 
     GGML_UNUSED(buft);
 }
 
-static ggml_backend_buffer_type_t ggml_backend_ane_iosurface_buffer_type(void) {
+GGML_BACKEND_API ggml_backend_buffer_type_t ggml_backend_ane_iosurface_buffer_type(void) {
     static ggml_backend_buffer_type buft;
     static bool initialized = false;
 

@@ -29,6 +29,18 @@ target_link_libraries(ggml-metal PRIVATE
                       ${METALKIT_FRAMEWORK}
                       )
 
+# Cross-backend zero-copy: with ANE enabled, Metal accepts the ANE IOSurface
+# buffer type and consumes it at encode time (ggml_metal_get_buffer_id).
+# GGML_USE_ANE is PUBLIC on the ggml umbrella target, but ggml-metal links
+# ggml-base, so it needs its own private definition and link dependency on
+# ggml-ane for the IOSurface helpers. Dynamic backend loading is not
+# supported by this wiring: as a MODULE, ggml-metal could not resolve the
+# ggml-ane symbols.
+if (GGML_ANE AND NOT GGML_BACKEND_DL)
+    target_compile_definitions(ggml-metal PRIVATE GGML_USE_ANE)
+    target_link_libraries(ggml-metal PRIVATE ggml-ane)
+endif()
+
 if (GGML_METAL_NDEBUG)
     add_compile_definitions(GGML_METAL_NDEBUG)
 endif()

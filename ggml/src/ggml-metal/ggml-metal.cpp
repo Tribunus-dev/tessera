@@ -13,6 +13,16 @@
 #define GGML_METAL_NAME "MTL"
 #define GGML_METAL_MAX_DEVICES 16
 
+#ifdef GGML_USE_ANE
+// The ANE backend's cross-backend IOSurface buffer type (declared in
+// ggml-ane.h). Declared extern here instead of including the ANE header so
+// ggml-metal keeps no build dependency on ggml-ane; the symbols resolve at
+// link time because both backends live in the same libggml.
+extern "C" {
+GGML_BACKEND_API ggml_backend_buffer_type_t ggml_backend_ane_iosurface_buffer_type(void);
+}
+#endif
+
 // number of Metal devices
 // note: can be overridden with GGML_METAL_DEVICES env to simulate virtual devices
 static int g_devices = 1;
@@ -734,6 +744,14 @@ static bool ggml_backend_metal_device_supports_op(ggml_backend_dev_t dev, const 
 }
 
 static bool ggml_backend_metal_device_supports_buft(ggml_backend_dev_t dev, ggml_backend_buffer_type_t buft) {
+#ifdef GGML_USE_ANE
+    // The ANE IOSurface type is portable (buft->device == nullptr): Metal
+    // consumes it zero-copy by wrapping the surface as an MTLBuffer at
+    // encode time (see ggml_metal_get_buffer_id).
+    if (buft == ggml_backend_ane_iosurface_buffer_type()) {
+        return true;
+    }
+#endif
     return
         buft->device == dev && (
         buft->iface.get_name == ggml_backend_metal_buffer_type_shared_get_name ||

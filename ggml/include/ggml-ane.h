@@ -101,6 +101,13 @@ GGML_BACKEND_API int64_t ggml_backend_ane_tile640_tile_size(void);
 GGML_BACKEND_API ggml_backend_buffer_t ggml_backend_ane_iosurface_buffer_alloc(
         size_t bytes);
 
+// The buffer type behind ggml_backend_ane_iosurface_buffer_alloc. Exposed
+// so the CPU, BLAS, Metal, and ANE backends can advertise the type from
+// their supports_buft, letting ggml_backend_sched place tensors in it
+// without inserting cross-backend copies. The type is process-global and
+// not owned by any single device (buft->device == nullptr).
+GGML_BACKEND_API ggml_backend_buffer_type_t ggml_backend_ane_iosurface_buffer_type(void);
+
 // Returns true if the buffer is an ANE cross-backend IOSurface buffer.
 GGML_BACKEND_API bool ggml_backend_ane_iosurface_buffer_check(
         ggml_backend_buffer_t buffer);
