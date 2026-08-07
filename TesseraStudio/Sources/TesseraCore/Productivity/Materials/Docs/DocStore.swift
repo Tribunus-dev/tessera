@@ -404,6 +404,27 @@ public struct DocStore: Sendable {
         )
     }
 
+    // MARK: - Hybrid search (subtype-filtered)
+
+    /// Hybrid search for docs: delegates to the data layer's RRF
+    /// and filters to subtype='doc' in Swift. The data layer's
+    /// hybrid_search already returns subtype so the filter is
+    /// cheap and reversible.
+    public func hybridSearch(
+        anchor: UUID,
+        queryText: String? = nil,
+        queryEmbedding: [Float]? = nil,
+        maxDepth: Int = 3
+    ) async throws -> [HybridSearchResult] {
+        let results = try await dataLayer.hybridSearch(
+            anchor: anchor,
+            queryText: queryText,
+            queryEmbedding: queryEmbedding,
+            maxDepth: maxDepth
+        )
+        return results.filter { $0.entityType == Doc.entityType && $0.subtype == Doc.subtype }
+    }
+
     // MARK: - Import marker
 
     /// Record that a doc was imported from an external format.

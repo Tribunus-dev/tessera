@@ -476,6 +476,23 @@ public struct SlideStore: Sendable {
             ])
     }
 
+    // MARK: - Hybrid search (subtype-filtered)
+
+    public func hybridSearch(
+        anchor: UUID,
+        queryText: String? = nil,
+        queryEmbedding: [Float]? = nil,
+        maxDepth: Int = 3
+    ) async throws -> [HybridSearchResult] {
+        let results = try await dataLayer.hybridSearch(
+            anchor: anchor,
+            queryText: queryText,
+            queryEmbedding: queryEmbedding,
+            maxDepth: maxDepth
+        )
+        return results.filter { $0.entityType == SlideDeck.entityType && $0.subtype == SlideDeck.subtype }
+    }
+
     // MARK: - Import marker
 
     public func recordImport(deckID: UUID, sourceFormat: String) async throws {

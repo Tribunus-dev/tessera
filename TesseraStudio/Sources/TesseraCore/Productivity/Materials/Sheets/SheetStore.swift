@@ -540,6 +540,23 @@ public struct SheetStore: Sendable {
         )
     }
 
+    // MARK: - Hybrid search (subtype-filtered)
+
+    public func hybridSearch(
+        anchor: UUID,
+        queryText: String? = nil,
+        queryEmbedding: [Float]? = nil,
+        maxDepth: Int = 3
+    ) async throws -> [HybridSearchResult] {
+        let results = try await dataLayer.hybridSearch(
+            anchor: anchor,
+            queryText: queryText,
+            queryEmbedding: queryEmbedding,
+            maxDepth: maxDepth
+        )
+        return results.filter { $0.entityType == Sheet.entityType && $0.subtype == Sheet.subtype }
+    }
+
     // MARK: - Import marker
 
     public func recordImport(sheetID: UUID, sourceFormat: String) async throws {

@@ -39,9 +39,13 @@ final class SlideMigrationTests: XCTestCase {
         let candidates: [URL] = [
             Bundle.module.url(forResource: "0012_slides", withExtension: "sql"),
             URL(fileURLWithPath: "/Users/user/Developer/GitHub/tessera/worktrees/prod-material-slides/tools/tessera/db/migrations/0012_slides.sql"),
+            URL(fileURLWithPath: "/Users/user/Developer/GitHub/tessera/tools/tessera/db/migrations/0012_slides.sql"),
+            URL(fileURLWithPath: "tools/tessera/db/migrations/0012_slides.sql"),
+            URL(fileURLWithPath: "../tools/tessera/db/migrations/0012_slides.sql"),
+            URL(fileURLWithPath: "../../tools/tessera/db/migrations/0012_slides.sql"),
         ].compactMap { $0 }
         guard let url = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }) else {
-            XCTFail("0012_slides.sql not found"); return
+            XCTFail("0012_slides.sql not found — checked \(candidates.map { $0.path }.joined(separator: ", "))"); return
         }
         let sql = try String(contentsOf: url, encoding: .utf8)
         XCTAssertTrue(sql.contains("subtype = 'slide'"))

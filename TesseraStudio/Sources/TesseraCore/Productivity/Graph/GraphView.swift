@@ -144,9 +144,9 @@ public struct GraphView: View {
             return .yellow
         }
         if viewModel.anchorNodeIDs.contains(node.id) {
-            return GraphNode.color(for: node.entityType).opacity(0.8)
+            return GraphNode.color(for: node.entityType, subtype: node.subtype).opacity(0.8)
         }
-        return GraphNode.color(for: node.entityType)
+        return GraphNode.color(for: node.entityType, subtype: node.subtype)
     }
 
     /// Color for an edge. The base color comes from
@@ -176,6 +176,9 @@ private struct GraphSidebar: View {
 
     private let typeChips: [(String, String)] = [
         ("document", "doc.text"),
+        ("doc", "doc.text"),
+        ("sheet", "tablecells"),
+        ("slide", "rectangle.on.rectangle"),
         ("task", "checkmark.square"),
         ("contact", "person.crop.circle"),
         ("email", "envelope"),
@@ -278,7 +281,7 @@ private struct GraphDetailPanel: View {
                 HStack(alignment: .center, spacing: 8) {
                     Image(systemName: node.iconName)
                         .font(.title2)
-                        .foregroundStyle(GraphNode.color(for: node.entityType))
+                        .foregroundStyle(GraphNode.color(for: node.entityType, subtype: node.subtype))
                     VStack(alignment: .leading) {
                         Text(node.label)
                             .font(.headline)
@@ -320,10 +323,18 @@ private struct GraphDetailPanel: View {
     }
 
     private func openLabel(for node: GraphNode) -> String {
+        if node.entityType == "document" {
+            switch node.subtype {
+            case "doc": return "Open in Docs"
+            case "sheet": return "Open in Sheets"
+            case "slide": return "Open in Slides"
+            default: break
+            }
+        }
         switch node.entityType {
         case "calendar_event", "event": return "Open in Calendar"
         case "contact": return "Open in Contacts"
-        case "document", "note", "doc": return "Open in Editor"
+        case "document", "note", "doc": return "Open in Docs"
         default: return "Open"
         }
     }
@@ -346,7 +357,7 @@ private struct GraphDetailPanel: View {
                 let other = viewModel.snapshot.nodes.first { $0.id == otherID }
                 HStack {
                     Image(systemName: other?.iconName ?? "circle")
-                        .foregroundStyle(GraphNode.color(for: other?.entityType ?? ""))
+                        .foregroundStyle(GraphNode.color(for: other?.entityType ?? "", subtype: other?.subtype))
                     VStack(alignment: .leading) {
                         Text(other?.label ?? "Unknown")
                             .font(.caption)

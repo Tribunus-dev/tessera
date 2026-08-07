@@ -97,6 +97,7 @@ public struct GraphReceipt: Sendable, Equatable, Identifiable {
 public struct HybridSearchResult: Sendable, Equatable {
     public let entityID: UUID
     public let entityType: String
+    public let subtype: String?
     public let label: String
     public let body: String?
     public let graphScore: Float
@@ -107,6 +108,7 @@ public struct HybridSearchResult: Sendable, Equatable {
     public init(
         entityID: UUID,
         entityType: String,
+        subtype: String? = nil,
         label: String,
         body: String?,
         graphScore: Float,
@@ -116,6 +118,7 @@ public struct HybridSearchResult: Sendable, Equatable {
     ) {
         self.entityID = entityID
         self.entityType = entityType
+        self.subtype = subtype
         self.label = label
         self.body = body
         self.graphScore = graphScore
@@ -934,7 +937,7 @@ public actor TesseraDataStore {
         // function's `p_max_depth` is declared `int DEFAULT 3`.
         let maxDepth32: Int32 = Int32(maxDepth)
         let query: PostgresQuery = """
-            SELECT entity_id, entity_type, label, body,
+            SELECT entity_id, entity_type, subtype, label, body,
                    graph_score, vector_score, keyword_score, rrf_score
               FROM hybrid_search(\(anchor)::uuid, \(queryText), \(embedLiteral)::vector, \(maxDepth32))
             """
@@ -1038,6 +1041,29 @@ public actor TesseraDataStore {
         let ra = makeRA(row)
         let entityID: UUID = try ra[0].decode(UUID.self)
         let entityType: String = try ra[1].decode(String.self)
+        // Try the 9-column shape first (with subtype), fall back to
+        // the legacy 8-column shape. The 9th column probe is the
+        // cheapest discriminator available on PostgresRandomAccessRow.
+        if let subtypeProbe: String? = try? ra[2].decode(String?.self),
+           (try? ra[8].decode(Float.self)) != nil {
+            let label: String = try ra[3].decode(String.self)
+            let body: String? = try ra[4].decode(String?.self)
+            let graphScore: Float = try ra[5].decode(Float.self)
+            let vectorScore: Float = try ra[6].decode(Float.self)
+            let keywordScore: Float = try ra[7].decode(Float.self)
+            let rrfScore: Float = try ra[8].decode(Float.self)
+            return HybridSearchResult(
+                entityID: entityID,
+                entityType: entityType,
+                subtype: subtypeProbe,
+                label: label,
+                body: body,
+                graphScore: graphScore,
+                vectorScore: vectorScore,
+                keywordScore: keywordScore,
+                rrfScore: rrfScore
+            )
+        }
         let label: String = try ra[2].decode(String.self)
         let body: String? = try ra[3].decode(String?.self)
         let graphScore: Float = try ra[4].decode(Float.self)
@@ -1047,6 +1073,7 @@ public actor TesseraDataStore {
         return HybridSearchResult(
             entityID: entityID,
             entityType: entityType,
+            subtype: nil,
             label: label,
             body: body,
             graphScore: graphScore,
