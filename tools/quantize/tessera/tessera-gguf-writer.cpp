@@ -10,6 +10,21 @@
 #define TS_PAGE_SIZE      640
 #define TS_WORDS_PER_PAGE 32
 
+// Cluster members are named <base>.weight_packed etc., where <base> is the
+// logical weight name WITHOUT its trailing ".weight": the components of
+// blk.0.attn_q.weight are blk.0.attn_q.weight_packed, not
+// blk.0.attn_q.weight.weight_packed. The loader-side lookup
+// (create_tensor_or_tile640) and quantize_v3.py agree on this convention.
+static void ts_cluster_base(char * dst, size_t dst_size, const char * base_name) {
+    snprintf(dst, dst_size, "%s", base_name);
+    const size_t len = strlen(dst);
+    const char * dot_weight = ".weight";
+    const size_t tail_len = strlen(dot_weight);
+    if (len > tail_len && strcmp(dst + len - tail_len, dot_weight) == 0) {
+        dst[len - tail_len] = '\0';
+    }
+}
+
 void ts_gguf_write_metadata(struct gguf_context * ctx, const ts_gguf_writer_params * params) {
     gguf_set_val_u32(ctx, "tessera.version", 1);
     gguf_set_val_u64(ctx, "tessera.quantize.seed", (uint64_t)params->seed);
@@ -58,29 +73,32 @@ void ts_gguf_write_tensor_cluster(struct gguf_context * ctx,
     const int64_t lane_cols     = pages_per_row * 32;
     const int64_t n_outliers    = (int64_t)res->outlier_cols.size();
 
+    char base[GGML_MAX_NAME];
+    ts_cluster_base(base, sizeof(base), base_name);
+
     struct ggml_tensor * t;
 
     // weight_packed: i32 [out_dim, pages_per_row * 32]
     t = ggml_new_tensor_2d(gctx, GGML_TYPE_I32, packed_cols, out_dim);
-    ggml_format_name(t, "%s.weight_packed", base_name);
+    ggml_format_name(t, "%s.weight_packed", base);
     t->data = (void *)res->packed.data();
     gguf_add_tensor(ctx, t);
 
     // weight_page_scales: f16 [out_dim, pages_per_row]
     t = ggml_new_tensor_2d(gctx, GGML_TYPE_F16, pages_per_row, out_dim);
-    ggml_format_name(t, "%s.weight_page_scales", base_name);
+    ggml_format_name(t, "%s.weight_page_scales", base);
     t->data = (void *)res->page_scales.data();
     gguf_add_tensor(ctx, t);
 
     // weight_lane_scales: i8 [out_dim, pages_per_row * 32]
     t = ggml_new_tensor_2d(gctx, GGML_TYPE_I8, lane_cols, out_dim);
-    ggml_format_name(t, "%s.weight_lane_scales", base_name);
+    ggml_format_name(t, "%s.weight_lane_scales", base);
     t->data = (void *)res->lane_scales.data();
     gguf_add_tensor(ctx, t);
 
     // weight_outlier_row_offsets: i32 [out_dim + 1]
     t = ggml_new_tensor_1d(gctx, GGML_TYPE_I32, out_dim + 1);
-    ggml_format_name(t, "%s.weight_outlier_row_offsets", base_name);
+    ggml_format_name(t, "%s.weight_outlier_row_offsets", base);
     t->data = (void *)res->outlier_row_offsets.data();
     gguf_add_tensor(ctx, t);
 
@@ -91,14 +109,14 @@ void ts_gguf_write_tensor_cluster(struct gguf_context * ctx,
     static const int32_t empty_i32 = 0;
     static const ggml_fp16_t empty_f16 = 0;
     t = ggml_new_tensor_1d(gctx, GGML_TYPE_I32, n_outliers > 0 ? n_outliers : 1);
-    ggml_format_name(t, "%s.weight_outlier_cols", base_name);
+    ggml_format_name(t, "%s.weight_outlier_cols", base);
     t->data = (n_outliers > 0) ? (void *)res->outlier_cols.data()
                                : (void *)&empty_i32;
     gguf_add_tensor(ctx, t);
 
     // weight_outlier_vals: f16 [total_outliers]
     t = ggml_new_tensor_1d(gctx, GGML_TYPE_F16, n_outliers > 0 ? n_outliers : 1);
-    ggml_format_name(t, "%s.weight_outlier_vals", base_name);
+    ggml_format_name(t, "%s.weight_outlier_vals", base);
     t->data = (n_outliers > 0) ? (void *)res->outlier_vals.data()
                                : (void *)&empty_f16;
     gguf_add_tensor(ctx, t);
@@ -106,7 +124,7 @@ void ts_gguf_write_tensor_cluster(struct gguf_context * ctx,
     // weight_act_scale: f16 [in_dim] (optional)
     if (!res->act_scale.empty()) {
         t = ggml_new_tensor_1d(gctx, GGML_TYPE_F16, in_dim);
-        ggml_format_name(t, "%s.weight_act_scale", base_name);
+        ggml_format_name(t, "%s.weight_act_scale", base);
         t->data = (void *)res->act_scale.data();
         gguf_add_tensor(ctx, t);
     }
@@ -132,6 +150,9 @@ int ts_gguf_repoint_tensor_cluster(struct ggml_context * gctx,
         { "weight_act_scale",        res->act_scale.data() },
     };
 
+    char base[GGML_MAX_NAME];
+    ts_cluster_base(base, sizeof(base), base_name);
+
     int repointed = 0;
     for (const auto & e : entries) {
         // Skip the optional act_scale buffer when the refined result dropped it
@@ -141,7 +162,7 @@ int ts_gguf_repoint_tensor_cluster(struct ggml_context * gctx,
             continue;
         }
         char want[GGML_MAX_NAME];
-        snprintf(want, sizeof(want), "%s.%s", base_name, e.suffix);
+        snprintf(want, sizeof(want), "%s.%s", base, e.suffix);
         struct ggml_tensor * t = ggml_get_tensor(gctx, want);
         if (t == nullptr) {
             // For act_scale this is expected when it was absent at first write;
