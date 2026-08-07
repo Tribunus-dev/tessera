@@ -243,6 +243,29 @@ public struct EvaluateNode: WorkflowNodeType {
     }
 }
 
+/// `SpeakTextTool` as a workflow node. Required inputs: `text`, `model_path`.
+/// Parameters (side panel): `voice_preset`, `code2wav_model_path`, `ref_hash`.
+public struct SpeakTextNode: WorkflowNodeType {
+    public static let typeId = "speak_text"
+    public static let displayName = TesseraToolNode.humanName("speak_text")
+    public static let summary = "Run the Talker + Code2Wav pass on a sentence and capture an s2s trace record."
+    public static let tool: any TesseraTool = SpeakTextTool()
+    public static let inputs: [WorkflowPort] = TesseraToolNode
+        .splitSchema(tool.parameters).0
+    public static let outputs: [WorkflowPort] = TesseraToolNode.resultPort
+    public static let parameterSchema: JSONSchema = TesseraToolNode
+        .splitSchema(tool.parameters).1
+
+    public static func execute(
+        parameters: [String: JSONValue],
+        inputs: [String: WorkflowPortValue],
+        context: WorkflowExecutionContext
+    ) async throws -> [String: WorkflowPortValue] {
+        try await TesseraToolNode.execute(
+            tool: tool, parameters: parameters, inputs: inputs, context: context)
+    }
+}
+
 /// `InspectSidecarTool` as a workflow node. Required input: `path`.
 public struct InspectSidecarNode: WorkflowNodeType {
     public static let typeId = "inspect_sidecar"
@@ -279,6 +302,7 @@ extension WorkflowNodeRegistry {
             QuantizeNode.self,
             EvaluateNode.self,
             InspectSidecarNode.self,
+            SpeakTextNode.self,
         ])
     }
 }
