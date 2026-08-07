@@ -3443,14 +3443,15 @@ inline float block_q_n_dot_y(device const block_q2_0 * qb_curr, float sumy, thre
     return qb_curr->d * (acc_lo + 2.0f * acc_hi - sumy);
 }
 
-// TQ2_0 dot: y[e] = (q-1)*d where q is plane-interleaved 2-bit. For a 16-elem
-// window at il: e=il*16+k -> g=e/128, l=(e%128)/32, m=e%32.
+// TQ2_0 dot: y[e] = (q-1)*d where q is plane-interleaved 2-bit sub-blocks.
+// il is the element offset of the 16-wide window within the QK=256 block
+// (0, 16, 32, .., 240). Element e = il + k -> g=e/128, l=(e%128)/32, m=e%32.
 inline float block_q_n_dot_y(device const block_tq2_0 * qb_curr, float sumy, thread float * yl, int il) {
     device const uint8_t * qs = qb_curr->qs;
     const float d = qb_curr->d;
     float acc = 0.0f;
     for (int k = 0; k < 16; ++k) {
-        const int e = il*16 + k;
+        const int e = il + k;
         const int g = e >> 7;
         const int l = (e & 127) >> 5;
         const int m = e & 31;
@@ -3880,12 +3881,13 @@ void kernel_mul_mv_tq2_0_f32_impl(
     float yl[16];
     float sumf[nr0] = {0.f};
 
-    const short ix = (tiisg/4);
-    const short il = (tiisg%4)*16;
+    // TQ2_0: QK=256 => 16 slices of 16 per block (vs 4 for Q2_0 with QK=64)
+    const short ix = (tiisg/16);
+    const short il = (tiisg%16)*16;
 
     device const float * yb = y + ix*QK_TQ2_0 + il;
 
-    for (int ib = ix; ib < nb; ib += N_SIMDWIDTH/4) {
+    for (int ib = ix; ib < nb; ib += N_SIMDWIDTH/16) {
         float sumy = 0.f;
 
         FOR_UNROLL (short i = 0; i < 16; i++) {
@@ -3897,7 +3899,7 @@ void kernel_mul_mv_tq2_0_f32_impl(
             sumf[row] += block_q_n_dot_y(ax[row] + ib, sumy, yl, il);
         }
 
-        yb += QK_TQ2_0 * (N_SIMDWIDTH/4);
+        yb += QK_TQ2_0 * (N_SIMDWIDTH/16);
     }
 
     device float * dst_f32 = (device float *) dst + (uint64_t)im*args.ne0*args.ne1 + (uint64_t)r1*args.ne0;

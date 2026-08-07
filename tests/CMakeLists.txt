@@ -267,6 +267,11 @@ if (NOT LLAMA_SANITIZE_ADDRESS AND NOT GGML_SCHED_NO_REALLOC)
   llama_build_and_test(test-opt.cpp)
 endif()
 llama_build_and_test(test-backend-ops.cpp)
+# TQ2_0 CPU vs Metal parity harness (isolated - avoids tessera_paged_attn coverage path).
+# Small graphs: MUL_MAT TQ2_0 x F32 and GET_ROWS TQ2_0.
+if (NOT GGML_BACKEND_DL)
+    llama_build(test-tq2-parity.cpp)
+endif()
 # Project B (auto backend selector) + Project C (memory
 # residency tracker) smoke test. Self-contained (no model
 # fixture); only the CPU backend is registered, the auto-select
