@@ -288,6 +288,33 @@ public struct InspectSidecarNode: WorkflowNodeType {
     }
 }
 
+// MARK: - SpeakTextNode (minimal shim for SpeechWorkflowView build)
+
+/// `SpeakTextTool` as a workflow node. Required inputs: `text`,
+/// `model_path`. The full speech W6 wave will promote this to a
+/// first-class node; this shim keeps `SpeechWorkflowView` building
+/// on main where the speech surface has not yet landed.
+public struct SpeakTextNode: WorkflowNodeType {
+    public static let typeId = "speak_text"
+    public static let displayName = TesseraToolNode.humanName("speak_text")
+    public static let summary = "Run the Talker + Code2Wav pass on a sentence."
+    public static let tool: any TesseraTool = SpeakTextTool()
+    public static let inputs: [WorkflowPort] = TesseraToolNode
+        .splitSchema(tool.parameters).0
+    public static let outputs: [WorkflowPort] = TesseraToolNode.resultPort
+    public static let parameterSchema: JSONSchema = TesseraToolNode
+        .splitSchema(tool.parameters).1
+
+    public static func execute(
+        parameters: [String: JSONValue],
+        inputs: [String: WorkflowPortValue],
+        context: WorkflowExecutionContext
+    ) async throws -> [String: WorkflowPortValue] {
+        try await TesseraToolNode.execute(
+            tool: tool, parameters: parameters, inputs: inputs, context: context)
+    }
+}
+
 // MARK: - Default registry
 
 extension WorkflowNodeRegistry {
