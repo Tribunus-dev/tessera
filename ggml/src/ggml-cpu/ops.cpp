@@ -11247,12 +11247,16 @@ static void ggml_compute_forward_tile640_matmul_f32(
         (packed2 ? 40 : WORDS_PER_PAGE);
     const int64_t n_lanes_per_row  = pages_per_row * LANES_PER_PAGE;
 
+    // zero-outlier clusters ship a length-1 cols/vals placeholder (GGUF
+    // cannot store empty tensors); the CSR scan only indexes the per-row
+    // range [offsets[i], offsets[i+1]), so the placeholder is never read
+    const int64_t n_outliers_total = (int64_t) outlier_row_offsets[out_dim];
     GGML_ASSERT((int64_t) A_outlier_row_offsets->ne[0] == (int64_t)(out_dim + 1));
     GGML_ASSERT((int64_t) A_packed->ne[0]              == (int64_t) out_dim * words_per_row);
     GGML_ASSERT((int64_t) A_page_scales->ne[0]         == (int64_t) out_dim * pages_per_row);
     GGML_ASSERT((int64_t) A_lane_scales->ne[0]         == (int64_t) out_dim * n_lanes_per_row);
-    GGML_ASSERT((int64_t) A_outlier_cols->ne[0]        == (int64_t) outlier_row_offsets[out_dim]);
-    GGML_ASSERT((int64_t) A_outlier_vals->ne[0]        == (int64_t) outlier_row_offsets[out_dim]);
+    GGML_ASSERT(n_outliers_total == 0 || (int64_t) A_outlier_cols->ne[0] == n_outliers_total);
+    GGML_ASSERT(n_outliers_total == 0 || (int64_t) A_outlier_vals->ne[0] == n_outliers_total);
 
     // Output layout: [out_dim, n_tokens, n_batch, n_seqs] — stride
     //   out[i, j, b, s] = dst_data[((s * n_batch + b) * n_tokens + j) * out_dim + i]
