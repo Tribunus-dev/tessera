@@ -81,6 +81,10 @@ public actor CovertTriggerMonitor {
     /// executor itself is an actor so the call is safe.
     public var onFire: (@Sendable () async -> Void)?
 
+    public func setOnFire(_ handler: (@Sendable () async -> Void)?) {
+        onFire = handler
+    }
+
     /// Logger for the audit trail. Per design section 9.3 a
     /// successful fire logs "covert_trigger_fired" + a
     /// timestamp, never the phrase. The system log is
