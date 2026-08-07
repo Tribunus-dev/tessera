@@ -19,6 +19,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <vector>
 
@@ -203,6 +204,48 @@ bool backend_buft_acceptance() {
     return true;
 }
 
+// The ANE device's default buffer type is the IOSurface type: model-load
+// placement for the ANE lane goes through IOSurface buffers by default. The
+// escape hatch GGML_ANE_NO_IOSURFACE_DEFAULT=1 restores the private ANE
+// heap. The IOSurface singleton must stay device-less (portable) either way.
+bool device_default_placement() {
+    ggml_backend_dev_t ane_dev = ggml_backend_dev_by_name("ANE");
+    if (!ane_dev) {
+        std::fprintf(stderr, "ANE device not registered\n");
+        return false;
+    }
+
+    ggml_backend_buffer_type_t dev_buft = ggml_backend_dev_buffer_type(ane_dev);
+    ggml_backend_buffer_type_t ios_buft = ggml_backend_ane_iosurface_buffer_type();
+
+    const char * env = getenv("GGML_ANE_NO_IOSURFACE_DEFAULT");
+    const bool disabled = env && env[0] != '\0' && env[0] != '0';
+
+    if (disabled) {
+        if (dev_buft == ios_buft) {
+            std::fprintf(stderr, "escape hatch set but ANE default is still IOSurface\n");
+            return false;
+        }
+        if (std::strcmp(ggml_backend_buft_name(dev_buft), "ANE") != 0) {
+            std::fprintf(stderr, "escape hatch set: expected ANE buft, got %s\n",
+                         ggml_backend_buft_name(dev_buft));
+            return false;
+        }
+        std::printf("(escape hatch active) ");
+    } else {
+        if (dev_buft != ios_buft) {
+            std::fprintf(stderr, "ANE default buft is %s, expected ANE_IOSURFACE\n",
+                         ggml_backend_buft_name(dev_buft));
+            return false;
+        }
+        if (ggml_backend_buft_get_device(ios_buft) != nullptr) {
+            std::fprintf(stderr, "IOSurface singleton must stay device-less\n");
+            return false;
+        }
+    }
+    return true;
+}
+
 // A scheduler-visible IOSurface buffer crosses CPU -> Metal -> CPU with zero
 // inserted copies. The leaves are allocated in the IOSurface buffer type; the
 // compute (F32 MUL_MAT) runs on Metal, which accepts the type and wraps the
@@ -372,6 +415,13 @@ int main() {
         return 1;
     }
     std::printf("  OK\n");
+
+    std::printf("  device_default_placement     ... ");
+    if (!device_default_placement()) {
+        std::printf("FAIL\n");
+        return 1;
+    }
+    std::printf("OK\n");
 
     std::printf("  scheduler_zero_copy          ... ");
     if (!scheduler_zero_copy()) {

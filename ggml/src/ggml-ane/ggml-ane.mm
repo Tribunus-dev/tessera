@@ -2963,6 +2963,22 @@ static ggml_backend_t ggml_backend_ane_device_init_backend(ggml_backend_dev_t de
 }
 
 static ggml_backend_buffer_type_t ggml_backend_ane_device_get_buffer_type(ggml_backend_dev_t dev) {
+    // Default placement for the ANE lane: IOSurface-backed buffers. They are
+    // CPU-readable (the IOSurface base stays locked) and wrap zero-copy as
+    // MTLBuffers, so tensors placed here cross the ANE<->Metal boundary
+    // without copies. The portable singleton keeps device == nullptr; the
+    // (dev, buft) pairing in the caller's buft list carries the device
+    // association. Set GGML_ANE_NO_IOSURFACE_DEFAULT=1 to fall back to the
+    // private ANE heap.
+    static const bool use_iosurface = []() {
+        const char * env = getenv("GGML_ANE_NO_IOSURFACE_DEFAULT");
+        return !(env && env[0] != '\0' && env[0] != '0');
+    }();
+
+    if (use_iosurface) {
+        return ggml_backend_ane_iosurface_buffer_type();
+    }
+
     ggml_backend_buffer_type_t buft = ggml_backend_ane_buffer_type();
     buft->device = dev;
     return buft;
