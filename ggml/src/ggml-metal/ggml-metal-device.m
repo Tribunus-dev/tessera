@@ -1312,8 +1312,8 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
                 return false;
             }
             // The Metal kernels only cover a fixed set of tsrc0 types. Any
-            // type not listed here has no kernel (e.g. TQ1_0/TQ2_0/NVFP4
-            // before the next wave lands) and must fall back to CPU rather
+            // type not listed here has no kernel (e.g. TQ1_0/NVFP4
+            // before the next wave lands (TQ2_0 now served)) and must fall back to CPU rather
             // than pipeline-compile-failing. tsrc1==F32 is fixed by
             // ggml_metal_library_get_pipeline_mul_{mm,mv,mv_ext}.
             switch (op->src[0]->type) {
@@ -1322,6 +1322,7 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
                 case GGML_TYPE_BF16:
                 case GGML_TYPE_Q1_0:
                 case GGML_TYPE_Q2_0:
+                case GGML_TYPE_TQ2_0:
                 case GGML_TYPE_Q4_0:
                 case GGML_TYPE_Q4_1:
                 case GGML_TYPE_Q5_0:
@@ -1414,6 +1415,7 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
                 case GGML_TYPE_I32:
                 case GGML_TYPE_Q1_0:
                 case GGML_TYPE_Q2_0:
+                case GGML_TYPE_TQ2_0:
                 case GGML_TYPE_Q4_0:
                 case GGML_TYPE_Q4_1:
                 case GGML_TYPE_Q5_0:
