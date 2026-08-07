@@ -1164,7 +1164,12 @@ float ts_quantize_mse_streaming(const float * weights,
 
     // Per-row streaming: scale -> clip -> ternarize -> compute_scales(1 row)
     // -> dequant(1 row) -> accumulate MSE. Scratch is O(in_dim) per row.
+    // row_ws holds the UNCLIPPED scaled weights (the MSE reference), row_core
+    // the clipped copy that feeds ternarize/scales - mirroring the ws/core
+    // split in ts_quantize_2d. Measuring against the clipped values would
+    // hide the clip distortion and score aggressive clips optimistically.
     std::vector<float>   row_ws((size_t)in_dim);
+    std::vector<float>   row_core((size_t)in_dim);
     std::vector<int8_t>  row_tern((size_t)in_dim);
     std::vector<uint16_t> row_pscale((size_t)pages);
     std::vector<int8_t>  row_lscale((size_t)pages * TS_LANES_PER_PAGE);
@@ -1174,29 +1179,31 @@ float ts_quantize_mse_streaming(const float * weights,
     for (int64_t r = 0; r < out_dim; r++) {
         const float * wrow = weights + r * in_dim;
 
-        // Scale + clip into row_ws.
+        // Scale into row_ws (unclipped) and row_core (clipped below).
         for (int64_t c = 0; c < in_dim; c++) {
-            row_ws[(size_t)c] = wrow[c] * wscale[(size_t)c];
+            float v = wrow[c] * wscale[(size_t)c];
+            row_ws[(size_t)c]   = v;
+            row_core[(size_t)c] = v;
         }
         if (clip > 0.0f && clip < 1.0f) {
-            float maxabs = ts_vec_maxabs(row_ws.data(), in_dim);
+            float maxabs = ts_vec_maxabs(row_core.data(), in_dim);
             float limit = maxabs * clip;
             for (int64_t c = 0; c < in_dim; c++) {
-                row_ws[(size_t)c] = std::min(std::max(row_ws[(size_t)c], -limit), limit);
+                row_core[(size_t)c] = std::min(std::max(row_core[(size_t)c], -limit), limit);
             }
         }
 
         // Ternarize.
         for (int64_t c = 0; c < in_dim; c++) {
             int8_t t = 0;
-            if (std::fabs(row_ws[(size_t)c]) >= threshold) {
-                t = (row_ws[(size_t)c] > 0.0f) ? 1 : ((row_ws[(size_t)c] < 0.0f) ? -1 : 0);
+            if (std::fabs(row_core[(size_t)c]) >= threshold) {
+                t = (row_core[(size_t)c] > 0.0f) ? 1 : ((row_core[(size_t)c] < 0.0f) ? -1 : 0);
             }
             row_tern[(size_t)c] = t;
         }
 
         // Per-row page/lane scales.
-        ts_compute_scales(row_ws.data(), row_tern.data(),
+        ts_compute_scales(row_core.data(), row_tern.data(),
                           row_pscale.data(), row_lscale.data(),
                           1, in_dim);
 
@@ -1204,7 +1211,7 @@ float ts_quantize_mse_streaming(const float * weights,
         ts_dequant(row_tern.data(), row_pscale.data(), row_lscale.data(),
                    row_deq.data(), 1, in_dim);
 
-        // Accumulate (ws - deq)^2 for this row.
+        // Accumulate (ws - deq)^2 for this row against the UNCLIPPED values.
         for (int64_t c = 0; c < in_dim; c++) {
             double d = (double)row_ws[(size_t)c] - (double)row_deq[(size_t)c];
             mse_accum += d * d;
