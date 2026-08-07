@@ -1751,8 +1751,14 @@ static bool compute_imatrix(llama_context * ctx, const common_params & params, c
 
         const auto t_start = std::chrono::high_resolution_clock::now();
 
-        // clear the KV cache
-        llama_memory_clear(llama_get_memory(ctx), true);
+        // KV clear: metadata reset (v_cells/head) is required, but the
+        // data memset is redundant. Each chunk writes n_ctx tokens
+        // contiguously from cell 0 via find_slot->cpy_k/v, overwriting
+        // every physical cell before it is read (n_kv via slot_info).
+        // Skipping the ggml_backend_buffer_clear saves ~700 MiB memset
+        // per chunk (~333 GiB over 476 chunks) and removes the serial
+        // barrier that blocked the k=4 observer pipeline.
+        llama_memory_clear(llama_get_memory(ctx), false);
 
         for (int j = 0; j < num_batches; ++j) {
             const int batch_start = start + j * n_batch;
@@ -2026,7 +2032,7 @@ static bool compute_features(llama_context * ctx, const common_params & params, 
 
         const auto t_start = std::chrono::high_resolution_clock::now();
 
-        llama_memory_clear(llama_get_memory(ctx), true);
+        llama_memory_clear(llama_get_memory(ctx), false); // KV data memset skipped, same rationale as compute_imatrix
 
         for (int j = 0; j < num_batches; ++j) {
             const int batch_start = start + j * n_batch;
