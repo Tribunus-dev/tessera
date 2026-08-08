@@ -121,7 +121,7 @@ public struct ABReceiptView: View {
                         x: .value("Offline proxy", line.max),
                         y: .value("Kernel-direct", line.max)
                     )
-                    .foregroundStyle(.gray.opacity(0.5))
+                    .foregroundStyle(.secondary)
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
                 }
             }

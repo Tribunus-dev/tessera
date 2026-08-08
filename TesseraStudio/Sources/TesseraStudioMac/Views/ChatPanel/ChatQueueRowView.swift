@@ -170,7 +170,7 @@ public struct ChatQueueRowView: View {
             Color.clear
         case .subtleHighlight:
             RoundedRectangle(cornerRadius: 6)
-                .fill(Color.yellow.opacity(0.08))
+                .fill(.quaternary)
         case .redFlash:
             RoundedRectangle(cornerRadius: 6)
                 .fill(Color.red.opacity(0.10))

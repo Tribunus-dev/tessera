@@ -58,7 +58,7 @@ struct WorkflowNodeView: View {
         .overlay(
             RoundedRectangle(cornerRadius: 8)
                 .stroke(
-                    isSelected ? Color.accentColor : Color.secondary.opacity(0.4),
+                    isSelected ? Color.accentColor : Color(.separatorColor),
                     lineWidth: isSelected ? 2 : 1
                 )
         )
@@ -197,7 +197,7 @@ struct WorkflowPortView: View {
                     Circle().stroke(
                         dragFeedback == .compatible
                             ? Color.accentColor
-                            : Color.primary.opacity(0.2),
+                            : Color(.separatorColor),
                         lineWidth: dragFeedback == .compatible ? 1.5 : 0.5
                     )
                 )

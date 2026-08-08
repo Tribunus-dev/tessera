@@ -165,7 +165,7 @@ public struct OnboardingView: View {
         HStack(spacing: 8) {
             ForEach(0..<pageCount, id: \.self) { index in
                 Circle()
-                    .fill(index == page ? Color.primary : Color.secondary.opacity(0.3))
+                    .foregroundStyle(index == page ? .primary : .quaternary)
                     .frame(width: 8, height: 8)
             }
         }

@@ -70,7 +70,7 @@ public struct HoldYourHorsesDialog: View {
                     .padding(4)
                     .background(
                         RoundedRectangle(cornerRadius: 5)
-                            .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                            .stroke(.separator, lineWidth: 1)
                     )
                     .focused($responseFocused)
                     .accessibilityLabel("Response to the agent")

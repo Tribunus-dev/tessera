@@ -161,7 +161,7 @@ struct WorkflowCanvasView: View {
     private var gridBackground: some View {
         Canvas { ctx, size in
             let spacing: CGFloat = 24
-            let color = Color.secondary.opacity(0.08)
+            let color = Color(.separatorColor)
             var path = Path()
             var x: CGFloat = 0
             while x < size.width {

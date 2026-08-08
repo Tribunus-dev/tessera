@@ -168,7 +168,7 @@ public struct SpeechWorkflowView: View {
                 .frame(minHeight: 80)
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.secondary.opacity(0.3))
+                        .stroke(.separator)
                 )
                 .accessibilityLabel("Sentence to speak")
                 .help("The text the Talker will speak. Empty input is refused.")

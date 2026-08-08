@@ -31,7 +31,7 @@ public struct SlideCanvasView: View {
                     .shadow(color: Color.black.opacity(0.12), radius: isSelected ? 10 : 4, x: 0, y: isSelected ? 4 : 2)
                     .overlay(
                         RoundedRectangle(cornerRadius: 10)
-                            .stroke(isSelected ? Color.accentColor.opacity(0.45) : Color.secondary.opacity(0.18),
+                            .stroke(isSelected ? Color.accentColor.opacity(0.45) : Color(.separatorColor),
                                     lineWidth: isSelected ? 1.5 : 0.75)
                     )
                 slideContent
@@ -219,7 +219,7 @@ public struct SlideThumbnailView: View {
                 .shadow(color: Color.black.opacity(isSelected ? 0.18 : 0.08), radius: isSelected ? 6 : 3, x: 0, y: 2)
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
-                        .stroke(isSelected ? Color.accentColor : Color.secondary.opacity(0.15),
+                        .stroke(isSelected ? Color.accentColor : Color(.separatorColor),
                                 lineWidth: isSelected ? 1.25 : 0.5)
                 )
             VStack(alignment: .leading, spacing: 3) {
