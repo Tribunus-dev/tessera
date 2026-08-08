@@ -1421,7 +1421,12 @@ bool common_tessera_params_parse(int argc, char ** argv, common_params & params,
     std::vector<char *> combined;
     combined.reserve(flag_argv.size() + pos_argv.size());
     for (char * p : flag_argv) combined.push_back(p);
-    for (char * p : pos_argv) combined.push_back(p);
+    // Positionals are NOT re-appended here: they are reserved for the
+    // main quantize subroutine, which re-reads the ORIGINAL argv
+    // (llama_quantize in tools/quantize/quantize.cpp parses <input>
+    // <ftype> positionals directly). Passing them through common_params_parse
+    // made it reject them as unknown args ("error: invalid argument").
+    // for (char * p : pos_argv) combined.push_back(p);
 
     // The user-supplied print_usage (if any) runs first; the
     // tessera_top_level_help_footer runs after and only appends when no

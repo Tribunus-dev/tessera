@@ -71,10 +71,9 @@ enum ggml_status ov_graph_compute(ggml_cgraph * cgraph, ggml_backend_t backend) 
 //   * ggml KV layout is a contiguous [1, 1, ctx_per_seq, n_heads_kv*head_size]
 //     so the first n_kv rows are the live prefix and shrinking the ctx axis
 //     gives a valid tensor over the same host storage
-//   * not an SWA layer (ring cache): once the window has wrapped the first
-//     n_kv rows no longer contain the live prefix
-// On any unmet pre-condition returns std::nullopt; the caller falls back to
-// the full-size tensor.
+//   * SWA layers use a ring buffer (window = ctx_per_seq_swa); slicing is
+//     only valid when the live window is still a prefix (no wrap) i.e.
+//     past_kv_len + attention_size_swa <= ctx_per_seq_swa.
 static std::optional<ov::Tensor> try_make_kv_sliced_tensor(std::shared_ptr<GgmlOvDecoder> ggml_decoder,
                                                            const std::string & name,
                                                            const ggml_tensor * ggml_tensor) {
@@ -106,11 +105,30 @@ static std::optional<ov::Tensor> try_make_kv_sliced_tensor(std::shared_ptr<GgmlO
     }
 
     const bool is_swa = ggml_decoder->is_swa_layer(layer);
+    int ctx_per_seq;
+    int n_kv;
     if (is_swa) {
-        return std::nullopt;
+        ctx_per_seq = ggml_decoder->get_ctx_per_seq_swa();
+        n_kv = compute_params.attention_size_swa;
+        // Fallback when SWA-specific fields were not populated (e.g. single-layer
+        // non-SWA probe graph reuses the generic attention_size).
+        if (n_kv <= 0) {
+            n_kv = compute_params.attention_size;
+        }
+        if (ctx_per_seq <= 0) {
+            ctx_per_seq = ggml_decoder->get_ctx_per_seq();
+        }
+        // Ring buffer wrap check: once the window has wrapped the first n_kv
+        // rows no longer hold the live prefix.
+        if (compute_params.past_kv_len >= 0) {
+            if (compute_params.past_kv_len + n_kv > ctx_per_seq) {
+                return std::nullopt;
+            }
+        }
+    } else {
+        ctx_per_seq = ggml_decoder->get_ctx_per_seq();
+        n_kv = compute_params.attention_size;
     }
-    const int ctx_per_seq = ggml_decoder->get_ctx_per_seq();
-    const int n_kv = compute_params.attention_size;
     if (ctx_per_seq <= 0 || n_kv <= 0 || n_kv >= ctx_per_seq) {
         return std::nullopt;
     }
@@ -124,12 +142,11 @@ static std::optional<ov::Tensor> try_make_kv_sliced_tensor(std::shared_ptr<GgmlO
     ov::Shape sliced_shape = full_shape;
     sliced_shape[2] = static_cast<size_t>(n_kv);
 
-    // Disabling for now as gpu has bug with in-place ScatterUpdate with remote tensors, can re-enable once CVS-186519 is fixed
-    // if (ggml_openvino_buffer_is_remote(ggml_tensor)) {
-    //     auto remote_context = ggml_openvino_get_remote_context();
-    //     auto gpu_context = remote_context->as<ov::intel_gpu::ocl::ClContext>();
-    //     return gpu_context.create_tensor(ggml_decoder->get_ov_type(ggml_tensor), sliced_shape, ggml_tensor->data);
-    // }
+    if (ggml_openvino_buffer_is_remote(ggml_tensor)) {
+        auto remote_context = ggml_openvino_get_remote_context();
+        auto gpu_context = remote_context->as<ov::intel_gpu::ocl::ClContext>();
+        return gpu_context.create_tensor(ggml_decoder->get_ov_type(ggml_tensor), sliced_shape, ggml_tensor->data);
+    }
 
     return ov::Tensor(ggml_decoder->get_ov_type(ggml_tensor), sliced_shape, ggml_tensor->data);
 }
@@ -142,14 +159,13 @@ ov::Tensor create_ov_output_tensor(std::shared_ptr<GgmlOvDecoder> ggml_decoder,
         return *sliced;
     }
 
-    // Disabling for now as gpu has bug with in-place ScatterUpdate with remote tensors, can re-enable once CVS-186519 is fixed
-    // if (ggml_tensor->extra != nullptr && !ggml_decoder->is_splited_model()) {
-    //     auto * extra_base = static_cast<ggml_openvino_extra_base *>(ggml_tensor->extra);
-    //     if (extra_base->type == ggml_openvino_extra_base::Type::TENSOR) {
-    //         auto * tensor_extra = static_cast<ggml_openvino_tensor_extra *>(extra_base);
-    //         return *tensor_extra->tensor;
-    //     }
-    // }
+    if (ggml_tensor->extra != nullptr && !ggml_decoder->is_splited_model()) {
+        auto * extra_base = static_cast<ggml_openvino_extra_base *>(ggml_tensor->extra);
+        if (extra_base->type == ggml_openvino_extra_base::Type::TENSOR) {
+            auto * tensor_extra = static_cast<ggml_openvino_tensor_extra *>(extra_base);
+            return *tensor_extra->tensor;
+        }
+    }
 
     auto output_type = ggml_decoder->get_ov_type(ggml_tensor);
     ov::Shape output_shape;
@@ -208,6 +224,8 @@ enum ggml_status ov_graph_compute_dynamic(ggml_cgraph * cgraph, std::shared_ptr<
                 auto mutex = std::make_shared<std::mutex>();
                 entry = std::make_shared<decoder_runtime_ctx>(mutex);
                 r_ctx->decoder_cache[key] = entry;
+                r_ctx->cache_order.push_back(key);
+                r_ctx->prune_caches_if_needed();
             }
         } else {
             auto mutex = std::make_shared<std::mutex>();
@@ -449,6 +467,8 @@ enum ggml_status ov_graph_compute_static(ggml_cgraph * cgraph, std::shared_ptr<o
             auto mutex = std::make_shared<std::mutex>();
             entry = std::make_shared<decoder_runtime_ctx>(mutex);
             r_ctx->decoder_cache[key] = entry;
+            r_ctx->cache_order.push_back(key);
+            r_ctx->prune_caches_if_needed();
         }
     } else {
         auto mutex = std::make_shared<std::mutex>();
@@ -723,12 +743,7 @@ enum ggml_status naive_compute(ggml_cgraph * cgraph,
 
     std::shared_ptr<ov::InferRequest> infer_request;
     auto remote_context = ggml_openvino_get_remote_context();
-    if (cgraph->nodes[0]->op == GGML_OP_MUL_MAT) {
-        // TODO ACCURACY hint triggers a bug in GPU plugin/driver on Lunar Lake. Remove once CVS-182166 is resolved
-        core.set_property(device, ov::hint::execution_mode(ov::hint::ExecutionMode::PERFORMANCE));
-    } else {
-        core.set_property(device, ov::hint::execution_mode(ov::hint::ExecutionMode::ACCURACY));
-    }
+    core.set_property(device, ov::hint::execution_mode(ov::hint::ExecutionMode::ACCURACY));
     if (remote_context.has_value()) {
         infer_request = std::make_shared<ov::InferRequest>(
             core.compile_model(model, remote_context.value(), config).create_infer_request());

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+<channel>
+<title>Tessera — Changelog</title>
+<link>https://tessera.tribunus.dev/changelog/</link>
+<description>What shipped, in order — receipts the kernel agrees with.</description>
+<language>en-us</language>
+<atom:link href="https://tessera.tribunus.dev/feed.xml" rel="self" type="application/rss+xml" />
+<item>
+<title>Bootstrap receipt · 2026-08-05 — tinyllama-1.1b TESSERA_T640</title>
+<link>https://tessera.tribunus.dev/evidence/#bootstrap-receipt</link>
+<guid>https://tessera.tribunus.dev/evidence/#bootstrap-receipt</guid>
+<pubDate>Tue, 05 Aug 2026 00:00:00 GMT</pubDate>
+<description>Aggregate t_l² 0.0016 — 202/202 tensors validated — kernel T640 sha256:7f3a…c9e1</description>
+</item>
+<item>
+<title>Tessera Observatory v1 — site goes live</title>
+<link>https://tessera.tribunus.dev/colophon/</link>
+<guid>https://tessera.tribunus.dev/colophon/</guid>
+<pubDate>Tue, 05 Aug 2026 00:00:00 GMT</pubDate>
+<description>Hand-authored HTML, Observatory design, GitHub Pages deploy on push to main. DRY assembler site/scripts/build.py now generates all 8 pages.</description>
+</item>
+</channel>
+</rss>

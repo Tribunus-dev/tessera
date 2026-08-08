@@ -1,0 +1,21 @@
+<link rel="preload" href="/styles/fonts/Newsreader-Variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/styles/fonts/Newsreader-Italic-Variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/media/og-image.svg" as="image" type="image/svg+xml">
+<link rel="stylesheet" href="/styles/site.css">
+<link rel="stylesheet" href="/styles/print.css" media="print">
+<script>
+(function(){try{
+  var k='tessera-theme';
+  var v=null;
+  try{v=localStorage.getItem(k);}catch(e){}
+  if(v!=='dark'&&v!=='light'){
+    try{
+      if(window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches){v='light';}
+      else{v='dark';}
+    }catch(e){v='dark';}
+  }
+  document.documentElement.setAttribute('data-theme',v);
+  try{document.documentElement.style.colorScheme=v;}catch(e){}
+}catch(e){}})();
+</script>
+<script src="/scripts/theme.js" defer></script>

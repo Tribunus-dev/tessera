@@ -18,6 +18,13 @@
 #include <iomanip>
 #include <map>
 #include <cinttypes>
+#include <array>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 
 // Recovered from 9e9f275 (was lost when WIP commit 06e514f captured a partial
 // snapshot). This probes the GGUF header for the MTP component marker without

@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.tessera.TesseraStudio" path="/org/tessera/TesseraStudio/">
+    <key name="provider" type="s">
+      <default>'placeholder'</default>
+      <summary>LLM provider</summary>
+      <description>One of placeholder, remote_api, on_device</description>
+    </key>
+    <key name="cloud-provider" type="s">
+      <default>''</default>
+      <summary>Cloud provider id driving the agent loop</summary>
+      <description>One of openai, anthropic, google, meta, minimax, alibaba, openrouter, zai, glm, deepseek, generic. Empty = use remote-base-url.</description>
+    </key>
+    <key name="cloud-model" type="s">
+      <default>''</default>
+      <summary>Model for cloud provider</summary>
+    </key>
+    <key name="remote-base-url" type="s">
+      <default>'http://localhost:8080'</default>
+      <summary>OpenAI-compatible base URL</summary>
+    </key>
+    <key name="on-device-model-path" type="s">
+      <default>''</default>
+      <summary>GGUF model path for ON_DEVICE</summary>
+    </key>
+    <key name="on-device-gpu-layers" type="i">
+      <default>0</default>
+      <summary>GPU layers for on-device (GGML_OPENVINO_DEVICE=GPU)</summary>
+    </key>
+    <key name="on-device-threads" type="i">
+      <default>0</default>
+      <summary>Threads (0 = auto)</summary>
+    </key>
+    <key name="cli-path" type="s">
+      <default>''</default>
+      <summary>Override tessera-cli path</summary>
+    </key>
+    <key name="onboarding-complete" type="b">
+      <default>false</default>
+      <summary>Onboarding complete</summary>
+    </key>
+    <key name="moe-prefetcher" type="s">
+      <default>'none'</default>
+      <summary>Active MoE prefetcher</summary>
+      <description>One of none, SpecPrefetch, SP-MoE, CORM-predictor — A/B test selector; CORM neuron cache stacks with any.</description>
+    </key>
+    <key name="moe-apex-tier" type="s">
+      <default>'Balanced'</default>
+      <summary>APEX tier</summary>
+      <description>One of Quality, Balanced, Compact, Lean, Mini — maps to tensor-type file for llama.cpp.</description>
+    </key>
+    <key name="moe-casmoe" type="b">
+      <default>true</default>
+      <summary>CasMoE cascaded policy</summary>
+    </key>
+  </schema>
+</schemalist>

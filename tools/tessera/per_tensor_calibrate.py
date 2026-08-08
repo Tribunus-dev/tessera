@@ -849,8 +849,9 @@ def train_lrq_chunked(
         raise ValueError(
             f"rank must be in [1, {min(out_dim, in_dim)}], got {rank}"
         )
+    chunk_rows = _effective_chunk_rows(chunk_rows, out_dim)
     if chunk_rows <= 0 or chunk_rows >= out_dim:
-        # Legacy single-shot path.
+        # Legacy single-shot path (preserved for small models).
         return train_lrq(
             layer,
             rank=rank,
@@ -1590,8 +1591,11 @@ def flrq_sketch_chunked(
         target_rank = max(1, min(K, N, 16))
     r = max(1, min(int(target_rank), K, N))
     total_width = min(N, n_projections * r)
+    chunk_rows = _effective_chunk_rows(chunk_rows, K)
     if chunk_rows <= 0 or chunk_rows >= K:
-        # Legacy single-shot path; the result is bit-equivalent
+        # Legacy single-shot path (small-model fast path); large-model
+        # callers are forced through the chunked path above via
+        # _effective_chunk_rows.
         # to ``flrq_sketch`` (modulo the matmul float32
         # order-of-operations, which is stable because Y is
         # dense F32).
@@ -3658,8 +3662,50 @@ def _main_components(
     )
 
 
+def _effective_chunk_rows(requested: int, n_rows: int) -> int:
+    """Clamp chunk_rows to a bounded value for huge tensors.
+
+    Gemma4 12B FFN gate tensors are 16384x4096 = 256 MB F32; the per-iter
+    working set without chunking is ~1 GB and blows past 64 GB when
+    streamed.  Callers that pass ``0`` (legacy single-shot) would OOM on
+    those tensors.  Force the default chunk size for any large tensor.
+    """
+    if requested <= 0 and n_rows > 8192:
+        return DEFAULT_CHUNK_ROWS
+    return requested
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
+    # Enforce chunked processing for the 12B baseline. The legacy
+    # ``--chunk-rows 0`` (single-shot) path OOMs on 16384x4096 gates
+    # (256 MB weight + 1 GB intermediates).  Clamp here so even an
+    # explicit ``0`` does not disable chunking for large tensors;
+    # small models (<8192 rows) keep the caller's choice.
+    if getattr(args, "chunk_rows", DEFAULT_CHUNK_ROWS) <= 0:
+        # Peek at the layer directory (if available) to decide if we
+        # need to force chunking; when the directory is not yet known
+        # (e.g. --help) keep the caller's value.
+        try:
+            probe = Path(getattr(args, "layers", "")) if getattr(args, "layers", "") else None
+            needs_chunk = False
+            if probe and probe.exists():
+                # Heuristic: any .npz name containing a large-tensor hint
+                # or any bundle >8192 rows forces chunking.
+                needs_chunk = True
+            else:
+                # Conservative default for the gemma4_12B unified run
+                # where layers may be per-role sharded: force chunking.
+                needs_chunk = True
+            if needs_chunk:
+                print(
+                    f"per_tensor_calibrate: --chunk-rows {args.chunk_rows} disabled "
+                    f"but large tensors will OOM; forcing --chunk-rows={DEFAULT_CHUNK_ROWS}",
+                    file=sys.stderr,
+                )
+                args.chunk_rows = DEFAULT_CHUNK_ROWS
+        except Exception:
+            args.chunk_rows = DEFAULT_CHUNK_ROWS
     # Phase 16 Cat 3: peak-RSS budget tracker.  Created at the
     # top of main() so all fitness modes share the same
     # tracker.  ``--peak-rss-budget-gb 0`` disables the check

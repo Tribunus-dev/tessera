@@ -54,7 +54,7 @@ void ggml_openvino_device_config::init() {
         }
     }
 
-    device_name = ggml_openvino_getenv_str("GGML_OPENVINO_DEVICE", "CPU");
+    device_name = ggml_openvino_getenv_str("GGML_OPENVINO_DEVICE", "GPU");
     auto available_devices = ov_singleton_core().get_available_devices();
     if (std::find(available_devices.begin(), available_devices.end(), device_name) == available_devices.end()) {
         GGML_LOG_WARN("GGML OpenVINO Backend: device %s is not available, fallback to CPU\n", device_name.c_str());

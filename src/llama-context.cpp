@@ -128,6 +128,24 @@ llama_context::llama_context(
     cparams.pooling_type = params.pooling_type;
 
     cparams.n_ctx            = params.n_ctx           == 0    ? hparams.n_ctx_train           : params.n_ctx;
+    // Baseline clamp (fix 4): gemma4 12B train ctx is 262144 -> 7.5 GiB KV
+    // buffer. A baseline with -p 512 that leaves n_ctx at the train default
+    // would OOM (especially on OpenVINO where the graph also scales with
+    // ctx). If the caller did not set --ctx-size and the batch is tiny,
+    // clamp to a sane baseline window and warn. Explicit --ctx-size
+    // bypasses this.
+    if (params.n_ctx == 0 && hparams.n_ctx_train >= 65536 && cparams.n_ctx == hparams.n_ctx_train) {
+        uint32_t batch_hint = params.n_batch ? params.n_batch : 512;
+        if (batch_hint <= 2048 && (hparams.n_ctx_train / batch_hint) >= 32) {
+            uint32_t clamped = std::max(batch_hint * 4u, 2048u);
+            clamped = GGML_PAD(clamped, 256);
+            if (clamped < cparams.n_ctx) {
+                LLAMA_LOG_WARN("%s: n_ctx %u (train default) is huge for a baseline with n_batch %u; clamping to %u to avoid 7+ GiB KV allocation. Pass --ctx-size %u explicitly if you need the full window.\n",
+                               __func__, cparams.n_ctx, batch_hint, clamped, hparams.n_ctx_train);
+                cparams.n_ctx = clamped;
+            }
+        }
+    }
     cparams.rope_freq_base   = params.rope_freq_base  == 0.0f ? hparams.rope_freq_base_train  : params.rope_freq_base;
     cparams.rope_freq_scale  = params.rope_freq_scale == 0.0f ? hparams.rope_freq_scale_train : params.rope_freq_scale;
 

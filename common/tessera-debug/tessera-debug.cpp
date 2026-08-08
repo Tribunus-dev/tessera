@@ -10,6 +10,8 @@
 
 #include "tessera-build-info.h"
 
+#include <math.h>
+
 // FP16 -> F32 conversion for the FP16 row outlier counter. We do not
 // pull in ggml.h from this translation unit (the sidecar writer is a
 // pure stream sink, below the ggml layering); the local copy of

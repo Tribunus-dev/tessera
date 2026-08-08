@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=Tessera Studio
+GenericName=Knowledge Studio
+Comment=Fedora GTK4 port — Chat, Code, Workflows, Notes, Tasks, Calendar, Contacts, Email
+Exec=tessera-studio-linux
+Icon=org.tessera.TesseraStudio
+Terminal=false
+Type=Application
+Categories=Office;ProjectManagement;Development;
+StartupWMClass=TesseraStudio
+MimeType=text/plain;
+X-GNOME-UsesNotifications=true

@@ -1,20 +1,1750 @@
-/* Tessera Observatory v1 -- site entry.
+/* --- foundation/tokens.css --- */
+/* Tessera Observatory v1 -- design tokens.
  *
- * Single entry point. Loads foundation, then components, in
- * dependency order. All tokens are declared in foundation/
- * tokens.css; components read from them.
+ * One source of truth for color, type, space, motion, and shape.
+ * Every component reads from these tokens. Editing a token is a
+ * constitutional change: every component depends on it.
  *
- * No @import in component files; they assume tokens.css is
- * already loaded.
+ * Archetype: observatory (research-project instrument panel). Dark
+ * first, single-family typography with weight variation, no
+ * decorative imagery, no third-party requests of any kind.
+ *
+ * Self-hosted font slot: the @font-face declarations are
+ * scaffolded in foundation/fonts.css. Drop the .woff2 files into
+ * /styles/fonts/ when ready; the system stack in this file is the
+ * fallback layer (page is readable with the network down).
+ *
+ * Status is communicated in three forms at once: text, shape,
+ * and color. The shape variation is what makes the state
+ * visible to a color-blind visitor, a screen reader (via the
+ * text label), and a printed page (no color at all). The
+ * state-badge component is the per-status application.
+ *
+ * Accent identity is shared with prism-engine on tribunus.dev
+ * (cyan + magenta as the prism dispersion). The two projects
+ * are architecturally distinct; the visual identity is the
+ * shared brand.
  */
 
-@import url("/styles/foundation/tokens.css");
-@import url("/styles/foundation/fonts.css");
-@import url("/styles/foundation/typography.css");
-@import url("/styles/foundation/layout.css");
+:root {
+  /* ------------------------------------------------------------- *
+   * 1. Color -- observatory ambient.
+   * ------------------------------------------------------------- */
 
-@import url("/styles/components/site-header.css");
-@import url("/styles/components/hero.css");
-@import url("/styles/components/page.css");
-@import url("/styles/components/chapter.css");
-@import url("/styles/components/footer.css");
+  /* Surfaces. Three levels of elevation, plus the base. */
+  --color-bg:           #0a0a10;
+  --color-surface-1:    #131320;
+  --color-surface-2:    #1c1c2e;
+  --color-surface-3:    #262638;
+
+  /* Text. High contrast for primary, lower for muted. */
+  --color-fg:           #ebebf2;
+  --color-fg-muted:     #a0a0b8;
+  --color-fg-subtle:    #6c6c84;
+
+  /* Rule. The hairline between sections, between rows, between
+   * panels. Visible at all times; never decorative. */
+  --color-rule:         #2a2a3e;
+  --color-rule-strong:  #3a3a52;
+
+  /* Accent. The prism dispersion color: cyan. The warm side:
+   * magenta. Shared with prism-engine. */
+  --color-accent:       #6ad4ff;
+  --color-accent-warm:  #c56ad4;
+
+  /* Status colors. Each one has a paired text/shape variant
+   * in the state-badge component. Color is reinforcement;
+   * text and shape are the primary signal. */
+  --color-state-planned:      #6c6c84;
+  --color-state-implemented:  #6ad4ff;
+  --color-state-qualifying:   #c56ad4;
+  --color-state-validated:    #5fd97a;
+  --color-state-released:     #6ad4ff;
+  --color-state-unreleased:   #6c6c84;
+
+  /* Status surface tints -- used for state badges' backgrounds
+   * when a badge sits on a chapter or a card. */
+  --color-state-planned-bg:      rgba(108, 108, 132, 0.12);
+  --color-state-implemented-bg:  rgba(106, 212, 255, 0.14);
+  --color-state-qualifying-bg:   rgba(197, 106, 212, 0.14);
+  --color-state-validated-bg:    rgba(95, 217, 122, 0.16);
+  --color-state-released-bg:     rgba(106, 212, 255, 0.14);
+  --color-state-unreleased-bg:   rgba(108, 108, 132, 0.10);
+
+  /* Focus ring. The visible focus indicator. WCAG 2.4.7. */
+  --color-focus:        #6ad4ff;
+  --color-focus-ring:   rgba(106, 212, 255, 0.35);
+
+  /* ------------------------------------------------------------- *
+   * 2. Type -- system stack (bootstrap); self-host slot is open.
+   * ------------------------------------------------------------- */
+
+  /* Bootstrap: system font stack. The page is readable with no
+   * network requests. Drop a self-hosted family in foundation/
+   * fonts.css when ready (the @font-face slot is already there).
+   * IBM Plex Sans leads the sans stack -- the observatory's
+   * instrument voice is technical, not generic Inter. Inter
+   * remains as a fallback, not the identity.
+   * Editorial display: serif for argument headlines only.
+   * Sans remains for body/UI, mono for data/receipts. The serif
+   * is the editorial contrast, not the page identity.
+   */
+  --font-sans: "IBM Plex Sans", "Inter", "Helvetica Neue",
+               -apple-system, BlinkMacSystemFont, "Segoe UI",
+               Helvetica, Arial, sans-serif;
+  --font-display: "Newsreader", "Fraunces", Georgia, "Times New Roman", serif;
+  --font-mono: "IBM Plex Mono", "JetBrains Mono", "SF Mono",
+               Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* Modular scale, 1.32 ratio. Editorial variant: display
+   * headlines get more air, body stays at 16px. Tight is for
+   * display (serif argument), loose is for editorial prose
+   * (long-form reading). */
+  --font-size-xs:   0.78rem;
+  --font-size-sm:   0.875rem;
+  --font-size-base: 1rem;
+  --font-size-md:   1.125rem;
+  --font-size-lg:   1.375rem;
+  --font-size-xl:   1.85rem;
+  --font-size-2xl:  2.4rem;
+  --font-size-3xl:  3.25rem;
+
+  --line-height-display: 1.05;
+  --line-height-tight:  1.15;
+  --line-height-snug:   1.3;
+  --line-height-base:   1.55;
+  --line-height-loose:  1.7;
+  --line-height-prose:  1.72;
+
+  --letter-spacing-tight:  -0.025em;
+  --letter-spacing-base:   0;
+  --letter-spacing-wide:   0.04em;
+  --letter-spacing-mono:   -0.01em;
+
+  --font-weight-regular: 400;
+  --font-weight-medium:  500;
+  --font-weight-bold:    700;
+
+  /* ------------------------------------------------------------- *
+   * 3. Space -- 4px base unit, geometric scale.
+   * ------------------------------------------------------------- */
+
+  --space-1:    0.25rem;
+  --space-2:    0.5rem;
+  --space-3:    0.75rem;
+  --space-4:    1rem;
+  --space-5:    1.5rem;
+  --space-6:    2rem;
+  --space-7:    3rem;
+  --space-8:    4rem;
+  --space-9:    6rem;
+
+  /* ------------------------------------------------------------- *
+   * 4. Layout -- content width and gutter.
+   * ------------------------------------------------------------- */
+
+  --max-width:   72rem;     /* the page */
+  --max-prose:   42rem;     /* editorial measure: 62-66ch at 16px */
+  --max-prose-wide: 46rem;  /* figure / table breakout */
+  --gutter:      1.5rem;    /* outer page padding on mobile */
+
+  /* ------------------------------------------------------------- *
+   * 5. Motion -- duration and easing. Reduced-motion collapses to 0.
+   * ------------------------------------------------------------- */
+
+  --motion-fast:  150ms;
+  --motion-base:  250ms;
+  --motion-slow:  400ms;
+  --motion-ease:  cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ------------------------------------------------------------- *
+   * 6. Shape.
+   * ------------------------------------------------------------- */
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+}
+
+/* Light theme -- opt-in via the [data-theme="light"] attribute on
+ * <html>. The same token names, inverted. Light is opt-in for the
+ * Observatory; dark is the default. The visitor toggles via the
+ * header button.
+ */
+:root[data-theme="light"] {
+  --color-bg:           #f2f2f5;
+  --color-surface-1:    #ffffff;
+  --color-surface-2:    #ececf0;
+  --color-surface-3:    #e0e0e6;
+  --color-fg:           #0a0a10;
+  --color-fg-muted:     #4a4a58;
+  --color-fg-subtle:    #8888a0;
+  --color-rule:         #d8d8e0;
+  --color-rule-strong:  #b8b8c4;
+  --color-state-planned-bg:      rgba(108, 108, 132, 0.08);
+  --color-state-implemented-bg:  rgba(106, 212, 255, 0.16);
+  --color-state-qualifying-bg:   rgba(197, 106, 212, 0.14);
+  --color-state-validated-bg:    rgba(95, 217, 122, 0.18);
+  --color-state-released-bg:     rgba(106, 212, 255, 0.16);
+  --color-state-unreleased-bg:   rgba(108, 108, 132, 0.06);
+  --color-focus-ring:   rgba(106, 212, 255, 0.45);
+}
+
+/* prefers-reduced-motion: motion collapses to zero. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+
+/* --- foundation/fonts.css --- */
+/* Tessera Observatory v1 — editorial type.
+ *
+ * Self-hosted family slot. Bootstrap ships with the system stack
+ * in tokens.css so the page is readable with no network requests.
+ * Drop the .woff2 files into /styles/fonts/ and uncomment the
+ * @font-face declarations when ready.
+ *
+ * Editorial stack:
+ *   Display: Newsreader (serif, argument headlines) — SIL OFL 1.1
+ *            https://fonts.google.com/specimen/Newsreader
+ *   Sans:    IBM Plex Sans (body/UI) is the sans identity; Inter
+ *            remains fallback. Source: IBM Plex SIL OFL.
+ *   Mono:    IBM Plex Mono / JetBrains Mono (data/receipts).
+ *
+ * Self-hosting is non-negotiable: no fonts.gstatic.com, no Google
+ * Fonts CSS, no third-party CDN. Visitor fetches from same origin.
+ *
+ * font-display: swap — system fallback renders immediately; local
+ * face swaps in. First paint is never blocked on font readiness.
+ *
+ * To activate:
+ *   1. Drop the .woff2 files into /styles/fonts/.
+ *   2. Update the src: URL below.
+ *   3. Preload the file in <head> for LCP.
+ */
+
+@font-face {
+  font-family: "Newsreader";
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url("/styles/fonts/Newsreader-Variable.woff2") format("woff2-variations");
+}
+@font-face {
+  font-family: "Newsreader";
+  font-style: italic;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url("/styles/fonts/Newsreader-Italic-Variable.woff2") format("woff2-variations");
+}
+
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/styles/fonts/IBMPlexSans-Regular.woff2") format("woff2") tech(variations),
+       url("/styles/fonts/IBMPlexSans-Medium.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url("/styles/fonts/JetBrainsMono-Variable.woff2") format("woff2-variations");
+}
+
+
+/* --- foundation/typography.css --- */
+/* Tessera Observatory v1 -- typography.
+ *
+ * Element-level styles. Reads from tokens.css. Never recomputes
+ * sizes locally; always references the modular scale.
+ *
+ * Monospace is reserved for identities, hashes, digests, commands,
+ * schemas, values, machine-state labels, and code. Prose never
+ * uses mono; identities never use proportional.
+ */
+
+:root {
+  color-scheme: dark light;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: var(--line-height-base);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+html { font-size: 100%; }
+body { font-size: var(--font-size-base); }
+
+/* Headings. Editorial variant: serif display for argument
+ * headlines (h1/h2), sans for structure (h3-h6). Display heads
+ * read as the essay's argument; body heads read as the instrument's
+ * scaffolding. */
+h1, h2, h3, h4, h5, h6 {
+  margin: 0 0 var(--space-4) 0;
+  color: var(--color-fg);
+  hanging-punctuation: first;
+}
+
+h1 {
+  font-family: var(--font-display);
+  font-size: var(--font-size-3xl);
+  font-weight: 400;
+  line-height: var(--line-height-display);
+  letter-spacing: -0.03em;
+}
+h2 {
+  font-family: var(--font-display);
+  font-size: var(--font-size-2xl);
+  font-weight: 400;
+  line-height: var(--line-height-display);
+  letter-spacing: -0.025em;
+}
+h3 {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-tight);
+  letter-spacing: var(--letter-spacing-base);
+}
+h4 {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-snug);
+  letter-spacing: var(--letter-spacing-base);
+}
+h5, h6 {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  line-height: var(--line-height-snug);
+}
+
+/* Body prose. Editorial measure: 62-66ch, hanging punctuation,
+ * lining/oldstyle nums opt-in. Chapter sets max-width; prose
+ * inherits it. */
+p {
+  margin: 0 0 var(--space-4) 0;
+  max-width: var(--max-prose);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-prose);
+  hanging-punctuation: first;
+  font-variant-ligatures: common-ligatures;
+  font-variant-numeric: lining-nums;
+}
+p:last-child { margin-bottom: 0; }
+
+.lede {
+  font-size: 1.2rem;
+  line-height: var(--line-height-loose);
+  color: var(--color-fg-muted);
+  max-width: var(--max-prose);
+  hanging-punctuation: first;
+}
+.byline {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  color: var(--color-fg-subtle);
+  margin-bottom: var(--space-4);
+}
+.byline a { color: var(--color-fg-muted); }
+
+/* Links. Cyan accent, underline on hover only. */
+a {
+  color: var(--color-accent);
+  text-decoration: none;
+  text-underline-offset: 0.2em;
+  text-decoration-thickness: 0.05em;
+  transition: color var(--motion-fast) var(--motion-ease);
+}
+a:hover { text-decoration: underline; }
+a:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Lists. */
+ul, ol {
+  margin: 0 0 var(--space-4) 0;
+  padding-left: var(--space-5);
+  max-width: var(--max-prose);
+}
+li { margin-bottom: var(--space-2); }
+
+/* Inline code and code blocks. */
+code, kbd, samp {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  letter-spacing: var(--letter-spacing-mono);
+  color: var(--color-fg);
+  background: var(--color-surface-1);
+  padding: 0.1em 0.35em;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-rule);
+}
+pre {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  line-height: 1.55;
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-md);
+  padding: var(--space-4) var(--space-5);
+  overflow-x: auto;
+  margin: 0 0 var(--space-4) 0;
+  max-width: var(--max-width);
+}
+pre code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-size: inherit;
+  color: inherit;
+}
+
+/* Quotes. The Observatory's voice is factual; quotes are used
+ * sparingly, for receipt-style attestations only. */
+blockquote {
+  margin: var(--space-5) 0;
+  padding: var(--space-3) var(--space-5);
+  border-left: 3px solid var(--color-accent);
+  color: var(--color-fg-muted);
+  font-style: normal;
+}
+
+/* Horizontal rules. */
+hr {
+  border: 0;
+  border-top: 1px solid var(--color-rule);
+  margin: var(--space-7) 0;
+}
+
+/* Tables. The Observatory's data-density use case. */
+table {
+  width: 100%;
+  max-width: var(--max-width);
+  border-collapse: collapse;
+  margin: 0 0 var(--space-5) 0;
+  font-size: var(--font-size-sm);
+}
+th, td {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-rule);
+}
+th {
+  color: var(--color-fg-muted);
+  font-weight: var(--font-weight-medium);
+  text-transform: uppercase;
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--letter-spacing-wide);
+}
+
+/* Forms. */
+input, textarea, select, button {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+/* Focus visible. WCAG 2.4.7 + 2.4.11. */
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Selection. */
+::selection {
+  background: var(--color-accent);
+  color: var(--color-bg);
+}
+
+/* Utility. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+
+/* --- foundation/layout.css --- */
+/* Tessera Observatory v1 -- layout primitives.
+ *
+ * Page chrome and structural primitives. Reads from tokens.css.
+ * Components compose these primitives; do not redefine widths
+ * or gutters in component files.
+ */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg);
+}
+
+main {
+  flex: 1 0 auto;
+  width: 100%;
+}
+
+/* Page wrapper. The page is a column of chapters inside this
+ * container. Max-width caps the prose; chapters can opt out for
+ * full-bleed surfaces (the hero, the secondary-nav). */
+.page {
+  width: 100%;
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+}
+
+@media (min-width: 768px) {
+  :root { --gutter: 2rem; }
+}
+@media (min-width: 1024px) {
+  :root { --gutter: 3rem; }
+}
+
+/* Page-level vertical rhythm. The home page is a stack of
+ * hero + chapters; the chapter page is a stack of section +
+ * footer. */
+.page-stack > * + * { margin-top: var(--space-6); }
+.page-stack > * + .hero,
+.page-stack > .hero + * { margin-top: var(--space-7); }
+
+/* Skip link. WCAG 2.4.1. */
+.skip-link {
+  position: absolute;
+  top: -100px;
+  left: var(--space-3);
+  z-index: 100;
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-accent);
+  color: var(--color-bg);
+  font-weight: var(--font-weight-medium);
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  transition: top var(--motion-fast) var(--motion-ease);
+}
+.skip-link:focus-visible {
+  top: var(--space-3);
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Visually hidden, but accessible to screen readers. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+
+/* --- components/site-header.css --- */
+/* Tessera Observatory v1 -- site header + primary nav.
+ *
+ * The header is the site's invariant chrome. The primary nav is
+ * exactly six items per the editorial-curated-site skill: Start,
+ * Architecture, Evidence, Status, Changelog, GitHub. The current
+ * route is marked with aria-current="page" and rendered with a
+ * stronger color and an underline.
+ *
+ * The nav wraps to a second row at small viewports. The brand sits
+ * on its own line, then the nav links flow.
+ */
+
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-5);
+  padding: var(--space-3) var(--gutter);
+  background: color-mix(in srgb, var(--color-bg) 92%, transparent);
+  backdrop-filter: blur(12px) saturate(1.2);
+  -webkit-backdrop-filter: blur(12px) saturate(1.2);
+  border-bottom: 1px solid var(--color-rule);
+  /* Ensure contrast when header overlays code blocks: stronger bg + subtle shadow */
+  box-shadow: 0 1px 0 var(--color-rule), 0 4px 16px rgba(0, 0, 0, 0.18);
+}
+:root[data-theme="light"] .site-header {
+  box-shadow: 0 1px 0 var(--color-rule), 0 4px 16px rgba(0, 0, 0, 0.06);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-fg);
+  text-decoration: none;
+  font-weight: var(--font-weight-bold);
+  font-size: var(--font-size-base);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+}
+.brand:hover { color: var(--color-fg); text-decoration: none; }
+
+.brand-mark {
+  display: inline-block;
+  width: 1.5rem;
+  height: 1.5rem;
+  background:
+    linear-gradient(135deg,
+      var(--color-accent) 0%,
+      var(--color-accent) 50%,
+      var(--color-accent-warm) 50%,
+      var(--color-accent-warm) 100%);
+  border-radius: 3px;
+  vertical-align: middle;
+  /* Subtle tessera tile: 2x2 grid hint via inner shadow + outline for crispness */
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(0, 0, 0, 0.12);
+}
+:root[data-theme="light"] .brand-mark {
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+.site-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-5);
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.site-nav-link {
+  position: relative;
+  display: inline-block;
+  padding: var(--space-2) 0;
+  color: var(--color-fg-muted);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  text-decoration: none;
+  transition: color var(--motion-fast) var(--motion-ease);
+}
+.site-nav-link::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--color-accent);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform var(--motion-base) var(--motion-ease);
+}
+.site-nav-link:hover,
+.site-nav-link:focus-visible {
+  color: var(--color-fg);
+  text-decoration: none;
+}
+.site-nav-link:hover::after,
+.site-nav-link:focus-visible::after {
+  transform: scaleX(1);
+}
+.site-nav-link[aria-current="page"] {
+  color: var(--color-fg);
+}
+.site-nav-link[aria-current="page"]::after {
+  transform: scaleX(1);
+}
+.site-nav-link[rel="external"]::before {
+  content: "↗";
+  display: inline-block;
+  margin-right: 0.3em;
+  opacity: 0.6;
+}
+
+/* Theme toggle. */
+.theme-toggle {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-sm);
+  color: var(--color-fg-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color var(--motion-fast) var(--motion-ease),
+              border-color var(--motion-fast) var(--motion-ease);
+}
+.theme-toggle:hover {
+  color: var(--color-fg);
+  border-color: var(--color-rule-strong);
+}
+.theme-toggle-icon {
+  display: inline-block;
+  width: 0.85rem;
+  height: 0.85rem;
+  border-radius: 50%;
+  background: transparent;
+  border: 1.5px solid var(--color-fg);
+  position: relative;
+  transition: border-color var(--motion-fast) var(--motion-ease),
+              background var(--motion-fast) var(--motion-ease);
+}
+.theme-toggle-icon::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 0.32rem;
+  height: 0.32rem;
+  border-radius: 50%;
+  background: var(--color-fg);
+  transition: opacity var(--motion-fast) var(--motion-ease),
+              transform var(--motion-fast) var(--motion-ease);
+}
+:root[data-theme="light"] .theme-toggle-icon {
+  background: var(--color-fg);
+  border-color: var(--color-fg);
+}
+:root[data-theme="light"] .theme-toggle-icon::after {
+  opacity: 0;
+  transform: scale(0.4);
+}
+
+
+/* --- components/hero.css --- */
+/* Tessera Observatory v1 -- hero.
+ *
+ * The page-level headline and lede. The hero is the first
+ * projection; it sets the page's intent and tone. The headline
+ * is the page's argument; the blurb is the page's invitation.
+ *
+ * The hero is generous. The headline is the largest type on
+ * the page. The blurb is the lead, in muted color, max-width
+ * to keep the line length readable. The hairline below the
+ * hero separates it from the body without committing to a
+ * heavy divider.
+ *
+ * The home hero adds a faint cyan ambient halo behind the
+ * headline, anchoring it to the page. Subordinated to the
+ * headline; pointer-events: none.
+ */
+
+.hero {
+  position: relative;
+  padding: var(--space-8) var(--gutter) var(--space-7);
+  max-width: var(--max-width);
+  margin: 0 auto;
+}
+.hero::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(100%, var(--max-width));
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--color-rule-strong) 30%,
+    var(--color-rule-strong) 70%,
+    transparent
+  );
+}
+
+.hero-home {
+  padding-top: var(--space-9);
+  padding-bottom: var(--space-8);
+}
+.hero-home::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 60%;
+  max-width: 36rem;
+  height: 100%;
+  background: radial-gradient(
+    ellipse 50% 50% at 50% 30%,
+    rgba(106, 212, 255, 0.06) 0%,
+    transparent 70%
+  );
+  pointer-events: none;
+  z-index: -1;
+}
+
+.hero-eyebrow {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  color: var(--color-fg-subtle);
+  margin-bottom: var(--space-3);
+  padding: var(--space-1) var(--space-3);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-sm);
+}
+
+.hero-headline {
+  font-family: var(--font-display);
+  font-size: clamp(2.1rem, 1.5rem + 2.8vw, 3.25rem);
+  line-height: var(--line-height-display);
+  letter-spacing: -0.03em;
+  font-weight: 400;
+  color: var(--color-fg);
+  margin: 0 0 var(--space-3) 0;
+  max-width: 36rem;
+  hanging-punctuation: first;
+}
+
+.hero-dek {
+  font-size: 1.2rem;
+  line-height: var(--line-height-loose);
+  color: var(--color-fg-muted);
+  max-width: 40rem;
+  margin: 0 0 var(--space-2) 0;
+  hanging-punctuation: first;
+}
+
+.hero-byline {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  color: var(--color-fg-subtle);
+  margin: 0 0 var(--space-5) 0;
+}
+
+.hero-blurb {
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-prose);
+  color: var(--color-fg-muted);
+  max-width: 40rem;
+  margin: 0 0 var(--space-5) 0;
+}
+
+.hero-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+.hero-cta-primary {
+  display: inline-block;
+  padding: var(--space-2) var(--space-5);
+  background: var(--color-accent);
+  color: var(--color-bg);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  font-size: var(--font-size-sm);
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  transition: filter var(--motion-fast) var(--motion-ease);
+}
+.hero-cta-primary:hover {
+  color: var(--color-bg);
+  filter: brightness(1.1);
+  text-decoration: none;
+}
+.hero-cta-secondary {
+  display: inline-block;
+  padding: var(--space-2) var(--space-3);
+  color: var(--color-fg-muted);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  font-size: var(--font-size-sm);
+  text-decoration: none;
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-1);
+  transition: color var(--motion-fast) var(--motion-ease),
+              border-color var(--motion-fast) var(--motion-ease),
+              background var(--motion-fast) var(--motion-ease);
+}
+.hero-cta-secondary:hover {
+  color: var(--color-fg);
+  border-color: var(--color-rule-strong);
+  background: var(--color-surface-2);
+  text-decoration: none;
+}
+
+
+/* --- components/page.css --- */
+/* Tessera Observatory v1 -- page header.
+ *
+ * The page-level header for non-home pages. Mirrors the home
+ * hero's structure (eyebrow + headline + blurb) at a smaller
+ * scale. The home page uses the full hero; everything else
+ * uses the page header.
+ */
+
+.page-header {
+  padding: var(--space-7) var(--gutter) var(--space-6);
+  max-width: var(--max-width);
+  margin: 0 auto;
+}
+
+.page-header-eyebrow {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  color: var(--color-fg-subtle);
+  margin-bottom: var(--space-3);
+  padding: var(--space-1) var(--space-3);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-sm);
+}
+
+.page-header-headline {
+  font-size: clamp(1.75rem, 1.25rem + 2vw, 2.5rem);
+  line-height: var(--line-height-tight);
+  letter-spacing: var(--letter-spacing-tight);
+  color: var(--color-fg);
+  margin: 0 0 var(--space-3) 0;
+  max-width: 32rem;
+}
+
+.page-header-blurb {
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-loose);
+  color: var(--color-fg-muted);
+  max-width: 40rem;
+  margin: 0;
+}
+
+
+/* --- components/chapter.css --- */
+/* Tessera Observatory v1 -- chapter.
+ *
+ * A chapter is a labelled section with a title, optional
+ * subtitle, and a body. Chapters stack vertically; the page
+ * is a column of chapters. The chapter title is the
+ * Observatory's mid-scale heading (xl, sans medium).
+ *
+ * Three forms:
+ *   .chapter            -- section with a left-rule accent
+ *   .chapter-tight      -- section without a rule (used between
+ *                         the hero and the first chapter)
+ *   .chapter-bleed      -- full-bleed chapter (used for the
+ *                         tool listing and the changelog)
+ */
+
+.chapter {
+  position: relative;
+  padding: var(--space-6) 0 var(--space-5);
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding-left: var(--gutter);
+  padding-right: var(--gutter);
+}
+
+.chapter::before {
+  content: "";
+  position: absolute;
+  top: var(--space-5);
+  left: var(--gutter);
+  width: 1.5rem;
+  height: 1px;
+  background: var(--color-accent);
+}
+
+.chapter-tight {
+  border-left: none;
+  padding-left: 0;
+}
+.chapter-tight::before { display: none; }
+
+.chapter-bleed {
+  max-width: 100%;
+  padding-left: var(--gutter);
+  padding-right: var(--gutter);
+}
+
+.chapter-eyebrow {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  color: var(--color-fg-subtle);
+  margin-bottom: var(--space-2);
+}
+.chapter-eyebrow::before { content: "§ "; opacity: 0.6; }
+
+.chapter-title {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--line-height-tight);
+  letter-spacing: var(--letter-spacing-tight);
+  color: var(--color-fg);
+  margin: 0 0 var(--space-3) 0;
+  max-width: 32rem;
+}
+
+.chapter-subtitle {
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-base);
+  color: var(--color-fg-muted);
+  margin: 0 0 var(--space-5) 0;
+  max-width: 40rem;
+}
+
+.chapter-body > * { max-width: var(--max-prose); }
+.chapter-body > * + * { margin-top: var(--space-4); }
+.chapter-body p { font-size: var(--font-size-md); line-height: var(--line-height-loose); }
+
+/* Step list -- used in "The Plan" and similar narrative beats. */
+.chapter-steps {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-4);
+  margin: var(--space-5) 0;
+  padding: 0;
+  list-style: none;
+}
+@media (min-width: 768px) {
+  .chapter-steps { grid-template-columns: repeat(3, 1fr); }
+}
+.chapter-step {
+  padding: var(--space-4) var(--space-5);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-md);
+  position: relative;
+}
+.chapter-step-number {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-subtle);
+  letter-spacing: var(--letter-spacing-mono);
+  margin-bottom: var(--space-2);
+}
+.chapter-step-title {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-bold);
+  margin: 0 0 var(--space-2) 0;
+  color: var(--color-fg);
+}
+.chapter-step-body {
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-muted);
+  margin: 0;
+  line-height: var(--line-height-base);
+}
+
+/* Callout. Observatory voice: factual, no decoration. */
+.callout {
+  margin: var(--space-5) 0;
+  padding: var(--space-4) var(--space-5);
+  background: var(--color-surface-1);
+  border-left: 3px solid var(--color-accent-warm);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-muted);
+}
+.callout-title {
+  display: block;
+  font-weight: var(--font-weight-bold);
+  font-size: var(--font-size-sm);
+  color: var(--color-fg);
+  margin-bottom: var(--space-1);
+  text-transform: uppercase;
+  letter-spacing: var(--letter-spacing-wide);
+}
+
+
+/* --- components/footer.css --- */
+/* Tessera Observatory v1 -- secondary nav + footer.
+ *
+ * The secondary nav is the per-page context navigation
+ * (one level deep, derived from data/navigation.json).
+ * The footer carries the author attribution, the repository
+ * link, and the canonical origin.
+ */
+
+.secondary-nav {
+  margin-top: var(--space-7);
+  padding: var(--space-5) var(--gutter);
+  border-top: 1px solid var(--color-rule);
+  border-bottom: 1px solid var(--color-rule);
+  background: var(--color-surface-1);
+}
+.secondary-nav-list {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-5);
+  align-items: center;
+  list-style: none;
+  padding: 0;
+}
+.secondary-nav-label {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-subtle);
+  text-transform: uppercase;
+  letter-spacing: var(--letter-spacing-wide);
+  margin-right: var(--space-2);
+}
+.secondary-nav a {
+  color: var(--color-fg-muted);
+  font-size: var(--font-size-sm);
+}
+.secondary-nav a:hover { color: var(--color-fg); }
+
+.site-footer {
+  padding: var(--space-6) var(--gutter);
+  border-top: 1px solid var(--color-rule);
+  background: var(--color-bg);
+}
+.site-footer-inner {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-5);
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-muted);
+}
+.site-footer a { color: var(--color-fg-muted); }
+.site-footer a:hover { color: var(--color-fg); }
+
+
+/* --- components/state-badge.css --- */
+/* Tessera Observatory v1 -- state badge.
+ *
+ * Status is communicated in three forms at once: text, shape, and color.
+ * The shape variation is what makes the state visible to a color-blind
+ * visitor, a screen reader (via the text label), and a printed page.
+ * Color is reinforcement; text + shape are the primary signal.
+ */
+
+.state-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0.2em 0.55em 0.2em 0.4em;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  line-height: 1.4;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.state-badge::before {
+  content: "";
+  flex-shrink: 0;
+  width: 0.6rem;
+  height: 0.6rem;
+  border: 1.5px solid currentColor;
+  background: transparent;
+}
+
+/* Planned / Unreleased -- hollow circle (pending) */
+.state-badge--planned,
+.state-badge--unreleased {
+  color: var(--color-state-planned);
+  background: var(--color-state-planned-bg);
+  border-color: rgba(108, 108, 132, 0.22);
+}
+.state-badge--planned::before,
+.state-badge--unreleased::before {
+  border-radius: 50%;
+  background: transparent;
+}
+
+/* Implemented / Released -- filled square (done, cyan) */
+.state-badge--implemented,
+.state-badge--released {
+  color: var(--color-state-implemented);
+  background: var(--color-state-implemented-bg);
+  border-color: rgba(106, 212, 255, 0.28);
+}
+.state-badge--implemented::before,
+.state-badge--released::before {
+  border-radius: 1px;
+  background: currentColor;
+}
+
+/* Qualifying -- diamond (in-progress, magenta) */
+.state-badge--qualifying {
+  color: var(--color-state-qualifying);
+  background: var(--color-state-qualifying-bg);
+  border-color: rgba(197, 106, 212, 0.28);
+}
+.state-badge--qualifying::before {
+  border-radius: 1px;
+  transform: rotate(45deg) scale(0.85);
+  background: currentColor;
+  width: 0.5rem;
+  height: 0.5rem;
+}
+
+/* Validated -- filled circle with check semantics (verified, green) */
+.state-badge--validated {
+  color: var(--color-state-validated);
+  background: var(--color-state-validated-bg);
+  border-color: rgba(95, 217, 122, 0.28);
+}
+.state-badge--validated::before {
+  border-radius: 50%;
+  background: currentColor;
+}
+
+@media print {
+  .state-badge {
+    border: 1px solid currentColor !important;
+    background: transparent !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
+
+
+/* --- components/receipt.css --- */
+/* Tessera Observatory v1 -- receipt.
+ *
+ * A receipt is a durable, auditable record of a single run. The
+ * component renders the per-tensor t_l2 and the kernel hash as
+ * they appear in the sidecar. No decorative imagery; the data is
+ * the visualization.
+ */
+
+.receipt {
+  margin: var(--space-5) 0;
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.receipt-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3) var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--color-rule);
+}
+
+.receipt-title {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  color: var(--color-fg);
+  margin: 0;
+}
+
+.receipt-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-subtle);
+}
+
+.receipt-meta dt {
+  display: inline;
+  text-transform: uppercase;
+  letter-spacing: var(--letter-spacing-wide);
+  margin-right: 0.35em;
+}
+
+.receipt-meta dd {
+  display: inline;
+  margin: 0;
+  color: var(--color-fg-muted);
+}
+
+.receipt-body {
+  padding: var(--space-4) var(--space-5);
+}
+
+.receipt-kv {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-1) var(--space-4);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+  margin: 0;
+}
+
+.receipt-kv dt {
+  color: var(--color-fg-subtle);
+  text-transform: uppercase;
+  letter-spacing: var(--letter-spacing-wide);
+}
+
+.receipt-kv dd {
+  margin: 0;
+  color: var(--color-fg-muted);
+  word-break: break-all;
+}
+
+.receipt-table {
+  width: 100%;
+  margin-top: var(--space-4);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+.receipt-table th {
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-subtle);
+  border-bottom-color: var(--color-rule-strong);
+}
+
+.receipt-table td {
+  color: var(--color-fg-muted);
+}
+
+.receipt-table td:last-child {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.receipt-footer {
+  padding: var(--space-3) var(--space-5);
+  background: var(--color-surface-2);
+  border-top: 1px solid var(--color-rule);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-subtle);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+}
+
+/* Terminal block -- the actual harness output */
+.terminal {
+  margin: var(--space-5) 0;
+  background: var(--color-bg);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.terminal-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-surface-1);
+  border-bottom: 1px solid var(--color-rule);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-subtle);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+}
+
+.terminal-bar::before {
+  content: "";
+  display: inline-block;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: var(--color-state-validated);
+  opacity: 0.9;
+  flex-shrink: 0;
+}
+
+.terminal pre {
+  margin: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: var(--space-4) var(--space-5);
+  font-size: var(--font-size-xs);
+  line-height: 1.7;
+  color: var(--color-fg-muted);
+}
+
+.terminal pre .hl-accent { color: var(--color-accent); }
+.terminal pre .hl-warm { color: var(--color-accent-warm); }
+.terminal pre .hl-good { color: var(--color-state-validated); }
+.terminal pre .hl-dim { color: var(--color-fg-subtle); }
+
+/* Figure with caption for Studio preview */
+.figure-frame {
+  margin: var(--space-5) 0;
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.figure-frame img,
+.figure-frame svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.figure-caption {
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface-2);
+  border-top: 1px solid var(--color-rule);
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-subtle);
+  line-height: var(--line-height-base);
+}
+
+.figure-caption strong {
+  color: var(--color-fg-muted);
+  font-weight: var(--font-weight-medium);
+}
+
+/* Evidence strip — data as editorial vis, no glow */
+.receipt-bar {
+  display: block;
+  width: 100%;
+  max-width: 8rem;
+  height: 0.4rem;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-rule);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.receipt-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--color-accent);
+  border-radius: 999px;
+}
+:root[data-theme="light"] .receipt-bar { background: var(--color-surface-3); }
+.receipt-bar-head { font-variant-numeric: tabular-nums; }
+
+.status-groups { display: grid; gap: var(--space-6); margin-top: var(--space-5); }
+.status-group-title { font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); margin: 0 0 var(--space-3) 0; display: flex; align-items: center; gap: var(--space-2); }
+.status-group-list { list-style: none; margin: 0; padding: 0; font-size: var(--font-size-sm); line-height: 1.7; }
+.status-group-list li { padding: var(--space-2) 0; border-bottom: 1px solid var(--color-rule); }
+.status-group-list li:last-child { border-bottom: 0; }
+.status-group-list code { font-size: 0.92em; }
+
+.receipt-details { margin-top: var(--space-4); border-top: 1px solid var(--color-rule); padding-top: var(--space-3); }
+.receipt-details summary { cursor: pointer; font-family: var(--font-mono); font-size: var(--font-size-xs); letter-spacing: var(--letter-spacing-wide); text-transform: uppercase; color: var(--color-fg-muted); list-style: none; }
+.receipt-details summary::-webkit-details-marker { display: none; }
+.receipt-details summary::before { content: "▸ "; color: var(--color-fg-subtle); }
+.receipt-details[open] summary::before { content: "▾ "; }
+.receipt-hist { margin-top: var(--space-3); display: grid; gap: var(--space-3); }
+.receipt-hist-row { display: grid; grid-template-columns: 9rem 8rem 7rem; gap: var(--space-3); align-items: center; font-family: var(--font-mono); font-size: var(--font-size-xs); }
+.receipt-hist-label { color: var(--color-fg-muted); }
+.receipt-hist-range { color: var(--color-fg-subtle); font-variant-numeric: tabular-nums; }
+
+
+/* --- components/prose.css --- */
+/* Tessera Observatory v1 — editorial prose.
+ *
+ * Long-form reading surface. Measure is 62-66ch (max-prose 42rem),
+ * line height 1.72, hanging punctuation. Monospace stays for data;
+ * serif display stays for argument headlines. This file is the
+ * reading rhythm, not the instrument panel.
+ */
+
+.prose {
+  max-width: var(--max-prose);
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-prose);
+  color: var(--color-fg);
+}
+
+.prose > * + * { margin-top: var(--space-4); }
+.prose p { line-height: var(--line-height-prose); }
+
+/* Lede — first paragraph after the headline, 1.2rem, muted */
+.prose .lede {
+  font-size: 1.2rem;
+  line-height: var(--line-height-loose);
+  color: var(--color-fg-muted);
+}
+
+/* Pull quote — editorial, not decorative card. Serif, left rule, no background. */
+.pullquote {
+  margin: var(--space-6) 0;
+  padding: var(--space-4) 0 var(--space-4) var(--space-5);
+  border-left: 2px solid var(--color-accent);
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  line-height: 1.35;
+  letter-spacing: -0.015em;
+  color: var(--color-fg);
+  hanging-punctuation: first;
+}
+.pullquote cite {
+  display: block;
+  margin-top: var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  font-style: normal;
+  color: var(--color-fg-subtle);
+}
+
+/* Marginalia — sits in gutter at desktop, stacks at mobile */
+.marginalia {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+  color: var(--color-fg-subtle);
+  border-left: 1px solid var(--color-rule);
+  padding-left: var(--space-3);
+  margin: var(--space-4) 0;
+}
+@media (min-width: 1100px) {
+  .marginalia {
+    float: right;
+    width: 14rem;
+    margin-right: -16rem;
+    margin-top: 0.2em;
+  }
+}
+
+/* Editorial figure variant — no card shadow, thin rule, caption in mono */
+.figure-editorial {
+  margin: var(--space-6) 0;
+  max-width: var(--max-prose-wide);
+}
+.figure-editorial img,
+.figure-editorial svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.figure-editorial figcaption {
+  margin-top: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-rule);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+  color: var(--color-fg-subtle);
+}
+.figure-editorial figcaption strong { color: var(--color-fg-muted); font-weight: 500; }
+
+/* TOC — editorial navigation. Mono, left rule, sticky at desktop */
+.toc {
+  margin: var(--space-5) 0;
+  padding: var(--space-4) var(--space-4) var(--space-4) var(--space-5);
+  border-left: 1px solid var(--color-rule);
+  max-width: var(--max-prose);
+}
+.toc-title {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  color: var(--color-fg-subtle);
+  margin-bottom: var(--space-2);
+}
+.toc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: var(--font-size-sm);
+  line-height: 1.7;
+}
+.toc-list a { color: var(--color-fg-muted); }
+.toc-list a:hover { color: var(--color-fg); }
+@media (min-width: 1024px) {
+  .toc {
+    position: sticky;
+    top: calc(var(--space-7) + 2rem);
+  }
+}
+.prose-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-6);
+}
+@media (min-width: 900px) {
+  .prose-grid {
+    grid-template-columns: 1fr 14rem;
+    gap: var(--space-6);
+  }
+}
+.chapter.prose {
+  max-width: var(--max-prose);
+  margin-left: auto;
+  margin-right: auto;
+}
+.chapter.prose .chapter-body { max-width: none; }
+
+/* Editorial hr — subtle, not a panel divider */
+.prose hr {
+  border: 0;
+  border-top: 1px solid var(--color-rule);
+  margin: var(--space-7) 0;
+  max-width: 8rem;
+}
+
+
+/* --- components/downloads.css --- */
+/* Tessera Observatory v1 — downloads.
+ *
+ * Editorial download surface, not a SaaS card grid. Two platforms,
+ * mono meta, thin rule. No glow, no gradient, no lucide icons.
+ */
+
+.downloads {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-4);
+  margin: var(--space-5) 0;
+}
+@media (min-width: 720px) {
+  .downloads { grid-template-columns: 1fr 1fr; }
+}
+
+.download-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-5);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-md);
+}
+
+.download-platform {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  color: var(--color-fg-subtle);
+  margin: 0;
+}
+
+.download-title {
+  font-family: var(--font-display);
+  font-size: var(--font-size-lg);
+  line-height: var(--line-height-tight);
+  color: var(--color-fg);
+  margin: 0;
+}
+
+.download-meta {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-muted);
+  line-height: 1.6;
+  margin: 0;
+}
+
+.download-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.download-button {
+  display: inline-block;
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-accent);
+  color: var(--color-bg);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  transition: filter var(--motion-fast) var(--motion-ease);
+}
+.download-button:hover { filter: brightness(1.08); color: var(--color-bg); text-decoration: none; }
+.download-button[aria-disabled="true"] { opacity: 0.5; pointer-events: none; }
+
+.download-secondary {
+  display: inline-block;
+  padding: var(--space-2) var(--space-3);
+  color: var(--color-fg-muted);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-1);
+  text-decoration: none;
+}
+.download-secondary:hover { color: var(--color-fg); border-color: var(--color-rule-strong); background: var(--color-surface-2); text-decoration: none; }
+
+.download-command {
+  display: block;
+  margin-top: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-bg);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-muted);
+  overflow-x: auto;
+  white-space: nowrap;
+}
+

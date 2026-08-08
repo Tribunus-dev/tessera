@@ -1,0 +1,61 @@
+/* Taste: Adwaita system palette only — no purple/gradient/glassmorphism (iMessage chat is tail+accent, not card) */
+.card { border-radius: 12px; }
+/* Legacy kept for compat, new chat uses .chat-bubble */
+.card.user-bubble { background-color: @accent_bg_color; color: @accent_fg_color; border-radius: 18px 18px 4px 18px; }
+.card.assistant-bubble { background-color: @view_bg_color; border: 1px solid alpha(@window_fg_color, 0.08); border-radius: 18px 18px 18px 4px; }
+/* iMessage x Adwaita chat */
+.chat-bubble { padding: 2px; border-radius: 18px; }
+.chat-bubble.user { background-color: @accent_bg_color; color: @accent_fg_color; border-radius: 18px 18px 4px 18px; }
+.chat-bubble.user label { color: @accent_fg_color; }
+.chat-bubble.assistant { background-color: @view_bg_color; border: 1px solid alpha(@borders, 0.9); border-radius: 18px 18px 18px 4px; }
+.chat-bubble.system { background-color: alpha(@window_bg_color, 0.7); border-radius: 12px; }
+.chat-timestamp { background-color: alpha(@window_fg_color, 0.08); border-radius: 999px; }
+.chat-avatar { border-radius: 999px; background-color: alpha(@accent_bg_color, 0.12); padding: 2px; }
+.tessy-avatar { background-color: alpha(@accent_bg_color, 0.16); border: 1px solid alpha(@accent_bg_color, 0.18); }
+.sky-avatar { background-color: alpha(@window_bg_color, 0.9); border: 1px solid alpha(@borders, 0.7); }
+.chat-bubble.sky { border: 1px dashed alpha(@borders, 0.9); }
+.chat-meta { opacity: 0.65; margin-top: 2px; }
+.chat-scroll { background-color: transparent; }
+.chat-input-row { background-color: @view_bg_color; border: 1px solid alpha(@borders, 0.8); border-radius: 999px; padding: 4px 6px 4px 14px; }
+.chat-entry { background: transparent; border: none; box-shadow: none; }
+.chat-entry:focus { outline: none; }
+.graph-canvas { background-color: @view_bg_color; border-radius: 12px; border: 1px solid alpha(@borders, 0.6); }
+.navigation-sidebar row:selected { background-color: alpha(@accent_bg_color, 0.12); }
+.navigation-sidebar row:hover { background-color: alpha(@accent_bg_color, 0.06); }
+.dim-label { opacity: 0.65; }
+.title-4 { font-weight: 700; font-size: 13px; letter-spacing: 0.01em; }
+/* Notes/Tasks 3-column */
+.notes-sidebar row:selected { background-color: alpha(@accent_bg_color, 0.12); }
+/* Agent working — Adwaita system palette only, no purple/aurora/glassmorphism */
+.agent-status { padding: 3px 10px; border-radius: 999px; background-color: alpha(@accent_bg_color, 0.10); border: 1px solid alpha(@accent_bg_color, 0.12); }
+.agent-status.working { background-color: alpha(@accent_bg_color, 0.18); }
+.agent-status label { font-size: 11px; font-weight: 600; }
+.agent-banner { background-color: alpha(@accent_bg_color, 0.08); border: 1px solid alpha(@accent_bg_color, 0.12); border-radius: 8px; padding: 7px 12px; margin: 6px 12px; }
+.chat-panel { background-color: @view_bg_color; border-left: 1px solid alpha(@borders, 0.55); }
+.nav-working-dot { background-color: @accent_bg_color; border-radius: 999px; min-width: 8px; min-height: 8px; opacity: 0.95; }
+.provider-card { padding: 12px; border: 1px solid alpha(@borders, 0.55); }
+.provider-card:hover { border-color: alpha(@accent_bg_color, 0.25); }
+.provider-card .title-4 { margin-bottom: 2px; }
+/* Group chat — subtle motion, Adwaita palette only, no purple/gradient/blur */
+@keyframes tessera-bubble-in { from { opacity: 0; transform: translateY(6px) scale(0.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes tessera-typing-bounce { 0%, 80%, 100% { transform: translateY(0); opacity: 0.6; } 40% { transform: translateY(-3px); opacity: 1; } }
+@keyframes tessera-tool-shimmer { 0% { opacity: 0.9; } 50% { opacity: 1; } 100% { opacity: 0.9; } }
+@keyframes tessera-avatar-pop { 0% { transform: scale(0.9); } 60% { transform: scale(1.06); } 100% { transform: scale(1); } }
+.chat-bubble { animation: tessera-bubble-in 180ms ease-out both; }
+.chat-bubble.user { animation: tessera-bubble-in 150ms ease-out both; }
+.chat-bubble.assistant, .chat-bubble.sky { animation-delay: 20ms; }
+/* consecutive group bubbles feel like a conversation */
+.chat-bubble + .chat-bubble { margin-top: 2px; }
+.chat-avatar.tessy-avatar, .chat-avatar.sky-avatar { animation: tessera-avatar-pop 260ms ease-out both; }
+/* typing indicator dots — GTK CSS: no display/width, use min-* */
+.typing-dot { min-width: 6px; min-height: 6px; border-radius: 999px; background-color: alpha(@window_fg_color, 0.35); animation: tessera-typing-bounce 900ms infinite ease-in-out both; }
+.typing-dot:nth-child(2) { animation-delay: 150ms; }
+.typing-dot:nth-child(3) { animation-delay: 300ms; }
+/* funny tool call — flat Adwaita, no glass/bento/left-border accent, system palette only */
+.tool-call { border-radius: 12px; background-color: alpha(@accent_bg_color, 0.06); border: 1px solid alpha(@borders, 0.55); padding: 8px 10px; animation: tessera-bubble-in 180ms ease-out both; }
+.tool-call.sky { background-color: alpha(@window_bg_color, 0.9); border-color: alpha(@borders, 0.6); }
+.tool-call.running { background-color: alpha(@accent_bg_color, 0.09); border-color: alpha(@accent_bg_color, 0.18); }
+.tool-call-label { font-weight: 600; font-size: 12px; }
+.tool-call-detail { opacity: 0.75; font-size: 12px; }
+.tool-call-emoji { font-size: 13px; }
+@media (prefers-reduced-motion: reduce) { .chat-bubble, .chat-avatar, .tool-call, .typing-dot { animation: none; } }

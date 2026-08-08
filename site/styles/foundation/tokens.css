@@ -81,29 +81,39 @@
   /* Bootstrap: system font stack. The page is readable with no
    * network requests. Drop a self-hosted family in foundation/
    * fonts.css when ready (the @font-face slot is already there).
+   * IBM Plex Sans leads the sans stack -- the observatory's
+   * instrument voice is technical, not generic Inter. Inter
+   * remains as a fallback, not the identity.
+   * Editorial display: serif for argument headlines only.
+   * Sans remains for body/UI, mono for data/receipts. The serif
+   * is the editorial contrast, not the page identity.
    */
-  --font-sans: "Inter", "IBM Plex Sans", "Helvetica Neue",
+  --font-sans: "IBM Plex Sans", "Inter", "Helvetica Neue",
                -apple-system, BlinkMacSystemFont, "Segoe UI",
                Helvetica, Arial, sans-serif;
-  --font-mono: "JetBrains Mono", "IBM Plex Mono", "SF Mono",
+  --font-display: "Newsreader", "Fraunces", Georgia, "Times New Roman", serif;
+  --font-mono: "IBM Plex Mono", "JetBrains Mono", "SF Mono",
                Menlo, Consolas, "Liberation Mono", monospace;
 
-  /* Modular scale, 1.25 ratio, anchored at 16px. Observatory
-   * variant: tighter than editorial; the page reads as an
-   * instrument panel, not a magazine. */
+  /* Modular scale, 1.32 ratio. Editorial variant: display
+   * headlines get more air, body stays at 16px. Tight is for
+   * display (serif argument), loose is for editorial prose
+   * (long-form reading). */
   --font-size-xs:   0.78rem;
   --font-size-sm:   0.875rem;
   --font-size-base: 1rem;
   --font-size-md:   1.125rem;
   --font-size-lg:   1.375rem;
-  --font-size-xl:   1.75rem;
-  --font-size-2xl:  2.25rem;
-  --font-size-3xl:  3rem;
+  --font-size-xl:   1.85rem;
+  --font-size-2xl:  2.4rem;
+  --font-size-3xl:  3.25rem;
 
+  --line-height-display: 1.05;
   --line-height-tight:  1.15;
   --line-height-snug:   1.3;
   --line-height-base:   1.55;
   --line-height-loose:  1.7;
+  --line-height-prose:  1.72;
 
   --letter-spacing-tight:  -0.025em;
   --letter-spacing-base:   0;
@@ -133,7 +143,8 @@
    * ------------------------------------------------------------- */
 
   --max-width:   72rem;     /* the page */
-  --max-prose:   44rem;     /* chapter prose, 65ch at 16px */
+  --max-prose:   42rem;     /* editorial measure: 62-66ch at 16px */
+  --max-prose-wide: 46rem;  /* figure / table breakout */
   --gutter:      1.5rem;    /* outer page padding on mobile */
 
   /* ------------------------------------------------------------- *
@@ -160,10 +171,10 @@
  * header button.
  */
 :root[data-theme="light"] {
-  --color-bg:           #fafafa;
+  --color-bg:           #f2f2f5;
   --color-surface-1:    #ffffff;
-  --color-surface-2:    #f0f0f4;
-  --color-surface-3:    #e6e6ec;
+  --color-surface-2:    #ececf0;
+  --color-surface-3:    #e0e0e6;
   --color-fg:           #0a0a10;
   --color-fg-muted:     #4a4a58;
   --color-fg-subtle:    #8888a0;

@@ -1,0 +1,13 @@
+[Unit]
+Description=Tessera Studio Agent (background)
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/tessera-studio-linux --background
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

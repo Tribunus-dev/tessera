@@ -1,0 +1,12 @@
+<svg viewBox="0 0 720 160" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="studio-title">
+<title id="studio-title">Tessera Studio — workflow graph</title>
+<rect x="0.5" y="0.5" width="719" height="159" rx="8" fill="none" stroke="#2a2a3e"/>
+<g font-family="IBM Plex Mono, monospace" font-size="10">
+<rect x="20" y="40" width="120" height="48" rx="6" fill="#131320" stroke="#2a2a3e"/><text x="80" y="62" text-anchor="middle" fill="#6ad4ff">per_tensor</text><text x="80" y="76" text-anchor="middle" fill="#6c6c84" font-size="8">calibrate</text>
+<rect x="170" y="40" width="120" height="48" rx="6" fill="#131320" stroke="#2a2a3e"/><text x="230" y="62" text-anchor="middle" fill="#c56ad4">awq-evolve</text><text x="230" y="76" text-anchor="middle" fill="#6c6c84" font-size="8">GA</text>
+<rect x="320" y="40" width="140" height="48" rx="6" fill="#131320" stroke="#2a2a3e"/><text x="390" y="62" text-anchor="middle" fill="#ebebf2">quantize</text><text x="390" y="76" text-anchor="middle" fill="#6c6c84" font-size="8">writer</text>
+<rect x="490" y="40" width="120" height="48" rx="6" fill="#131320" stroke="#3a3a52"/><text x="550" y="62" text-anchor="middle" fill="#5fd97a">harness</text><text x="550" y="76" text-anchor="middle" fill="#6c6c84" font-size="8">receipt</text>
+<line x1="140" y1="64" x2="170" y2="64" stroke="#3a3a52"/><line x1="290" y1="64" x2="320" y2="64" stroke="#3a3a52"/><line x1="460" y1="64" x2="490" y2="64" stroke="#3a3a52"/>
+</g>
+<g font-family="IBM Plex Mono, monospace" font-size="7" fill="#6c6c84"><text x="360" y="120" text-anchor="middle">Studio wraps each stage as a composable node — same pipeline, surfaced as an agent app</text></g>
+</svg>

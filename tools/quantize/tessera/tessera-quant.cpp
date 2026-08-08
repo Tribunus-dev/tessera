@@ -689,9 +689,9 @@ float ts_awq_scale_search(const float * weights, const float * act_scales,
         }
         err_sum = (float)err;
 #endif
-        float err = err_sum / (float)mn;
-        if (err < best_err) {
-            best_err   = err;
+        float err_mse = err_sum / (float)mn;
+        if (err_mse < best_err) {
+            best_err   = err_mse;
             best_alpha = alpha;
         }
     }

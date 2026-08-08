@@ -1037,9 +1037,14 @@ int llama_quantize(int argc, char ** argv) {
     float prior_weight     = 0.0f;
     bool  prior_weight_set = false;
     bool use_tessera = false;
+    std::string model_input;  // --model/-m value (kept for the flag-based CLI)
 
     for (; arg_idx < argc && strncmp(argv[arg_idx], "--", 2) == 0; arg_idx++) {
-        if (strcmp(argv[arg_idx], "--leave-output-tensor") == 0) {
+        if (strcmp(argv[arg_idx], "--model") == 0 || strcmp(argv[arg_idx], "-m") == 0) {
+            if (arg_idx < argc-1) {
+                model_input = argv[++arg_idx];
+            }
+        } else if (strcmp(argv[arg_idx], "--leave-output-tensor") == 0) {
             params.quantize_output_tensor = false;
         } else if (strcmp(argv[arg_idx], "--output-tensor-type") == 0) {
             if (arg_idx < argc-1) {
@@ -1232,7 +1237,7 @@ int llama_quantize(int argc, char ** argv) {
     llama_backend_init();
 
     // parse command line arguments
-    const std::string fname_inp = argv[arg_idx];
+    const std::string fname_inp = !model_input.empty() ? model_input : argv[arg_idx];
     arg_idx++;
     std::string fname_out;
 

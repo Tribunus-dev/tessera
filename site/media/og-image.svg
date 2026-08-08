@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="ogTitle ogDesc">
+<title id="ogTitle">Tessera — receipts the kernel agrees with</title>
+<desc id="ogDesc">Calibrate and quantize models with receipts the kernel agrees with. The fitness is measured against the actual kernel dequant.</desc>
+<rect width="1200" height="630" fill="#0a0a10"/>
+<rect x="0.5" y="0.5" width="1199" height="629" fill="none" stroke="#2a2a3e"/>
+<!-- brand mark -->
+<rect x="48" y="48" width="28" height="28" rx="3" fill="#6ad4ff"/><rect x="62" y="48" width="14" height="14" fill="#c56ad4" opacity="0.95"/><rect x="48" y="62" width="14" height="14" fill="#c56ad4" opacity="0.9"/>
+<text x="88" y="68" font-family="IBM Plex Sans, sans-serif" font-size="13" letter-spacing="0.14em" fill="#ebebf2">TESSERA</text>
+<text x="48" y="140" font-family="Newsreader, Georgia, serif" font-size="56" fill="#ebebf2" letter-spacing="-0.03em">Calibrate and quantize</text>
+<text x="48" y="205" font-family="Newsreader, Georgia, serif" font-size="56" fill="#ebebf2" letter-spacing="-0.03em">models with receipts</text>
+<text x="48" y="270" font-family="Newsreader, Georgia, serif" font-size="56" fill="#ebebf2" letter-spacing="-0.03em">the kernel agrees with.</text>
+<text x="48" y="320" font-family="IBM Plex Sans, sans-serif" font-size="18" fill="#a0a0b8">The fitness is measured against the actual kernel dequant — not a proxy.</text>
+<g font-family="IBM Plex Mono, monospace" font-size="11" fill="#6c6c84">
+<rect x="48" y="380" width="560" height="64" rx="8" fill="#131320" stroke="#2a2a3e"/>
+<text x="68" y="402" fill="#6ad4ff">per_tensor_calibrate</text><text x="220" y="402" fill="#3a3a52">→</text><text x="240" y="402" fill="#c56ad4">awq-evolve</text><text x="350" y="402" fill="#3a3a52">→</text><text x="370" y="402" fill="#ebebf2">llama-quantize</text><text x="500" y="402" fill="#3a3a52">→</text><text x="520" y="402" fill="#5fd97a">t_l² 0.0016</text>
+<text x="68" y="424" fill="#6c6c84">receipt → tinyllama-1.1b.tessera-t640.receipt.json  •  sha256:7f3a…c9e1  •  202/202 validated</text>
+</g>
+<text x="48" y="580" font-family="IBM Plex Mono, monospace" font-size="11" letter-spacing="0.08em" fill="#6c6c84">TESSERA.TRIBUNUS.DEV  —  INDEPENDENTLY DEVELOPED BY JULIAN TORRES</text>
+</svg>

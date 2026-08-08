@@ -1,0 +1,104 @@
+/* Tessera Observatory v1 — downloads.
+ *
+ * Editorial download surface, not a SaaS card grid. Two platforms,
+ * mono meta, thin rule. No glow, no gradient, no lucide icons.
+ */
+
+.downloads {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-4);
+  margin: var(--space-5) 0;
+}
+@media (min-width: 720px) {
+  .downloads { grid-template-columns: 1fr 1fr; }
+}
+
+.download-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-5);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-md);
+}
+
+.download-platform {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  color: var(--color-fg-subtle);
+  margin: 0;
+}
+
+.download-title {
+  font-family: var(--font-display);
+  font-size: var(--font-size-lg);
+  line-height: var(--line-height-tight);
+  color: var(--color-fg);
+  margin: 0;
+}
+
+.download-meta {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-muted);
+  line-height: 1.6;
+  margin: 0;
+}
+
+.download-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.download-button {
+  display: inline-block;
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-accent);
+  color: var(--color-bg);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  transition: filter var(--motion-fast) var(--motion-ease);
+}
+.download-button:hover { filter: brightness(1.08); color: var(--color-bg); text-decoration: none; }
+.download-button[aria-disabled="true"] { opacity: 0.5; pointer-events: none; }
+
+.download-secondary {
+  display: inline-block;
+  padding: var(--space-2) var(--space-3);
+  color: var(--color-fg-muted);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-1);
+  text-decoration: none;
+}
+.download-secondary:hover { color: var(--color-fg); border-color: var(--color-rule-strong); background: var(--color-surface-2); text-decoration: none; }
+
+.download-command {
+  display: block;
+  margin-top: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-bg);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-muted);
+  overflow-x: auto;
+  white-space: nowrap;
+}

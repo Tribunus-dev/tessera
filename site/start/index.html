@@ -12,8 +12,21 @@
 <meta property="og:description" content="Calibrate and quantize models with receipts the kernel agrees with.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://tessera.tribunus.dev/start/">
+<meta property="og:image" content="https://tessera.tribunus.dev/media/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Tessera — receipts the kernel agrees with">
+<meta property="og:image:type" content="image/png">
 <meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://tessera.tribunus.dev/media/og-image.png">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"Tessera \u2014 Start","description":"Calibrate and quantize models with receipts the kernel agrees with.","author":{"@type":"Person","name":"Julian Torres"},"mainEntityOfPage":{"@type":"WebPage","@id":"https://tessera.tribunus.dev/start/"},"publisher":{"@type":"Organization","name":"Tessera","logo":{"@type":"ImageObject","url":"https://tessera.tribunus.dev/media/og-image.svg"}}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://tessera.tribunus.dev/"},{"@type":"ListItem","position":2,"name":"Tessera \u2014 Start","item":"https://tessera.tribunus.dev/start/"}]}</script>
+<link rel="alternate" type="application/rss+xml" title="Tessera Changelog" href="/feed.xml">
+<link rel="preload" href="/styles/fonts/Newsreader-Variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/styles/fonts/Newsreader-Italic-Variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/media/og-image.svg" as="image" type="image/svg+xml">
 <link rel="stylesheet" href="/styles/site.css">
+<link rel="stylesheet" href="/styles/print.css" media="print">
 <script>
 (function(){try{
   var k='tessera-theme';
@@ -30,8 +43,7 @@
 }catch(e){}})();
 </script>
 <script src="/scripts/theme.js" defer></script>
-<script src="/scripts/transitions-orchestrator.js" defer></script>
-<script src="/scripts/selection-controller.js" defer></script>
+<script src="/scripts/downloads.js" defer></script>
 </head>
 <body data-prism-route="/start/" data-prism-hydrated="false">
 <a href="#top" class="skip-link">Skip to main content</a>
@@ -47,6 +59,7 @@
 </nav>
 <button type="button" class="theme-toggle" aria-label="Toggle dark and light theme" data-theme-toggle><span class="theme-toggle-icon" aria-hidden="true"></span><span class="theme-toggle-label">Dark</span></button>
 </header>
+
 <main class="page-body" id="top">
 
 <header class="page-header">
@@ -55,9 +68,46 @@
 <p class="page-header-blurb">Build the pipeline, calibrate a tiny model, and read the receipt. The whole loop is a single <code>llama-quantize</code> invocation.</p>
 </header>
 
+<section class="chapter" id="download">
+<div class="chapter-eyebrow">Download</div>
+<h2 class="chapter-title">Or grab a binary.</h2>
+<div class="chapter-body">
+<p>Prebuilt binaries track the latest GitHub release. Same pipeline, no build. Checksums live beside each asset. If the release has no assets yet, you will land on the releases page — install from source below.</p>
+</div>
+<p id="download-status" class="byline" aria-live="polite">Checking latest release…</p>
+<div class="downloads">
+<div class="download-card">
+<p class="download-platform">macOS</p>
+<h3 class="download-title">Tessera for Mac</h3>
+<p class="download-meta">Apple Silicon arm64 · Intel x64 · Metal on, signed tarball · <span data-release-tag>latest</span></p>
+<div class="download-actions">
+<a id="dl-mac-arm" class="download-button" href="https://github.com/Tribunus-dev/tessera/releases/latest" target="_blank" rel="external">Download arm64</a>
+<a id="dl-mac-x64" class="download-secondary" href="https://github.com/Tribunus-dev/tessera/releases/latest" target="_blank" rel="external">x64</a>
+<a class="download-secondary" href="https://github.com/Tribunus-dev/tessera/releases" target="_blank" rel="external">All releases</a>
+</div>
+<code id="dl-mac-arm-cmd" class="download-command">curl -L -o llama-latest-bin-macos-arm64.tar.gz https://github.com/Tribunus-dev/tessera/releases/latest/download/llama-latest-bin-macos-arm64.tar.gz && tar -xzf llama-latest-bin-macos-arm64.tar.gz</code>
+</div>
+<div class="download-card">
+<p class="download-platform">Linux</p>
+<h3 class="download-title">Tessera for Linux</h3>
+<p class="download-meta">Ubuntu x64 · arm64 · Vulkan + CPU variants · <span data-release-tag>latest</span></p>
+<div class="download-actions">
+<a id="dl-linux-x64" class="download-button" href="https://github.com/Tribunus-dev/tessera/releases/latest" target="_blank" rel="external">Download x64</a>
+<a id="dl-linux-arm" class="download-secondary" href="https://github.com/Tribunus-dev/tessera/releases/latest" target="_blank" rel="external">arm64</a>
+<a class="download-secondary" href="https://github.com/Tribunus-dev/tessera/releases" target="_blank" rel="external">All releases</a>
+</div>
+<code id="dl-linux-x64-cmd" class="download-command">curl -L -o llama-latest-bin-ubuntu-x64.tar.gz https://github.com/Tribunus-dev/tessera/releases/latest/download/llama-latest-bin-ubuntu-x64.tar.gz && tar -xzf llama-latest-bin-ubuntu-x64.tar.gz</code>
+</div>
+</div>
+<div class="callout">
+<span class="callout-title">Verify</span>
+Every asset is a <code>.tar.gz</code> containing <code>build/bin/</code> + <code>LICENSE</code> built with <code>-DGGML_NATIVE=OFF</code> for portability. Check <code>sha256sum</code> against the release notes.
+</div>
+</section>
+
 <section class="chapter" id="prerequisites">
 <div class="chapter-eyebrow">Prerequisites</div>
-<h2 class="chapter-title">What you need before you start.</h2>
+<h2 class="chapter-title">What you need before you start — from source.</h2>
 <div class="chapter-body">
 <ul>
 <li>A C++17 or later toolchain (clang or gcc).</li>
@@ -109,6 +159,17 @@ cmake --build build --target llama-quantize -j</code></pre>
   --metric t_l2</code></pre>
 <p>The harness reports the per-tensor t_l² and the aggregate. The t_l² is the Frobenius distance between the original weight and the kernel's dequant output, normalized by the max weight magnitude. A green receipt is one where the t_l² matches what the policy predicted.</p>
 </div>
+<div class="terminal">
+<div class="terminal-bar">What you will see</div>
+<pre><code><span class="hl-accent">tessera-ab-harness v1</span>  <span class="hl-dim">kernel T640 sha256:7f3a…c9e1</span>
+<span class="hl-good">✓</span> aggregate t_l² 0.0016  <span class="hl-good">validated</span>  <span class="hl-dim">202/202 tensors within tolerance</span>
+<span class="hl-dim">receipt → tinyllama-1.1b.tessera-t640.receipt.json</span>
+<span class="hl-dim">Full per-tensor table at <a href="/evidence/">/evidence/</a></span></code></pre>
+</div>
+<div class="callout">
+<span class="callout-title">If it fails</span>
+<code>TESSERA_T640 failed: need --tessera-mode=on</code> means you ran stock <code>llama-quantize</code>. Re-run with <code>--tessera-mode=on --tessera-policy=auto</code>. See <a href="/colophon/">Colophon → Build</a> for the assembler step.
+</div>
 </section>
 
 <section class="chapter" id="next">
@@ -124,6 +185,7 @@ cmake --build build --target llama-quantize -j</code></pre>
 </section>
 
 </main>
+
 <aside class="secondary-nav">
 <ul class="secondary-nav-list">
 <li class="secondary-nav-label">Navigate</li>
@@ -136,11 +198,13 @@ cmake --build build --target llama-quantize -j</code></pre>
 <li><a href="/colophon/">Colophon</a></li>
 </ul>
 </aside>
+
 <footer class="site-footer">
 <div class="site-footer-inner">
 <p>Tessera is independently developed by <strong>Julian Torres</strong>. Released under the project's license. <a href="/colophon/">Colophon</a> · <a rel="external" target="_blank" href="https://github.com/Tribunus-dev/tessera">Repository</a></p>
 <p><a href="https://tessera.tribunus.dev">tessera.tribunus.dev</a></p>
 </div>
 </footer>
+
 </body>
 </html>

@@ -12,8 +12,21 @@
 <meta property="og:description" content="Calibrate and quantize models with receipts the kernel agrees with.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://tessera.tribunus.dev/colophon/">
+<meta property="og:image" content="https://tessera.tribunus.dev/media/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Tessera — receipts the kernel agrees with">
+<meta property="og:image:type" content="image/png">
 <meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://tessera.tribunus.dev/media/og-image.png">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"Tessera \u2014 Colophon","description":"Calibrate and quantize models with receipts the kernel agrees with.","author":{"@type":"Person","name":"Julian Torres"},"mainEntityOfPage":{"@type":"WebPage","@id":"https://tessera.tribunus.dev/colophon/"},"publisher":{"@type":"Organization","name":"Tessera","logo":{"@type":"ImageObject","url":"https://tessera.tribunus.dev/media/og-image.svg"}}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://tessera.tribunus.dev/"},{"@type":"ListItem","position":2,"name":"Tessera \u2014 Colophon","item":"https://tessera.tribunus.dev/colophon/"}]}</script>
+<link rel="alternate" type="application/rss+xml" title="Tessera Changelog" href="/feed.xml">
+<link rel="preload" href="/styles/fonts/Newsreader-Variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/styles/fonts/Newsreader-Italic-Variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/media/og-image.svg" as="image" type="image/svg+xml">
 <link rel="stylesheet" href="/styles/site.css">
+<link rel="stylesheet" href="/styles/print.css" media="print">
 <script>
 (function(){try{
   var k='tessera-theme';
@@ -30,8 +43,6 @@
 }catch(e){}})();
 </script>
 <script src="/scripts/theme.js" defer></script>
-<script src="/scripts/transitions-orchestrator.js" defer></script>
-<script src="/scripts/selection-controller.js" defer></script>
 </head>
 <body data-prism-route="/colophon/" data-prism-hydrated="false">
 <a href="#top" class="skip-link">Skip to main content</a>
@@ -47,6 +58,7 @@
 </nav>
 <button type="button" class="theme-toggle" aria-label="Toggle dark and light theme" data-theme-toggle><span class="theme-toggle-icon" aria-hidden="true"></span><span class="theme-toggle-label">Dark</span></button>
 </header>
+
 <main class="page-body" id="top">
 
 <header class="page-header">
@@ -80,10 +92,10 @@
 <table>
 <thead><tr><th>Layer</th><th>Choice</th></tr></thead>
 <tbody>
-<tr><td>Source</td><td>Hand-authored HTML in <code>site/</code> on the <code>feat/docs-bootstrap</code> branch.</td></tr>
-<tr><td>Build</td><td>None (static output). The <code>tessera-docs-ssg</code> binary is the next milestone; this bootstrap is the source-of-truth HTML it will eventually read.</td></tr>
+<tr><td>Source</td><td>Hand-authored partials in <code>site/src/</code> (see <code>site/src/partials/</code> and <code>site/src/pages/</code>); <code>site/*.html</code> is the generated output checked in for deploy readability.</td></tr>
+<tr><td>Build</td><td>Assembler <code>site/scripts/build.py</code> (stdlib Python, no deps). Run <code>python3 site/scripts/build.py</code> to regenerate; <code>--check</code> verifies no drift in CI. The future <code>tessera-docs-ssg</code> binary will replace this assembler when typed content moves beyond hand-authored pages.</td></tr>
 <tr><td>Hosting</td><td>GitHub Pages, custom domain <code>tessera.tribunus.dev</code> via the <code>CNAME</code> file in <code>site/</code>.</td></tr>
-<tr><td>Deploy</td><td>GitHub Actions, <code>actions/deploy-pages@v4</code>, triggered on push to <code>main</code> when files under <code>site/</code> change.</td></tr>
+<tr><td>Deploy</td><td>GitHub Actions, <code>actions/deploy-pages@v4</code> with a <code>Build site</code> step (<code>python3 site/scripts/build.py</code>) before <code>upload-pages-artifact</code>, triggered on push to <code>main</code> when files under <code>site/**</code> change.</td></tr>
 <tr><td>Theme</td><td>Dark by default, light opt-in via a header button, FOUC-free inline init, <code>prefers-color-scheme</code> fallback, localStorage override.</td></tr>
 <tr><td>Accessibility</td><td>Skip link, focus ring, <code>aria-current</code> on the active nav, <code>prefers-reduced-motion</code> respected, WCAG 2.2 contrast targets.</td></tr>
 </tbody>
@@ -101,6 +113,7 @@
 </section>
 
 </main>
+
 <aside class="secondary-nav">
 <ul class="secondary-nav-list">
 <li class="secondary-nav-label">Navigate</li>
@@ -113,11 +126,13 @@
 <li><a href="/colophon/" aria-current="page">Colophon</a></li>
 </ul>
 </aside>
+
 <footer class="site-footer">
 <div class="site-footer-inner">
 <p>Tessera is independently developed by <strong>Julian Torres</strong>. Released under the project's license. <a href="/colophon/">Colophon</a> · <a rel="external" target="_blank" href="https://github.com/Tribunus-dev/tessera">Repository</a></p>
 <p><a href="https://tessera.tribunus.dev">tessera.tribunus.dev</a></p>
 </div>
 </footer>
+
 </body>
 </html>

@@ -23,49 +23,83 @@
 html { font-size: 100%; }
 body { font-size: var(--font-size-base); }
 
-/* Headings. Observatory variant: tight, factual, sans heavy. */
+/* Headings. Editorial variant: serif display for argument
+ * headlines (h1/h2), sans for structure (h3-h6). Display heads
+ * read as the essay's argument; body heads read as the instrument's
+ * scaffolding. */
 h1, h2, h3, h4, h5, h6 {
   margin: 0 0 var(--space-4) 0;
-  font-weight: var(--font-weight-bold);
-  line-height: var(--line-height-tight);
-  letter-spacing: var(--letter-spacing-tight);
   color: var(--color-fg);
+  hanging-punctuation: first;
 }
 
 h1 {
+  font-family: var(--font-display);
   font-size: var(--font-size-3xl);
-  font-weight: var(--font-weight-bold);
+  font-weight: 400;
+  line-height: var(--line-height-display);
+  letter-spacing: -0.03em;
 }
 h2 {
+  font-family: var(--font-display);
   font-size: var(--font-size-2xl);
-  font-weight: var(--font-weight-bold);
+  font-weight: 400;
+  line-height: var(--line-height-display);
+  letter-spacing: -0.025em;
 }
 h3 {
+  font-family: var(--font-sans);
   font-size: var(--font-size-xl);
   font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-tight);
   letter-spacing: var(--letter-spacing-base);
 }
 h4 {
+  font-family: var(--font-sans);
   font-size: var(--font-size-lg);
   font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-snug);
   letter-spacing: var(--letter-spacing-base);
 }
 h5, h6 {
+  font-family: var(--font-sans);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
   letter-spacing: var(--letter-spacing-wide);
   text-transform: uppercase;
+  line-height: var(--line-height-snug);
 }
 
-/* Body prose. The chapter's max-width is set in the chapter
- * component, not here, so it can vary per surface. */
+/* Body prose. Editorial measure: 62-66ch, hanging punctuation,
+ * lining/oldstyle nums opt-in. Chapter sets max-width; prose
+ * inherits it. */
 p {
   margin: 0 0 var(--space-4) 0;
   max-width: var(--max-prose);
   font-size: var(--font-size-md);
-  line-height: var(--line-height-loose);
+  line-height: var(--line-height-prose);
+  hanging-punctuation: first;
+  font-variant-ligatures: common-ligatures;
+  font-variant-numeric: lining-nums;
 }
 p:last-child { margin-bottom: 0; }
+
+.lede {
+  font-size: 1.2rem;
+  line-height: var(--line-height-loose);
+  color: var(--color-fg-muted);
+  max-width: var(--max-prose);
+  hanging-punctuation: first;
+}
+.byline {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  color: var(--color-fg-subtle);
+  margin-bottom: var(--space-4);
+}
+.byline a { color: var(--color-fg-muted); }
 
 /* Links. Cyan accent, underline on hover only. */
 a {

@@ -4,6 +4,9 @@
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
+#include <cstdlib>
+#include <deque>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <openvino/runtime/core.hpp>
@@ -58,6 +61,10 @@ struct ov_runtime_context {
     std::unordered_map<graph_key, std::shared_ptr<ov::InferRequest>, graph_key_hash> infer_request_cache_prefill;
     std::unordered_map<graph_key, std::vector<std::string>, graph_key_hash> ov_input_names_cache;
     std::unordered_map<graph_key, std::vector<std::string>, graph_key_hash> ov_output_names_cache;
+    // Bounded-cache order: insertion order for simple FIFO eviction. Keeps
+    // compiled-model memory bounded for 12B graphs that would otherwise retain
+    // every distinct cgraph key indefinitely.
+    std::deque<graph_key> cache_order;
     //TODO: Stateful is only supported for single request at a time.
     //      Simultanous stateful inference request support to be added.
     size_t stateful_kv_size;
@@ -73,6 +80,33 @@ struct ov_runtime_context {
         infer_request_cache_prefill.clear();
         ov_input_names_cache.clear();
         ov_output_names_cache.clear();
+        cache_order.clear();
+    }
+
+    // FIFO eviction: keep at most max_entries compiled graphs. Call with
+    // ctx_mutex held. Evicts oldest entries first.
+    void prune_caches_if_needed(size_t max_entries = 8) {
+        // Allow override via env GGML_OPENVINO_MAX_CACHE_ENTRIES (0 = unbounded).
+        static int env_max = -1;
+        if (env_max == -1) {
+            int v = 0;
+            const char * e = std::getenv("GGML_OPENVINO_MAX_CACHE_ENTRIES");
+            if (e) { v = std::atoi(e); }
+            env_max = v;
+        }
+        size_t limit = env_max > 0 ? (size_t) env_max : (env_max == 0 ? std::numeric_limits<size_t>::max() : max_entries);
+        while (decoder_cache.size() > limit && !cache_order.empty()) {
+            graph_key oldest = cache_order.front();
+            cache_order.pop_front();
+            auto it = decoder_cache.find(oldest);
+            if (it != decoder_cache.end()) {
+                decoder_cache.erase(it);
+                infer_request_cache.erase(oldest);
+                infer_request_cache_prefill.erase(oldest);
+                ov_input_names_cache.erase(oldest);
+                ov_output_names_cache.erase(oldest);
+            }
+        }
     }
 };
 

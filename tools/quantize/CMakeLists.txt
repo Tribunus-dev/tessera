@@ -24,6 +24,7 @@ endif()
 if(TS_DUCKDB_AVAILABLE)
     add_library(duckdb-amalgamation OBJECT
         ${TS_DUCKDB_DIR}/duckdb.cpp)
+    set_target_properties(duckdb-amalgamation PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_include_directories(duckdb-amalgamation PUBLIC ${TS_DUCKDB_DIR})
     # The amalgamation is internally a single TU; give it lots of memory and
     # disable some pedantic warnings it does not pass.

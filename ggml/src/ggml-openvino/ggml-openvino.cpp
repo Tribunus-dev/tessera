@@ -1053,12 +1053,15 @@ static bool is_op_unsupported_case(const ggml_tensor * op) {
             (op->ne[0] == 2 && op->ne[1] == 4 && op->ne[2] == 3 && op->ne[3] == 2)) {
             return true;
         }
-        // CPY into a strided view of a larger buffer (recurrent-state snapshots) not supported
-        if (op->view_src && ggml_nbytes(op) != ggml_nbytes(op->view_src)) {
-            return true;
-        }
-        break;
-    }
+         // CPY into a strided view of a larger buffer (recurrent-state snapshots) not supported.
+         // Exception: 0-byte (degenerate) view copies are recurrent-state snapshot markers
+         // that the OpenVINO decoder trivially no-ops; treat them as supported so the
+         // scheduler does not abort on pre-allocated KV cache views (e.g. cache_r_l* (copy of )).
+         if (op->view_src && ggml_nbytes(op) != ggml_nbytes(op->view_src) && ggml_nbytes(op) != 0) {
+             return true;
+         }
+         break;
+     }
     case GGML_OP_MUL_MAT: {
         if (ggml_openvino_get_device_name() == "GPU" && op->src[1]->op == GGML_OP_SOFT_MAX &&
             op->src[0]->op == GGML_OP_CONT && op->src[0]->src[0] != nullptr &&
@@ -1128,12 +1131,10 @@ static bool is_op_unsupported_case(const ggml_tensor * op) {
         break;
     }
     case GGML_OP_GATED_DELTA_NET: {
-        // enable after https://github.com/openvinotoolkit/openvino/pull/35917 is included in OV release
-        return true;
-        // if (ggml_openvino_get_device_name() == "GPU" && op->src[0]->ne[2] > 1) {
-        //     // CVS-186471
-        //     return true;
-        // }
+        if (ggml_openvino_get_device_name() == "GPU" && op->src[0]->ne[2] > 1) {
+            // CVS-186471
+            return true;
+        }
         if (op->src[2]->op == GGML_OP_PERMUTE) {
             return true;
         }

@@ -769,9 +769,9 @@ OvWeight process_weight_tensor(const ggml_tensor * tensor, const void * data, vo
             // Using external buffer - copy data and create shared-memory constant
             size_t tensor_bytes = ggml_nbytes(tensor);
             memcpy(output_base_ptr, data, tensor_bytes);
-            result.weights = ov::Tensor(element_type, node_shape, output_base_ptr);
+            result.weights = ov::Tensor(element_type, node_shape, const_cast<void *>(output_base_ptr));
         } else {
-            result.weights = ov::Tensor(element_type, node_shape, data);
+            result.weights = ov::Tensor(element_type, node_shape, const_cast<void *>(data));
         }
         result.weight_node = std::make_shared<ov::op::v0::Constant>(result.weights);
         return result;
