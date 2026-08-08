@@ -99,6 +99,7 @@ if(GTK4_FOUND AND ADWAITA_FOUND AND TESSERA_LINUX_BUILD_UI)
         src/ui/surfaces/models/Surface.cpp
         src/ui/surfaces/capacity/Surface.cpp
         src/ui/surfaces/collab/Surface.cpp
+        src/ui/surfaces/docs/DocsSurface.cpp
     )
 
     target_include_directories(tessera-studio-linux PRIVATE
