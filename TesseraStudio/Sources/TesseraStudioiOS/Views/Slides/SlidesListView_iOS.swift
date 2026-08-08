@@ -85,7 +85,7 @@ public struct SlidesListView_iOS: View {
 
     private var emptyState: some View {
         VStack(spacing: 12) {
-            Image(systemName: "rectangle.on.rectangle").font(.system(size: 48)).foregroundStyle(.secondary)
+            Image(systemName: "rectangle.on.rectangle").font(.largeTitle).foregroundStyle(.secondary)
             Text(emptyStateTitle).font(.headline)
             Button { Task { await createBlankDeck() } } label: {
                 Label("New Deck", systemImage: "rectangle.on.rectangle.badge.plus")

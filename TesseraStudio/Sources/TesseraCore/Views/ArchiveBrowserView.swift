@@ -130,7 +130,7 @@ public struct ArchiveBrowserView: View {
                     .frame(width: 34, height: 34)
                     .overlay(
                         Text(String(format: "%.3g", cell.representative.bestFitness))
-                            .font(.system(size: 7, design: .monospaced))
+                            .font(.caption2.monospaced())
                             .foregroundStyle(scale.textColor(for: cell.representative.bestFitness))
                             .lineLimit(1)
                             .minimumScaleFactor(0.4)

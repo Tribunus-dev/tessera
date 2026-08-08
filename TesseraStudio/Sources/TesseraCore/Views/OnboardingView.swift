@@ -46,7 +46,7 @@ public struct OnboardingView: View {
     private var welcomePage: some View {
         VStack(spacing: 16) {
             Image(systemName: "square.grid.3x3.topleft.filled")
-                .font(.system(size: 56))
+                .font(.largeTitle)
                 .foregroundStyle(.purple)
             Text("Welcome to Tessera Studio")
                 .font(.largeTitle.bold())
@@ -67,7 +67,7 @@ public struct OnboardingView: View {
     private var modelPage: some View {
         VStack(spacing: 16) {
             Image(systemName: "cube.box")
-                .font(.system(size: 56))
+                .font(.largeTitle)
                 .foregroundStyle(.blue)
             Text("Set Up Models")
                 .font(.largeTitle.bold())
@@ -121,7 +121,7 @@ public struct OnboardingView: View {
     private var agentPage: some View {
         VStack(spacing: 16) {
             Image(systemName: "bubble.left.and.text.bubble.right")
-                .font(.system(size: 56))
+                .font(.largeTitle)
                 .foregroundStyle(.green)
             Text("Meet the Agent")
                 .font(.largeTitle.bold())

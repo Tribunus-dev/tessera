@@ -166,7 +166,7 @@ public struct EmailView: View {
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
-                .help("Reload")
+                .help("Reload the message list")
             }
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -175,7 +175,7 @@ public struct EmailView: View {
                     Label("Compose", systemImage: "square.and.pencil")
                 }
                 .keyboardShortcut("c", modifiers: [])
-                .help("Compose (c)")
+                .help("Compose a new message (c)")
             }
             ToolbarItem(placement: .primaryAction) {
                 Menu {
@@ -186,7 +186,7 @@ public struct EmailView: View {
                 } label: {
                     Label("Import", systemImage: "square.and.arrow.down")
                 }
-                .help("Import email files")
+                .help("Import messages from a file")
             }
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -194,7 +194,7 @@ public struct EmailView: View {
                 } label: {
                     Image(systemName: "questionmark.circle")
                 }
-                .help("Keyboard shortcuts")
+                .help("Show keyboard shortcuts")
             }
         }
         .onAppear {
@@ -429,7 +429,7 @@ public struct EmailView: View {
     private var emptyState: some View {
         VStack(spacing: 8) {
             Image(systemName: "envelope")
-                .font(.system(size: 64))
+                .font(.largeTitle)
                 .foregroundStyle(.tertiary)
             Text("Select an email")
                 .font(.title3)
@@ -694,27 +694,27 @@ private struct EmailDetailView: View {
                 Button(action: onReply) {
                     Image(systemName: "arrowshape.turn.up.left")
                 }
-                .help("Reply (r)")
+                .help("Reply to this message (r)")
                 Button(action: onReplyAll) {
                     Image(systemName: "arrowshape.turn.up.left.2")
                 }
-                .help("Reply All (R)")
+                .help("Reply to all recipients (R)")
                 Button(action: onForward) {
                     Image(systemName: "arrowshape.turn.up.right")
                 }
-                .help("Forward (f)")
+                .help("Forward this message (f)")
                 Button(action: onToggleStar) {
                     Image(systemName: email.isStarred ? "star.fill" : "star")
                 }
-                .help("Star (s)")
+                .help("Toggle star on this message (s)")
                 Button(action: onArchive) {
                     Image(systemName: "archivebox")
                 }
-                .help("Archive (a)")
+                .help("Archive this message (a)")
                 Button(action: onTrash) {
                     Image(systemName: "trash")
                 }
-                .help("Trash (#)")
+                .help("Move this message to Trash (#)")
             }
         }
         .task {

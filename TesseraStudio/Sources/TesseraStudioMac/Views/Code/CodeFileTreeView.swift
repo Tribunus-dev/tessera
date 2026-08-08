@@ -78,7 +78,7 @@ public struct CodeFileTreeView: View {
     private var emptyState: some View {
         VStack(spacing: 8) {
             Image(systemName: "folder.badge.questionmark")
-                .font(.system(size: 32))
+                .font(.title2)
                 .foregroundStyle(.secondary)
             Text("No files yet")
                 .font(.headline)

@@ -146,7 +146,7 @@ public struct ChatPanelView_iOS: View {
     private var emptyState: some View {
         VStack(spacing: 8) {
             Image(systemName: "bubble.left")
-                .font(.system(size: 32))
+                .font(.title2)
                 .foregroundStyle(.tertiary)
             Text("No commands yet")
                 .font(.headline)
@@ -207,30 +207,30 @@ public struct ChatQueueRowView_iOS: View {
         Button(action: onTap) {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: display.style.iconSystemName)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.body.weight(.semibold))
                     .foregroundStyle(display.style.iconTint)
                     .frame(width: 22, height: 22)
                     .thinkingPulse(isActive: display.style.pulseAnimation)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(display.message)
-                        .font(.system(size: 14))
+                        .font(.body)
                         .italic(display.style.isItalic)
                         .lineLimit(3)
                         .multilineTextAlignment(.leading)
                     if display.style.state == .applied {
                         Button(action: onReceiptChipTap) {
                             Label("Receipt", systemImage: "doc.text")
-                                .font(.system(size: 12))
+                                .font(.callout)
                                 .foregroundStyle(.green)
                         }
                         .buttonStyle(.plain)
                     }
                     if let badge = display.style.replaceBadge {
                         Text("replaces #\(badge)")
-                            .font(.system(size: 10, weight: .medium))
+                            .font(.caption2.weight(.medium))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(Capsule().fill(Color.secondary.opacity(0.12)))
+                            .background(Capsule().fill(.quaternary))
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -270,7 +270,7 @@ struct HoldYourHorsesDialog_iOS: View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 16) {
                 Image(systemName: "pause.circle.fill")
-                    .font(.system(size: 36))
+                    .font(.title)
                     .foregroundStyle(.orange)
                 Text(state.title)
                     .font(.title2.bold())

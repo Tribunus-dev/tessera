@@ -191,6 +191,25 @@ public struct EditorTheme: Codable, Sendable, Hashable {
     }
 
     public static let light = EditorTheme()
+    public static let dark = EditorTheme(
+        textColorHex: "#E8E8EA",
+        headingColorHex: "#FFFFFF",
+        codeBackgroundColorHex: "#1E1E28",
+        codeForegroundColorHex: "#E8E8EA",
+        quoteAccentColorHex: "#6B7280",
+        calloutBackgroundColorHex: "#3F3A1A",
+        agentCursorColorHex: "#60A5FA",
+        userCursorColorHex: "#E8E8EA",
+        dividerColorHex: "#3A3A44",
+        syntaxColors: .dark
+    )
+
+    /// Picks the theme that matches the current system appearance.
+    /// Host views should pass `isDark` from `@Environment(\.colorScheme)`
+    /// rather than hard-coding `.light` so the editor follows the system (§2.8).
+    public static func current(isDark: Bool) -> EditorTheme {
+        isDark ? .dark : .light
+    }
 }
 
 // MARK: - FontDescriptor
@@ -272,4 +291,15 @@ public struct SyntaxThemePalette: Codable, Sendable, Hashable {
     }
 
     public static let light = SyntaxThemePalette()
+    public static let dark = SyntaxThemePalette(
+        plain: "#E8E8EA",
+        operator: "#A78BFA",
+        keyword: "#F87171",
+        type: "#22D3EE",
+        number: "#38BDF8",
+        string: "#4ADE80",
+        identifier: "#E8E8EA",
+        comment: "#9CA3AF",
+        functionCall: "#60A5FA"
+    )
 }

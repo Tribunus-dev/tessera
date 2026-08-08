@@ -159,7 +159,7 @@ public struct ContactsView: View {
     private var emptyState: some View {
         VStack(spacing: 8) {
             Image(systemName: "person.crop.circle")
-                .font(.system(size: 64))
+                .font(.largeTitle)
                 .foregroundStyle(.tertiary)
             Text("Select a contact")
                 .font(.title3)
@@ -264,7 +264,7 @@ private struct ContactDetailView: View {
                 for: "contact",
                 subtype: contact.subtype.rawValue
             ))
-            .font(.system(size: 48))
+            .font(.largeTitle)
             .foregroundStyle(GraphNode.color(for: "contact"))
             VStack(alignment: .leading, spacing: 4) {
                 Text(contact.displayName)

@@ -21,6 +21,7 @@ import TesseraCore
 /// — Phase 5 just reuses it).
 public struct NotesView_iOS: View {
 
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject public var viewModel: NotesViewModel
     @State private var searchText: String = ""
     @State private var newNotePending: Bool = false
@@ -104,7 +105,7 @@ public struct NotesView_iOS: View {
     private var emptyState: some View {
         VStack(spacing: 12) {
             Image(systemName: "note.text")
-                .font(.system(size: 48))
+                .font(.largeTitle)
                 .foregroundStyle(.secondary)
             Text(emptyStateTitle)
                 .font(.headline)
@@ -211,7 +212,7 @@ struct NoteEditorView_iOS: View {
             }
             TesseraEditorView(
                 mode: .notes,
-                theme: .light,
+                theme: EditorTheme.current(isDark: colorScheme == .dark),
                 document: documentBinding,
                 onMutationCommitted: { _, _ in
                     let ast = viewModel.document
@@ -339,10 +340,8 @@ struct TagPill_iOS: View {
             .font(.caption)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
-            .background(
-                Capsule().fill(Color.accentColor.opacity(0.15))
-            )
-            .foregroundStyle(Color.accentColor)
+            .background(.quaternary, in: Capsule())
+            .foregroundStyle(.tint)
     }
 }
 

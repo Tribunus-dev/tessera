@@ -35,7 +35,7 @@ public struct ReminderDetailView_iOS: View {
             Section {
                 HStack(spacing: 12) {
                     Image(systemName: "bell")
-                        .font(.system(size: 36))
+                        .font(.title)
                         .foregroundStyle(.yellow)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(reminder.title)

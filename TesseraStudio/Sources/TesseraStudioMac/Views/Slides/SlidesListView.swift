@@ -134,7 +134,7 @@ public struct SlidesListView: View {
     private var emptyState: some View {
         VStack(spacing: 12) {
             Image(systemName: "rectangle.on.rectangle")
-                .font(.system(size: 48)).foregroundStyle(.secondary)
+                .font(.largeTitle).foregroundStyle(.secondary)
             Text(emptyStateTitle).font(.headline)
             Text(emptyStateSubtitle).foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -170,7 +170,7 @@ public struct SlidesListView: View {
     private func errorState(_ message: String) -> some View {
         VStack(spacing: 12) {
             Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 48)).foregroundStyle(.orange)
+                .font(.largeTitle).foregroundStyle(.orange)
             Text("Couldn't load decks").font(.headline)
             Text(message).foregroundStyle(.secondary).font(.callout)
                 .multilineTextAlignment(.center)
@@ -199,7 +199,7 @@ public struct SlidesListView: View {
         } else {
             VStack(spacing: 8) {
                 Image(systemName: "rectangle.on.rectangle")
-                    .font(.system(size: 56)).foregroundStyle(.secondary)
+                    .font(.largeTitle).foregroundStyle(.secondary)
                 Text("Select or create a deck")
                     .font(.title3).foregroundStyle(.secondary)
             }

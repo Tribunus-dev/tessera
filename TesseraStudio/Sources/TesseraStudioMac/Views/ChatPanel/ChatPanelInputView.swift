@@ -54,7 +54,7 @@ public struct ChatPanelInputView: View {
     private var inputField: some View {
         TextField("Type a command…", text: $text, axis: .vertical)
             .textFieldStyle(.roundedBorder)
-            .font(.system(size: 13))
+            .font(.callout)
             .lineLimit(1...3)
             .focused($inputFocused)
             .onSubmit(onSubmit)
@@ -68,9 +68,9 @@ public struct ChatPanelInputView: View {
         Button(action: onHoldYourHorses) {
             HStack(spacing: 4) {
                 Image(systemName: holdIcon)
-                    .font(.system(size: 11))
+                    .font(.caption)
                 Text(holdMode.footerButtonLabel)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.caption.weight(.medium))
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
@@ -94,9 +94,9 @@ public struct ChatPanelInputView: View {
         Button(action: onCancelInProgress) {
             HStack(spacing: 4) {
                 Image(systemName: "stop.circle")
-                    .font(.system(size: 11))
+                    .font(.caption)
                 Text("Stop")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.caption.weight(.medium))
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)

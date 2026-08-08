@@ -53,7 +53,7 @@ struct WorkflowNodeView: View {
         .frame(width: 200)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color(nsColor: .controlBackgroundColor))
+                .fill(.background)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8)
@@ -201,7 +201,7 @@ struct WorkflowPortView: View {
                 .overlay {
                     if dragFeedback == .incompatible {
                         Image(systemName: "circle.slash")
-                            .font(.system(size: 10))
+                            .font(.caption2)
                             .foregroundStyle(.secondary)
                             .accessibilityHidden(true)
                     }

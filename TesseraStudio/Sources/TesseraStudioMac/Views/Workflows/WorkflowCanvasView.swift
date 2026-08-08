@@ -114,7 +114,7 @@ struct WorkflowCanvasView: View {
         .overlay(alignment: .bottomTrailing) {
             zoomControls.padding(10)
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(.background)
     }
 
     /// Zoom in / out / reset cluster, pinned to the canvas

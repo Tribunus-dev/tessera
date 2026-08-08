@@ -93,7 +93,7 @@ public struct CodeGitPanelView: View {
     private var emptyState: some View {
         VStack(spacing: 8) {
             Image(systemName: "clock.arrow.circlepath")
-                .font(.system(size: 32))
+                .font(.title2)
                 .foregroundStyle(.secondary)
             Text("No git history")
                 .font(.subheadline)

@@ -74,7 +74,7 @@ public struct CodeSearchPanelView: View {
     private var emptyState: some View {
         VStack(spacing: 6) {
             Image(systemName: "text.magnifyingglass")
-                .font(.system(size: 28))
+                .font(.title2)
                 .foregroundStyle(.secondary)
             if viewModel.searchQuery.isEmpty {
                 Text("Type a query to search")

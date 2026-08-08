@@ -39,7 +39,7 @@ public struct DocDetailView: View {
                 .padding(.vertical, 12)
             }
         }
-        .background(Color(nsColor: .textBackgroundColor))
+        .background(.background)
         .toolbar { detailToolbar }
         .sheet(isPresented: $showDeleteConfirm) { deleteSheet }
         .sheet(isPresented: $showLinkSearch) { linkSheet }

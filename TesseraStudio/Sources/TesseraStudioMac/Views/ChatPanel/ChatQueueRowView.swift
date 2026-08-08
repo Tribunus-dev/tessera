@@ -77,14 +77,14 @@ public struct ChatQueueRowView: View {
 
     private var iconView: some View {
         Image(systemName: display.style.iconSystemName)
-            .font(.system(size: 12, weight: .semibold))
+            .font(.callout.weight(.semibold))
             .foregroundStyle(display.style.iconTint)
             .thinkingPulse(isActive: display.style.pulseAnimation)
     }
 
     private var messageText: some View {
         Text(display.message)
-            .font(.system(size: 13))
+            .font(.callout)
             .italic(display.style.isItalic)
             .lineLimit(3)
             .multilineTextAlignment(.leading)
@@ -97,9 +97,9 @@ public struct ChatQueueRowView: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "doc.text")
-                    .font(.system(size: 10))
+                    .font(.caption2)
                 Text(chip)
-                    .font(.system(size: 11))
+                    .font(.caption)
                     .lineLimit(1)
             }
             .padding(.horizontal, 6)
@@ -120,9 +120,9 @@ public struct ChatQueueRowView: View {
     private func replacesBadge(position: Int) -> some View {
         HStack(spacing: 4) {
             Image(systemName: "arrow.uturn.backward")
-                .font(.system(size: 9))
+                .font(.caption2)
             Text("replaces #\(position)")
-                .font(.system(size: 10, weight: .medium))
+                .font(.caption2.weight(.medium))
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 1)
@@ -138,14 +138,14 @@ public struct ChatQueueRowView: View {
                 .controlSize(.small)
                 .scaleEffect(0.6)
             Text(text)
-                .font(.system(size: 11))
+                .font(.caption)
                 .foregroundStyle(.secondary)
         }
     }
 
     private func failureNote(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 11))
+            .font(.caption)
             .foregroundStyle(.red)
             .lineLimit(2)
     }

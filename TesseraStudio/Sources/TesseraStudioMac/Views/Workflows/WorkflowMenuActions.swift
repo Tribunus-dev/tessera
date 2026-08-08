@@ -133,11 +133,12 @@ struct HelpMenuItems: View {
     }
 }
 
-/// View menu items. The Workflows-surface toggles (node palette,
-/// parameter inspector) need a focused WorkflowsView and stay
-/// disabled otherwise; the telemetry drawer toggle is always
-/// available. Titles flip Show/Hide off the live state, so the
-/// menu reads as a statement of what will happen.
+/// View menu items. HIG §12.2 expects Show/Hide Toolbar,
+/// Sidebar, Tab Bar, and Enter/Exit Full Screen in the View
+/// menu — those system items are provided by SwiftUI's
+/// NavigationSplitView defaults. The app-specific toggles
+/// below sit after the system sidebar group (see
+/// `CommandGroup(after: .sidebar)` in TesseraStudioMacApp).
 struct ViewMenuItems: View {
     @FocusedValue(\.workflowMenuActions) private var workflowActions
     @FocusedValue(\.telemetryMenuActions) private var telemetryActions

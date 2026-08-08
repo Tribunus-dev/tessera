@@ -25,11 +25,11 @@ public struct ReceiptRowView: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(receipt.summary)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.callout.weight(.medium))
                         .lineLimit(1)
                     if receipt.isVoided {
                         Text("voided")
-                            .font(.system(size: 9, weight: .medium))
+                            .font(.caption2.weight(.medium))
                             .padding(.horizontal, 4)
                             .padding(.vertical, 1)
                             .background(Capsule().fill(Color.red.opacity(0.15)))
@@ -38,13 +38,13 @@ public struct ReceiptRowView: View {
                 }
                 HStack(spacing: 6) {
                     Text(actorLabel)
-                        .font(.system(size: 10))
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
                     Text("·")
-                        .font(.system(size: 10))
+                        .font(.caption2)
                         .foregroundStyle(.tertiary)
                     Text(timestampText)
-                        .font(.system(size: 10))
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -62,7 +62,7 @@ public struct ReceiptRowView: View {
 
     private var actorIcon: some View {
         Image(systemName: actorIconName)
-            .font(.system(size: 12, weight: .semibold))
+            .font(.callout.weight(.semibold))
             .foregroundStyle(actorIconTint)
     }
 

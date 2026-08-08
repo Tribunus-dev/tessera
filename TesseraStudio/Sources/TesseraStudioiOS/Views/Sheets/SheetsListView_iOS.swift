@@ -74,7 +74,7 @@ public struct SheetsListView_iOS: View {
 
     private var emptyState: some View {
         VStack(spacing: 12) {
-            Image(systemName: "tablecells").font(.system(size: 48)).foregroundStyle(.secondary)
+            Image(systemName: "tablecells").font(.largeTitle).foregroundStyle(.secondary)
             Text(emptyStateTitle).font(.headline)
             Button { Task { await createBlankSheet() } } label: {
                 Label("New Sheet", systemImage: "tablecells.badge.ellipsis")

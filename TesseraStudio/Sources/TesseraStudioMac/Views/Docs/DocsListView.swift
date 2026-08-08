@@ -133,7 +133,7 @@ public struct DocsListView: View {
     private var emptyState: some View {
         VStack(spacing: 12) {
             Image(systemName: "doc.text")
-                .font(.system(size: 48))
+                .font(.largeTitle)
                 .foregroundStyle(.secondary)
             Text(emptyStateTitle)
                 .font(.headline)
@@ -172,7 +172,7 @@ public struct DocsListView: View {
     private func errorState(_ message: String) -> some View {
         VStack(spacing: 12) {
             Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 48))
+                .font(.largeTitle)
                 .foregroundStyle(.orange)
             Text("Couldn't load docs")
                 .font(.headline)
@@ -199,7 +199,7 @@ public struct DocsListView: View {
         } else {
             VStack(spacing: 8) {
                 Image(systemName: "doc.text")
-                    .font(.system(size: 56))
+                    .font(.largeTitle)
                     .foregroundStyle(.secondary)
                 Text("Select or create a document")
                     .font(.title3)

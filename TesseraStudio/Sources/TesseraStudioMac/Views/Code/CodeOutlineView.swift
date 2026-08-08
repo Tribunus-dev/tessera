@@ -57,7 +57,7 @@ public struct CodeOutlineView: View {
     private var emptyState: some View {
         VStack(spacing: 6) {
             Image(systemName: "list.bullet.rectangle")
-                .font(.system(size: 24))
+                .font(.title3)
                 .foregroundStyle(.secondary)
             Text("No outline available")
                 .font(.subheadline)

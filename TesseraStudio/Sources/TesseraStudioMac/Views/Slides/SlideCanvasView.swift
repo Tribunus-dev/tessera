@@ -27,7 +27,7 @@ public struct SlideCanvasView: View {
             let canvasHeight = canvasWidth * 9 / 16
             ZStack {
                 RoundedRectangle(cornerRadius: 10)
-                    .fill(Color(nsColor: .textBackgroundColor))
+                    .fill(.background)
                     .shadow(color: Color.black.opacity(0.12), radius: isSelected ? 10 : 4, x: 0, y: isSelected ? 4 : 2)
                     .overlay(
                         RoundedRectangle(cornerRadius: 10)
@@ -45,7 +45,7 @@ public struct SlideCanvasView: View {
             .onTapGesture { onTap?() }
         }
         .frame(minHeight: 180)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(.background)
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
@@ -215,7 +215,7 @@ public struct SlideThumbnailView: View {
     public var body: some View {
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 6)
-                .fill(Color(nsColor: .textBackgroundColor))
+                .fill(.background)
                 .shadow(color: Color.black.opacity(isSelected ? 0.18 : 0.08), radius: isSelected ? 6 : 3, x: 0, y: 2)
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)

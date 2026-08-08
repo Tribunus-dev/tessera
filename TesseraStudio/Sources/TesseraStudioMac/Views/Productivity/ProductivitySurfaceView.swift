@@ -32,6 +32,8 @@ public struct ProductivitySurfaceView: View {
     public let documentID: UUID
     public let documentTitle: String
 
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var chatPanelFocused: Bool
 
     public init(
@@ -52,15 +54,11 @@ public struct ProductivitySurfaceView: View {
             editorColumn
                 .frame(minWidth: 360)
         } detail: {
-            HStack(spacing: 0) {
-                chatColumn
-                if model.showReceiptsDrawer {
-                    Divider()
+            chatColumn
+                .inspector(isPresented: $model.showReceiptsDrawer) {
                     receiptsColumn
-                        .frame(minWidth: 320, idealWidth: 380)
-                        .transition(.move(edge: .trailing))
+                        .inspectorColumnWidth(min: 320, ideal: 380, max: 480)
                 }
-            }
         }
         .navigationTitle(documentTitle)
         .frame(minWidth: 900, minHeight: 560)
@@ -103,7 +101,7 @@ public struct ProductivitySurfaceView: View {
             // happens in Phase 5.
             TesseraEditorView(
                 mode: .document,
-                theme: .light,
+                theme: EditorTheme.current(isDark: colorScheme == .dark),
                 document: .constant(DocumentAST.empty),
                 onMutationCommitted: { _, _ in }
             )
@@ -145,7 +143,7 @@ public struct ProductivitySurfaceView: View {
     }
 
     private func toggleReceipts() {
-        withAnimation { model.showReceiptsDrawer.toggle() }
+        withAnimation(reduceMotion ? nil : .default) { model.showReceiptsDrawer.toggle() }
     }
 }
 
@@ -327,7 +325,7 @@ public final class ProductivitySurfaceModel: ObservableObject {
 
     public func openReceiptInDrawer(_ id: UUID) async {
         await coordinator.openReceiptInDrawer(id, fromChatItem: nil)
-        withAnimation { showReceiptsDrawer = true }
+        showReceiptsDrawer = true
     }
 
     // MARK: - Internals

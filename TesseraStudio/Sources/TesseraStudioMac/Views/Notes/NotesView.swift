@@ -175,24 +175,26 @@ public struct NotesView: View {
     @State private var _localSearch: String = ""
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "note.text")
-                .font(.system(size: 48))
-                .foregroundStyle(.secondary)
-            Text(emptyStateTitle)
-                .font(.headline)
+        ContentUnavailableView {
+            Label(emptyStateTitle, systemImage: emptyStateSystemImage)
+        } description: {
             Text(emptyStateSubtitle)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+        } actions: {
             Button {
                 Task { await createBlankNote() }
             } label: {
                 Label("New Note", systemImage: "square.and.pencil")
             }
-            .controlSize(.large)
+            .buttonStyle(.borderedProminent)
         }
-        .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var emptyStateSystemImage: String {
+        switch viewModel.filter {
+        case .all: return "note.text"
+        case .pinned: return "pin"
+        case .archived: return "archivebox"
+        }
     }
 
     private var emptyStateTitle: String {
@@ -215,22 +217,14 @@ public struct NotesView: View {
     }
 
     private func errorState(_ message: String) -> some View {
-        VStack(spacing: 12) {
-            Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 48))
-                .foregroundStyle(.orange)
-            Text("Couldn't load notes")
-                .font(.headline)
+        ContentUnavailableView {
+            Label("Couldn't load notes", systemImage: "exclamationmark.triangle")
+        } description: {
             Text(message)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .font(.callout)
-            Button("Retry") {
-                Task { await viewModel.refresh() }
-            }
+        } actions: {
+            Button("Retry") { Task { await viewModel.refresh() } }
+                .buttonStyle(.borderedProminent)
         }
-        .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Detail column
@@ -245,15 +239,11 @@ public struct NotesView: View {
             )
             .id(editor.note.id)  // Rebuild on note change
         } else {
-            VStack(spacing: 8) {
-                Image(systemName: "note.text")
-                    .font(.system(size: 56))
-                    .foregroundStyle(.secondary)
-                Text("Select or create a note")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            ContentUnavailableView(
+                "Select or create a note",
+                systemImage: "note.text",
+                description: Text("Choose a note from the list or create a new one.")
+            )
         }
     }
 
@@ -364,11 +354,11 @@ struct TagPill: View {
         Text("#\(text)")
             .font(isCompact ? .caption2 : .caption)
             .padding(.horizontal, isCompact ? 6 : 8)
-            .padding(.vertical, isCompact ? 2 : 3)
-            .background(
-                Capsule().fill(Color.accentColor.opacity(0.15))
-            )
-            .foregroundStyle(Color.accentColor)
+            .padding(.vertical, isCompact ? 5 : 6)
+            .background(.quaternary, in: Capsule())
+            .foregroundStyle(.tint)
+            .contentShape(Capsule())
+            .frame(minHeight: 20)
     }
 }
 
@@ -392,6 +382,9 @@ struct TagChipsView: View {
                             .opacity(activeTag == nil || activeTag == tag ? 1.0 : 0.4)
                     }
                     .buttonStyle(.plain)
+                    .contentShape(Capsule())
+                    .accessibilityLabel("Filter by \(tag)")
+                    .accessibilityAddTraits(activeTag == tag ? .isSelected : [])
                 }
             }
         }

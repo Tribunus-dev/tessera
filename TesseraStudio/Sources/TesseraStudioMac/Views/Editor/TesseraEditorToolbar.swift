@@ -228,7 +228,7 @@ struct ToolbarButton: View {
                     .strikethrough(strikethrough)
                 if let shortcut {
                     Text(shortcut)
-                        .font(.system(size: 8))
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
             }

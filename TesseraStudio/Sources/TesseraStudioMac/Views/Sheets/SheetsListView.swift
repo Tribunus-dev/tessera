@@ -133,7 +133,7 @@ public struct SheetsListView: View {
     private var emptyState: some View {
         VStack(spacing: 12) {
             Image(systemName: "tablecells")
-                .font(.system(size: 48))
+                .font(.largeTitle)
                 .foregroundStyle(.secondary)
             Text(emptyStateTitle)
                 .font(.headline)

@@ -9,6 +9,7 @@ import TesseraCore
 /// (cover, icon, word count, favorite/archive/trash toggles).
 public struct DocDetailView_iOS: View {
 
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject public var viewModel: DocEditorViewModel
     @State private var showDeleteConfirm: Bool = false
 
@@ -21,7 +22,7 @@ public struct DocDetailView_iOS: View {
             titleBar
             TesseraEditorView(
                 mode: .document,
-                theme: .light,
+                theme: EditorTheme.current(isDark: colorScheme == .dark),
                 document: documentBinding,
                 onMutationCommitted: { _, _ in
                     let ast = viewModel.document
@@ -98,8 +99,8 @@ public struct DocDetailView_iOS: View {
                             Text("#\(tag)")
                                 .font(.caption)
                                 .padding(.horizontal, 8).padding(.vertical, 3)
-                                .background(Capsule().fill(Color.accentColor.opacity(0.15)))
-                                .foregroundStyle(Color.accentColor)
+                                .background(.quaternary, in: Capsule())
+                                .foregroundStyle(.tint)
                         }
                     }
                 }

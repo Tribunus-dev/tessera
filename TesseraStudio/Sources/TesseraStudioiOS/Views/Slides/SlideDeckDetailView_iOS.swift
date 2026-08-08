@@ -97,8 +97,8 @@ public struct SlideDeckDetailView_iOS: View {
                             Image(systemName: "xmark").font(.caption2)
                         }
                         .padding(.horizontal, 8).padding(.vertical, 4)
-                        .background(Capsule().fill(Color.accentColor.opacity(0.15)))
-                        .foregroundStyle(Color.accentColor)
+                        .background(.quaternary, in: Capsule())
+                        .foregroundStyle(.tint)
                     }
                     .buttonStyle(.plain)
                 }

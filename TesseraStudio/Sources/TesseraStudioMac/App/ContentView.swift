@@ -47,6 +47,7 @@ struct ContentView: View {
         tokenLimit: TesseraSettings.tokenBudget
     )
     @State private var showHistory = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var telemetryMonitor = TelemetryMonitor(
         bridge: TesseraEngineBridgeFactory.makeInferenceBridge()
     )
@@ -108,7 +109,7 @@ struct ContentView: View {
         // so View > Show/Hide Telemetry can reach it from any
         // destination.
         .focusedSceneValue(\.telemetryMenuActions, TelemetryMenuActions(
-            toggle: { withAnimation { telemetryExpanded.toggle() } },
+            toggle: { withAnimation(reduceMotion ? nil : .default) { telemetryExpanded.toggle() } },
             isExpanded: { telemetryExpanded }
         ))
         // Runs are scene-lived, so one can reach a terminal outcome
@@ -152,7 +153,7 @@ struct ContentView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button("History", systemImage: "sidebar.left") {
-                    withAnimation { showHistory.toggle() }
+                    withAnimation(reduceMotion ? nil : .default) { showHistory.toggle() }
                 }
                 .help("Show or hide the chat history drawer")
                 .accessibilityHint("Shows or hides the chat history drawer")
@@ -214,7 +215,7 @@ struct ContentView: View {
         restoredMessages = ConversationStore.messages(for: convo.id, in: modelContext)
         playgroundSession = UUID()
         storedDestinationRaw = Destination.playground.rawValue
-        withAnimation { showHistory = false }
+        withAnimation(reduceMotion ? nil : .default) { showHistory = false }
     }
 
     private func exportConversation(_ convo: Conversation, format: ExportFormat) {

@@ -60,6 +60,10 @@ public struct GraphView: View {
             }
         }
         .navigationTitle("Graph")
+        .searchable(text: $viewModel.searchQuery, prompt: "Search graph")
+        .onChange(of: viewModel.searchQuery) { _, _ in
+            viewModel.recomputeVisible()
+        }
         .toolbar {
             GraphToolbar(viewModel: viewModel, graphStates: $graphStates)
         }
@@ -108,29 +112,29 @@ public struct GraphView: View {
                 .link(originalLength: 50.0, stiffness: .weightedByDegree { _, _ in 1.0 })
                 .collide(radius: 6.0)
             }
-            .background(Color(NSColor.controlBackgroundColor))
+            .background(.background)
         }
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "circle.dotted")
-                .font(.system(size: 48))
-                .foregroundStyle(.tertiary)
-            Text("No graph data yet")
-                .font(.headline)
-            Text("Add a contact, document, or task to populate the graph.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+        Group {
             if let err = viewModel.loadError {
-                Text(err)
-                    .font(.caption2)
-                    .foregroundStyle(.red)
-                    .multilineTextAlignment(.center)
+                ContentUnavailableView {
+                    Label("Couldn't load graph", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(err)
+                } actions: {
+                    Button("Retry") { Task { await viewModel.load() } }
+                        .buttonStyle(.borderedProminent)
+                }
+            } else {
+                ContentUnavailableView {
+                    Label("No graph data yet", systemImage: "circle.dotted")
+                } description: {
+                    Text("Add a contact, document, or task to populate the graph.")
+                }
             }
         }
-        .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -190,13 +194,6 @@ private struct GraphSidebar: View {
 
     var body: some View {
         List {
-            Section("Search") {
-                TextField("Find (⌘F)", text: $viewModel.searchQuery)
-                    .textFieldStyle(.roundedBorder)
-                    .onChange(of: viewModel.searchQuery) { _, _ in
-                        viewModel.recomputeVisible()
-                    }
-            }
             Section("Visibility") {
                 Picker("Radius", selection: $viewModel.radius) {
                     ForEach(GraphViewModel.VisibilityRadius.allCases) { r in

@@ -13,6 +13,7 @@ import TesseraCore
 /// tag chips already carry most of the chrome.
 public struct DocEditorView: View {
 
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject public var viewModel: DocEditorViewModel
 
     public init(viewModel: DocEditorViewModel) {
@@ -22,7 +23,7 @@ public struct DocEditorView: View {
     public var body: some View {
         TesseraEditorView(
             mode: .document,
-            theme: .light,
+            theme: EditorTheme.current(isDark: colorScheme == .dark),
             document: documentBinding,
             onMutationCommitted: { _, _ in
                 let ast = viewModel.document

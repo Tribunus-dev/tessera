@@ -95,7 +95,7 @@ public struct ReminderDetailView: View {
     private var header: some View {
         HStack(alignment: .center, spacing: 16) {
             Image(systemName: "bell")
-                .font(.system(size: 48))
+                .font(.largeTitle)
                 .foregroundStyle(.yellow)
             VStack(alignment: .leading, spacing: 4) {
                 Text(reminder.title)

@@ -20,6 +20,7 @@ public struct NoteEditorColumn: View {
     @Binding public var isFocusMode: Bool
     public let onDelete: () -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var formattingState: FormattingState = FormattingState()
     @State private var showDeleteConfirm: Bool = false
     @State private var showLinkSearch: Bool = false
@@ -55,7 +56,7 @@ public struct NoteEditorColumn: View {
                     .transition(.opacity)
             }
         }
-        .background(Color(nsColor: .textBackgroundColor))
+        .background(.background)
         .toolbar { editorToolbar }
         .sheet(isPresented: $showDeleteConfirm) {
             deleteConfirmationSheet
@@ -141,10 +142,8 @@ public struct NoteEditorColumn: View {
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
-                        .background(
-                            Capsule().fill(Color.accentColor.opacity(0.15))
-                        )
-                        .foregroundStyle(Color.accentColor)
+                        .background(.quaternary, in: Capsule())
+                        .foregroundStyle(.tint)
                     }
                     .buttonStyle(.plain)
                 }
@@ -160,10 +159,12 @@ public struct NoteEditorColumn: View {
 
     // MARK: - Editor (TesseraEditorView in notes mode)
 
+    @Environment(\.colorScheme) private var editorColorScheme
+
     private var editor: some View {
         TesseraEditorView(
             mode: .notes,
-            theme: .light,
+            theme: EditorTheme.current(isDark: editorColorScheme == .dark),
             document: documentBinding,
             onMutationCommitted: { _, _ in
                 // The editor's coalescer already updates the
@@ -257,7 +258,7 @@ public struct NoteEditorColumn: View {
         }
         ToolbarItem(placement: .primaryAction) {
             Button {
-                withAnimation(.easeInOut(duration: 0.25)) {
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
                     isFocusMode.toggle()
                 }
             } label: {
@@ -387,9 +388,7 @@ struct LinkedEntityChip: View {
             .font(.caption)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
-            .background(
-                Capsule().fill(Color.gray.opacity(0.15))
-            )
+            .background(.quaternary, in: Capsule())
             .foregroundStyle(.secondary)
         }
         .buttonStyle(.plain)

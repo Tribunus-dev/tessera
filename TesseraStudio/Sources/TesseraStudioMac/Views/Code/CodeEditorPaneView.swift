@@ -85,7 +85,7 @@ public struct CodeEditorPaneView: View {
     private var emptyState: some View {
         VStack(spacing: 8) {
             Image(systemName: "chevron.left.forwardslash.chevron.right")
-                .font(.system(size: 48))
+                .font(.largeTitle)
                 .foregroundStyle(.secondary)
             Text("Select a file to view or edit")
                 .font(.headline)

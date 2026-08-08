@@ -75,7 +75,7 @@ private struct AgentCursorGlyph: View {
                 .frame(width: 14, height: 18)
             // Robot icon
             Image(systemName: "cpu")
-                .font(.system(size: 9, weight: .semibold))
+                .font(.caption2.weight(.semibold))
                 .foregroundStyle(Color(hex: colorHex) ?? .blue)
         }
         .cursorBlink(isActive: isActive)

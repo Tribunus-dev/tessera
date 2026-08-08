@@ -189,7 +189,7 @@ public struct RemindersView: View {
     private var emptyState: some View {
         VStack(spacing: 8) {
             Image(systemName: "bell")
-                .font(.system(size: 64))
+                .font(.largeTitle)
                 .foregroundStyle(.tertiary)
             Text("Select a reminder")
                 .font(.title3)

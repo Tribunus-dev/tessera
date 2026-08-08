@@ -70,7 +70,7 @@ public struct ReceiptsDrawerView: View {
             content
         }
         .frame(minWidth: 280, idealWidth: 360, maxWidth: 520, maxHeight: .infinity)
-        .background(Color(NSColor.textBackgroundColor).opacity(0.5))
+        .background(.thinMaterial)
         .onAppear {
             Task {
                 await loadReceipts()
@@ -87,30 +87,18 @@ public struct ReceiptsDrawerView: View {
         }
     }
 
-    // MARK: - Tab bar
+    // MARK: - Tab bar (HIG §13.17: 3 mutually exclusive choices ->
+    // segmented control, not a custom button strip).
 
     private var tabBar: some View {
-        HStack(spacing: 0) {
+        Picker("Section", selection: $selectedTab) {
             ForEach(Tab.allCases) { tab in
-                Button {
-                    selectedTab = tab
-                } label: {
-                    VStack(spacing: 2) {
-                        Text(tab.rawValue)
-                            .font(.system(size: 11, weight: selectedTab == tab ? .semibold : .regular))
-                            .foregroundStyle(selectedTab == tab ? Color.primary : .secondary)
-                        Rectangle()
-                            .fill(selectedTab == tab ? Color.accentColor : .clear)
-                            .frame(height: 2)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+                Text(tab.rawValue).tag(tab)
             }
-            Spacer()
         }
+        .pickerStyle(.segmented)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
         .background(.bar)
     }
 
@@ -143,10 +131,14 @@ public struct ReceiptsDrawerView: View {
                     .controlSize(.small)
                     .padding(20)
             } else if let err = errorMessage {
-                Text(err)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.red)
-                    .padding()
+                ContentUnavailableView {
+                    Label("Couldn't load receipts", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(err)
+                } actions: {
+                    Button("Retry") { Task { await loadReceipts() } }
+                        .buttonStyle(.borderedProminent)
+                }
             } else {
                 chainList
             }
@@ -154,9 +146,10 @@ public struct ReceiptsDrawerView: View {
     }
 
     private var chainList: some View {
-        HSplitView {
+        NavigationSplitView {
             receiptList
-                .frame(minWidth: 200, idealWidth: 240)
+                .navigationSplitViewColumnWidth(min: 200, ideal: 240)
+        } detail: {
             if let selected = selectedReceipt {
                 ReceiptDetailView(
                     receipt: selected,
@@ -169,10 +162,6 @@ public struct ReceiptsDrawerView: View {
                     },
                     onShowInGraph: {
                         Task {
-                            // The graph entity id is the
-                            // document's id for v1. Phase 6
-                            // navigates to a more specific
-                            // entity.
                             await bridge.showInGraph(entityID: documentID)
                         }
                     },
@@ -180,9 +169,12 @@ public struct ReceiptsDrawerView: View {
                         selectedReceipt = nil
                     }
                 )
-                .frame(minWidth: 280)
             } else {
-                Color.clear
+                ContentUnavailableView(
+                    "No receipt selected",
+                    systemImage: "doc.text.magnifyingglass",
+                    description: Text("Select a receipt from the list to view its details.")
+                )
             }
         }
     }
@@ -191,10 +183,7 @@ public struct ReceiptsDrawerView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 if receipts.isEmpty {
-                    Text("No receipts yet")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .padding()
+                    ContentUnavailableView("No receipts yet", systemImage: "doc.text", description: Text("This document has no receipt records yet."))
                 } else {
                     ForEach(receipts) { r in
                         ReceiptRowView(receipt: r, isSelected: selectedReceipt?.id == r.id)
@@ -242,10 +231,7 @@ public struct ReceiptsDrawerView: View {
             LazyVStack(alignment: .leading, spacing: 0) {
                 let filtered = allFilter.apply(to: allDocuments)
                 if filtered.isEmpty {
-                    Text("No matching receipts")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .padding()
+                    ContentUnavailableView("No matching receipts", systemImage: "magnifyingglass", description: Text("Try a different filter."))
                 } else {
                     ForEach(filtered) { entry in
                         Button {
@@ -271,14 +257,14 @@ public struct ReceiptsDrawerView: View {
     private func allDocumentsRow(_ entry: AllDocumentsEntry) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: entry.documentID == documentID ? "doc.text" : "doc")
-                .font(.system(size: 11))
+                .font(.caption)
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.receipt.summary)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.caption.weight(.medium))
                     .lineLimit(1)
                 Text("\(entry.documentTitle) · \(entry.timestampText)")
-                    .font(.system(size: 10))
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
             }
         }

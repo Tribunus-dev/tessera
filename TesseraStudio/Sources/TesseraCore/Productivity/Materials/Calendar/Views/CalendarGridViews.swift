@@ -291,7 +291,7 @@ public struct CalendarMonthView: View {
             }
             if overflow > 0 {
                 Text("+\(overflow)")
-                    .font(.system(size: 8))
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
@@ -327,7 +327,7 @@ struct CalendarEventChip: View {
                 .lineLimit(1)
             if event.recurrence != nil {
                 Image(systemName: "repeat")
-                    .font(.system(size: compact ? 7 : 9))
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
             }
         }

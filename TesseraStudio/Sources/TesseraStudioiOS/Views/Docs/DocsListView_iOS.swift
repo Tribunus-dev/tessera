@@ -75,7 +75,7 @@ public struct DocsListView_iOS: View {
 
     private var emptyState: some View {
         VStack(spacing: 12) {
-            Image(systemName: "doc.text").font(.system(size: 48)).foregroundStyle(.secondary)
+            Image(systemName: "doc.text").font(.largeTitle).foregroundStyle(.secondary)
             Text(emptyStateTitle).font(.headline)
             Button { Task { await createBlankDoc() } } label: {
                 Label("New Doc", systemImage: "doc.badge.plus")
