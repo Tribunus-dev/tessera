@@ -258,6 +258,13 @@ if (GGML_OPENMP_ENABLED)
     target_link_libraries(ggml-base PRIVATE OpenMP::OpenMP_C OpenMP::OpenMP_CXX)
 endif()
 
+# First-class Linux: enable AVX512/F16C on ggml-quants.c when GGML_AVX512 requested.
+# The TILE640 paths are gated on __AVX512F__/__F16C__, so this makes the Apple
+# accelerate-equivalent paths available on Linux without requiring -march=native.
+if (GGML_AVX512)
+    set_source_files_properties(ggml-quants.c PROPERTIES COMPILE_FLAGS "-march=icelake-server -mf16c -O3")
+endif()
+
 add_library(ggml
             ggml-backend-dl.cpp
             ggml-backend-reg.cpp)

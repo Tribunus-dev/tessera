@@ -979,3 +979,252 @@ void common_fit_print(
     printf("%zu ", dmd.back().mb.compute/1024/1024);
     printf("\n");
 }
+
+// Combined fit: target already resident + draft to be loaded.
+// Strategy: compute live target usage, then fit draft within remaining budget
+// (free - target - margins) by reducing draft n_ctx and n_gpu_layers.
+common_params_fit_status common_fit_params_for_draft(
+                         const char * path_draft,
+                 llama_model_params * mparams_dft,
+               llama_context_params * cparams_dft,
+                      llama_model * model_tgt,
+                    llama_context * ctx_tgt,
+                             size_t * margins,
+                           uint32_t   n_ctx_min,
+                     ggml_log_level   log_level) {
+    if (!path_draft || !mparams_dft || !cparams_dft || !model_tgt || !ctx_tgt || !margins) {
+        return COMMON_PARAMS_FIT_STATUS_ERROR;
+    }
+
+    constexpr int64_t MiB = 1024*1024;
+
+    // helper: build live target per-device breakdown (same mapping as
+    // common_get_device_memory_data_impl but from an already loaded ctx)
+    auto get_live_dmds = [](llama_model * model, llama_context * ctx) {
+        const size_t nd = llama_model_n_devices(model);
+        std::vector<llama_device_memory_data> ret(nd + 1);
+        llama_memory_breakdown mb = llama_get_memory_breakdown(ctx);
+        for (const auto & kv : mb) {
+            ggml_backend_buffer_type_t buft = kv.first;
+            const llama_memory_breakdown_data & data = kv.second;
+            if (ggml_backend_buft_is_host(buft)) {
+                ret.back().mb.model   += data.model;
+                ret.back().mb.context += data.context;
+                ret.back().mb.compute += data.compute;
+                continue;
+            }
+            ggml_backend_dev_t dev = ggml_backend_buft_get_device(buft);
+            if (!dev) continue;
+            for (size_t i = 0; i < nd; i++) {
+                if (dev == llama_model_get_device(model, i)) {
+                    ret[i].mb.model   += data.model;
+                    ret[i].mb.context += data.context;
+                    ret[i].mb.compute += data.compute;
+                    break;
+                }
+            }
+        }
+        ggml_backend_dev_t cpu_dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+        if (cpu_dev) {
+            size_t free, total;
+            ggml_backend_dev_memory(cpu_dev, &free, &total);
+            ret.back().free  = free;
+            ret.back().total = total;
+        }
+        for (size_t i = 0; i < nd; i++) {
+            ggml_backend_dev_t dev = llama_model_get_device(model, i);
+            size_t free, total;
+            ggml_backend_dev_memory(dev, &free, &total);
+            if (free == 0 && total == 0) {
+                const enum ggml_backend_dev_type type = ggml_backend_dev_type(dev);
+                if (type == GGML_BACKEND_DEVICE_TYPE_GPU || type == GGML_BACKEND_DEVICE_TYPE_IGPU) {
+                    LOG_WRN("%s: device %s did not report memory; combined fit will not use it\n",
+                            __func__, ggml_backend_dev_name(dev));
+                } else {
+                    free  = ret.back().free;
+                    total = ret.back().total;
+                }
+            }
+            ret[i].free  = free;
+            ret[i].total = total;
+        }
+        return ret;
+    };
+
+    std::vector<llama_device_memory_data> dmds_tgt = get_live_dmds(model_tgt, ctx_tgt);
+    const size_t nd_tgt = dmds_tgt.size() - 1;
+
+    // helper to test if draft with given params fits alongside live target
+    // sum usages per device/host and check against free - margins
+    auto combined_fits = [&](llama_model_params * mp, llama_context_params * cp,
+                             std::vector<llama_device_memory_data> * out_draft) -> bool {
+        std::vector<ggml_backend_dev_t> devs_draft;
+        uint32_t hp_ngl = 0, hp_nct = 0, hp_nex = 0;
+        std::vector<llama_device_memory_data> dmds_draft;
+        try {
+            dmds_draft = common_get_device_memory_data_impl(path_draft, mp, cp, devs_draft, hp_ngl, hp_nct, hp_nex, log_level);
+        } catch (...) {
+            return false;
+        }
+        if (out_draft) *out_draft = dmds_draft;
+
+        const size_t nd_draft = dmds_draft.size() - 1;
+
+        // device union: assume same device set when counts match, otherwise require exact match
+        // For the Gemma4 + drafter case both are 0 or 1 devices, so simple sum suffices.
+        // General case: sum per index up to max, host always summed.
+        size_t nd = std::max(nd_tgt, nd_draft);
+
+        // host check - always required to avoid OOM kill
+        {
+            int64_t host_used = (int64_t)dmds_tgt.back().mb.total() + (int64_t)dmds_draft.back().mb.total();
+            int64_t host_free = dmds_tgt.back().free;
+            // draft's reported host free should be similar; use min to be conservative
+            if (dmds_draft.back().free && dmds_draft.back().free < (size_t)host_free) host_free = dmds_draft.back().free;
+            int64_t host_margin = margins[0];
+            if (host_used + host_margin > host_free) {
+                LOG_TRC("%s: host not fit: used %" PRId64 " + margin %" PRId64 " > free %" PRId64 " MiB\n",
+                        __func__, host_used/MiB, host_margin/MiB, host_free/MiB);
+                return false;
+            }
+        }
+
+        if (nd == 0) return true;
+
+        // Per-device check: for each device id, sum target+draft if both have that device
+        for (size_t i = 0; i < nd; i++) {
+            int64_t used = 0;
+            int64_t free = 0;
+            int64_t margin = margins[i];
+
+            if (i < nd_tgt) {
+                used += dmds_tgt[i].mb.total();
+                free  = dmds_tgt[i].free;
+            }
+            if (i < nd_draft) {
+                used += dmds_draft[i].mb.total();
+                if (free == 0) free = dmds_draft[i].free;
+            }
+            if (free == 0) continue; // unknown device, skip
+
+            if (used + margin > free) {
+                LOG_TRC("%s: device %zu not fit: used %" PRId64 " + margin %" PRId64 " > free %" PRId64 " MiB\n",
+                        __func__, i, used/MiB, margin/MiB, free/MiB);
+                return false;
+            }
+        }
+        return true;
+    };
+
+    // fast path: already fits
+    if (combined_fits(mparams_dft, cparams_dft, nullptr)) {
+        LOG_TRC("%s: combined target+drafter already fits\n", __func__);
+        return COMMON_PARAMS_FIT_STATUS_SUCCESS;
+    }
+
+    LOG_TRC("%s: combined target+drafter exceeds memory, attempting to fit draft\n", __func__);
+
+    // step 1: try reducing draft context size (only if not set by user)
+    if (cparams_dft->n_ctx == 0) {
+        std::vector<ggml_backend_dev_t> devs_tmp;
+        uint32_t hp_ngl = 0, hp_nct = 0, hp_nex = 0;
+        std::vector<llama_device_memory_data> dmds_full;
+        try {
+            dmds_full = common_get_device_memory_data_impl(path_draft, mparams_dft, cparams_dft, devs_tmp, hp_ngl, hp_nct, hp_nex, log_level);
+        } catch (...) {
+            return COMMON_PARAMS_FIT_STATUS_ERROR;
+        }
+        if (hp_nct > n_ctx_min) {
+            // estimate usage at minimal context
+            llama_context_params cp_min = *cparams_dft;
+            cp_min.n_ctx = n_ctx_min;
+            std::vector<llama_device_memory_data> dmds_min;
+            bool got_min = combined_fits(mparams_dft, &cp_min, &dmds_min);
+            // even if min still doesn't fit alone, we still try interpolation
+            int64_t sum_used_full = 0, sum_used_min = 0, sum_free = 0;
+            // host is the critical dimension for OOM kill, use it for interpolation
+            sum_used_full = (int64_t)dmds_tgt.back().mb.total() + (int64_t)dmds_full.back().mb.total();
+            // recompute min properly even if got_min failed, fetch dmds_min via direct call
+            {
+                std::vector<ggml_backend_dev_t> devs2;
+                uint32_t a,b,c;
+                try {
+                    auto d = common_get_device_memory_data_impl(path_draft, mparams_dft, &cp_min, devs2, a, b, c, log_level);
+                    sum_used_min = (int64_t)dmds_tgt.back().mb.total() + (int64_t)d.back().mb.total();
+                } catch (...) {
+                    sum_used_min = sum_used_full;
+                }
+            }
+            sum_free = dmds_tgt.back().free;
+
+            int64_t target_used = sum_free - (int64_t)margins[0];
+            if (target_used > sum_used_min && sum_used_full != sum_used_min) {
+                // linear interpolation similar to common_params_fit_impl
+                uint32_t new_nctx = n_ctx_min + (hp_nct - n_ctx_min) * (target_used - sum_used_min) / (sum_used_full - sum_used_min);
+                new_nctx = std::max(new_nctx - new_nctx % 256, n_ctx_min);
+                new_nctx = std::min(new_nctx, hp_nct);
+                cparams_dft->n_ctx = new_nctx;
+                int64_t bytes_per = (sum_used_full - sum_used_min) / (int64_t)(hp_nct - n_ctx_min);
+                int64_t reduction = (int64_t)(hp_nct - new_nctx) * bytes_per;
+                LOG_TRC("%s: draft context reduced %u -> %u (save %" PRId64 " MiB)\n",
+                        __func__, hp_nct, new_nctx, reduction/MiB);
+                if (combined_fits(mparams_dft, cparams_dft, nullptr)) {
+                    return COMMON_PARAMS_FIT_STATUS_SUCCESS;
+                }
+            } else if (got_min) {
+                cparams_dft->n_ctx = n_ctx_min;
+                LOG_TRC("%s: draft context reduced %u -> %u (min)\n", __func__, hp_nct, n_ctx_min);
+                if (combined_fits(mparams_dft, cparams_dft, nullptr)) {
+                    return COMMON_PARAMS_FIT_STATUS_SUCCESS;
+                }
+            } else {
+                // not enough even at min, set to min anyway and continue to next step
+                cparams_dft->n_ctx = n_ctx_min;
+            }
+        }
+    }
+
+    // step 2: try reducing draft n_gpu_layers (keep target on GPU, move draft to CPU)
+    {
+        const llama_model_params dft_default = llama_model_default_params();
+        bool ngl_user_set = (mparams_dft->n_gpu_layers != dft_default.n_gpu_layers);
+        if (!ngl_user_set) {
+            // need hp_ngl for draft
+            std::vector<ggml_backend_dev_t> devs_tmp;
+            uint32_t hp_ngl = 0, hp_nct = 0, hp_nex = 0;
+            try {
+                auto d = common_get_device_memory_data_impl(path_draft, mparams_dft, cparams_dft, devs_tmp, hp_ngl, hp_nct, hp_nex, log_level);
+                (void)d;
+            } catch (...) {
+                return COMMON_PARAMS_FIT_STATUS_ERROR;
+            }
+            int32_t cur = hp_ngl;
+            if (mparams_dft->n_gpu_layers >= 0) cur = std::min<int32_t>(cur, mparams_dft->n_gpu_layers);
+
+            for (int32_t try_ngl = cur - 1; try_ngl >= 0; --try_ngl) {
+                llama_model_params mp_try = *mparams_dft;
+                mp_try.n_gpu_layers = try_ngl;
+                if (combined_fits(&mp_try, cparams_dft, nullptr)) {
+                    mparams_dft->n_gpu_layers = try_ngl;
+                    LOG_TRC("%s: draft n_gpu_layers reduced to %d to fit\n", __func__, try_ngl);
+                    return COMMON_PARAMS_FIT_STATUS_SUCCESS;
+                }
+            }
+            // try 0
+            {
+                llama_model_params mp_try = *mparams_dft;
+                mp_try.n_gpu_layers = 0;
+                if (combined_fits(&mp_try, cparams_dft, nullptr)) {
+                    mparams_dft->n_gpu_layers = 0;
+                    LOG_TRC("%s: draft n_gpu_layers reduced to 0 to fit\n", __func__);
+                    return COMMON_PARAMS_FIT_STATUS_SUCCESS;
+                }
+            }
+        } else {
+            LOG_TRC("%s: draft n_gpu_layers user-set (%d), not adjusting\n", __func__, mparams_dft->n_gpu_layers);
+        }
+    }
+
+    LOG_WRN("%s: unable to fit combined target+drafter even after reducing draft context/layers\n", __func__);
+    return COMMON_PARAMS_FIT_STATUS_FAILURE;
+}

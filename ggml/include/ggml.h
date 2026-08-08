@@ -432,7 +432,9 @@ extern "C" {
         GGML_TYPE_Q2_0    = 42,
         GGML_TYPE_TESSERA_T640    = 43, // 2D Tile640 ternary; 6 component tensors
         GGML_TYPE_TESSERA_T640_3D = 44, // 3D expert bank marker; same physical encoding as T640
-        GGML_TYPE_COUNT   = 45,
+        GGML_TYPE_TESSERA_T512    = 45, // 2D Tile512 Intel-native 16×32 ternary (first-class Linux export)
+        GGML_TYPE_TESSERA_T1024   = 46, // 2D Tile1024 Intel-native 32×32 ternary (first-class Linux export)
+        GGML_TYPE_COUNT   = 47,
     };
 
     // precision
@@ -581,6 +583,14 @@ extern "C" {
         GGML_OP_TILE640_MATMUL_ID,
         GGML_OP_TILE640_GET_ROWS,
         GGML_OP_TILE640_DEQUANT,
+        GGML_OP_TILE512_MATMUL,
+        GGML_OP_TILE512_MATMUL_ID,
+        GGML_OP_TILE512_GET_ROWS,
+        GGML_OP_TILE512_DEQUANT,
+        GGML_OP_TILE1024_MATMUL,
+        GGML_OP_TILE1024_MATMUL_ID,
+        GGML_OP_TILE1024_GET_ROWS,
+        GGML_OP_TILE1024_DEQUANT,
         GGML_OP_IMATRIX_OBSERVER,
 
         GGML_OP_UNARY,
@@ -2679,6 +2689,94 @@ extern "C" {
     // Decode a Tile640 vector payload to F32 for elementwise, normalization,
     // convolution, and recurrent-state consumers.
     GGML_API struct ggml_tensor * ggml_tile640_dequant(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * A_packed,
+            struct ggml_tensor  * A_page_scales,
+            struct ggml_tensor  * A_lane_scales,
+            struct ggml_tensor  * A_outlier_row_offsets,
+            struct ggml_tensor  * A_outlier_cols,
+            struct ggml_tensor  * A_outlier_vals,
+            int64_t               ne0,
+            int64_t               ne1,
+            int64_t               ne2,
+            int64_t               ne3);
+
+    // Intel-native Tile512 first-class Linux quantize-at-export.
+    // Same 6-tensor layout as T640 but 16×32=512, sub_group 16, DPAS 8×32, no shuffle.
+    GGML_API struct ggml_tensor * ggml_tile512_matmul(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * A_packed,
+            struct ggml_tensor  * A_page_scales,
+            struct ggml_tensor  * A_lane_scales,
+            struct ggml_tensor  * A_outlier_rows,
+            struct ggml_tensor  * A_outlier_cols,
+            struct ggml_tensor  * A_outlier_vals,
+            struct ggml_tensor  * B);
+    GGML_API struct ggml_tensor * ggml_tile512_matmul_id(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * A_packed,
+            struct ggml_tensor  * A_page_scales,
+            struct ggml_tensor  * A_lane_scales,
+            struct ggml_tensor  * A_outlier_rows,
+            struct ggml_tensor  * A_outlier_cols,
+            struct ggml_tensor  * A_outlier_vals,
+            struct ggml_tensor  * B,
+            struct ggml_tensor  * ids,
+            int32_t             out_dim);
+    GGML_API struct ggml_tensor * ggml_tile512_get_rows(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * A_packed,
+            struct ggml_tensor  * A_page_scales,
+            struct ggml_tensor  * A_lane_scales,
+            struct ggml_tensor  * A_outlier_row_offsets,
+            struct ggml_tensor  * A_outlier_cols,
+            struct ggml_tensor  * A_outlier_vals,
+            struct ggml_tensor  * ids,
+            int32_t               row_width);
+    GGML_API struct ggml_tensor * ggml_tile512_dequant(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * A_packed,
+            struct ggml_tensor  * A_page_scales,
+            struct ggml_tensor  * A_lane_scales,
+            struct ggml_tensor  * A_outlier_row_offsets,
+            struct ggml_tensor  * A_outlier_cols,
+            struct ggml_tensor  * A_outlier_vals,
+            int64_t               ne0,
+            int64_t               ne1,
+            int64_t               ne2,
+            int64_t               ne3);
+    // Intel-native Tile1024 XMX 32×32
+    GGML_API struct ggml_tensor * ggml_tile1024_matmul(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * A_packed,
+            struct ggml_tensor  * A_page_scales,
+            struct ggml_tensor  * A_lane_scales,
+            struct ggml_tensor  * A_outlier_rows,
+            struct ggml_tensor  * A_outlier_cols,
+            struct ggml_tensor  * A_outlier_vals,
+            struct ggml_tensor  * B);
+    GGML_API struct ggml_tensor * ggml_tile1024_matmul_id(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * A_packed,
+            struct ggml_tensor  * A_page_scales,
+            struct ggml_tensor  * A_lane_scales,
+            struct ggml_tensor  * A_outlier_rows,
+            struct ggml_tensor  * A_outlier_cols,
+            struct ggml_tensor  * A_outlier_vals,
+            struct ggml_tensor  * B,
+            struct ggml_tensor  * ids,
+            int32_t             out_dim);
+    GGML_API struct ggml_tensor * ggml_tile1024_get_rows(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * A_packed,
+            struct ggml_tensor  * A_page_scales,
+            struct ggml_tensor  * A_lane_scales,
+            struct ggml_tensor  * A_outlier_row_offsets,
+            struct ggml_tensor  * A_outlier_cols,
+            struct ggml_tensor  * A_outlier_vals,
+            struct ggml_tensor  * ids,
+            int32_t               row_width);
+    GGML_API struct ggml_tensor * ggml_tile1024_dequant(
             struct ggml_context * ctx,
             struct ggml_tensor  * A_packed,
             struct ggml_tensor  * A_page_scales,

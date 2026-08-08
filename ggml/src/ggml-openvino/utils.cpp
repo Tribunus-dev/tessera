@@ -926,27 +926,28 @@ ov::Tensor get_ov_input_tensor_static_prefill(std::shared_ptr<GgmlOvDecoder> ggm
     if (GgmlOvDecoder::is_inp_tok(ggml_tensor, op) || GgmlOvDecoder::is_inp_pos(ggml_tensor, op) ||
         GgmlOvDecoder::is_kv_idx(ggml_tensor, op)) {
         ov::Shape input_shape = {1, 1, 1, chunk_size};
-        ov::Tensor input_tensor(ggml_decoder->get_ov_type(ggml_tensor), input_shape);
-        // copy the chunk_index-th chunk from ggml_tensor
         size_t element_size = ggml_type_size(ggml_tensor->type);
         void * input_data = (char *) ggml_tensor->data + chunk_index * chunk_size * element_size;
+        // Zero-copy fast path: full chunk, no padding — wrap ggml data directly (unified memory, no memcpy)
+        // Mirrors Apple ANE IOSurface zero-copy (ggml-ane.mm:60 16KB page, 64KB floor) but via
+        // cl_intel_unified_shared_memory / Level Zero USM (this host: Iris Plus G7, libze_intel_gpu.so).
+        if (chunk_pad_size == 0) {
+            return ov::Tensor(ggml_decoder->get_ov_type(ggml_tensor), input_shape, input_data);
+        }
+        ov::Tensor input_tensor(ggml_decoder->get_ov_type(ggml_tensor), input_shape);
         std::memcpy(input_tensor.data(), input_data, chunk_valid_size * element_size);
-        // pad the rest with last_value + 1, so that kv's of padded positions are inserted
-        // to the next row after the valids row in the kvcache
-        if (chunk_pad_size > 0) {
-            if (ggml_tensor->type == GGML_TYPE_I32) {
-                int32_t last_value =
-                    *((int32_t *) ggml_tensor->data + (chunk_index * chunk_size + chunk_valid_size - 1));
-                int32_t * output_data = input_tensor.data<int32_t>();
-                std::fill(output_data + chunk_valid_size, output_data + chunk_size, last_value + 1);
-            } else if (ggml_tensor->type == GGML_TYPE_I64) {
-                int64_t last_value =
-                    *((int64_t *) ggml_tensor->data + (chunk_index * chunk_size + chunk_valid_size - 1));
-                int64_t * output_data = input_tensor.data<int64_t>();
-                std::fill(output_data + chunk_valid_size, output_data + chunk_size, last_value + 1);
-            } else {
-                throw std::runtime_error("Unexpected tensor type for " + param_name);
-            }
+        if (ggml_tensor->type == GGML_TYPE_I32) {
+            int32_t last_value =
+                *((int32_t *) ggml_tensor->data + (chunk_index * chunk_size + chunk_valid_size - 1));
+            int32_t * output_data = input_tensor.data<int32_t>();
+            std::fill(output_data + chunk_valid_size, output_data + chunk_size, last_value + 1);
+        } else if (ggml_tensor->type == GGML_TYPE_I64) {
+            int64_t last_value =
+                *((int64_t *) ggml_tensor->data + (chunk_index * chunk_size + chunk_valid_size - 1));
+            int64_t * output_data = input_tensor.data<int64_t>();
+            std::fill(output_data + chunk_valid_size, output_data + chunk_size, last_value + 1);
+        } else {
+            throw std::runtime_error("Unexpected tensor type for " + param_name);
         }
         return input_tensor;
     }
@@ -1179,6 +1180,43 @@ const ggml_tensor * get_inp_pos_tensor(ggml_cgraph * cgraph) {
 
 bool get_is_prefill(const ggml_tensor * inp_pos) {
     return inp_pos->ne[0] > 1;
+}
+
+// Apple Silicon bucketed prefill -> OpenVINO first-class (common/ane-mtp.h:125 / 215)
+// Default buckets mirror ANE's sequence_buckets; env GGML_OPENVINO_PREFILL_BUCKETS="128,256,512,1024,2048"
+// overrides, and GGML_OPENVINO_PREFILL_CHUNK_SIZE remains the single-bucket compat.
+std::vector<int> ov_get_prefill_buckets() {
+    static std::vector<int> buckets = []{
+        std::vector<int> def{128,256,512,1024,2048};
+        const char * env = getenv("GGML_OPENVINO_PREFILL_BUCKETS");
+        if (!env || !*env) return def;
+        std::vector<int> out;
+        std::string s(env);
+        size_t pos=0;
+        while (pos < s.size()) {
+            size_t nxt = s.find(',', pos);
+            std::string tok = s.substr(pos, nxt==std::string::npos ? std::string::npos : nxt-pos);
+            try { int v = std::stoi(tok); if (v>0) out.push_back(v); } catch(...) {}
+            if (nxt==std::string::npos) break;
+            pos = nxt+1;
+        }
+        if (out.empty()) return def;
+        std::sort(out.begin(), out.end());
+        out.erase(std::unique(out.begin(), out.end()), out.end());
+        return out;
+    }();
+    return buckets;
+}
+int ov_select_prefill_bucket(int n_tokens, const std::vector<int> & buckets) {
+    if (buckets.empty() || n_tokens <= 0) return 256;
+    for (int b : buckets) if (n_tokens <= b) return b;
+    return buckets.back();
+}
+int ov_get_prefill_bucket_for_len(int inp_len) {
+    // Preserve causal_right_padding semantics: smallest bucket >= inp_len,
+    // else largest (caller chunks tail). Mirrors common_ane_prefill_select_bucket.
+    auto buckets = ov_get_prefill_buckets();
+    return ov_select_prefill_bucket(inp_len, buckets);
 }
 
 #pragma GCC diagnostic pop

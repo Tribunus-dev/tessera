@@ -153,6 +153,14 @@ const ggml_tensor * get_inp_pos_tensor(struct ggml_cgraph * cgraph);
 
 bool get_is_prefill(const ggml_tensor * inp_pos);
 
+// Apple Silicon bucketed prefill port: sequence_buckets / select_bucket
+// Ported from common/ane-mtp.h:125 common_ane_prefill_select_bucket.
+// Linux OpenVINO first-class: multiple compiled prefill models per bucket size,
+// cached in infer_request_cache_prefill, env GGML_OPENVINO_PREFILL_BUCKETS="128,256,512,1024,2048".
+std::vector<int> ov_get_prefill_buckets();
+int ov_select_prefill_bucket(int n_tokens, const std::vector<int> & buckets);
+int ov_get_prefill_bucket_for_len(int inp_len);
+
 ov::Tensor get_ov_input_tensor(std::shared_ptr<GgmlOvDecoder> ggml_decoder, const std::string & param_name);
 ov::Tensor get_ov_input_tensor_static_decode(std::shared_ptr<GgmlOvDecoder> ggml_decoder,
                                              const std::string & param_name);

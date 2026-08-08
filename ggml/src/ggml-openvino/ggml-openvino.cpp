@@ -432,8 +432,16 @@ static ggml_backend_buffer_t ggml_backend_openvino_buffer_type_alloc_buffer(ggml
                                                                             size_t size) {
     ggml_backend_openvino_buffer_type_context * buft_ctx = (ggml_backend_openvino_buffer_type_context *) buft->context;
 
-    // Create buffer context with contiguous memory allocation
-    ggml_backend_openvino_buffer_context * ctx = new ggml_backend_openvino_buffer_context(buft_ctx->device, size);
+    // Zero-copy first-class: unified memory (cl_intel_unified_shared_memory) lets CPU and GPU share
+    // the same LPDDR4X on Gen11 Iris Plus G7 (this host) and Xe2 Lunar Lake. Use USM for every
+    // GPU buffer when GGML_OPENVINO_ZERO_COPY != "0" (default 1 on GPU). Mirrors Apple ANE
+    // IOSurface 16KB page zero-copy (ggml-ane.mm:60) but via Level Zero USMTensor (libze_intel_gpu.so).
+    bool use_usm = false;
+    if (ggml_openvino_get_device_name() == "GPU") {
+        const char * env = getenv("GGML_OPENVINO_ZERO_COPY");
+        use_usm = !env || env[0] != '0';
+    }
+    ggml_backend_openvino_buffer_context * ctx = new ggml_backend_openvino_buffer_context(buft_ctx->device, size, use_usm);
 
     if (ctx->data == nullptr && size > 0) {
         GGML_LOG_ERROR("%s: failed to allocate buffer of size %zu\n", __func__, size);

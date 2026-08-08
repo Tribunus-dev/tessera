@@ -3,6 +3,7 @@
 #include "ggml-openvino/openvino/node_context.h"
 #include "ggml-openvino/openvino/utils.h"
 #include "input_model.h"
+#include "pass/fuse_tile640.h"
 #include "pass/mark_decompression_convert_constant_folding.h"
 #include "pass/squeeze_matmul.h"
 #include "rt_info/weightless_caching_attributes.hpp"
@@ -287,6 +288,7 @@ std::shared_ptr<Model> TranslateSession::apply_transformations(std::shared_ptr<M
         if (ggml_model_decoder->is_static()) {
             manager.register_pass<pass::SqueezeMatmul>();
         }
+        manager.register_pass<pass::FuseTile640Fused>();
         manager.run_passes(model);
         if (ggml_model_decoder->is_stateful()) {
             auto output_names = ggml_model_decoder->get_model_output_names();

@@ -17,6 +17,8 @@ extern "C" {
 GGML_API void quantize_row_q1_0_ref(const float * GGML_RESTRICT x, block_q1_0 * GGML_RESTRICT y, int64_t k);
 GGML_API void quantize_row_q2_0_ref(const float * GGML_RESTRICT x, block_q2_0 * GGML_RESTRICT y, int64_t k);
 GGML_API void quantize_row_tessera_t640_ref(const float * GGML_RESTRICT x, void * GGML_RESTRICT y, int64_t k);
+GGML_API void quantize_row_tessera_t512_ref(const float * GGML_RESTRICT x, void * GGML_RESTRICT y, int64_t k);
+GGML_API void quantize_row_tessera_t1024_ref(const float * GGML_RESTRICT x, void * GGML_RESTRICT y, int64_t k);
 GGML_API void quantize_row_q4_0_ref(const float * GGML_RESTRICT x, block_q4_0 * GGML_RESTRICT y, int64_t k);
 GGML_API void quantize_row_q4_1_ref(const float * GGML_RESTRICT x, block_q4_1 * GGML_RESTRICT y, int64_t k);
 GGML_API void quantize_row_q5_0_ref(const float * GGML_RESTRICT x, block_q5_0 * GGML_RESTRICT y, int64_t k);
@@ -53,6 +55,20 @@ GGML_API void dequantize_row_tessera_t640(const void * GGML_RESTRICT x, float * 
 // GGML_OP_TILE640_MATMUL dispatch to hoist the meta decode out
 // of the per-row loop.
 GGML_API void dequantize_row_tessera_t640_with_meta(const void * GGML_RESTRICT packed,
+                                                    const float * GGML_RESTRICT page_max_in,
+                                                    const float * GGML_RESTRICT lane_scale_in,
+                                                    int64_t k,
+                                                    float * GGML_RESTRICT y);
+GGML_API void quantize_row_tessera_t512_ref(const float * GGML_RESTRICT x, void * GGML_RESTRICT y, int64_t k);
+GGML_API void dequantize_row_tessera_t512(const void * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k);
+GGML_API void dequantize_row_tessera_t512_with_meta(const void * GGML_RESTRICT packed,
+                                                    const float * GGML_RESTRICT page_max_in,
+                                                    const float * GGML_RESTRICT lane_scale_in,
+                                                    int64_t k,
+                                                    float * GGML_RESTRICT y);
+GGML_API void quantize_row_tessera_t1024_ref(const float * GGML_RESTRICT x, void * GGML_RESTRICT y, int64_t k);
+GGML_API void dequantize_row_tessera_t1024(const void * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k);
+GGML_API void dequantize_row_tessera_t1024_with_meta(const void * GGML_RESTRICT packed,
                                                     const float * GGML_RESTRICT page_max_in,
                                                     const float * GGML_RESTRICT lane_scale_in,
                                                     int64_t k,

@@ -34,6 +34,21 @@ void common_fit_print(
 
 void common_memory_breakdown_print(const llama_context * ctx);
 
+// Combined fit: account for target model+context already resident (model_tgt/ctx_tgt)
+// and a draft model that is about to be loaded from path_draft.
+// Adjusts mparams_dft / cparams_dft to leave margins free per device/host, summing
+// target and draft usage. Returns SUCCESS if combined fits, FAILURE if cannot be
+// made to fit by reducing context / offload, ERROR on hard failure.
+common_params_fit_status common_fit_params_for_draft(
+                         const char * path_draft,
+                 llama_model_params * mparams_dft,
+               llama_context_params * cparams_dft,
+                      llama_model * model_tgt,
+                    llama_context * ctx_tgt,
+                             size_t * margins,
+                           uint32_t   n_ctx_min,
+                     ggml_log_level   log_level);
+
 struct common_device_memory_data {
     int64_t total;
     int64_t free;

@@ -20,6 +20,9 @@
 #if defined(__APPLE__)
 #include <Accelerate/Accelerate.h>
 #endif
+#if defined(__AVX512F__)
+#include <immintrin.h>
+#endif
 
 #define GROUP_MAX_EPS 1e-15f
 #define GROUP_MAX_EPS_IQ3_XXS 1e-8f
@@ -139,9 +142,8 @@ void quantize_row_tessera_t640_ref(const float * GGML_RESTRICT x, void * GGML_RE
     uint16_t * page_scales = (uint16_t *) (packed + pages * TILE640_WORDS_PER_PAGE);
     int8_t   * lane_scales = (int8_t *)   (page_scales + pages);
 
-#if defined(__APPLE__)
-    // Below the cutoff the vDSP call setup costs more than the
-    // per-page work; the scalar path wins.
+#if defined(__APPLE__) || defined(__AVX512F__)
+    // Below the cutoff the vDSP/AVX-512 setup costs more than per-page work; scalar wins.
     const bool accel = k >= GGML_TESSERA_T640_ACCEL_MIN_K &&
                        ggml_tessera_t640_accel_enabled();
 #else
@@ -164,6 +166,21 @@ void quantize_row_tessera_t640_ref(const float * GGML_RESTRICT x, void * GGML_RE
 #if defined(__APPLE__)
             vDSP_maxmgv(x + base, 1, &page_max, (vDSP_Length) page_len);
             vDSP_meamgv(x + base, 1, &threshold, (vDSP_Length) page_len);
+#elif defined(__AVX512F__)
+            // Linux AVX-512: max and mean(|x|) via 16-wide
+            __m512 vmax = _mm512_setzero_ps();
+            __m512 vsum = _mm512_setzero_ps();
+            int j=0;
+            for (; j+16 <= page_len; j+=16) {
+                __m512 v = _mm512_loadu_ps(x + base + j);
+                __m512 av = _mm512_and_ps(v, _mm512_castsi512_ps(_mm512_set1_epi32(0x7fffffff)));
+                vmax = _mm512_max_ps(vmax, av);
+                vsum = _mm512_add_ps(vsum, av);
+            }
+            page_max = _mm512_reduce_max_ps(vmax);
+            float sum_abs = _mm512_reduce_add_ps(vsum);
+            for (; j < page_len; ++j) { float a=fabsf(x[base+j]); sum_abs+=a; if(a>page_max) page_max=a; }
+            threshold = sum_abs / page_len;
 #endif
         } else {
             float sum_abs = 0.0f;
@@ -189,6 +206,16 @@ void quantize_row_tessera_t640_ref(const float * GGML_RESTRICT x, void * GGML_RE
             if (accel) {
 #if defined(__APPLE__)
                 vDSP_maxmgv(x + col0, 1, &lane_max, (vDSP_Length) lane_len);
+#elif defined(__AVX512F__)
+                __m512 vmax = _mm512_setzero_ps();
+                int j=0;
+                for (; j+16 <= lane_len; j+=16) {
+                    __m512 v = _mm512_loadu_ps(x + col0 + j);
+                    __m512 av = _mm512_and_ps(v, _mm512_castsi512_ps(_mm512_set1_epi32(0x7fffffff)));
+                    vmax = _mm512_max_ps(vmax, av);
+                }
+                lane_max = _mm512_reduce_max_ps(vmax);
+                for (; j<lane_len; ++j) { float a=fabsf(x[col0+j]); if(a>lane_max) lane_max=a; }
 #endif
             } else {
                 for (int j = 0; j < lane_len; j++) {
@@ -241,6 +268,35 @@ void quantize_row_tessera_t640_ref(const float * GGML_RESTRICT x, void * GGML_RE
                         if (v < -threshold) trit = 2;
                     }
                     group_val += trit * k_t640_pow3[d];
+                }
+#elif defined(__AVX512F__)
+                {
+                    const int valid = (gcol + 5 <= k) ? 5 : (k - gcol);
+                    if (valid == 5) {
+                        __mmask16 k5 = 0x1F;
+                        __m512 vf = _mm512_maskz_loadu_ps(k5, x + gcol);
+                        __mmask16 m_pos = _mm512_cmp_ps_mask(vf, _mm512_set1_ps(threshold), _CMP_GT_OQ);
+                        __mmask16 m_neg = _mm512_cmp_ps_mask(vf, _mm512_set1_ps(-threshold), _CMP_LT_OQ);
+                        m_pos &= k5; m_neg &= k5;
+                        uint32_t trit5[5];
+                        for(int d=0;d<5;++d){
+                            bool pos = (m_pos >> d) & 1;
+                            bool neg = (m_neg >> d) & 1;
+                            trit5[d] = pos ? 1 : neg ? 2 : 0;
+                        }
+                        for(int d=0;d<5;++d) group_val += trit5[d] * k_t640_pow3[d];
+                    } else {
+                        for (int d = 0; d < 5; d++) {
+                            const int col = gcol + d;
+                            uint32_t trit = 0;
+                            if (col < k) {
+                                const float v = x[col];
+                                if (v >  threshold) trit = 1;
+                                if (v < -threshold) trit = 2;
+                            }
+                            group_val += trit * k_t640_pow3[d];
+                        }
+                    }
                 }
 #else
                 for (int d = 0; d < 5; d++) {
@@ -364,6 +420,14 @@ void dequantize_row_tessera_t640_with_meta(const void * GGML_RESTRICT packed,
                 vst1q_f32(&sign_buf[col0 + chunk * 4], vsign_f32);
                 vst1q_f32(&scale_buf[col0 + chunk * 4], vscale);
             }
+#elif defined(__AVX512F__)
+            {
+                for(int j2=0;j2<20;++j2){
+                    int8_t tv = trits[j2];
+                    sign_buf[col0+j2] = tv==1 ? 1.0f : tv==2 ? -1.0f : 0.0f;
+                    scale_buf[col0+j2] = scale;
+                }
+            }
 #else
             for (int j = 0; j < 20; j++) {
                 const int8_t trit = trits[j];
@@ -383,6 +447,16 @@ void dequantize_row_tessera_t640_with_meta(const void * GGML_RESTRICT packed,
 
 #if defined(__APPLE__)
         vDSP_vmul(sign_buf, 1, scale_buf, 1, y + base, 1, (vDSP_Length) page_len);
+#elif defined(__AVX512F__)
+        {
+            int j = 0;
+            for (; j + 16 <= page_len; j += 16) {
+                __m512 a = _mm512_loadu_ps(&sign_buf[j]);
+                __m512 b = _mm512_loadu_ps(&scale_buf[j]);
+                _mm512_storeu_ps(&y[base + j], _mm512_mul_ps(a, b));
+            }
+            for (; j < page_len; j++) y[base + j] = sign_buf[j] * scale_buf[j];
+        }
 #else
         for (int j = 0; j < page_len; j++) {
             y[base + j] = sign_buf[j] * scale_buf[j];
@@ -408,6 +482,7 @@ void ts_decode_per_row_meta(const void * GGML_RESTRICT page_scales_packed,
 
     // page_max: fp16 -> fp32. Accel: NEON vcvt_f32_f16 in
     // 4-element chunks over the whole batch; tail is scalar.
+    // On Linux AVX512, F16C _mm256_cvtph_ps is the equivalent bulk path.
     int64_t p = 0;
 #if GGML_TESSERA_T640_NEON
     if (use_accel) {
@@ -417,6 +492,20 @@ void ts_decode_per_row_meta(const void * GGML_RESTRICT page_scales_packed,
             float32x4_t vf = vcvt_f32_f16(vreinterpret_f16_u64(vdup_n_u64(bits)));
             vst1q_f32(&page_max_out[p], vf);
         }
+    }
+#elif defined(__AVX512F__) && defined(__F16C__)
+    if (use_accel) {
+        int64_t i = 0;
+        for (; i + 8 <= n_total_pages; i += 8) {
+            __m128i v = _mm_loadu_si128((const __m128i*)&ps[i]);
+            __m256 f = _mm256_cvtph_ps(v);
+            _mm256_storeu_ps(&page_max_out[i], f);
+        }
+        p = i;
+    }
+#elif defined(__AVX512F__)
+    if (use_accel) {
+        // F16C not available, scalar tail already handles; keep p=0
     }
 #endif
     for (; p < n_total_pages; p++) {
@@ -449,6 +538,26 @@ void ts_decode_per_row_meta(const void * GGML_RESTRICT page_scales_packed,
             lane_scale_out[i] /= 127.0f;
         }
 #endif
+        return;
+    }
+#elif defined(__AVX512F__) && defined(__AVX512BW__) && defined(__AVX512VL__)
+    if (use_accel) {
+        const __m512 v127 = _mm512_set1_ps(127.0f);
+        int64_t i = 0;
+        for (; i + 16 <= n_total_lanes; i += 16) {
+            __m128i v8 = _mm_loadu_si128((const __m128i*)&ls[i]);
+            __m512i v32 = _mm512_cvtepi8_epi32(v8);
+            __m512 f = _mm512_cvtepi32_ps(v32);
+            f = _mm512_div_ps(f, v127);
+            _mm512_storeu_ps(&lane_scale_out[i], f);
+        }
+        for (; i < n_total_lanes; i++) lane_scale_out[i] = ((float)ls[i]) / 127.0f;
+        return;
+    }
+#elif defined(__AVX512F__)
+    if (use_accel) {
+        // AVX512 without BW/VL: fallback scalar
+        for (int64_t i = 0; i < n_total_lanes; i++) lane_scale_out[i] = ((float)ls[i]) / 127.0f;
         return;
     }
 #endif
@@ -501,6 +610,27 @@ void ts_apply_outlier_addback(float * GGML_RESTRICT rows,
         }
         return;
     }
+#elif defined(__AVX512F__) && defined(__F16C__)
+    if (use_accel && n_total <= TS_T640_OUTLIER_ACCEL_MAX_N_TOTAL) {
+        float val_scratch[TS_T640_OUTLIER_ACCEL_MAX_N_TOTAL] __attribute__((aligned(64)));
+        int64_t i = 0;
+        for (; i + 8 <= n_total; i += 8) {
+            __m128i v = _mm_loadu_si128((const __m128i*)&vals[base + i]);
+            __m256 f = _mm256_cvtph_ps(v);
+            _mm256_storeu_ps(&val_scratch[i], f);
+        }
+        for (; i < n_total; i++) val_scratch[i] = GGML_FP16_TO_FP32(vals[base + i]);
+        for (int64_t r = 0; r < n_rows; r++) {
+            const int32_t lo = outlier_row_offsets[r];
+            const int32_t hi = outlier_row_offsets[r + 1];
+            float * GGML_RESTRICT row = rows + r * row_len;
+            for (int32_t ki = lo; ki < hi; ki++) {
+                const int32_t col = outlier_cols[ki];
+                if (col >= 0 && col < row_len) row[col] = val_scratch[ki - (int32_t) base];
+            }
+        }
+        return;
+    }
 #endif
 
     for (int64_t r = 0; r < n_rows; r++) {
@@ -541,9 +671,210 @@ void ts_apply_act_scale(float * GGML_RESTRICT y,
         vDSP_vmul(scratch, 1, y, 1, y, 1, (vDSP_Length) n);
         return;
     }
+#elif defined(__AVX512F__) && defined(__F16C__)
+    if (n <= 4096) {
+        float scratch[4096] __attribute__((aligned(64)));
+        int64_t i = 0;
+        for (; i + 8 <= n; i += 8) {
+            __m128i v = _mm_loadu_si128((const __m128i*)&as[i]);
+            __m256 f = _mm256_cvtph_ps(v);
+            _mm256_storeu_ps(&scratch[i], f);
+        }
+        for (; i < n; i++) scratch[i] = GGML_FP16_TO_FP32(as[i]);
+        int64_t j = 0;
+        for (; j + 16 <= n; j += 16) {
+            __m512 a = _mm512_loadu_ps(&scratch[j]);
+            __m512 b = _mm512_loadu_ps(&y[j]);
+            _mm512_storeu_ps(&y[j], _mm512_mul_ps(a, b));
+        }
+        for (; j < n; j++) y[j] *= scratch[j];
+        return;
+    }
 #endif
     for (int64_t i = 0; i < n; i++) {
         y[i] *= GGML_FP16_TO_FP32(as[i]);
+    }
+}
+
+//
+// Tessera Tile512 / Tile1024 — Intel-native 16×32 and 32×32, 2-bit pack
+// On-disk T512 canonical, T1024 is 2×T512 coalesce (zero-copy).
+// Packing: 2 bits/trit (0=0,1=+1,2=-1,3 unused→0), 16 trits per uint32 word,
+// 2 words per 32-wide lane. Scales match T640: per-page f16 page_max,
+// per-lane int8 lane_scale (lane_max/page_max*127).
+// Gen11 fallback uses same on-disk format with scalar dequant.
+//
+void quantize_row_tessera_t512_ref(const float * GGML_RESTRICT x, void * GGML_RESTRICT y, int64_t k) {
+    assert(k >= 0);
+    const int pages = (int)((k + TILE512_PAGE_SIZE - 1) / TILE512_PAGE_SIZE);
+    uint32_t * packed = (uint32_t *) y;
+    uint16_t * page_scales = (uint16_t *) (packed + pages * TILE512_WORDS_PER_PAGE);
+    int8_t   * lane_scales = (int8_t *)   (page_scales + pages);
+#if defined(__AVX512F__)
+    const bool accel = k >= GGML_TESSERA_T640_ACCEL_MIN_K && ggml_tessera_t640_accel_enabled();
+#else
+    const bool accel = false;
+#endif
+    for (int p = 0; p < pages; p++) {
+        const int base = p * TILE512_PAGE_SIZE;
+        const int page_len = (base + TILE512_PAGE_SIZE <= k) ? TILE512_PAGE_SIZE : (int)(k - base);
+        float page_max = 0.0f; float threshold = 0.0f;
+        if (accel) {
+#if defined(__AVX512F__)
+            __m512 vmax = _mm512_setzero_ps();
+            __m512 vsum = _mm512_setzero_ps();
+            int j=0; for (; j+16 <= page_len; j+=16) {
+                __m512 v = _mm512_loadu_ps(x + base + j);
+                __m512 av = _mm512_and_ps(v, _mm512_castsi512_ps(_mm512_set1_epi32(0x7fffffff)));
+                vmax = _mm512_max_ps(vmax, av);
+                vsum = _mm512_add_ps(vsum, av);
+            }
+            page_max = _mm512_reduce_max_ps(vmax);
+            float sum_abs = _mm512_reduce_add_ps(vsum);
+            for (; j < page_len; ++j) { float a=fabsf(x[base+j]); sum_abs+=a; if(a>page_max) page_max=a; }
+            threshold = sum_abs / page_len;
+#endif
+        } else {
+            float sum_abs=0; for(int j=0;j<page_len;j++){ float a=fabsf(x[base+j]); sum_abs+=a; if(a>page_max) page_max=a; }
+            threshold = page_len ? sum_abs / page_len : 0;
+        }
+        page_scales[p] = GGML_FP32_TO_FP16(page_max);
+        for (int l = 0; l < TILE512_LANES_PER_PAGE; l++) {
+            const int col0 = base + l * TILE512_LANE_SIZE;
+            const int lane_len = (col0 + TILE512_LANE_SIZE <= k) ? TILE512_LANE_SIZE : (col0 < k ? (int)(k - col0) : 0);
+            float lane_max = 0;
+            if (accel) {
+#if defined(__AVX512F__)
+                __m512 vmax = _mm512_setzero_ps();
+                int j=0; for (; j+16 <= lane_len; j+=16) {
+                    __m512 v = _mm512_loadu_ps(x + col0 + j);
+                    __m512 av = _mm512_and_ps(v, _mm512_castsi512_ps(_mm512_set1_epi32(0x7fffffff)));
+                    vmax = _mm512_max_ps(vmax, av);
+                }
+                lane_max = _mm512_reduce_max_ps(vmax);
+                for (; j<lane_len; ++j){ float a=fabsf(x[col0+j]); if(a>lane_max) lane_max=a; }
+#endif
+            } else { for(int j=0;j<lane_len;j++){ float a=fabsf(x[col0+j]); if(a>lane_max) lane_max=a; } }
+            int8_t ls = 0; if(page_max>0) { ls=(int8_t)roundf(127.0f*lane_max/page_max); if(ls>127) ls=127; }
+            lane_scales[p*TILE512_LANES_PER_PAGE + l]=ls;
+            for(int w=0; w<2; w++){
+                uint32_t word=0;
+                for(int d=0; d<16; d++){
+                    int col = col0 + w*16 + d;
+                    uint32_t trit=0;
+                    if(col<k){ float v=x[col]; if(v>threshold) trit=1; else if(v<-threshold) trit=2; }
+                    word |= (trit & 3u) << (d*2);
+                }
+                packed[p*TILE512_WORDS_PER_PAGE + l*2 + w]=word;
+            }
+        }
+    }
+}
+void dequantize_row_tessera_t512(const void * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k) {
+    assert(k>=0);
+    const int pages=(int)((k+TILE512_PAGE_SIZE-1)/TILE512_PAGE_SIZE);
+    const uint32_t * packed=(const uint32_t*)x;
+    const uint16_t * page_scales=(const uint16_t*)(packed+pages*TILE512_WORDS_PER_PAGE);
+    const int8_t * lane_scales=(const int8_t*)(page_scales+pages);
+    for(int p=0;p<pages;p++){
+        float page_max=GGML_FP16_TO_FP32(page_scales[p]);
+        for(int l=0;l<TILE512_LANES_PER_PAGE;l++){
+            float scale=page_max*(lane_scales[p*TILE512_LANES_PER_PAGE+l]*(1.0f/127.0f));
+            int col0=p*TILE512_PAGE_SIZE+l*TILE512_LANE_SIZE;
+            for(int w=0;w<2;w++){
+                uint32_t word=packed[p*TILE512_WORDS_PER_PAGE+l*2+w];
+                for(int d=0; d<16; d++){
+                    int col=col0+w*16+d; if(col>=k) break;
+                    uint32_t bits=(word>>(d*2))&3u;
+                    y[col]= bits==1? scale : bits==2? -scale : 0.0f;
+                }
+            }
+        }
+    }
+}
+void dequantize_row_tessera_t512_with_meta(const void * GGML_RESTRICT packed,
+                                           const float * GGML_RESTRICT page_max_in,
+                                           const float * GGML_RESTRICT lane_scale_in,
+                                           int64_t k, float * GGML_RESTRICT y){
+    const int pages=(int)((k+TILE512_PAGE_SIZE-1)/TILE512_PAGE_SIZE);
+    const uint32_t * pw=(const uint32_t*)packed;
+    float sign_buf[TILE512_PAGE_SIZE] __attribute__((aligned(64)));
+    float scale_buf[TILE512_PAGE_SIZE] __attribute__((aligned(64)));
+    for(int p=0;p<pages;p++){
+        int base=p*TILE512_PAGE_SIZE; int page_len=base+TILE512_PAGE_SIZE<=k?TILE512_PAGE_SIZE:(int)(k-base);
+        float page_max=page_max_in[p];
+        for(int l=0;l<TILE512_LANES_PER_PAGE;l++){
+            int col0=l*TILE512_LANE_SIZE; float scale=page_max*lane_scale_in[p*TILE512_LANES_PER_PAGE+l];
+            for(int w=0;w<2;w++){
+                uint32_t word=pw[p*TILE512_WORDS_PER_PAGE+l*2+w];
+                for(int d=0;d<16;d++){
+                    int col=col0+w*16+d; if(col>=TILE512_PAGE_SIZE) break;
+                    uint32_t bits=(word>>(d*2))&3u;
+                    sign_buf[col]= bits==1?1.0f: bits==2?-1.0f:0.0f;
+                    scale_buf[col]=scale;
+                }
+            }
+        }
+        if(page_len<TILE512_PAGE_SIZE) for(int j=page_len;j<TILE512_PAGE_SIZE;j++){ sign_buf[j]=0; scale_buf[j]=0; }
+#if defined(__AVX512F__)
+        int j=0; for(;j+16<=page_len;j+=16){ __m512 a=_mm512_loadu_ps(&sign_buf[j]); __m512 b=_mm512_loadu_ps(&scale_buf[j]); _mm512_storeu_ps(&y[base+j], _mm512_mul_ps(a,b)); }
+        for(;j<page_len;j++) y[base+j]=sign_buf[j]*scale_buf[j];
+#else
+        for(int j=0;j<page_len;j++) y[base+j]=sign_buf[j]*scale_buf[j];
+#endif
+    }
+}
+void quantize_row_tessera_t1024_ref(const float * GGML_RESTRICT x, void * GGML_RESTRICT y, int64_t k){
+    assert(k>=0);
+    const int pages=(int)((k+TILE1024_PAGE_SIZE-1)/TILE1024_PAGE_SIZE);
+    uint32_t * packed=(uint32_t*)y;
+    uint16_t * page_scales=(uint16_t*)(packed+pages*TILE1024_WORDS_PER_PAGE);
+    int8_t * lane_scales=(int8_t*)(page_scales+pages);
+#if defined(__AVX512F__)
+    const bool accel=k>=GGML_TESSERA_T640_ACCEL_MIN_K && ggml_tessera_t640_accel_enabled();
+#else
+    const bool accel=false;
+#endif
+    for(int p=0;p<pages;p++){
+        int base=p*TILE1024_PAGE_SIZE; int page_len=base+TILE1024_PAGE_SIZE<=k?TILE1024_PAGE_SIZE:(int)(k-base);
+        float page_max=0, threshold=0;
+        if(accel){
+#if defined(__AVX512F__)
+            __m512 vmax=_mm512_setzero_ps(); __m512 vsum=_mm512_setzero_ps();
+            int j=0; for(;j+16<=page_len;j+=16){ __m512 v=_mm512_loadu_ps(x+base+j); __m512 av=_mm512_and_ps(v,_mm512_castsi512_ps(_mm512_set1_epi32(0x7fffffff))); vmax=_mm512_max_ps(vmax,av); vsum=_mm512_add_ps(vsum,av); }
+            page_max=_mm512_reduce_max_ps(vmax); float sum=_mm512_reduce_add_ps(vsum); for(;j<page_len;j++){float a=fabsf(x[base+j]); sum+=a; if(a>page_max) page_max=a;} threshold=sum/page_len;
+#endif
+        } else { float sum=0; for(int j=0;j<page_len;j++){float a=fabsf(x[base+j]); sum+=a; if(a>page_max) page_max=a;} threshold=page_len?sum/page_len:0; }
+        page_scales[p]=GGML_FP32_TO_FP16(page_max);
+        for(int l=0;l<TILE1024_LANES_PER_PAGE;l++){
+            int col0=base+l*TILE1024_LANE_SIZE; int lane_len=col0+TILE1024_LANE_SIZE<=k?TILE1024_LANE_SIZE:(col0<k?(int)(k-col0):0);
+            float lane_max=0;
+            if(accel){
+#if defined(__AVX512F__)
+                __m512 vmax=_mm512_setzero_ps(); int j=0; for(;j+16<=lane_len;j+=16){ __m512 v=_mm512_loadu_ps(x+col0+j); __m512 av=_mm512_and_ps(v,_mm512_castsi512_ps(_mm512_set1_epi32(0x7fffffff))); vmax=_mm512_max_ps(vmax,av); }
+                lane_max=_mm512_reduce_max_ps(vmax); for(;j<lane_len;j++){float a=fabsf(x[col0+j]); if(a>lane_max) lane_max=a;}
+#endif
+            } else { for(int j=0;j<lane_len;j++){float a=fabsf(x[col0+j]); if(a>lane_max) lane_max=a; } }
+            int8_t ls=0; if(page_max>0){ ls=(int8_t)roundf(127*lane_max/page_max); if(ls>127) ls=127; }
+            lane_scales[p*TILE1024_LANES_PER_PAGE+l]=ls;
+            for(int w=0;w<2;w++){ uint32_t word=0; for(int d=0;d<16;d++){int col=col0+w*16+d; uint32_t trit=0; if(col<k){float v=x[col]; if(v>threshold) trit=1; else if(v<-threshold) trit=2; } word|=(trit&3u)<<(d*2); } packed[p*TILE1024_WORDS_PER_PAGE+l*2+w]=word; }
+        }
+    }
+}
+void dequantize_row_tessera_t1024(const void * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k){
+    assert(k>=0); int pages=(int)((k+TILE1024_PAGE_SIZE-1)/TILE1024_PAGE_SIZE);
+    const uint32_t * packed=(const uint32_t*)x; const uint16_t * ps=(const uint16_t*)(packed+pages*TILE1024_WORDS_PER_PAGE); const int8_t * ls=(const int8_t*)(ps+pages);
+    for(int p=0;p<pages;p++){ float page_max=GGML_FP16_TO_FP32(ps[p]); for(int l=0;l<TILE1024_LANES_PER_PAGE;l++){ float scale=page_max*(ls[p*TILE1024_LANES_PER_PAGE+l]*(1.0f/127.0f)); int col0=p*TILE1024_PAGE_SIZE+l*TILE1024_LANE_SIZE; for(int w=0;w<2;w++){ uint32_t word=packed[p*TILE1024_WORDS_PER_PAGE+l*2+w]; for(int d=0;d<16;d++){int col=col0+w*16+d; if(col>=k) break; uint32_t bits=(word>>(d*2))&3u; y[col]=bits==1?scale:bits==2?-scale:0.0f; } } } }
+}
+void dequantize_row_tessera_t1024_with_meta(const void * GGML_RESTRICT packed, const float * GGML_RESTRICT page_max_in, const float * GGML_RESTRICT lane_scale_in, int64_t k, float * GGML_RESTRICT y){
+    int pages=(int)((k+TILE1024_PAGE_SIZE-1)/TILE1024_PAGE_SIZE); const uint32_t * pw=(const uint32_t*)packed;
+    float sign_buf[TILE1024_PAGE_SIZE] __attribute__((aligned(64))); float scale_buf[TILE1024_PAGE_SIZE] __attribute__((aligned(64)));
+    for(int p=0;p<pages;p++){ int base=p*TILE1024_PAGE_SIZE; int page_len=base+TILE1024_PAGE_SIZE<=k?TILE1024_PAGE_SIZE:(int)(k-base); float page_max=page_max_in[p]; for(int l=0;l<TILE1024_LANES_PER_PAGE;l++){ int col0=l*TILE1024_LANE_SIZE; float scale=page_max*lane_scale_in[p*TILE1024_LANES_PER_PAGE+l]; for(int w=0;w<2;w++){ uint32_t word=pw[p*TILE1024_WORDS_PER_PAGE+l*2+w]; for(int d=0;d<16;d++){ int col=col0+w*16+d; if(col>=TILE1024_PAGE_SIZE) break; uint32_t bits=(word>>(d*2))&3u; sign_buf[col]=bits==1?1.0f:bits==2?-1.0f:0.0f; scale_buf[col]=scale; } } } if(page_len<TILE1024_PAGE_SIZE) for(int j=page_len;j<TILE1024_PAGE_SIZE;j++){sign_buf[j]=0;scale_buf[j]=0;} 
+#if defined(__AVX512F__)
+        int j=0; for(;j+16<=page_len;j+=16){ __m512 a=_mm512_loadu_ps(&sign_buf[j]); __m512 b=_mm512_loadu_ps(&scale_buf[j]); _mm512_storeu_ps(&y[base+j], _mm512_mul_ps(a,b)); } for(;j<page_len;j++) y[base+j]=sign_buf[j]*scale_buf[j];
+#else
+        for(int j=0;j<page_len;j++) y[base+j]=sign_buf[j]*scale_buf[j];
+#endif
     }
 }
 

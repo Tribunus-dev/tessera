@@ -4,6 +4,7 @@
 #include "ggml.h"
 #include "gguf.h"
 #include "llama.h"
+#include "fit.h"
 #include "log.h"
 #include "ngram-cache.h"
 #include "ngram-map.h"
@@ -2889,6 +2890,30 @@ common_speculative_init_result::common_speculative_init_result(
         } else {
             model_path = params.speculative.draft.mparams.path;
             LOG_INF("%s: loading draft model '%s'\n", __func__, model_path.c_str());
+        }
+
+        // Combined fit: ensure target+draft together leave margins free on host/device.
+        // This prevents the Gemma4 MoE + drafter OOM kill by summing both models'
+        // mmap + KV usage before the second mmap. Only adjusts draft params
+        // (n_ctx, n_gpu_layers) when fit_params is on and the draft is standalone.
+        if (params.fit_params && !use_embedded && model_tgt && ctx_tgt) {
+            ggml_log_level lvl = params.verbosity >= LOG_LEVEL_DEBUG ? GGML_LOG_LEVEL_DEBUG : GGML_LOG_LEVEL_ERROR;
+            common_params_fit_status st = common_fit_params_for_draft(
+                model_path.c_str(), &mparams, &cparams,
+                model_tgt, ctx_tgt,
+                params.fit_params_target.data(),
+                params.fit_params_min_ctx,
+                lvl);
+            if (st == COMMON_PARAMS_FIT_STATUS_FAILURE) {
+                LOG_WRN("%s: combined fit could not make draft fit; proceeding anyway - may OOM\n", __func__);
+            } else if (st == COMMON_PARAMS_FIT_STATUS_ERROR) {
+                LOG_ERR("%s: combined fit error for draft '%s'\n", __func__, model_path.c_str());
+            } else {
+                LOG_INF("%s: combined fit adjusted draft: n_ctx=%u n_gpu_layers=%d\n",
+                        __func__, cparams.n_ctx, mparams.n_gpu_layers);
+            }
+        } else if (use_embedded) {
+            LOG_TRC("%s: embedded drafter - model weights shared, skipping combined fit\n", __func__);
         }
 
         llama_model * model_dft = llama_model_load_from_file(model_path.c_str(), mparams);

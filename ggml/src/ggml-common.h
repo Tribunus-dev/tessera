@@ -178,13 +178,41 @@ typedef sycl::half2 ggml_half2;
 #endif // _MSC_VER
 
 //
-// Tessera Tile640 (TESSERA_T640 / TESSERA_T640_3D)
+// Tessera Tile640 (TESSERA_T640 / TESSERA_T640_3D) + Intel flex tile
+//   Apple:  T640 32×20=640 (3D 32×20×?)
+//   Intel:  T512 16×32=512 canonical, T1024 32×32=1024 == 2×T512
+// Single Intel-optimized GGUF quantizes to T512; T1024 is a zero-copy view
+// (same LANE_SIZE=32, 2 contiguous pages). Gen11 (ICL 64EU/64KB SLM, no XMX/DPAS)
+// validates via scalar/emulated fallback but shares the same on-disk T512.
+// Host-tune picks 16×32 (Xe-HPG) vs 32×32 (Xe2/Xe3) and SLM budget.
 //
 
 #define TILE640_PAGE_SIZE      640
 #define TILE640_LANE_SIZE      20
 #define TILE640_LANES_PER_PAGE 32
 #define TILE640_WORDS_PER_PAGE 32
+// Intel-native tiles: 16×32=512 (DPAS 8×32, sub_group 16) and 32×32=1024 (XMX)
+// Keep T640 on-disk for Apple compat; T512 is canonical Intel quantize-at-export,
+// T1024 is a runtime coalesce of 2×T512 pages (zero repack).
+// Native 2-bit packing: 32 trits/lane = 2×16 trits/word (2 bits/trit), so WORDS=2×LANES.
+#define TILE512_PAGE_SIZE      512
+#define TILE512_LANE_SIZE      32
+#define TILE512_LANES_PER_PAGE 16
+#define TILE512_WORDS_PER_PAGE 32
+#define TILE1024_PAGE_SIZE      1024
+#define TILE1024_LANE_SIZE      32
+#define TILE1024_LANES_PER_PAGE 32
+#define TILE1024_WORDS_PER_PAGE 64
+// Flex canonical: one on-disk format for all Intel gens
+#define TILE_INTEL_CANONICAL_PAGE_SIZE  TILE512_PAGE_SIZE
+#define TILE_INTEL_CANONICAL_LANES      TILE512_LANES_PER_PAGE
+#define TILE_INTEL_CANONICAL_LANE_SIZE  TILE512_LANE_SIZE
+#define TILE_INTEL_CANONICAL_WORDS      TILE512_WORDS_PER_PAGE
+#define TILE_FLEX_LANE_SIZE             32
+#define TILE_FLEX_IS_CANONICAL(lanes)   ((lanes)==16 || (lanes)==32)
+// view helpers: T1024 view == 2 consecutive T512 pages
+static inline int tile_flex_pages_for_dim(int dim, int lanes) { return (dim + lanes*TILE_FLEX_LANE_SIZE -1)/(lanes*TILE_FLEX_LANE_SIZE); }
+static inline int tile_flex_words_per_page(int lanes) { return lanes*2; }
 
 #define QK1_0 128
 typedef struct {
