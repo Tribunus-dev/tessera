@@ -1,21 +1,22 @@
 #include "ChatView.h"
 #include "core/provider.h"
+#include "core/data/DataLayer.h"
 #include "ui/widgets/ChatBubble.h"
 #include <adwaita.h>
 #include <vector>
 
 namespace tessera {
 
-struct ChatState{ DataLayer* dl; LLMProvider* provider; GtkWidget* list; GtkWidget* entry; GtkWidget* sendBtn; std::vector<ChatMessage> history; };
+struct ChatViewState{ DataLayer* dl; LLMProvider* provider; GtkWidget* list; GtkWidget* entry; GtkWidget* sendBtn; std::vector<ChatMessage> history; };
 
-static void bubble_append(ChatState* st, ChatRole role, const std::string& text){
+static void bubble_append(ChatViewState* st, ChatRole role, const std::string& text){
     GtkWidget* w = chat_bubble_new(role, text, "");
     gtk_list_box_append(GTK_LIST_BOX(st->list), w);
     // auto-scroll handled by parent ScrolledWindow
 }
 
 static void on_send_clicked(GtkButton*, gpointer d){
-    ChatState* st=(ChatState*)d;
+    ChatViewState* st=(ChatViewState*)d;
     const char* txt = gtk_editable_get_text(GTK_EDITABLE(st->entry));
     if(!txt || !*txt) return;
     std::string prompt=txt;
@@ -28,17 +29,17 @@ static void on_send_clicked(GtkButton*, gpointer d){
     // dispatch to LLMProvider off GTK thread
     LLMProvider* prov = st->provider;
     if(!prov) { gtk_list_box_remove(GTK_LIST_BOX(st->list), typing); bubble_append(st, ChatRole::Assistant, "No provider configured. Select a model in Settings."); return; }
-    struct Job{ ChatState* st; std::string prompt; GtkWidget* typing; LLMProvider* prov; std::string acc; };
+    struct Job{ ChatViewState* st; std::string prompt; GtkWidget* typing; LLMProvider* prov; std::string acc; };
     Job* job=new Job{st, prompt, typing, prov, ""};
     g_thread_new("chat-send", [](gpointer p)->gpointer{
         Job* j=(Job*)p;
         j->prov->send(j->prompt, [j](const std::string& delta, bool done){
             j->acc+=delta;
             std::string* tmp=new std::string(j->acc);
-            GtkWidget* typing=j->typing; ChatState* st=j->st;
+            GtkWidget* typing=j->typing; ChatViewState* st=j->st;
             g_idle_add([](gpointer q)->gboolean{
-                auto *a=(std::pair<ChatState*, std::string*>*)q;
-                ChatState* s=a->first; std::string* txt=a->second;
+                auto *a=(std::pair<ChatViewState*, std::string*>*)q;
+                ChatViewState* s=a->first; std::string* txt=a->second;
                 // replace typing bubble text via remove+append (simple)
                 // find typing row is last
                 GtkWidget* list=s->list;
@@ -46,18 +47,18 @@ static void on_send_clicked(GtkButton*, gpointer d){
                 if(last) gtk_list_box_remove(GTK_LIST_BOX(list), last);
                 bubble_append(s, ChatRole::Assistant, *txt);
                 delete txt; delete a; return G_SOURCE_REMOVE;
-            }, new std::pair<ChatState*, std::string*>(st, tmp));
+            }, new std::pair<ChatViewState*, std::string*>(st, tmp));
             if(done){
                 g_idle_add([](gpointer q)->gboolean{ Job* jj=(Job*)q; jj->st->history.push_back({ChatRole::Assistant, jj->acc}); delete jj; return G_SOURCE_REMOVE; }, j);
             }
         }, [j](const std::string& err){
             g_idle_add([](gpointer q)->gboolean{
-                auto *pr=(std::pair<ChatState*, std::string>*)q;
+                auto *pr=(std::pair<ChatViewState*, std::string>*)q;
                 GtkWidget* last=gtk_widget_get_last_child(pr->first->list);
                 if(last) gtk_list_box_remove(GTK_LIST_BOX(pr->first->list), last);
                 bubble_append(pr->first, ChatRole::Assistant, "Error: "+pr->second);
                 delete pr; return G_SOURCE_REMOVE;
-            }, new std::pair<ChatState*, std::string>(j->st, err));
+            }, new std::pair<ChatViewState*, std::string>(j->st, err));
             delete j;
         });
         return nullptr;
@@ -65,7 +66,7 @@ static void on_send_clicked(GtkButton*, gpointer d){
 }
 
 GtkWidget* chat_view_new(DataLayer* dl, LLMProvider* provider){
-    ChatState* st=new ChatState{dl, provider, nullptr, nullptr, nullptr, {}};
+    ChatViewState* st=new ChatViewState{dl, provider, nullptr, nullptr, nullptr, {}};
     GtkWidget* outer=gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
     // message list
     GtkWidget* list=gtk_list_box_new(); gtk_widget_add_css_class(list,"chat-list"); gtk_widget_set_selection_mode(GTK_LIST_BOX(list), GTK_SELECTION_NONE);

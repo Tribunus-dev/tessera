@@ -1,5 +1,7 @@
 #include "SheetsSurface.h"
 #include "core/productivity/sheets/SheetStore.h"
+#include "core/productivity/slides/SlideDeck.h"
+#include "core/productivity/slides/SlideStore.h"
 #include <adwaita.h>
 namespace tessera {
 GtkWidget* sheets_surface_new(DataLayer* dl, SheetStore* store){

@@ -56,10 +56,9 @@ std::vector<Doc> DocStore::list(int limit){
 Doc* DocStore::get(const std::string& id){ for(auto &c: cache_) if(c.id==id) return &c; return nullptr; }
 
 void DocStore::appendReceipt(const std::string& entityId, DocReceiptType type, const std::string& payloadJson){
-    // constitutional receipt backbone: graph_receipts append
     if(dl_ && dl_->is_connected()){
         std::string rt = docReceiptTypeString(type);
-        dl_->exec_psql("INSERT INTO graph_receipts (entity_id, receipt_type, payload) VALUES ('"+dl_->sql_escape(entityId)+"','"+rt+"','"+dl_->sql_escape(payloadJson)+"')");
+        dl_->add_receipt(entityId, rt, payloadJson);
     }
 }
 
