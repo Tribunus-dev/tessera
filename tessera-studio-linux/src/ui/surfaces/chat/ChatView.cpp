@@ -69,7 +69,7 @@ GtkWidget* chat_view_new(DataLayer* dl, LLMProvider* provider){
     ChatViewState* st=new ChatViewState{dl, provider, nullptr, nullptr, nullptr, {}};
     GtkWidget* outer=gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
     // message list
-    GtkWidget* list=gtk_list_box_new(); gtk_widget_add_css_class(list,"chat-list"); gtk_widget_set_selection_mode(GTK_LIST_BOX(list), GTK_SELECTION_NONE);
+    GtkWidget* list=gtk_list_box_new(); gtk_widget_add_css_class(list,"chat-list"); gtk_list_box_set_selection_mode(GTK_LIST_BOX(list), GTK_SELECTION_NONE);
     // placeholder history
     GtkWidget* sc=gtk_scrolled_window_new(); gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(sc), list); gtk_widget_set_vexpand(sc, TRUE); gtk_widget_set_hexpand(sc, TRUE);
     gtk_box_append(GTK_BOX(outer), sc);

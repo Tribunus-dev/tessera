@@ -344,6 +344,7 @@ llama_build(test-tessera-s2s-w7-calibration.cpp
             ${PROJECT_SOURCE_DIR}/common/tessera-s2s-capture.cpp)
 target_include_directories(test-tessera-s2s-w7-calibration
                             PRIVATE ${PROJECT_SOURCE_DIR}/src)
+find_package(ZLIB REQUIRED)
 if(APPLE)
     target_link_libraries(test-tessera-s2s-w7-calibration PRIVATE -lz)
 else()
