@@ -304,6 +304,18 @@ void ggml_metal_device_event_synchronize(ggml_metal_device_t dev, ggml_metal_eve
 void ggml_metal_device_get_memory(ggml_metal_device_t dev, size_t * free, size_t * total);
 bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_tensor * op);
 
+// Slice 4.2b: per-layer IOSurface streaming fence for heterog FFN (MTL0 BF16).
+// Mirrors ggml-ane.mm:489 (last_streamed_layer + MTLSharedEvent slot).
+// The loader owns the 2x450 MiB IOSurface slots; dispatch only fences.
+// Data plane = IOSurface MTLBuffer zero-copy (offset = t->data - base);
+// control plane = MTLSharedEvent counter (prefetch signals L+1, compute waits).
+bool    ggml_metal_device_stream_parse_layer(const char * name, int32_t * out_layer);
+int32_t ggml_metal_device_stream_get_last_layer(ggml_metal_device_t dev);
+void    ggml_metal_device_stream_set_last_layer(ggml_metal_device_t dev, int32_t layer);
+int     ggml_metal_device_stream_advance_slot(ggml_metal_device_t dev);
+void    ggml_metal_device_stream_set_fence(ggml_metal_device_t dev, void * shared_event);
+void *  ggml_metal_device_stream_get_fence(ggml_metal_device_t dev);
+
 const struct ggml_metal_device_props * ggml_metal_device_get_props(ggml_metal_device_t dev);
 
 //
