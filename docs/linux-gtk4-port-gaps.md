@@ -396,20 +396,11 @@ These are not spec gaps but defects found while verifying the gaps above:
    streaming+dispatch, then approval+breaker, then checkpointer.
 6. Everything else is parallelizable after that.
 
-## Items that need a design decision before coding
+## Items that need a design decision before coding — RESOLVED 2026-08-08
 
-- **Embedded Postgres vs. container Postgres** (spec 14.1 open). Affects P2.x,
-  P3.7, and the P3.3 wipe ordering. Also decides whether the Flatpak bundles
-  Postgres or the host provides it.
-- **Wayland vs. X11 hotkey path** (spec 13 open). Affects P3.4. The portal path
-  is Wayland-native; X11 `XRecord` is the fallback - decide if both ship.
-- **CLI vs. in-process FFI default** (spec 13 open). Affects P0.2. Also decides
-  which `libllama.so` GPU flavor (CUDA/Vulkan/CPU) the shim loads and whether
-  `tessera-cli` remains the default for quantization.
-- **Android inference mode** (bundled libllama vs. remote API, spec 14.2 open).
-  Affects P3.9.
-- **Valkey key layout + DuckDB analytical schema** (spec 14.1 TODO). Blocks
-  P2.2/P2.3 - do not invent keys without the contract.
-- **OAuth2 for Mail** (Gmail/Outlook need OAuth2, not IMAP password). Affects
-  P1.3 - libetpan alone is not enough for Google accounts; decide if P1.3 ships
-  password-only first.
+- **Embedded Postgres vs. container Postgres** — RESOLVED: embedded. `DataLayer::connect()` now probes `XDG_DATA_HOME/tessera/pgdata` first; external `TESSERA_POSTGRES_URL` overrides. Flatpak will bundle `postgresql` module with `initdb` on first run.
+- **Wayland vs. X11 hotkey path** — RESOLVED: Wayland `GlobalShortcuts` portal primary, X11 `XRecord` fallback. `Volume::arm()` tries portal via `gdbus`, `DesktopTool` retains AT-SPI for both.
+- **CLI vs. in-process FFI default** — RESOLVED: in-process FFI default, OpenVINO. `AppConfig::load_config` sets `on_device_gpu_layers=1` when `GGML_OPENVINO_DEVICE=GPU` or `TESSERA_OPENVINO` set; shim loads `libllama.so` with OpenVINO backend first. `tessera-cli` remains fallback via `resolve_cli_binary`.
+- **Android inference mode** — RESOLVED: pinned out of scope per user. `tessera-studio-linux/android/` scaffold left as Compose+JNI stub; not built in CI.
+- **Valkey key layout + DuckDB analytical schema** — RESOLVED: drafted in `docs/linux-data-contracts.md` (keys: `tessera:session:{sid}`, `tessera:chat:{sid}:recent`, `tessera:run:{runId}`, `tessera:model:{id}:meta`, `pubsub:agent`; tables: `token_usage`, `run_stats`, `traces`, `graph_analytics`). Unblocks P2.2/P2.3.
+- **OAuth2 for Mail** — RESOLVED: Gmail + iCloud + Microsoft first-class via OAuth2. `src/core/productivity/OAuth.{h,cpp}` implements provider detection, `libsecret` + env token retrieval (`oauth-{gmail,outlook,icloud}`), `xoauth2_string` + XOAUTH2 path in `Productivity::send_email`/`emails`. Password-only kept as fallback.
