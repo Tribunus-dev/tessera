@@ -2,14 +2,22 @@
 //
 // On Apple/GGML_USE_ANE forwards to ane_weight_stream_*.
 // Elsewhere: stub that reports "not supported".
+// Slice 4.1 adds: async prefetch (background memcpy) + layer_bytes helper.
 
 #include "llama-weight-stream.h"
 
 #if defined(__APPLE__) && defined(GGML_USE_ANE)
 #include "gguf_weight_stream.h"
 
+#include <future>
+#include <thread>
+
 struct llama_weight_stream_t {
     ane_weight_stream_t * inner = nullptr;
+};
+
+struct llama_weight_stream_prefetch {
+    std::future<int64_t> fut;
 };
 
 bool llama_weight_stream_open(const char * p, llama_weight_stream_t ** out,
@@ -52,12 +60,55 @@ size_t llama_weight_stream_file_size(const llama_weight_stream_t * s) {
     if (!s || !s->inner) return 0;
     return ane_weight_stream_file_size(s->inner);
 }
+size_t llama_weight_stream_layer_bytes(const llama_weight_stream_t * s, int32_t l) {
+    if (!s || !s->inner) return 0;
+    const uint32_t n = ane_weight_stream_n_block_tensors(s->inner, l);
+    if (n == 0) return 0;
+    size_t total = 0;
+    for (uint32_t i = 0; i < n; ++i) {
+        size_t sz = 0;
+        if (!ane_weight_stream_block_tensor_info(s->inner, l, i, nullptr, &sz, nullptr, nullptr)) return 0;
+        total += sz;
+    }
+    return total;
+}
+llama_weight_stream_prefetch_t * llama_weight_stream_prefetch_async(
+        llama_weight_stream_t * s, int32_t l, void * d, size_t n) {
+    if (!s || !s->inner || !d) return nullptr;
+    auto * pre = new llama_weight_stream_prefetch_t();
+    // Capture s->inner + layer + dst + size. The inner stream is
+    // thread-safe for concurrent reads (mmap + map only reads the
+    // header map). The sync path holds no lock; we rely on the
+    // fact that stream_layer only reads the mmap.
+    ane_weight_stream_t * inner = s->inner;
+    pre->fut = std::async(std::launch::async, [inner, l, d, n]() -> int64_t {
+        return ane_weight_stream_layer(inner, l, d, n);
+    });
+    return pre;
+}
+int64_t llama_weight_stream_prefetch_wait(llama_weight_stream_prefetch_t * p) {
+    if (!p) return -1;
+    int64_t r = -1;
+    try { r = p->fut.get(); } catch (...) { r = -1; }
+    delete p;
+    return r;
+}
+void llama_weight_stream_prefetch_free(llama_weight_stream_prefetch_t * p) {
+    if (!p) return;
+    // Not waiting — detach and leak the future's thread. The dst
+    // buffer must no longer be in use by the caller. We just delete.
+    // The background memcpy may still be running; we let it finish
+    // orphaned (small race, but imatrix cancellation already tore
+    // down the context before this).
+    delete p;
+}
 
 #else // !APPLE || !GGML_USE_ANE — stub
 
 #include <cstdio>
 
 struct llama_weight_stream_t { int dummy; };
+struct llama_weight_stream_prefetch { int dummy; };
 
 bool llama_weight_stream_open(const char *, llama_weight_stream_t ** out,
                               char * e, size_t es) {
@@ -72,5 +123,9 @@ bool llama_weight_stream_block_tensor_info(const llama_weight_stream_t *, int32_
                                            const char **, size_t *, uint32_t *, uint64_t *) { return false; }
 int64_t llama_weight_stream_block_tensor(llama_weight_stream_t *, int32_t, uint32_t, void *, size_t) { return -1; }
 size_t llama_weight_stream_file_size(const llama_weight_stream_t *) { return 0; }
+size_t llama_weight_stream_layer_bytes(const llama_weight_stream_t *, int32_t) { return 0; }
+llama_weight_stream_prefetch_t * llama_weight_stream_prefetch_async(llama_weight_stream_t *, int32_t, void *, size_t) { return nullptr; }
+int64_t llama_weight_stream_prefetch_wait(llama_weight_stream_prefetch_t * p) { delete p; return -1; }
+void    llama_weight_stream_prefetch_free(llama_weight_stream_prefetch_t * p) { delete p; }
 
 #endif

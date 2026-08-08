@@ -194,9 +194,14 @@ static uint64_t ggml_type_size(uint32_t type, uint64_t n_elems) {
         case 1:  return n_elems * 2; // GGML_TYPE_F16
         case 2:  return n_elems * 4; // GGML_TYPE_Q4_0
         case 3:  return n_elems * 4; // GGML_TYPE_Q4_1
-        case 6:  return n_elems * 4; // GGML_TYPE_I32
-        case 4:  return n_elems * 1; // GGML_TYPE_I8
-        case 24: return n_elems * 1; // GGML_TYPE_BOOL
+        case 6:  return n_elems * 4; // GGML_TYPE_Q5_0 (block-size approx; unknown types fall through to estimate)
+        case 4:  return n_elems * 1; // GGML_TYPE_I8 (legacy alias)
+        case 24: return n_elems * 1; // GGML_TYPE_I8
+        case 25: return n_elems * 2; // GGML_TYPE_I16
+        case 26: return n_elems * 4; // GGML_TYPE_I32
+        case 27: return n_elems * 8; // GGML_TYPE_I64
+        case 28: return n_elems * 8; // GGML_TYPE_F64
+        case 30: return n_elems * 2; // GGML_TYPE_BF16
         // Tessera T640 packed (large enum value; matches
         // the value ggml-quants.h uses for the conversion
         // tool's emitted type). The exact enum depends on
@@ -204,7 +209,7 @@ static uint64_t ggml_type_size(uint32_t type, uint64_t n_elems) {
         // values as "T640 packed" and let the caller size
         // via the dim shape (page_count * row_bytes).
         default:
-            return 0; // unknown
+            return 0; // unknown -> t640 estimate
     }
 }
 
