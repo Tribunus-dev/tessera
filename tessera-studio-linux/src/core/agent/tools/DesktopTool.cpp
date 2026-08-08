@@ -51,15 +51,46 @@ bool DesktopTool::click(const std::string &role, const std::string &name){
     auto els=find(role,name);
     if(els.empty()) return false;
 #ifdef HAVE_ATSPI
-    // Would atspi_accessible_do_action with "click" on matched accessible
+    if(atspi_init()==0){
+        AtspiAccessible *root = atspi_get_desktop(0);
+        if(root){
+            gint n = atspi_accessible_get_child_count(root, nullptr);
+            for(int i=0;i<n;i++){
+                AtspiAccessible *child = atspi_accessible_get_child_at_index(root, i, nullptr);
+                if(child){
+                    char *cname = atspi_accessible_get_name(child, nullptr);
+                    AtspiRole rr = atspi_accessible_get_role(child, nullptr);
+                    const char *rname = atspi_role_get_name(rr);
+                    bool match = (!role.empty() && rname && std::string(rname).find(role)!=std::string::npos) || (cname && std::string(cname).find(name)!=std::string::npos);
+                    if(match){
+                        AtspiAction *act = atspi_accessible_get_action(child);
+                        if(act){
+                            atspi_action_do_action(act, 0, nullptr);
+                            g_object_unref(act);
+                            g_free(cname); g_object_unref(child); g_object_unref(root);
+                            return true;
+                        }
+                    }
+                    g_free(cname); g_object_unref(child);
+                }
+            }
+            g_object_unref(root);
+        }
+    }
 #endif
     return true;
 }
 bool DesktopTool::type_text(const std::string &text){
-    (void)text;
 #ifdef HAVE_ATSPI
-    // Would use atspi_generate_keyboard_event or RemoteDesktop portal
+    if(atspi_init()==0){
+        // Use atspi_generate_keyboard_event for typing
+        for(char ch: text){
+            char ks[2]={ch,0}; atspi_generate_keyboard_event(0, ks, ATSPI_KEY_PRESSRELEASE, nullptr);
+        }
+        return true;
+    }
 #endif
+    (void)text;
     return true;
 }
 bool DesktopTool::open_app(const std::string &app_id){

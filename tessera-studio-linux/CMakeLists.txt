@@ -18,6 +18,10 @@ if(PkgConfig_FOUND)
     pkg_check_modules(EDS libecal-2.0 libebook-1.2 libedataserver-1.2)
     pkg_check_modules(LIBETPAN libetpan)
     pkg_check_modules(ATSPI atspi-2)
+    pkg_check_modules(LIBPQ libpq)
+    pkg_check_modules(HIREDIS hiredis)
+    pkg_check_modules(WEBKIT webkitgtk-6.0)
+    pkg_check_modules(DUCKDB duckdb)
 endif()
 
 # Core library (no GTK deps) — C0..M7 full parity (all REQUIRED backends)
@@ -73,6 +77,26 @@ if(ATSPI_FOUND)
     target_link_libraries(tessera-core-linux PRIVATE ${ATSPI_LIBRARIES})
     target_compile_definitions(tessera-core-linux PRIVATE HAVE_ATSPI=1)
 endif()
+if(LIBSOUP_FOUND)
+    target_include_directories(tessera-core-linux PRIVATE ${LIBSOUP_INCLUDE_DIRS})
+    target_link_libraries(tessera-core-linux PRIVATE ${LIBSOUP_LIBRARIES})
+    target_compile_definitions(tessera-core-linux PRIVATE HAVE_LIBSOUP=1)
+endif()
+if(LIBPQ_FOUND)
+    target_include_directories(tessera-core-linux PRIVATE ${LIBPQ_INCLUDE_DIRS})
+    target_link_libraries(tessera-core-linux PRIVATE ${LIBPQ_LIBRARIES})
+    target_compile_definitions(tessera-core-linux PRIVATE HAVE_LIBPQ=1)
+endif()
+if(HIREDIS_FOUND)
+    target_include_directories(tessera-core-linux PRIVATE ${HIREDIS_INCLUDE_DIRS})
+    target_link_libraries(tessera-core-linux PRIVATE ${HIREDIS_LIBRARIES})
+    target_compile_definitions(tessera-core-linux PRIVATE HAVE_HIREDIS=1)
+endif()
+if(WEBKIT_FOUND)
+    target_include_directories(tessera-core-linux PRIVATE ${WEBKIT_INCLUDE_DIRS})
+    target_link_libraries(tessera-core-linux PRIVATE ${WEBKIT_LIBRARIES})
+    target_compile_definitions(tessera-core-linux PRIVATE HAVE_WEBKIT=1)
+endif()
 
 # FFI + engine bridge already in core lib above
 
@@ -82,6 +106,7 @@ if(GTK4_FOUND AND ADWAITA_FOUND AND TESSERA_LINUX_BUILD_UI)
         src/app/AppMain.cpp
         src/ui/surfaces/chat/ChatView.cpp
         src/ui/surfaces/editor/Editor.cpp
+        src/ui/surfaces/editor/EditorSurface.cpp
         src/ui/surfaces/workflow/Workflow.cpp
         src/ui/widgets/ChatBubble.cpp
         src/ui/surfaces/learning/Surface.cpp
@@ -101,6 +126,8 @@ if(GTK4_FOUND AND ADWAITA_FOUND AND TESSERA_LINUX_BUILD_UI)
         src/ui/surfaces/collab/Surface.cpp
         src/ui/surfaces/docs/DocsSurface.cpp
         src/ui/surfaces/sheets/SheetsSurface.cpp
+        src/ui/surfaces/receipts/ReceiptsSurface.cpp
+        src/ui/surfaces/receipts/Surface.cpp
     )
 
     target_include_directories(tessera-studio-linux PRIVATE
@@ -116,26 +143,39 @@ if(GTK4_FOUND AND ADWAITA_FOUND AND TESSERA_LINUX_BUILD_UI)
         ${ADWAITA_LIBRARIES}
         ${GTKSOURCEVIEW_LIBRARIES}
         ${LIBSECRET_LIBRARIES}
-        ${LIBSOUP_LIBRARIES}
         ${EDS_LIBRARIES}
         ${LIBETPAN_LIBRARIES}
     )
+    if(LIBSOUP_FOUND)
+        target_link_libraries(tessera-studio-linux PRIVATE ${LIBSOUP_LIBRARIES})
+    endif()
 
     target_include_directories(tessera-studio-linux PRIVATE
         ${GTK4_INCLUDE_DIRS}
         ${ADWAITA_INCLUDE_DIRS}
         ${GTKSOURCEVIEW_INCLUDE_DIRS}
         ${LIBSECRET_INCLUDE_DIRS}
-        ${LIBSOUP_INCLUDE_DIRS}
         ${EDS_INCLUDE_DIRS}
         ${LIBETPAN_INCLUDE_DIRS}
     )
+    if(LIBSOUP_FOUND)
+        target_include_directories(tessera-studio-linux PRIVATE ${LIBSOUP_INCLUDE_DIRS})
+    endif()
 
     if(EDS_FOUND)
         target_compile_definitions(tessera-studio-linux PRIVATE HAVE_EDS=1)
     endif()
     if(LIBETPAN_FOUND)
         target_compile_definitions(tessera-studio-linux PRIVATE HAVE_LIBETPAN=1)
+    endif()
+    if(LIBSOUP_FOUND)
+        target_compile_definitions(tessera-studio-linux PRIVATE HAVE_LIBSOUP=1)
+    endif()
+    if(LIBSECRET_FOUND)
+        target_compile_definitions(tessera-studio-linux PRIVATE HAVE_LIBSECRET=1)
+    endif()
+    if(ATSPI_FOUND)
+        target_compile_definitions(tessera-studio-linux PRIVATE HAVE_ATSPI=1)
     endif()
     target_compile_definitions(tessera-studio-linux PRIVATE HAVE_GTK=1)
     target_compile_options(tessera-studio-linux PRIVATE

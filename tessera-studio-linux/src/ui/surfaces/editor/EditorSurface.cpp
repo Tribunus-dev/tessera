@@ -33,5 +33,5 @@ GtkWidget* editor_surface_new(){
     gtk_paned_set_position(GTK_PANED(pane), 240);
     return pane;
 }
-void CodeEditor::open_file(const std::string&){} void CodeEditor::show(){}
+
 } // namespace tessera

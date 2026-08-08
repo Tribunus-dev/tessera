@@ -38,8 +38,18 @@ endif()
 ```
 
 Mirror for the UI executable's compile definitions block (lines 134-140).
+Also add `HAVE_LIBSOUP` to the `tessera-studio-linux` executable target so
+surfaces that check it (e.g. providers Test button) agree with core. The
+current `tessera-studio-linux` target links `LIBSOUP_LIBRARIES` unconditionally
+(line 119) - make that conditional on `LIBSOUP_FOUND` to avoid linking when the
+dev package is absent.
 
 **Size:** S (one block, mirrors the existing EDS/LIBETPAN pattern).
+
+**Follow-up note:** `RemoteStreamingProvider::send` (lines 104-123) uses
+`soup_session_send_and_read` which blocks the calling worker thread for the
+entire stream. Correct for P0 but will need `soup_session_send_async` or a
+dedicated I/O thread before concurrent chats. Track as tech debt.
 
 **Verify:** `cmake -B build-linux -S tessera-studio-linux && cmake --build
 build-linux`, then confirm `RemoteStreamingProvider::send` is in the binary
@@ -57,19 +67,32 @@ are stored and `dlclose`d.
 1. Resolve symbols from `libllama.so` via `dlsym`: at minimum `llama_model_load`,
    `llama_new_context_with_model`, `llama_decode`, `llama_get_logits,
    `llama_token_to_piece`, `llama_tokenize`, `llama_kv_cache_clear,
-   `llama_sampler_chain_*` (or the legacy `llama_sample_*` set).
+   `llama_sampler_chain_*` (or the legacy `llama_sample_*` set). Probe at
+   runtime for sampler API version - llama.cpp has broken the sampler ABI
+   before.
 2. Add a `LlamaProvider : LLMProvider` in `provider.cpp` that owns a model +
    context, tokenizes the prompt, decodes incrementally on the worker thread,
-   emits `on_chunk` per token, and clears the KV cache on completion.
+   emits `on_chunk` per token, and clears the KV cache on completion. Must
+   handle `gpu_layers`/`threads` from config and surface load errors via
+   `on_error` rather than crashing.
 3. Replace `make_provider_on_device` to `dlopen` via `shim.cpp`, resolve symbols,
    load the model at `model_path`, set `gpu_layers`/`threads`, and return the new
    provider. Fall back to `PlaceholderProvider` only on dlopen/load failure.
 
-**Size:** M. Mirror the SwiftUI `cllama_shim.c` (633 LOC) + `LlamaLLMProvider`
-(14.7k LOC) - both are the spec.
+Design note: spec section 13 leaves `CLI vs. in-process FFI` open. On Linux
+`gpu_layers` means different things per build (CUDA vs Vulkan vs CPU-only
+`libllama.so`). Document which `libllama.so` flavor the shim expects and keep
+the `tessera-cli` subprocess fallback working - do not assume one shared
+library covers all GPU paths.
+
+**Size:** M-L. Mirror the SwiftUI `cllama_shim.c` (633 LOC) + `LlamaLLMProvider`
+(14.7k LOC) - both are the spec. The shim table + version probe alone is S;
+the streaming provider with KV and sampler wiring is the bulk.
 
 **Verify:** point `on-device-model-path` at a real GGUF, open Chat, send a
-prompt, observe real generation at configured `gpu-layers`.
+prompt, observe real generation at configured `gpu-layers`. Test with both a
+CPU-only and a Vulkan/CUDA `libllama.so` if available, and with a missing model
+path to confirm graceful fallback.
 
 ### P0.3 Cloud-only Sky path + provider "Test" button
 
@@ -104,6 +127,10 @@ Lovelace", "Sprint review").
 - Reminders: same as calendar but `VTODO` components (summary, due, priority,
   status).
 
+All EDS calls must stay on the worker thread (never GTK thread) and handle
+`GError` + registry-unavailable gracefully - keep the demo fallback only when
+EDS is absent, not as a silent success path.
+
 **Size:** M. The EDS APIs are verbose but well-documented; this is mechanical
 mapping work.
 
@@ -120,7 +147,8 @@ Lovelace" / "Sprint review".
 
 **Work:** in each surface's create handler, build the `EContact` / `icalcomponent
 (VEVENT|VTODO)` and call the corresponding EDS create. Refresh the list from EDS
-on success rather than mutating the UI directly.
+on success rather than mutating the UI directly. Handle UID conflicts and
+read-only sources (Google secondary calendars) with an error dialog.
 
 **Size:** S-M.
 
@@ -137,9 +165,12 @@ linked but no libetpan function is ever called anywhere in the tree.
 `mailimap_login`, `mailimap_select`, `mailimap_search`/`mailimap_fetch`, map
 `mailmessage` -> `EmailMessage`. For SMTP send, `smtp_socket` /
 `mailsmtp_socket`. Resolve credentials from libsecret ("tessera",
-"imap-credentials" / "smtp-credentials").
+"imap-credentials" / "smtp-credentials"). Keep the `TESSERA_IMAP_URL` env var
+as the connection string but require libsecret for the password - never log it.
 
 **Size:** M. libetpan's API is C and fiddly; budget for IMAP IDLE later.
+Consider whether `libetpan` vs `GMime` + `libsoup` for OAuth2 (Gmail) needs a
+decision - plain IMAP password is not enough for Google accounts.
 
 **Verify:** set IMAP creds in libsecret, point `TESSERA_IMAP_URL`, open Email,
 see real inbox. Reply sends via SMTP and lands in the recipient's inbox.
@@ -153,18 +184,23 @@ only via `podman exec tessera-postgres psql -c ...`.
 
 **Root cause:** `src/core/data/DataLayer.cpp` shells out to `podman exec
 tessera-postgres psql -t -A -F '|' -c "..."`. `LIBPQ_LIBRARIES` is not even in
-CMakeLists. `sql_escape` is a hand-rolled escaper.
+CMakeLists. `sql_escape` is a hand-rolled escaper. The command hardcodes
+`podman` and the container name `tessera-postgres`, so it fails on Docker hosts
+or when the container is not running, and every query spawns a new process.
 
 **Work:** add `pkg_check_modules(LIBPQ libpq)` (or `find_package(PostgreSQL)`),
 link into `tessera-core-linux`, replace every popen call with `PQconnectdb` +
 `PQexecParams` (parameterized queries eliminate `sql_escape` entirely), keep
-the same row/field mapping.
+the same row/field mapping. Add connection pooling or at least a persistent
+`PGconn` with reconnect, and propagate `PQerrorMessage` into
+`DataStoreDegraded` rather than returning empty strings.
 
 **Size:** M. Mechanical but touches every method in DataLayer.
 
 **Verify:** start a Postgres container, insert/query an entity, confirm via
 `psql` that the rows are there; kill `podman` mid-run, confirm graceful
-degradation to `DataStoreDegraded`.
+degradation to `DataStoreDegraded`. Test with `podman` absent to confirm no
+shell-out fallback remains.
 
 ### P2.2 Valkey: real cache, not a TCP probe
 
@@ -177,7 +213,8 @@ owns a `redisConnect`, implement `get`/`set`/`setex`/`del`/`incr` for the spec's
 hot-state keys. Wire read-through/write-through in `DataLayer` so cache misses
 fall through to Postgres and writes fan out to both.
 
-**Size:** M. Land the key-layout contract from spec 14.1 first.
+**Size:** M. Land the key-layout contract from spec 14.1 first - do not invent
+keys before that doc exists.
 
 **Verify:** run two concurrent chats, confirm the active-session key is set in
 Valkey; stop Valkey, confirm the app degrades to `CacheDegraded` and keeps
@@ -189,9 +226,10 @@ working against Postgres.
 resolved. Spec 6 + 14.1 say DuckDB holds analytical aggregates (token usage over
 time, per-model run stats).
 
-**Work:** vendor DuckDB (spec 12 notes it is "already vendored" - verify), wire
-`duckdb_open`/`duckdb_query`, define the analytical schema (spec 14.1 TODO),
-expose an `analytics_*` method set on DataLayer.
+**Work:** vendor DuckDB (spec 12 notes it is "already vendored" - verify),
+wire `duckdb_open`/`duckdb_query`, define the analytical schema (spec 14.1 TODO),
+expose an `analytics_*` method set on DataLayer. ETL from Postgres can be
+lazy at first - the schema is the hard part.
 
 **Size:** M-L. Schema design + ETL from Postgres is the bulk.
 
@@ -217,9 +255,14 @@ callbacks, no tool dispatch. SwiftUI's `TesseraAgentLoop` (15k LOC) is the spec.
 
 **Work:** port the streaming loop: LLM call -> parse tool calls -> execute via
 `ToolRegistry` with `ApprovalEngine` gating -> yield events. Port the
-action-class classifier + denial circuit-breaker.
+action-class classifier + denial circuit-breaker + checkpointer. This is not
+just a loop - it includes the safety decision, policy, and persistence layers.
 
-**Size:** L. This is the spine; budget accordingly.
+**Size:** XL. This is the spine; budget accordingly. Previously estimated L
+but 15k LOC Swift with approval, classification, and checkpointing is a
+multi-week port even with the spec as pseudocode. Split into milestones:
+streaming+tool-dispatch first, approval+circuit-breaker second, checkpointer
+third.
 
 ### P3.3 Plead the Fifth: real LUKS + wipe
 
@@ -233,7 +276,8 @@ comment. SwiftUI's wipe is a real 9-step actor (crypto-shred + N-pass overwrite
 (`udisks2` is the friendly path); secure-overwrite (shred pattern); wire
 AppMain's accept handler to `Volume::wipe()`. Add the wipe-report audit trail.
 
-**Size:** M-L. polkit authorization is the fiddly part.
+**Size:** M-L. polkit authorization is the fiddly part. Test on both Wayland
+and X11 - the global hotkey that triggers wipe shares code with P3.4.
 
 ### P3.4 Global hotkey + covert phrase (X11/Wayland)
 
@@ -270,10 +314,13 @@ detail fields; tags from a real `list_tags` query.
 `--share=network` (cloud calls fail even with P0.1 fixed), missing
 `--talk-name=org.freedesktop.portal.Background`/`RemoteDesktop`/`GlobalShortcuts,
 and missing postgres/valkey/duckdb modules (the podman-exec data path has
-nothing to talk to inside the sandbox).
+nothing to talk to inside the sandbox). Also missing
+`--talk-name=org.freedesktop.secrets` for libsecret (GNOME Keyring) - without
+it the secret store silently fails inside the sandbox.
 
-**Work:** add `--share=network`; add portal talk-names; add Postgres/Valkey/DuckDB
-as Flatpak modules (or document the embedded-Postgres decision from spec 14.1).
+**Work:** add `--share=network`; add portal talk-names (including `secrets`);
+add Postgres/Valkey/DuckDB as Flatpak modules (or document the embedded-Postgres
+decision from spec 14.1).
 
 **Size:** S-M.
 
@@ -312,22 +359,57 @@ StateGraph test (validation, cycle detection, checkpointer), TraceStore test
 
 **Size:** M.
 
+### P3.11 Additional hardening noted during review
+
+These are not spec gaps but defects found while verifying the gaps above:
+
+- **P3.11a Blocking HTTP:** `provider.cpp` uses `soup_session_send_and_read`
+  (synchronous). Track migration to `soup_session_send_async` before concurrent
+  chats.
+- **P3.11b Shell-out fragility:** `DataLayer.cpp` hardcodes `podman exec` and
+  escapes shell args by hand. Removed by P2.1 but note that any interim fix
+  must not add more shell quoting - use `execv` or wait for libpq.
+- **P3.11c SQL injection surface:** `sql_escape` doubles single quotes but
+  string-concatenated `source_url`/`label` remain risky. Parameterized queries
+  (P2.1) close this.
+- **P3.11d Sandbox secrets:** Flatpak without `--talk-name=org.freedesktop.secrets`
+  makes `SecretStore` fail closed. Already covered in P3.7 but worth a standalone
+  test.
+
+**Size:** S (tracking only; fixed by P0.1/P2.1/P3.7).
+
 ## Sequencing recommendation
 
 1. **P0.1** first (one-line CMake fix; unblocks cloud LLM for everything else).
+   Pair with **P3.1** in the same PR - both are S, both are immediately visible,
+   and P3.1 has no dependencies.
 2. **P0.2** next (unblocks on-device inference; biggest single capability add).
+   Split into shim symbol table + `LlamaProvider` so the two can be reviewed
+   separately.
 3. **P1.1 + P1.2** (EDS read + write; turns the productivity surfaces from demo
    into real - the highest visible-value work after the LLM path).
 4. **P2.1** (libpq) before P2.2/P2.3 (the popen-`psql` path is the data-plane
-   foundation).
-5. **P3.1** (wire Docs/Sheets/Slides into nav) - cheap win, immediately visible.
+   foundation). Do not start Valkey/DuckDB until the Valkey key layout and
+   DuckDB analytical schema (spec 14.1 TODOs) are drafted.
+5. **P3.2** after P0 is stable - it depends on a working provider and is XL,
+   so start early but do not block P1/P2 on it. Milestone it as
+   streaming+dispatch, then approval+breaker, then checkpointer.
 6. Everything else is parallelizable after that.
 
 ## Items that need a design decision before coding
 
 - **Embedded Postgres vs. container Postgres** (spec 14.1 open). Affects P2.x,
-  P3.7, and the P3.3 wipe ordering.
-- **Wayland vs. X11 hotkey path** (spec 13 open). Affects P3.4.
-- **CLI vs. in-process FFI default** (spec 13 open). Affects P0.2.
+  P3.7, and the P3.3 wipe ordering. Also decides whether the Flatpak bundles
+  Postgres or the host provides it.
+- **Wayland vs. X11 hotkey path** (spec 13 open). Affects P3.4. The portal path
+  is Wayland-native; X11 `XRecord` is the fallback - decide if both ship.
+- **CLI vs. in-process FFI default** (spec 13 open). Affects P0.2. Also decides
+  which `libllama.so` GPU flavor (CUDA/Vulkan/CPU) the shim loads and whether
+  `tessera-cli` remains the default for quantization.
 - **Android inference mode** (bundled libllama vs. remote API, spec 14.2 open).
   Affects P3.9.
+- **Valkey key layout + DuckDB analytical schema** (spec 14.1 TODO). Blocks
+  P2.2/P2.3 - do not invent keys without the contract.
+- **OAuth2 for Mail** (Gmail/Outlook need OAuth2, not IMAP password). Affects
+  P1.3 - libetpan alone is not enough for Google accounts; decide if P1.3 ships
+  password-only first.

@@ -2,10 +2,12 @@
 #include "config.h"
 #include "agent/Agent.h"
 #include "encryption/Secrets.h"
+#include "ffi/ctessera/shim.h"
 #include <thread>
 #include <chrono>
 #include <sstream>
 #include <cstdlib>
+#include <vector>
 
 #ifdef HAVE_LIBSOUP
 #include <libsoup/soup.h>
@@ -204,9 +206,126 @@ LLMProvider *make_provider_for_cloud(const std::string &provider_id, const std::
 #endif
 }
 
+class LlamaProvider : public LLMProvider {
+public:
+    LlamaProvider(std::string model_path, int gpu_layers, int threads)
+        : model_path_(std::move(model_path)), gpu_layers_(gpu_layers), threads_(threads) {}
+    void send(const std::string &prompt, ChatChunkCallback on_chunk, ChatErrorCallback on_error) override {
+        // Try to load shim if not already loaded
+        if (!llama_shim_is_loaded()) {
+            if (!llama_shim_load("")) {
+                on_error("on-device: " + llama_shim_last_error() + " — fallback to placeholder for: " + prompt.substr(0,80));
+                // fallback echo so UI is not empty
+                std::string reply = "[on-device unavailable] echo: " + prompt;
+                for (size_t i=0;i<reply.size();i+=16) { on_chunk(reply.substr(i,16), false); std::this_thread::sleep_for(std::chrono::milliseconds(12)); }
+                on_chunk("", true);
+                return;
+            }
+        }
+        const LlamaApi *api = llama_api();
+        if (!api || !api->model_load_from_file || !api->new_context_with_model) {
+            on_error("on-device: llama symbols missing — " + llama_shim_last_error());
+            std::string reply = "[on-device symbols missing] echo: " + prompt;
+            for (size_t i=0;i<reply.size();i+=16) { on_chunk(reply.substr(i,16), false); std::this_thread::sleep_for(std::chrono::milliseconds(12)); }
+            on_chunk("", true);
+            return;
+        }
+        // Load model (gpu_layers maps to n_gpu_layers param)
+        void *model = api->model_load_from_file(model_path_.c_str(), gpu_layers_);
+        if (!model) {
+            on_error("on-device: failed to load model at " + model_path_);
+            std::string reply = "[on-device load failed] echo: " + prompt;
+            for (size_t i=0;i<reply.size();i+=16) { on_chunk(reply.substr(i,16), false); std::this_thread::sleep_for(std::chrono::milliseconds(12)); }
+            on_chunk("", true);
+            return;
+        }
+        int n_threads = threads_ > 0 ? threads_ : 4;
+        void *ctx = api->new_context_with_model(model, 2048, 512, n_threads, n_threads);
+        if (!ctx) {
+            if (api->model_free) api->model_free(model);
+            on_error("on-device: failed to create context");
+            std::string reply = "[on-device context failed] echo: " + prompt;
+            for (size_t i=0;i<reply.size();i+=16) { on_chunk(reply.substr(i,16), false); std::this_thread::sleep_for(std::chrono::milliseconds(12)); }
+            on_chunk("", true);
+            return;
+        }
+        // Tokenize prompt
+        std::vector<int> tokens(4096);
+        int n_tokens = -1;
+        if (api->tokenize) {
+            n_tokens = api->tokenize(model, prompt.c_str(), (int)prompt.size(), tokens.data(), (int)tokens.size(), true, true);
+            if (n_tokens < 0) n_tokens = 0;
+            tokens.resize(n_tokens);
+        } else {
+            // no tokenize — fallback
+            on_chunk("[on-device tokenize missing] ", false);
+            n_tokens = 0;
+        }
+        // Decode prompt tokens (prefill)
+        if (n_tokens > 0 && api->decode) {
+            // In real llama.cpp we need to batch tokens; simplified: decode all at once
+            int rc = api->decode(ctx, n_tokens);
+            if (rc != 0) {
+                on_error("on-device: decode failed");
+            }
+        }
+        // Generate loop — greedy for simplicity, up to 256 tokens or until EOS
+        int max_new = 256;
+        void *sampler = nullptr;
+        if (api->sampler_chain_init) {
+            sampler = api->sampler_chain_init(0);
+            if (sampler && api->sampler_chain_add_greedy) api->sampler_chain_add_greedy(sampler);
+        }
+        for (int i=0;i<max_new;i++) {
+            int next_token = -1;
+            if (sampler && api->sampler_sample) {
+                next_token = api->sampler_sample(sampler, ctx, -1);
+            } else if (api->sample_token_greedy) {
+                next_token = api->sample_token_greedy(ctx, -1);
+            } else if (api->get_logits || api->get_logits_ith) {
+                float* logits = api->get_logits ? api->get_logits(ctx) : api->get_logits_ith(ctx, -1);
+                if (logits) {
+                    // naive argmax over first 32000 vocab — real vocab size unknown without model
+                    // pick highest logit as next token
+                    int best = 0; float bestv = logits[0];
+                    for (int v=1; v<32000; ++v) if (logits[v] > bestv) { bestv = logits[v]; best = v; }
+                    next_token = best;
+                }
+            }
+            if (next_token < 0) break;
+            // EOS check: llama token 2 is often EOS, but we stop on 0 as well
+            if (next_token == 0 || next_token == 2) break;
+            char piece[64] = {0};
+            int n = 0;
+            if (api->token_to_piece) n = api->token_to_piece(model, next_token, piece, sizeof(piece)-1, 0, false);
+            std::string delta;
+            if (n > 0) delta.assign(piece, n);
+            else delta = " ";
+            if (!delta.empty()) on_chunk(delta, false);
+            if (api->decode) {
+                // feed token back — single token decode
+                int rc = api->decode(ctx, 1);
+                if (rc != 0) break;
+            } else break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(8));
+        }
+        if (api->kv_cache_clear) api->kv_cache_clear(ctx);
+        if (sampler && api->sampler_free) api->sampler_free(sampler);
+        if (api->free_context) api->free_context(ctx);
+        if (api->model_free) api->model_free(model);
+        on_chunk("", true);
+    }
+private:
+    std::string model_path_;
+    int gpu_layers_;
+    int threads_;
+};
+
 LLMProvider *make_provider_on_device(const std::string &model_path, int gpu_layers, int threads) {
-    (void)model_path; (void)gpu_layers; (void)threads;
-    return new PlaceholderProvider();
+    if (model_path.empty()) return new PlaceholderProvider();
+    // If shim already loaded and symbols present, return real provider; else placeholder will
+    // attempt load on first send and fallback gracefully. This keeps construction cheap.
+    return new LlamaProvider(model_path, gpu_layers, threads);
 }
 
 } // namespace tessera

@@ -2,6 +2,12 @@
 #include <string>
 #include <vector>
 #include <optional>
+#ifdef HAVE_LIBPQ
+#include <libpq-fe.h>
+#endif
+#ifdef HAVE_HIREDIS
+#include <hiredis/hiredis.h>
+#endif
 namespace tessera {
 // Postgres (source of truth) + Valkey (cache) + DuckDB (analytical) — spec §6
 // Mirrors TesseraDataLayer/TesseraDataStore/TesseraCache (§6, hexagonal facade, cache invariants)
@@ -46,12 +52,27 @@ public:
     std::vector<GraphNodeRow> list_graph_nodes(int limit=120);
     std::vector<GraphEdgeRow> list_graph_edges(int limit=500);
     std::optional<GraphNodeRow> get_entity_row(const std::string &id);
+    // P2.2 Valkey cache API (hot state)
+    bool valkey_set(const std::string &key, const std::string &value, int ttl_seconds=0) const;
+    std::string valkey_get(const std::string &key) const;
+    // P2.3 DuckDB analytical path (in-process)
+    bool duckdb_exec(const std::string &sql) const;
 private:
     DataConfig cfg_;
     bool connected_=false;
     StartOutcome last_outcome_=StartOutcome::BothDown;
     std::string last_error_;
+    mutable std::string last_pg_error_;
+#ifdef HAVE_LIBPQ
+    mutable PGconn *pg_conn_=nullptr;
+    std::string exec_via_libpq(const std::string &sql) const;
+#endif
+#ifdef HAVE_HIREDIS
+    mutable redisContext *valkey_ctx_=nullptr;
+    bool valkey_connect() const;
+#endif
     std::string exec_psql(const std::string &sql) const;
+    std::string exec_psql_popen(const std::string &sql) const;
     friend class KnowledgeSync;
 };
 } // namespace tessera

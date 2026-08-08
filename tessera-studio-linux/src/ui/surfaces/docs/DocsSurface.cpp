@@ -82,6 +82,23 @@ GtkWidget* docs_surface_new(DataLayer* dl, DocStore* store){
     GtkWidget* editor = gtk_text_view_new(); gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(editor), GTK_WRAP_WORD); gtk_widget_set_vexpand(editor, TRUE);
     GtkWidget* edScroll = gtk_scrolled_window_new(); gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(edScroll), editor);
     gtk_box_append(GTK_BOX(detail), edScroll);
+    // P3.6: persist editor body on change via DocStore/DataLayer
+    if(store){
+        GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(editor));
+        g_signal_connect(buf, "changed", (GCallback)(+[](GtkTextBuffer *b, gpointer d){
+            auto *st = (DocStore*)d;
+            GtkTextIter s,e; gtk_text_buffer_get_bounds(b,&s,&e);
+            char *txt = gtk_text_buffer_get_text(b,&s,&e,false);
+            std::string body = txt?txt:"";
+            g_free(txt);
+            auto docs = st->list(1);
+            if(!docs.empty()){
+                Doc doc = docs[0];
+                doc.body = body;
+                st->upsert(doc);
+            }
+        }), store);
+    }
     gtk_stack_add_named(GTK_STACK(midStack), detail, "detail");
 
     // right pane is stack of list/detail
@@ -92,7 +109,7 @@ GtkWidget* docs_surface_new(DataLayer* dl, DocStore* store){
     // filter click -> detail
     g_signal_connect(filters, "row-activated", G_CALLBACK(on_docs_filter), midStack);
     // list click -> detail
-    g_signal_connect(list, "row-activated", G_CALLBACK(+[](GtkListBox*, GtkListBoxRow* r, gpointer st){ if(r) gtk_stack_set_visible_child_name(GTK_STACK(st), "detail"); }), midStack);
+    g_signal_connect(list, "row-activated", (GCallback)(+[](GtkListBox*, GtkListBoxRow* r, gpointer st){ if(r) gtk_stack_set_visible_child_name(GTK_STACK(st), "detail"); }), midStack);
     return pane;
 }
 

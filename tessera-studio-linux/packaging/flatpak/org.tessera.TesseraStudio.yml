@@ -5,11 +5,17 @@ sdk: org.gnome.Sdk
 command: tessera-studio-linux
 finish-args:
   - --share=ipc
+  - --share=network
   - --socket=wayland
   - --socket=fallback-x11
   - --talk-name=org.freedesktop.secrets
+  - --talk-name=org.freedesktop.portal.Background
+  - --talk-name=org.freedesktop.portal.RemoteDesktop
+  - --talk-name=org.freedesktop.portal.GlobalShortcuts
+  - --talk-name=org.freedesktop.portal.FileChooser
   - --filesystem=xdg-data/tessera:rw
   - --filesystem=xdg-config/tessera:rw
+  - --filesystem=xdg-run/gvfs:rw
 modules:
   - name: tessera-studio-linux
     buildsystem: cmake-ninja

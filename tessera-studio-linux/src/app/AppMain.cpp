@@ -22,6 +22,15 @@
 #include "ui/surfaces/providers/Surface.h"
 #include "ui/surfaces/capacity/Surface.h"
 #include "ui/surfaces/collab/Surface.h"
+#include "ui/surfaces/docs/DocsSurface.h"
+#include "ui/surfaces/sheets/SheetsSurface.h"
+#include "ui/surfaces/slides/SlidesSurface.h"
+#include "ui/surfaces/models/Surface.h"
+#include "ui/surfaces/receipts/Surface.h"
+#include "ui/surfaces/editor/EditorSurface.h"
+#include "core/productivity/docs/DocStore.h"
+#include "core/productivity/sheets/SheetStore.h"
+#include "core/productivity/slides/SlideStore.h"
 #include <glib.h>
 
 #ifdef HAVE_GTK
@@ -211,10 +220,16 @@ static void on_activate(AdwApplication *app, gpointer) {
         {"tasks","Tasks","check-round-outline-symbolic","Work"},
         {"library","Library","books-vertical-symbolic","Knowledge"},
         {"notes","Notes","note-symbolic","Knowledge"},
+        {"docs","Docs","document-symbolic","Knowledge"},
+        {"sheets","Sheets","view-grid-symbolic","Knowledge"},
+        {"slides","Slides","presentation-symbolic","Knowledge"},
         {"learning","Learning","chart-bar-symbolic","Knowledge"},
         {"graph","Graph","share-symbolic","Knowledge"},
+        {"receipts","Receipts","emblem-ok-symbolic","Knowledge"},
+        {"editor","Editor","edit-symbolic","Knowledge"},
         {"providers","Providers","cloud-symbolic","Knowledge"},
         {"capacity","Capacity","gauge-symbolic","Knowledge"},
+        {"models","Models","cpu-symbolic","System"},
         {"collab","Tessy & Sky","chat-bubble-text-symbolic","Knowledge"},
         {"email","Email","mail-symbolic","Connect"},
         {"calendar","Calendar","x-office-calendar-symbolic","Connect"},
@@ -226,7 +241,7 @@ static void on_activate(AdwApplication *app, gpointer) {
     gtk_widget_add_css_class(list, "navigation-sidebar");
     g_nav_list = GTK_LIST_BOX(list);
     const char *cur_group=nullptr;
-    for (int i=0;i<15;i++) {
+    for (int i=0;i<21;i++) {
         if(!cur_group || std::string(cur_group)!=dests[i].group){
             cur_group=dests[i].group;
             GtkWidget *hdr = gtk_label_new(cur_group); gtk_widget_add_css_class(hdr,"dim-label"); gtk_widget_add_css_class(hdr,"caption");
@@ -568,6 +583,22 @@ static void on_activate(AdwApplication *app, gpointer) {
     gtk_stack_add_titled(GTK_STACK(stack), contacts_box, "contacts", "Contacts");
     GtkWidget *reminders_box = tessera::reminders_surface_new(pstore);
     gtk_stack_add_titled(GTK_STACK(stack), reminders_box, "reminders", "Reminders");
+    // Docs / Sheets / Slides / Models / Editor / Receipts — P3.1 wired (were never instantiated)
+    static tessera::DocStore *docStore = new tessera::DocStore(dl);
+    static tessera::SheetStore *sheetStore = new tessera::SheetStore(dl);
+    static tessera::SlideStore *slideStore = new tessera::SlideStore(dl);
+    GtkWidget *docs_box = tessera::docs_surface_new(dl, docStore);
+    gtk_stack_add_titled(GTK_STACK(stack), docs_box, "docs", "Docs");
+    GtkWidget *sheets_box = tessera::sheets_surface_new(dl, sheetStore);
+    gtk_stack_add_titled(GTK_STACK(stack), sheets_box, "sheets", "Sheets");
+    GtkWidget *slides_box = tessera::slides_surface_new(dl, slideStore);
+    gtk_stack_add_titled(GTK_STACK(stack), slides_box, "slides", "Slides");
+    GtkWidget *models_box = tessera::models_surface_new();
+    gtk_stack_add_titled(GTK_STACK(stack), models_box, "models", "Models");
+    GtkWidget *editor_box = tessera::editor_surface_new();
+    gtk_stack_add_titled(GTK_STACK(stack), editor_box, "editor", "Editor");
+    GtkWidget *receipts_box = tessera::receipts_surface_new(dl);
+    gtk_stack_add_titled(GTK_STACK(stack), receipts_box, "receipts", "Receipts");
     // Providers — cloud API cards (anthropic/openai/google/meta/minimax/alibaba/openrouter/z.ai/glm/deepseek) — libsecret + libsoup3, drives AgentLoop
     GtkWidget *providers_box = tessera::providers_surface_new();
     gtk_stack_add_titled(GTK_STACK(stack), providers_box, "providers", "Providers");
@@ -775,6 +806,20 @@ static void on_about(GSimpleAction*, GVariant*, gpointer win){ tessera::show_abo
 static void on_plead5(GSimpleAction*, GVariant*, gpointer app){ GtkWindow *w = gtk_application_get_active_window(GTK_APPLICATION(app)); if(!w) return; GtkWidget* d=gtk_dialog_new_with_buttons("Plead the Fifth — Lock/Wipe", w, GTK_DIALOG_MODAL, "Cancel", GTK_RESPONSE_CANCEL, "Lock", GTK_RESPONSE_ACCEPT, nullptr); GtkWidget* c=gtk_dialog_get_content_area(GTK_DIALOG(d)); GtkWidget* lb=gtk_label_new("This will lock the encrypted volume via libsecret. Type DELETE to wipe."); gtk_label_set_wrap(GTK_LABEL(lb),TRUE); gtk_box_append(GTK_BOX(c), lb); GtkWidget* e=gtk_entry_new(); gtk_entry_set_placeholder_text(GTK_ENTRY(e),"type DELETE to confirm wipe"); gtk_box_append(GTK_BOX(c), e); gtk_window_present(GTK_WINDOW(d)); g_signal_connect(d,"response", G_CALLBACK(+[](GtkDialog* dlg,int r,gpointer){ if(r==GTK_RESPONSE_ACCEPT){ /* call Volume::lock/wipe via Secrets backend */ } gtk_window_destroy(GTK_WINDOW(dlg)); }), nullptr); }
 
 int main(int argc, char **argv) {
+    // --background flag for systemd tessera-agent.service (P3.8)
+    bool background = false;
+    for (int i=1;i<argc;i++) if (std::string(argv[i])=="--background") background = true;
+    if (background) {
+        auto cfg = tessera::load_config();
+        g_print("Tessera agent — background mode (provider=%s)\n", tessera::provider_to_string(cfg.provider).c_str());
+        // headless agent loop — run one turn on stdin or idle
+        // For now, keep alive as a service: block on GMainLoop until killed
+        GMainLoop *loop = g_main_loop_new(nullptr, FALSE);
+        g_print("Background agent running; waiting for D-Bus activation. Send SIGTERM to stop.\n");
+        g_main_loop_run(loop);
+        g_main_loop_unref(loop);
+        return 0;
+    }
     auto cfg = tessera::load_config();
     auto cli = tessera::resolve_cli_binary(cfg.cli_path_override);
 #ifdef HAVE_GTK

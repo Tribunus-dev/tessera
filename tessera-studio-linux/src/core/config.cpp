@@ -1,5 +1,6 @@
 #include "config.h"
 #include <cstdlib>
+#include <gio/gio.h>
 
 namespace tessera {
 
@@ -44,6 +45,36 @@ std::string cloud_base_url_for(const std::string &id){
 
 AppConfig load_config() {
     AppConfig cfg;
+    // GSettings first (when schema installed), env overrides
+    GSettings *gs = nullptr;
+    GSettingsSchemaSource *src = g_settings_schema_source_get_default();
+    if (src) {
+        GSettingsSchema *schema = g_settings_schema_source_lookup(src, "org.tessera.TesseraStudio", TRUE);
+        if (schema) {
+            gs = g_settings_new("org.tessera.TesseraStudio");
+            g_settings_schema_unref(schema);
+            char *p = g_settings_get_string(gs, "provider");
+            if (p && *p) cfg.provider = provider_from_string(p);
+            g_free(p);
+            char *u = g_settings_get_string(gs, "remote-base-url");
+            if (u && *u) cfg.remote_base_url = u;
+            g_free(u);
+            char *cp = g_settings_get_string(gs, "cloud-provider");
+            if (cp && *cp) cfg.cloud_provider = cp;
+            g_free(cp);
+            char *cm = g_settings_get_string(gs, "cloud-model");
+            if (cm && *cm) cfg.cloud_model = cm;
+            g_free(cm);
+            char *mp = g_settings_get_string(gs, "on-device-model-path");
+            if (mp && *mp) cfg.on_device_model_path = mp;
+            g_free(mp);
+            cfg.on_device_gpu_layers = g_settings_get_int(gs, "on-device-gpu-layers");
+            cfg.on_device_threads = g_settings_get_int(gs, "on-device-threads");
+            char *cli = g_settings_get_string(gs, "cli-path");
+            if (cli && *cli) cfg.cli_path_override = cli;
+            g_free(cli);
+        }
+    }
     if (const char *v = std::getenv("TESSERA_PROVIDER")) {
         cfg.provider = provider_from_string(v);
     }
@@ -60,11 +91,30 @@ AppConfig load_config() {
         cfg.on_device_model_path = v;
         if(cfg.cloud_model.empty()) cfg.cloud_model = v;
     }
+    if (const char *v = std::getenv("TESSERA_CLI_PATH")) {
+        cfg.cli_path_override = v;
+    }
+    if (gs) g_object_unref(gs);
     return cfg;
 }
 
-void save_config(const AppConfig &) {
-    // Persist via GSettings when GTK available; stub for core-only build.
+void save_config(const AppConfig &cfg) {
+    GSettingsSchemaSource *src = g_settings_schema_source_get_default();
+    if (!src) return;
+    GSettingsSchema *schema = g_settings_schema_source_lookup(src, "org.tessera.TesseraStudio", TRUE);
+    if (!schema) return;
+    g_settings_schema_unref(schema);
+    GSettings *gs = g_settings_new("org.tessera.TesseraStudio");
+    g_settings_set_string(gs, "provider", provider_to_string(cfg.provider).c_str());
+    g_settings_set_string(gs, "remote-base-url", cfg.remote_base_url.c_str());
+    g_settings_set_string(gs, "cloud-provider", cfg.cloud_provider.c_str());
+    g_settings_set_string(gs, "cloud-model", cfg.cloud_model.c_str());
+    g_settings_set_string(gs, "on-device-model-path", cfg.on_device_model_path.c_str());
+    g_settings_set_int(gs, "on-device-gpu-layers", cfg.on_device_gpu_layers);
+    g_settings_set_int(gs, "on-device-threads", cfg.on_device_threads);
+    g_settings_set_string(gs, "cli-path", cfg.cli_path_override.c_str());
+    g_settings_sync();
+    g_object_unref(gs);
 }
 
 } // namespace tessera

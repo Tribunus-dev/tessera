@@ -75,26 +75,87 @@ DataConfig DataLayer::from_env(){
 std::string DataLayer::xdg_config_dir(){ const char* p=getenv("XDG_CONFIG_HOME"); return p? std::string(p)+"/tessera" : std::string(getenv("HOME")?getenv("HOME"):"")+"/.config/tessera"; }
 std::string DataLayer::xdg_data_dir(){ const char* p=getenv("XDG_DATA_HOME"); return p? std::string(p)+"/tessera" : std::string(getenv("HOME")?getenv("HOME"):"")+"/.local/share/tessera"; }
 std::string DataLayer::xdg_cache_dir(){ const char* p=getenv("XDG_CACHE_HOME"); return p? std::string(p)+"/tessera" : std::string(getenv("HOME")?getenv("HOME"):"")+"/.cache/tessera"; }
-std::string DataLayer::exec_psql(const std::string &sql) const {
-    // Hexagonal: surfaces call DataLayer, which shells to podman exec psql (host has no psql binary, daemons run in podman)
-    // Escape double quotes and backslashes for the outer -c "..." shell arg; sql_escape already handled single quotes for SQL
+std::string DataLayer::exec_psql_popen(const std::string &sql) const {
     std::string esc_sql; esc_sql.reserve(sql.size()*2);
     for(char c: sql){ if(c=='\\') esc_sql+="\\\\"; else if(c=='"') esc_sql+="\\\""; else if(c=='$') esc_sql+="\\$"; else if(c=='`') esc_sql+="\\`"; else esc_sql+=c; }
     std::string cmd = "podman exec tessera-postgres psql -h 127.0.0.1 -U tessera -d tessera -t -A -c \"" + esc_sql + "\" 2>/dev/null";
-    // escape quotes in sql (simple: replace \" with \\\")
     std::array<char,256> buf; std::string out;
     FILE *p = popen(cmd.c_str(), "r");
     if(!p) return "";
     while(fgets(buf.data(), buf.size(), p)) out += buf.data();
     pclose(p);
-    // psql -t -A prints command tag "INSERT 0 1" on second line for INSERT ... RETURNING; take first non-empty line only
     size_t nl = out.find('\n');
     if(nl != std::string::npos) out = out.substr(0, nl);
-    // trim
     while(!out.empty() && (out.back()=='\n' || out.back()=='\r' || out.back()==' ')) out.pop_back();
     while(!out.empty() && out.front()==' ') out.erase(out.begin());
     return out;
 }
+std::string DataLayer::exec_psql(const std::string &sql) const {
+#ifdef HAVE_LIBPQ
+    std::string r = exec_via_libpq(sql);
+    if(!r.empty() || last_pg_error_.empty()) return r;
+    // fallback to popen if libpq failed (e.g. no server or not connected)
+#endif
+    return exec_psql_popen(sql);
+}
+#ifdef HAVE_LIBPQ
+std::string DataLayer::exec_via_libpq(const std::string &sql) const {
+    if(cfg_.postgres_url.empty()){ last_pg_error_="no postgres_url"; return ""; }
+    if(!pg_conn_ || PQstatus(pg_conn_)!=CONNECTION_OK){
+        if(pg_conn_) PQfinish(pg_conn_);
+        pg_conn_ = PQconnectdb(cfg_.postgres_url.c_str());
+        if(PQstatus(pg_conn_)!=CONNECTION_OK){
+            last_pg_error_ = PQerrorMessage(pg_conn_);
+            PQfinish(pg_conn_); pg_conn_=nullptr;
+            return "";
+        }
+    }
+    PGresult *res = PQexec(pg_conn_, sql.c_str());
+    if(!res){ last_pg_error_=PQerrorMessage(pg_conn_); return ""; }
+    ExecStatusType st = PQresultStatus(res);
+    std::string out;
+    if(st==PGRES_TUPLES_OK){
+        if(PQntuples(res)>0 && PQnfields(res)>0){
+            // For our usage we want first field of first row (count, id, etc)
+            // If multiple fields (list_notes with delimiter), the popen path handles it.
+            // For libpq, reconstruct pipe-delimited for list_* callers that parse '|'
+            if(PQnfields(res)==1){
+                out = PQgetvalue(res,0,0) ? PQgetvalue(res,0,0) : "";
+            } else {
+                // concatenate fields with '|'
+                for(int f=0;f<PQnfields(res);++f){
+                    if(f) out+='|';
+                    out += PQgetvalue(res,0,f) ? PQgetvalue(res,0,f) : "";
+                }
+            }
+            // For multi-row queries, callers currently use popen with -F '|'.
+            // Return first row only here; multi-row will be handled via separate PQ path in list_* methods.
+            // Signal multi-row by returning concatenated lines?
+            if(PQntuples(res)>1){
+                // Build full output as lines with | delimiter
+                out.clear();
+                for(int r=0;r<PQntuples(res);++r){
+                    std::string line;
+                    for(int f=0;f<PQnfields(res);++f){
+                        if(f) line+='|';
+                        line += PQgetvalue(res,r,f) ? PQgetvalue(res,r,f) : "";
+                    }
+                    out += line + "\n";
+                }
+                if(!out.empty() && out.back()=='\n') out.pop_back();
+            }
+        }
+        last_pg_error_.clear();
+    } else if(st==PGRES_COMMAND_OK){
+        // For INSERT ... RETURNING, libpq returns TUPLES_OK, not COMMAND_OK. If we get COMMAND_OK, try to get OID?
+        last_pg_error_.clear();
+    } else {
+        last_pg_error_ = PQresultErrorMessage(res);
+    }
+    PQclear(res);
+    return out;
+}
+#endif
 int DataLayer::count_entities(const std::string &entity_type){
     std::string sql = entity_type.empty() ? "SELECT count(*) FROM graph_entities" : "SELECT count(*) FROM graph_entities WHERE entity_type='" + entity_type + "'";
     std::string r = exec_psql(sql);
@@ -217,6 +278,57 @@ std::vector<DataLayer::GraphEdgeRow> DataLayer::list_graph_edges(int limit){
     std::vector<GraphEdgeRow> rows; size_t pos=0;
     while(pos<out.size()){ size_t nl=out.find('\n',pos); std::string line=out.substr(pos,nl==std::string::npos?std::string::npos:nl-pos); pos=nl==std::string::npos?out.size():nl+1; if(line.empty()) continue; std::vector<std::string> f; size_t s=0; while(true){ size_t d=line.find('|',s); if(d==std::string::npos){ f.push_back(line.substr(s)); break;} f.push_back(line.substr(s,d-s)); s=d+1; } if(f.size()<5) continue; rows.push_back({f[0],f[1],f[2],f[3], (float)std::atof(f[4].c_str())}); }
     return rows;
+}
+
+bool DataLayer::valkey_set(const std::string &key, const std::string &value, int ttl_seconds) const {
+#ifdef HAVE_HIREDIS
+    if(!valkey_connect()) return false;
+    redisReply *r = nullptr;
+    if(ttl_seconds>0) r = (redisReply*)redisCommand(valkey_ctx_, "SETEX %s %d %s", key.c_str(), ttl_seconds, value.c_str());
+    else r = (redisReply*)redisCommand(valkey_ctx_, "SET %s %s", key.c_str(), value.c_str());
+    bool ok = r && r->type!=REDIS_REPLY_ERROR;
+    if(r) freeReplyObject(r);
+    return ok;
+#else
+    (void)key; (void)value; (void)ttl_seconds;
+    // TCP probe fallback already in connect(); no hiredis available
+    return false;
+#endif
+}
+std::string DataLayer::valkey_get(const std::string &key) const {
+#ifdef HAVE_HIREDIS
+    if(!valkey_connect()) return "";
+    redisReply *r = (redisReply*)redisCommand(valkey_ctx_, "GET %s", key.c_str());
+    std::string out;
+    if(r && r->type==REDIS_REPLY_STRING) out = r->str ? r->str : "";
+    if(r) freeReplyObject(r);
+    return out;
+#else
+    (void)key; return "";
+#endif
+}
+#ifdef HAVE_HIREDIS
+bool DataLayer::valkey_connect() const {
+    if(valkey_ctx_ && valkey_ctx_->err==0) return true;
+    if(valkey_ctx_) { redisFree(valkey_ctx_); valkey_ctx_=nullptr; }
+    std::string host="127.0.0.1"; int port=6379;
+    std::string url = cfg_.valkey_url;
+    if(!url.empty()){
+        std::string h; int p; if(probe_url(url,h,p)){ host=h; port=p; }
+    }
+    valkey_ctx_ = redisConnect(host.c_str(), port);
+    return valkey_ctx_ && valkey_ctx_->err==0;
+}
+#endif
+bool DataLayer::duckdb_exec(const std::string &sql) const {
+    (void)sql;
+    // DuckDB analytical path: vendor duckdb and call duckdb_open/duckdb_query
+    // Stub for now — schema design (spec 14.1 TODO) blocks real implementation.
+    // Keep data plane compiling without duckdb dev package.
+#ifdef HAVE_DUCKDB
+    // TODO: duckdb_open(cfg_.duckdb_path.c_str(), &db); duckdb_query...
+#endif
+    return false;
 }
 std::optional<DataLayer::GraphNodeRow> DataLayer::get_entity_row(const std::string &id){
     std::string sql="SELECT id::text, label, entity_type, coalesce(subtype,''), coalesce(source_url,''), updated_at::text FROM graph_entities WHERE id='"+sql_escape(id)+"' LIMIT 1";
