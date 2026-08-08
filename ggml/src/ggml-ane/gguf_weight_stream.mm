@@ -110,43 +110,47 @@ static bool skip_gguf_kv(const uint8_t * base,
     if (*pos + 4 > file_size) return false;
     const uint32_t vtype = read_u32(base + *pos);
     *pos += 4;
+    // GGUF KV type enum — must match ggml/include/gguf.h (0..12).
+    // UINT8=0 INT8=1 UINT16=2 INT16=3 UINT32=4 INT32=5 FLOAT32=6 BOOL=7
+    // STRING=8 ARRAY=9 UINT64=10 INT64=11 FLOAT64=12
     switch (vtype) {
-        case 0: // uint8
-        case 1: // int8
-        case 24: // bool
+        case 0: // GGUF_TYPE_UINT8
+        case 1: // GGUF_TYPE_INT8
+        case 7: // GGUF_TYPE_BOOL
             *pos += 1; return true;
-        case 2: // uint16
-        case 3: // int16
+        case 2: // GGUF_TYPE_UINT16
+        case 3: // GGUF_TYPE_INT16
             *pos += 2; return true;
-        case 4: // uint32
-        case 5: // int32
-        case 6: // f32
+        case 4: // GGUF_TYPE_UINT32
+        case 5: // GGUF_TYPE_INT32
+        case 6: // GGUF_TYPE_FLOAT32
             *pos += 4; return true;
-        case 7: // uint64
-        case 8: // int64
-        case 9: // f64
+        case 10: // GGUF_TYPE_UINT64
+        case 11: // GGUF_TYPE_INT64
+        case 12: // GGUF_TYPE_FLOAT64
             *pos += 8; return true;
-        case 10: // f16
-            *pos += 2; return true;
-        case 11: // string
+        case 8: // GGUF_TYPE_STRING
             return read_gguf_string(base, file_size, pos, &key);
-        case 12: // array
+        case 9: // GGUF_TYPE_ARRAY
         {
             if (*pos + 12 > file_size) return false;
             const uint32_t  elem_type = read_u32(base + *pos);
             const uint64_t n_elems    = read_u64(base + *pos + 4);
             *pos += 12;
-            // Recurse for each element. We pick conservative
-            // element sizes for the common cases; the
-            // streaming path doesn't read kvs so an inaccurate
-            // skip is acceptable as long as we don't overflow
-            // the file.
+            if (elem_type == 8) { // GGUF_TYPE_STRING array — variable-length entries
+                for (uint64_t i = 0; i < n_elems; ++i) {
+                    std::string tmp;
+                    if (!read_gguf_string(base, file_size, pos, &tmp)) return false;
+                }
+                return true;
+            }
             const size_t elem_size =
-                elem_type == 0 || elem_type == 1 || elem_type == 24 ? 1 :
-                elem_type == 2 || elem_type == 3 || elem_type == 10 ? 2 :
+                elem_type == 0 || elem_type == 1 || elem_type == 7  ? 1 :
+                elem_type == 2 || elem_type == 3                     ? 2 :
                 elem_type == 4 || elem_type == 5 || elem_type == 6  ? 4 :
-                elem_type == 7 || elem_type == 8 || elem_type == 9  ? 8 : 0;
+                elem_type == 10 || elem_type == 11 || elem_type == 12 ? 8 : 0;
             if (elem_size == 0) return false; // unknown array element
+            if (n_elems > SIZE_MAX / (elem_size ? elem_size : 1)) return false;
             *pos += n_elems * elem_size;
             return *pos <= file_size;
         }
