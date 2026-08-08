@@ -1415,18 +1415,14 @@ bool common_tessera_params_parse(int argc, char ** argv, common_params & params,
             i++;
         }
     }
-    // Reassemble: flag args first, then positionals. The order within
-    // each group is preserved. We need this for the caller to find the
-    // model + ftype via simple indices.
-    std::vector<char *> combined;
-    combined.reserve(flag_argv.size() + pos_argv.size());
-    for (char * p : flag_argv) combined.push_back(p);
-    // Positionals are NOT re-appended here: they are reserved for the
-    // main quantize subroutine, which re-reads the ORIGINAL argv
-    // (llama_quantize in tools/quantize/quantize.cpp parses <input>
-    // <ftype> positionals directly). Passing them through common_params_parse
-    // made it reject them as unknown args ("error: invalid argument").
-    // for (char * p : pos_argv) combined.push_back(p);
+    // Positionals stay out of common_params_parse (it rejects unknown
+    // non-flag args) and reach the quantize subroutine through the
+    // caller's original argv, which is unmodified here. Additive merge:
+    // - local fix kept positionals out because the quantize path re-reads
+    //   the original argv (llama_quantize parses <input> <ftype> directly)
+    // - remote fix did the same via flag_argv-only dispatch. Both guards
+    //   are preserved; positionals are never passed to common_params_parse.
+    (void) pos_argv;
 
     // The user-supplied print_usage (if any) runs first; the
     // tessera_top_level_help_footer runs after and only appends when no
@@ -1442,7 +1438,7 @@ bool common_tessera_params_parse(int argc, char ** argv, common_params & params,
     };
     (void) user_print;  // suppress unused-warning if user_print is null
 
-    return common_params_parse((int) combined.size(), combined.data(), params, LLAMA_EXAMPLE_TESSERA, print_wrapper);
+    return common_params_parse((int) flag_argv.size(), flag_argv.data(), params, LLAMA_EXAMPLE_TESSERA, print_wrapper);
 }
 
 static std::string list_builtin_chat_templates() {

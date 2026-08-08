@@ -153,6 +153,8 @@ a.out.*
 
 AGENTS.local.md
 .pi/SYSTEM.md
+/.agents/
+/.pip_openvino/
 
 # Tessera Studio xcframework build outputs (see
 # TesseraStudio/scripts/build-xcframework.sh). The xcframework is rebuilt
