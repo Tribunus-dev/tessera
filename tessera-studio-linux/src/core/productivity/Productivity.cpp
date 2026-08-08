@@ -314,12 +314,13 @@ bool ProductivityStore::send_email(const Email &e){
     else if(prov==EmailProvider::Outlook) pid="outlook";
     else if(prov==EmailProvider::ICloud) pid="icloud";
     if(!pid.empty()){
-        OAuthCreds creds = load_oauth_creds(pid);
-        if(!creds.access_token.empty()){
-            // Use XOAUTH2: libetpan supports mailimap_oauth2_authenticate / mailsmtp_oauth2
-            // For SMTP, we would call mailsmtp_oauth2_authenticate with xoauth2_string
-            std::string xoauth = xoauth2_string(creds.email.empty()?email_hint:creds.email, creds.access_token);
-            (void)xoauth; // used below when libetpan XOAUTH2 is wired
+        std::string valid = get_valid_access_token(pid);
+        if(!valid.empty()){
+            OAuthCreds creds = load_oauth_creds(pid);
+            std::string xoauth = xoauth2_string(creds.email.empty()?email_hint:creds.email, valid);
+            (void)xoauth;
+            // libetpan XOAUTH2: mailsmtp_oauth2_authenticate(smtp, email, valid) would be called here
+            // and mailimap_oauth2_authenticate for IMAP
         }
     }
     const char *smtp_url = getenv("TESSERA_SMTP_URL");
