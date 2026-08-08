@@ -68,6 +68,7 @@ public struct SlideDeckDetailView: View {
     private var headerSection: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: "rectangle.on.rectangle")
+                .symbolRenderingMode(.hierarchical)
                 .font(.title3).foregroundStyle(.secondary)
             TextField("Title", text: $viewModel.draftTitle, onCommit: {
                 Task { await viewModel.commitTitle() }
@@ -107,6 +108,7 @@ public struct SlideDeckDetailView: View {
                     HStack(spacing: 4) {
                         Text("#\(tag)")
                         Image(systemName: "xmark").font(.caption2)
+                            .symbolRenderingMode(.hierarchical)
                     }
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .background(Capsule().fill(Color.accentColor.opacity(0.15)))
@@ -234,6 +236,7 @@ public struct SlideDeckDetailView: View {
                             }
                         } label: {
                             Image(systemName: "ellipsis.circle").font(.caption)
+                                .symbolRenderingMode(.hierarchical)
                         }
                         .menuStyle(.borderlessButton)
                     }
@@ -394,6 +397,7 @@ private struct SlideLinkedEntityChip: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "link").font(.caption2).foregroundStyle(.secondary)
+                .symbolRenderingMode(.hierarchical)
             Text(id.uuidString.prefix(8) + "…").font(.caption).foregroundStyle(.primary)
         }
         .padding(.horizontal, 8).padding(.vertical, 4)

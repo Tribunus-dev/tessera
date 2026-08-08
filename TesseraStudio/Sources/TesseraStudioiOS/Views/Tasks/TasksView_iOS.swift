@@ -50,6 +50,7 @@ public struct TasksView_iOS: View {
                         showInputSheet = true
                     } label: {
                         Image(systemName: "plus")
+                            .symbolRenderingMode(.hierarchical)
                     }
                 }
             }
@@ -82,6 +83,7 @@ public struct TasksView_iOS: View {
                         VStack(spacing: 4) {
                             HStack(spacing: 4) {
                                 Image(systemName: list.systemImageName)
+                                    .symbolRenderingMode(.hierarchical)
                                 Text(list.displayName)
                                     .font(.subheadline)
                                     .fontWeight(.medium)
@@ -196,6 +198,7 @@ private struct TaskRow_iOS: View {
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
             Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
+                .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(task.isCompleted ? .green : .secondary)
             VStack(alignment: .leading, spacing: 2) {
                 Text(task.title)
@@ -209,6 +212,7 @@ private struct TaskRow_iOS: View {
             Spacer()
             if task.priority != .none {
                 Image(systemName: task.prioritySystemImageName)
+                    .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(priorityColor)
             }
         }
@@ -302,6 +306,7 @@ private struct TaskDetailView_iOS: View {
                     .font(.title3)
                 HStack {
                     Image(systemName: task.list.systemImageName)
+                        .symbolRenderingMode(.hierarchical)
                     Text(task.list.displayName)
                     if let due = task.dueAt, !task.isCompleted {
                         Spacer()

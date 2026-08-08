@@ -75,13 +75,16 @@ public struct TasksView: View {
         .navigationTitle("Tasks")
         .searchable(text: $searchText, prompt: "Search tasks")
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItem(placement: .secondaryAction) {
                 Button {
                     Task { await load() }
                 } label: {
                     Image(systemName: "arrow.clockwise")
+                        .font(.body)
+                        .symbolRenderingMode(.hierarchical)
                 }
                 .help("Reload tasks")
+                .accessibilityLabel("Reload")
             }
             ToolbarItem(placement: .primaryAction) {
                 Menu {
@@ -138,6 +141,7 @@ public struct TasksView: View {
         HStack(alignment: .center, spacing: 8) {
             Image(systemName: "plus.circle")
                 .font(.title3)
+                .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.secondary)
             TextField(
                 "Type a task — try \"tomorrow at 3pm, call John\"",
@@ -346,7 +350,9 @@ private struct TaskRow: View {
             } label: {
                 Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
                     .font(.title3)
+                    .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(task.isCompleted ? .green : .secondary)
+                    .contentTransition(.symbolEffect(.replace))
             }
             .buttonStyle(.plain)
             .accessibilityLabel(task.isCompleted ? "Reopen \(task.title)" : "Complete \(task.title)")
@@ -362,6 +368,8 @@ private struct TaskRow: View {
                             Text(due.formatted(date: .abbreviated, time: .shortened))
                         } icon: {
                             Image(systemName: "calendar")
+                                .font(.caption)
+                                .symbolRenderingMode(.hierarchical)
                         }
                         .font(.caption)
                         .foregroundStyle(due < Date() && !task.isCompleted ? .red : .secondary)
@@ -383,6 +391,7 @@ private struct TaskRow: View {
             if task.priority != .none {
                 Image(systemName: task.prioritySystemImageName)
                     .font(.caption)
+                    .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(priorityColor(task.priority))
                     .accessibilityLabel("\(task.priority.displayName) priority")
             }
@@ -545,6 +554,8 @@ private struct TaskDetailView: View {
                 ForEach(receipts) { r in
                     HStack {
                         Image(systemName: "doc.text")
+                            .font(.caption)
+                            .symbolRenderingMode(.hierarchical)
                             .foregroundStyle(.tertiary)
                         VStack(alignment: .leading) {
                             Text(r.receiptType)

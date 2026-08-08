@@ -251,6 +251,7 @@ struct ToolbarIconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
+                .symbolRenderingMode(.hierarchical)
                 .frame(minWidth: 24, minHeight: 22)
                 .padding(.horizontal, 4)
         }

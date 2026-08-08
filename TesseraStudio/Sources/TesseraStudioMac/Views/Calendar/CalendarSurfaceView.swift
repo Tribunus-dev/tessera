@@ -154,6 +154,7 @@ public struct CalendarSurfaceView: View {
     private var quickAddBar: some View {
         HStack(spacing: 8) {
             Image(systemName: "sparkles")
+                .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.secondary)
             TextField(
                 "\"Lunch with John tomorrow at noon\", \"Q3 review next monday 2pm-4pm in the blue room\"...",
@@ -180,6 +181,7 @@ public struct CalendarSurfaceView: View {
                 model.step(-1)
             } label: {
                 Image(systemName: "chevron.left")
+                    .symbolRenderingMode(.hierarchical)
             }
             .buttonStyle(.borderless)
 
@@ -191,6 +193,7 @@ public struct CalendarSurfaceView: View {
                 model.step(1)
             } label: {
                 Image(systemName: "chevron.right")
+                    .symbolRenderingMode(.hierarchical)
             }
             .buttonStyle(.borderless)
         }

@@ -56,6 +56,7 @@ public struct CodeEditorPaneView: View {
         HStack(spacing: 8) {
             if let file = viewModel.currentFile {
                 Image(systemName: "doc.text")
+                    .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(.secondary)
                 Text(file.filename)
                     .font(.headline)

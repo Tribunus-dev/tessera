@@ -208,6 +208,8 @@ public struct SlidesListView: View {
         ToolbarItem(placement: .secondaryAction) {
             Button { Task { await viewModel.refresh() } } label: {
                 Label("Refresh", systemImage: "arrow.clockwise")
+                    .font(.body)
+                    .symbolRenderingMode(.hierarchical)
             }
             .help("Reload decks")
             .accessibilityLabel("Reload decks")
@@ -233,13 +235,13 @@ struct SlideDeckRowView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 if row.isFavorite {
-                    Image(systemName: "star.fill").foregroundStyle(.yellow).font(.caption)
+                    Image(systemName: "star.fill").font(.caption).symbolRenderingMode(.hierarchical).foregroundStyle(.yellow)
                 }
                 if row.isArchived {
-                    Image(systemName: "archivebox.fill").foregroundStyle(.secondary).font(.caption)
+                    Image(systemName: "archivebox.fill").font(.caption).symbolRenderingMode(.hierarchical).foregroundStyle(.secondary)
                 }
                 if row.isTrashed {
-                    Image(systemName: "trash.fill").foregroundStyle(.secondary).font(.caption)
+                    Image(systemName: "trash.fill").font(.caption).symbolRenderingMode(.hierarchical).foregroundStyle(.secondary)
                 }
                 Text(row.title).font(.headline).lineLimit(1)
                 Spacer()

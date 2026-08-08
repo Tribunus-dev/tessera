@@ -201,6 +201,8 @@ public struct DocsListView: View {
         ToolbarItem(placement: .secondaryAction) {
             Button { Task { await viewModel.refresh() } } label: {
                 Label("Refresh", systemImage: "arrow.clockwise")
+                    .font(.body)
+                    .symbolRenderingMode(.hierarchical)
             }
             .help("Reload docs")
             .accessibilityLabel("Reload docs")
@@ -231,23 +233,27 @@ struct DocRowView: View {
                 }
                 if row.isFavorite {
                     Image(systemName: "star.fill")
-                        .foregroundStyle(.yellow)
                         .font(.caption)
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(.yellow)
                 }
                 if row.isArchived {
                     Image(systemName: "archivebox.fill")
-                        .foregroundStyle(.secondary)
                         .font(.caption)
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(.secondary)
                 }
                 if row.isTrashed {
                     Image(systemName: "trash.fill")
-                        .foregroundStyle(.secondary)
                         .font(.caption)
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(.secondary)
                 }
                 if row.hasCover {
                     Image(systemName: "photo")
-                        .foregroundStyle(.secondary)
                         .font(.caption)
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(.secondary)
                 }
                 Text(row.title)
                     .font(.headline)

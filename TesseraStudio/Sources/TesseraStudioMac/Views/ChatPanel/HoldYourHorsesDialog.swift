@@ -50,6 +50,7 @@ public struct HoldYourHorsesDialog: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 8) {
                 Image(systemName: "pause.circle.fill")
+                    .symbolRenderingMode(.hierarchical)
                     .font(.title3)
                     .foregroundStyle(.orange)
                 Text(state.title)
@@ -88,6 +89,7 @@ public struct HoldYourHorsesDialog: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "play.fill")
+                            .symbolRenderingMode(.hierarchical)
                         Text("Resume")
                     }
                 }

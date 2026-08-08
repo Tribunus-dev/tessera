@@ -75,6 +75,7 @@ private struct AgentCursorGlyph: View {
                 .frame(width: 14, height: 18)
             // Robot icon
             Image(systemName: "cpu")
+                .symbolRenderingMode(.hierarchical)
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(Color(hex: colorHex) ?? .blue)
         }

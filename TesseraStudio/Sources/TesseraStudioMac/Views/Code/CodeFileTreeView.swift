@@ -41,6 +41,8 @@ public struct CodeFileTreeView: View {
     private var searchBar: some View {
         HStack(spacing: 4) {
             Image(systemName: "magnifyingglass")
+                .font(.callout)
+                .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.secondary)
             TextField("Filter files", text: $searchText)
                 .textFieldStyle(.plain)
@@ -49,7 +51,10 @@ public struct CodeFileTreeView: View {
                     searchText = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
+                        .font(.callout)
+                        .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(.secondary)
+                        .contentTransition(.symbolEffect(.replace))
                 }
                 .buttonStyle(.plain)
             }
@@ -90,10 +95,13 @@ public struct CodeFileTreeView: View {
     private func directoryRow(_ node: CodeFileTreeNode) -> some View {
         HStack(spacing: 4) {
             Image(systemName: node.iconName)
+                .font(.caption)
+                .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.tint)
                 .frame(width: 16)
             Text(node.name)
                 .lineLimit(1)
+                .truncationMode(.tail)
         }
         .contentShape(Rectangle())
     }
@@ -101,6 +109,8 @@ public struct CodeFileTreeView: View {
     private func fileRow(_ node: CodeFileTreeNode) -> some View {
         HStack(spacing: 4) {
             Image(systemName: node.iconName)
+                .font(.caption)
+                .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.secondary)
                 .frame(width: 16)
             Text(node.name)

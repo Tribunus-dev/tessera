@@ -92,6 +92,7 @@ public struct ChatPanelInputView: View {
         .help(holdMode.isUserPaused
             ? "Resume the agent"
             : "Pause the agent and open a conversation")
+        .accessibilityLabel(holdMode.isUserPaused ? "Resume" : "Hold your horses")
     }
 
     private var cancelButton: some View {
@@ -119,6 +120,7 @@ public struct ChatPanelInputView: View {
         }
         .buttonStyle(.plain)
         .help("Stop the agent's current work")
+        .accessibilityLabel("Stop")
     }
 
     private var holdIcon: String {

@@ -214,6 +214,7 @@ struct ModelCardView: View {
                     .lineLimit(1)
                 Spacer()
                 Image(systemName: model.runtime.icon)
+                    .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(.secondary)
             }
 

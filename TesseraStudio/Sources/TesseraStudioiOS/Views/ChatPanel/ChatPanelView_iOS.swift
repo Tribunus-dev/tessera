@@ -67,6 +67,7 @@ public struct ChatPanelView_iOS: View {
                         showReceiptsSheet = true
                     } label: {
                         Image(systemName: "doc.text.magnifyingglass")
+                            .symbolRenderingMode(.hierarchical)
                     }
                     .accessibilityLabel("View receipts")
                     .accessibilityHint("Opens the receipts list")
@@ -204,6 +205,7 @@ public struct ChatQueueRowView_iOS: View {
         Button(action: onTap) {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: display.style.iconSystemName)
+                    .symbolRenderingMode(.hierarchical)
                     .font(.body.weight(.semibold))
                     .foregroundStyle(display.style.iconTint)
                     .frame(width: 22, height: 22)
@@ -286,6 +288,7 @@ struct HoldYourHorsesDialog_iOS: View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 16) {
                 Image(systemName: "pause.circle.fill")
+                    .symbolRenderingMode(.hierarchical)
                     .font(.title)
                     .foregroundStyle(.orange)
                 Text(state.title)

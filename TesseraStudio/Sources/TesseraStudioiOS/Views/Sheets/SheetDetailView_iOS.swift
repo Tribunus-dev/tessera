@@ -75,6 +75,7 @@ public struct SheetDetailView_iOS: View {
                         HStack(spacing: 4) {
                             Text("#\(tag)")
                             Image(systemName: "xmark").font(.caption2)
+                                .symbolRenderingMode(.hierarchical)
                         }
                         .padding(.horizontal, 8).padding(.vertical, 3)
                         .background(Capsule().fill(Color.accentColor.opacity(0.15)))
@@ -155,6 +156,7 @@ public struct SheetDetailView_iOS: View {
                 ForEach(viewModel.sheet.linkedEntityIDs, id: \.self) { id in
                     HStack(spacing: 4) {
                         Image(systemName: "link").font(.caption)
+                            .symbolRenderingMode(.hierarchical)
                         Text(id.uuidString.prefix(8) + "…").font(.caption)
                     }
                     .padding(.horizontal, 8).padding(.vertical, 3)
@@ -174,6 +176,7 @@ public struct SheetDetailView_iOS: View {
                 Button("Delete", role: .destructive) { showDeleteConfirm = true }
             } label: {
                 Image(systemName: "ellipsis.circle")
+                    .symbolRenderingMode(.hierarchical)
             }
         }
     }

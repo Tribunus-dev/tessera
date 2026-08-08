@@ -138,6 +138,7 @@ public struct NoteEditorColumn: View {
                         HStack(spacing: 4) {
                             Text("#\(tag)")
                             Image(systemName: "xmark")
+                                .symbolRenderingMode(.hierarchical)
                                 .font(.caption2)
                         }
                         .padding(.horizontal, 8)
@@ -385,6 +386,7 @@ struct LinkedEntityChip: View {
         Button(action: onClick) {
             HStack(spacing: 4) {
                 Image(systemName: "link")
+                    .symbolRenderingMode(.hierarchical)
                 Text(id.uuidString.prefix(8) + "…")
             }
             .font(.caption)

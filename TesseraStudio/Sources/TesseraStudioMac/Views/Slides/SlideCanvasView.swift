@@ -231,6 +231,7 @@ public struct SlideThumbnailView: View {
                 }
                 if slide.thumbnailHint != nil {
                     Image(systemName: "photo").font(.caption2).foregroundStyle(.tertiary)
+                        .symbolRenderingMode(.hierarchical)
                 }
             }
             .padding(6)

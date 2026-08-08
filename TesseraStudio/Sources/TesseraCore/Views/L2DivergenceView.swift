@@ -140,6 +140,7 @@ public struct L2DivergenceView: View {
                 HStack(spacing: 4) {
                     if row.flagged {
                         Image(systemName: "flag.fill").foregroundStyle(.red).font(.caption2)
+                            .symbolRenderingMode(.hierarchical)
                     }
                     Text(row.tensor).font(.system(.caption, design: .monospaced)).lineLimit(1)
                 }
@@ -166,6 +167,7 @@ public struct L2DivergenceView: View {
                 HStack {
                     if row.flagged {
                         Image(systemName: "flag.fill").foregroundStyle(.red).font(.caption2)
+                            .symbolRenderingMode(.hierarchical)
                     }
                     Text(row.tensor).font(.system(.caption, design: .monospaced)).lineLimit(1)
                     Spacer()

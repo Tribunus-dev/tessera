@@ -60,6 +60,7 @@ public struct ReceiptDetailView: View {
             ToolbarItem(placement: .primaryAction) {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
+                        .symbolRenderingMode(.hierarchical)
                 }
                 .help("Close receipt")
             }
@@ -83,6 +84,7 @@ public struct ReceiptDetailView: View {
             }
             HStack(spacing: 6) {
                 Image(systemName: actorIcon)
+                    .symbolRenderingMode(.hierarchical)
                     .font(.caption)
                     .foregroundStyle(actorTint)
                 Text(actorLabel)
@@ -168,6 +170,7 @@ public struct ReceiptDetailView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "checkmark.shield")
+                            .symbolRenderingMode(.hierarchical)
                             .font(.caption)
                         Text("Verify")
                             .font(.caption)
@@ -176,6 +179,7 @@ public struct ReceiptDetailView: View {
                 if let result = verificationResult {
                     HStack(spacing: 4) {
                         Image(systemName: result.icon)
+                            .symbolRenderingMode(.hierarchical)
                             .foregroundStyle(result.tint)
                         Text(result.label)
                             .font(.caption.weight(.medium))
@@ -206,6 +210,7 @@ public struct ReceiptDetailView: View {
                     } label: {
                         HStack(spacing: 4) {
                             Image(systemName: "doc.text.magnifyingglass")
+                                .symbolRenderingMode(.hierarchical)
                                 .font(.caption2)
                             Text("View")
                                 .font(.caption2)

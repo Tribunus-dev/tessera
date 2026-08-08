@@ -87,6 +87,7 @@ public struct SheetDetailView: View {
                     HStack(spacing: 4) {
                         Text("#\(tag)")
                         Image(systemName: "xmark").font(.caption2)
+                            .symbolRenderingMode(.hierarchical)
                     }
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .background(Capsule().fill(Color.accentColor.opacity(0.15)))
@@ -158,6 +159,7 @@ public struct SheetDetailView: View {
     private var emptyGridState: some View {
         VStack(spacing: 8) {
             Image(systemName: "tablecells.badge.ellipsis").font(.title2).foregroundStyle(.secondary)
+                .symbolRenderingMode(.hierarchical)
             Text("No grid yet").font(.subheadline).foregroundStyle(.secondary)
             Button("Create 5 x 4 grid") {
                 // Insert an initial table via a throwaway blank sheet's AST.
@@ -280,6 +282,7 @@ struct SheetLinkedEntityChip: View {
     var body: some View {
         HStack(spacing: 4) {
             Image(systemName: "link")
+                .symbolRenderingMode(.hierarchical)
             Text(id.uuidString.prefix(8) + "…")
         }
         .font(.caption)

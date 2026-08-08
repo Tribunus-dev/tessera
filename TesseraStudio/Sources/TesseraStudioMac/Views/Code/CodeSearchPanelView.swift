@@ -37,6 +37,7 @@ public struct CodeSearchPanelView: View {
     private var searchBar: some View {
         HStack(spacing: 4) {
             Image(systemName: "magnifyingglass")
+                .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.secondary)
             TextField("Search workspace", text: $viewModel.searchQuery)
                 .textFieldStyle(.plain)
@@ -45,6 +46,7 @@ public struct CodeSearchPanelView: View {
                     viewModel.searchQuery = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
+                        .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)

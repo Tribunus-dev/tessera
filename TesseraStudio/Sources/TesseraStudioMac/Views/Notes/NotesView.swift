@@ -303,11 +303,13 @@ struct NoteRowView: View {
             HStack(spacing: 6) {
                 if row.isPinned {
                     Image(systemName: "pin.fill")
+                        .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(.orange)
                         .font(.caption)
                 }
                 if row.isArchived {
                     Image(systemName: "archivebox.fill")
+                        .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(.secondary)
                         .font(.caption)
                 }

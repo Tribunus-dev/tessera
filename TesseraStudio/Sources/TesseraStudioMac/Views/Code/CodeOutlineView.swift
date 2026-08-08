@@ -39,6 +39,7 @@ public struct CodeOutlineView: View {
     private var filterBar: some View {
         HStack(spacing: 4) {
             Image(systemName: "list.bullet.indent")
+                .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.secondary)
             Picker("Kind", selection: $kindFilter) {
                 Text("All").tag(CodeOutlineItem.Kind?.none)
@@ -95,6 +96,7 @@ public struct CodeOutlineView: View {
     private func outlineRow(_ row: OutlineRow) -> some View {
         HStack(spacing: 6) {
             Image(systemName: iconName(for: row.kind))
+                .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.tint)
                 .frame(width: 14)
             Text(row.label)

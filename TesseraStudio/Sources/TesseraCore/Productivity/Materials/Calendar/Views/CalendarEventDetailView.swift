@@ -79,6 +79,8 @@ public struct CalendarEventDetailView: View {
                 }
             } icon: {
                 Image(systemName: "clock")
+                    .font(.callout)
+                    .symbolRenderingMode(.hierarchical)
             }
             if event.allDay {
                 Label("All day", systemImage: "sun.max")
@@ -115,8 +117,12 @@ public struct CalendarEventDetailView: View {
                 .foregroundStyle(.secondary)
             ForEach(Array(event.attendees.enumerated()), id: \.offset) { _, attendee in
                 HStack(spacing: 6) {
-                    Image(systemName: attendee.contactID != nil ? "person.crop.circle.fill" : "person.crop.circle")
-                        .foregroundStyle(attendee.contactID != nil ? Color.accentColor : .secondary)
+                    Image(systemName: "person.crop.circle")
+                        .symbolVariant(attendee.contactID != nil ? .fill : .none)
+                        .symbolRenderingMode(.hierarchical)
+                        .font(.callout)
+                        .foregroundStyle(attendee.contactID != nil ? Color.accentColor : Color.secondary)
+                        .contentTransition(.symbolEffect(.replace))
                     VStack(alignment: .leading, spacing: 0) {
                         Text(attendee.name)
                             .font(.callout)
@@ -204,6 +210,8 @@ public struct CalendarEventDetailView: View {
                 ForEach(links, id: \.id) { link in
                     HStack(spacing: 6) {
                         Image(systemName: linkIcon(link.linkType))
+                            .font(.caption)
+                            .symbolRenderingMode(.hierarchical)
                             .foregroundStyle(.secondary)
                         Text(linkTargetName(link))
                             .font(.callout)
@@ -266,6 +274,8 @@ public struct CalendarEventDetailView: View {
                 ForEach(receipts) { receipt in
                     HStack(spacing: 6) {
                         Image(systemName: receiptIcon(receipt.receiptType))
+                            .font(.caption)
+                            .symbolRenderingMode(.hierarchical)
                             .foregroundStyle(.secondary)
                         Text(receipt.receiptType.replacingOccurrences(of: "_", with: " "))
                             .font(.callout)

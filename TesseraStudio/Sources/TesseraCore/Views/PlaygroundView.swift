@@ -90,6 +90,7 @@ public struct PlaygroundView: View {
 
             Button(action: send) {
                 Image(systemName: "arrow.up.circle.fill")
+                    .symbolRenderingMode(.hierarchical)
                     .font(.title2)
             }
             .accessibilityLabel("Send")

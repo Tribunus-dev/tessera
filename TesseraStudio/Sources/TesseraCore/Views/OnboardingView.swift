@@ -46,6 +46,7 @@ public struct OnboardingView: View {
     private var welcomePage: some View {
         VStack(spacing: 16) {
             Image(systemName: "square.grid.3x3.topleft.filled")
+                .symbolRenderingMode(.hierarchical)
                 .font(.largeTitle)
                 .foregroundStyle(.purple)
             Text("Welcome to Tessera Studio")
@@ -67,6 +68,7 @@ public struct OnboardingView: View {
     private var modelPage: some View {
         VStack(spacing: 16) {
             Image(systemName: "cube.box")
+                .symbolRenderingMode(.hierarchical)
                 .font(.largeTitle)
                 .foregroundStyle(.blue)
             Text("Set Up Models")
@@ -121,6 +123,7 @@ public struct OnboardingView: View {
     private var agentPage: some View {
         VStack(spacing: 16) {
             Image(systemName: "bubble.left.and.text.bubble.right")
+                .symbolRenderingMode(.hierarchical)
                 .font(.largeTitle)
                 .foregroundStyle(.green)
             Text("Meet the Agent")
@@ -142,6 +145,7 @@ public struct OnboardingView: View {
     private func feature(_ icon: String, _ title: String, _ detail: String) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
+                .symbolRenderingMode(.hierarchical)
                 .frame(width: 24)
                 .foregroundStyle(.purple)
             VStack(alignment: .leading, spacing: 1) {

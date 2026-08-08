@@ -327,6 +327,7 @@ struct CalendarEventChip: View {
                 .lineLimit(1)
             if event.recurrence != nil {
                 Image(systemName: "repeat")
+                    .symbolRenderingMode(.hierarchical)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }

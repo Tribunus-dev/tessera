@@ -284,6 +284,7 @@ public struct SpeechWorkflowView: View {
     private func statusBadge(outcome: SpeechWorkflowOutcome) -> some View {
         HStack(spacing: 6) {
             Image(systemName: outcome.success ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(outcome.success ? .green : .orange)
             Text(outcome.success ? "Last run OK" : "Last run failed")
                 .font(.callout)

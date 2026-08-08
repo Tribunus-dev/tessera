@@ -195,6 +195,7 @@ public struct BlockRenderer: Sendable {
             attachment.image = image
         } else {
             attachment.image = UIImage(systemName: "photo")
+                .symbolRenderingMode(.hierarchical)
         }
         #else
         // Non-platform: placeholder string. The build configuration

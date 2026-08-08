@@ -100,6 +100,7 @@ public struct ReminderDetailView: View {
     private var header: some View {
         HStack(alignment: .center, spacing: 16) {
             Image(systemName: "bell")
+                .symbolRenderingMode(.hierarchical)
                 .font(.largeTitle)
                 .foregroundStyle(.yellow)
             VStack(alignment: .leading, spacing: 4) {
@@ -171,6 +172,7 @@ public struct ReminderDetailView: View {
                 ForEach(receipts) { r in
                     HStack(alignment: .top, spacing: 8) {
                         Image(systemName: "doc.text")
+                            .symbolRenderingMode(.hierarchical)
                             .foregroundStyle(.tertiary)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(r.receiptType)

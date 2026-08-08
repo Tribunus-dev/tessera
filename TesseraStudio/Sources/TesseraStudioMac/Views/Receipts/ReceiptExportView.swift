@@ -109,6 +109,7 @@ public struct ReceiptExportView: View {
         } label: {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: format == fmt ? "largecircle.fill.circle" : "circle")
+                    .symbolRenderingMode(.hierarchical)
                     .font(.body)
                     .foregroundStyle(format == fmt ? Color.accentColor : .secondary)
                 VStack(alignment: .leading, spacing: 2) {
@@ -136,6 +137,7 @@ public struct ReceiptExportView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Image(systemName: "checkmark.circle.fill")
+                    .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(.green)
                 Text("Exported")
                     .font(.caption.weight(.medium))

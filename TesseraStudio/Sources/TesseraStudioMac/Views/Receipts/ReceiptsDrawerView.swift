@@ -257,6 +257,7 @@ public struct ReceiptsDrawerView: View {
     private func allDocumentsRow(_ entry: AllDocumentsEntry) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: entry.documentID == documentID ? "doc.text" : "doc")
+                .symbolRenderingMode(.hierarchical)
                 .font(.caption)
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 2) {

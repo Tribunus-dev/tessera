@@ -39,6 +39,7 @@ public struct SheetGridView: View {
                     Text(label).font(.caption).fontWeight(.semibold).lineLimit(1)
                     if col.type != .text {
                         Image(systemName: iconForColumnType(col.type)).font(.caption2).foregroundStyle(.secondary)
+                            .symbolRenderingMode(.hierarchical)
                     }
                 }
                 .frame(maxWidth: .infinity).frame(height: 28)
@@ -53,6 +54,7 @@ public struct SheetGridView: View {
             // Spacer for the add-column affordance.
             Button { Task { await viewModel.insertColumn(at: viewModel.sheet.columnCount) } } label: {
                 Image(systemName: "plus").font(.caption)
+                    .symbolRenderingMode(.hierarchical)
             }
             .buttonStyle(.plain).frame(width: 28, height: 28)
         }
@@ -99,6 +101,7 @@ public struct SheetGridView: View {
                                 }
                             } label: {
                                 Image(systemName: "ellipsis").font(.caption2).foregroundStyle(.secondary)
+                                    .symbolRenderingMode(.hierarchical)
                             }
                             .menuStyle(.borderlessButton).controlSize(.mini)
                         }

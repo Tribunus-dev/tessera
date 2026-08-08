@@ -104,6 +104,7 @@ public struct ChatHistoryDrawer: View {
             Spacer()
             Button(action: { withAnimation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0.2)) { isPresented = false } }) {
                 Image(systemName: "xmark.circle.fill")
+                    .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)

@@ -200,6 +200,7 @@ public struct RemindersView: View {
     private var notificationsDisabledBanner: some View {
         HStack(spacing: 8) {
             Image(systemName: "bell.slash")
+                .symbolRenderingMode(.hierarchical)
             Text("Notifications are disabled. Open System Settings to enable them.")
                 .font(.caption)
             Spacer()
@@ -231,6 +232,7 @@ private struct ReminderRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: rowIcon)
+                .symbolRenderingMode(.hierarchical)
                 .font(.title3)
                 .foregroundStyle(rowColor)
                 .frame(width: 28)

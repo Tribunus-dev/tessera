@@ -36,6 +36,7 @@ public struct DocsListView_iOS: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { Task { await createBlankDoc() } } label: {
                         Image(systemName: "doc.badge.plus")
+                            .symbolRenderingMode(.hierarchical)
                     }
                 }
             }
@@ -110,8 +111,11 @@ struct DocRowView_iOS: View {
             HStack(spacing: 6) {
                 if let emoji = row.iconEmoji, !emoji.isEmpty { Text(emoji).font(.caption) }
                 if row.isFavorite { Image(systemName: "star.fill").foregroundStyle(.yellow).font(.caption) }
+                    .symbolRenderingMode(.hierarchical)
                 if row.isArchived { Image(systemName: "archivebox.fill").foregroundStyle(.secondary).font(.caption) }
+                    .symbolRenderingMode(.hierarchical)
                 if row.isTrashed { Image(systemName: "trash.fill").foregroundStyle(.secondary).font(.caption) }
+                    .symbolRenderingMode(.hierarchical)
                 Text(row.title).font(.headline).lineLimit(1)
             }
             if !row.snippet.isEmpty {

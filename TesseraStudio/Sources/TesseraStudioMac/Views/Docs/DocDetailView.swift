@@ -121,6 +121,7 @@ public struct DocDetailView: View {
                     HStack(spacing: 4) {
                         Text("#\(tag)")
                         Image(systemName: "xmark").font(.caption2)
+                            .symbolRenderingMode(.hierarchical)
                     }
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .background(Capsule().fill(Color.accentColor.opacity(0.15)))
@@ -276,6 +277,7 @@ struct DocLinkedEntityChip: View {
     var body: some View {
         HStack(spacing: 4) {
             Image(systemName: "link")
+                .symbolRenderingMode(.hierarchical)
             Text(id.uuidString.prefix(8) + "…")
         }
         .font(.caption)

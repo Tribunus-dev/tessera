@@ -61,6 +61,7 @@ public struct SlideDeckDetailView_iOS: View {
     private var headerSection: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: "rectangle.on.rectangle").foregroundStyle(.secondary)
+                .symbolRenderingMode(.hierarchical)
             TextField("Title", text: $draftTitle, onCommit: {
                 viewModel.draftTitle = draftTitle
                 Task { await viewModel.commitTitle() }
@@ -96,6 +97,7 @@ public struct SlideDeckDetailView_iOS: View {
                         HStack(spacing: 4) {
                             Text("#\(tag)").font(.caption)
                             Image(systemName: "xmark").font(.caption2)
+                                .symbolRenderingMode(.hierarchical)
                         }
                         .padding(.horizontal, 8).padding(.vertical, 4)
                         .background(.quaternary, in: Capsule())
@@ -203,6 +205,7 @@ public struct SlideDeckDetailView_iOS: View {
                     HStack(spacing: 8) {
                         Button { if selectedSlideIndex > 0 { selectedSlideIndex -= 1 } } label: {
                             Image(systemName: "chevron.left")
+                                .symbolRenderingMode(.hierarchical)
                         }
                         .disabled(selectedSlideIndex == 0)
                         .accessibilityLabel("Previous slide")
@@ -217,6 +220,7 @@ public struct SlideDeckDetailView_iOS: View {
                         Spacer()
                         Button { if selectedSlideIndex < viewModel.deck.slideCount - 1 { selectedSlideIndex += 1 } } label: {
                             Image(systemName: "chevron.right")
+                                .symbolRenderingMode(.hierarchical)
                         }
                         .disabled(selectedSlideIndex >= viewModel.deck.slideCount - 1)
                         .accessibilityLabel("Next slide")
@@ -285,6 +289,7 @@ public struct SlideDeckDetailView_iOS: View {
                 Button("Move to Trash", role: .destructive) { showDeleteConfirm = true }
             } label: {
                 Image(systemName: "ellipsis.circle")
+                    .symbolRenderingMode(.hierarchical)
             }
             .accessibilityLabel("More actions")
             .help("More actions")

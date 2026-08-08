@@ -62,6 +62,7 @@ public struct ReceiptRowView: View {
 
     private var actorIcon: some View {
         Image(systemName: actorIconName)
+            .symbolRenderingMode(.hierarchical)
             .font(.callout.weight(.semibold))
             .foregroundStyle(actorIconTint)
     }

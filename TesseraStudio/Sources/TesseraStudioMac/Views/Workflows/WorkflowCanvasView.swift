@@ -126,6 +126,7 @@ struct WorkflowCanvasView: View {
                 zoom = WorkflowGeometry.clampedZoom(zoom / 1.25)
             } label: {
                 Image(systemName: "minus.magnifyingglass")
+                    .symbolRenderingMode(.hierarchical)
             }
             .keyboardShortcut("-", modifiers: .command)
             .help("Zoom out")
@@ -138,6 +139,7 @@ struct WorkflowCanvasView: View {
                 zoom = WorkflowGeometry.clampedZoom(zoom * 1.25)
             } label: {
                 Image(systemName: "plus.magnifyingglass")
+                    .symbolRenderingMode(.hierarchical)
             }
             .keyboardShortcut("=", modifiers: .command)
             .help("Zoom in")
@@ -147,6 +149,7 @@ struct WorkflowCanvasView: View {
                 pan = .zero
             } label: {
                 Image(systemName: "arrow.up.left.and.down.right.magnifyingglass")
+                    .symbolRenderingMode(.hierarchical)
             }
             .keyboardShortcut("0", modifiers: .command)
             .help("Reset zoom and pan")

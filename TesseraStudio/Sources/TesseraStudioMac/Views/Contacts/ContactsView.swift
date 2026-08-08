@@ -59,6 +59,8 @@ public struct ContactsView: View {
                     Task { await load() }
                 } label: {
                     Image(systemName: "arrow.clockwise")
+                        .font(.body)
+                        .symbolRenderingMode(.hierarchical)
                 }
                 .help("Reload contacts")
                 .accessibilityLabel("Reload contacts")
@@ -195,19 +197,24 @@ private struct ContactRow: View {
                 subtype: contact.subtype.rawValue
             ))
             .font(.title3)
+            .symbolRenderingMode(.hierarchical)
             .foregroundStyle(GraphNode.color(for: "contact"))
             .frame(width: 28)
             VStack(alignment: .leading, spacing: 2) {
                 Text(contact.displayName)
                     .font(.body)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                 if let org = contact.organization, !org.isEmpty {
                     Text(org)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 } else if let email = contact.emails.first {
                     Text(email.value)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
             Spacer()
@@ -268,6 +275,7 @@ private struct ContactDetailView: View {
                 subtype: contact.subtype.rawValue
             ))
             .font(.largeTitle)
+            .symbolRenderingMode(.hierarchical)
             .foregroundStyle(GraphNode.color(for: "contact"))
             VStack(alignment: .leading, spacing: 4) {
                 Text(contact.displayName)
@@ -349,6 +357,8 @@ private struct ContactDetailView: View {
                 ForEach(receipts) { r in
                     HStack {
                         Image(systemName: "doc.text")
+                            .font(.caption)
+                            .symbolRenderingMode(.hierarchical)
                             .foregroundStyle(.tertiary)
                         VStack(alignment: .leading) {
                             Text(r.receiptType)

@@ -54,6 +54,7 @@ public struct DocDetailView_iOS: View {
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")
+                        .symbolRenderingMode(.hierarchical)
                 }
             }
         }
