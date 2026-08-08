@@ -33,6 +33,7 @@ public struct ChatPanelView: View {
     public let onSwitchToDocument: ((UUID) -> Void)?
     public let onOpenReceipt: ((UUID) -> Void)?
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var holdResponse: String = ""
     @State private var backgroundDocuments: [ActiveDocumentInfo] = []
     @State private var dragSourceID: UUID?
@@ -86,7 +87,7 @@ public struct ChatPanelView: View {
                 onCancelInProgress: { Task { await viewModel.cancelInProgress() } }
             )
         }
-        .background(Color(NSColor.textBackgroundColor).opacity(0.5))
+        .background(.thinMaterial)
         .frame(minWidth: 280, idealWidth: 340, maxWidth: 480, maxHeight: .infinity)
         .focusable(true)
         .focusEffectDisabled()
@@ -179,12 +180,15 @@ public struct ChatPanelView: View {
                             .contextMenu {
                                 contextMenu(for: display)
                             }
+                            .accessibilityLabel(display.message)
+                            .accessibilityHint("Double-click to edit; drag to reorder")
+                            .accessibilityAddTraits(.isButton)
                             .onDrag {
                                 dragSourceID = display.item.id
                                 return NSItemProvider(object: display.item.id.uuidString as NSString)
                             } preview: {
                                 Text(display.message)
-                                    .font(.system(size: 11))
+                                    .font(.caption)
                                     .padding(6)
                                     .background(.thickMaterial)
                                     .cornerRadius(4)
@@ -205,7 +209,7 @@ public struct ChatPanelView: View {
             }
             .onChange(of: viewModel.items) { _, newItems in
                 if let firstInProgress = newItems.first(where: { $0.item.state == .inProgress }) {
-                    withAnimation(.easeOut(duration: 0.25)) {
+                    withAnimation(reduceMotion ? nil : .spring(duration: 0.25)) {
                         proxy.scrollTo(firstInProgress.item.id, anchor: .center)
                     }
                 }
@@ -214,18 +218,11 @@ public struct ChatPanelView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 6) {
-            Image(systemName: "bubble.left")
-                .font(.system(size: 24))
-                .foregroundStyle(.tertiary)
-            Text("No commands yet")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.secondary)
-            Text("Type a command for the agent below.")
-                .font(.system(size: 11))
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
-        }
+        ContentUnavailableView(
+            "No commands yet",
+            systemImage: "bubble.left",
+            description: Text("Type a command for the agent below.")
+        )
         .frame(maxWidth: .infinity)
         .padding(.vertical, 32)
     }

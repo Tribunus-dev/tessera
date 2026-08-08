@@ -77,16 +77,19 @@ public struct ChatQueueRowView: View {
 
     private var iconView: some View {
         Image(systemName: display.style.iconSystemName)
-            .font(.system(size: 12, weight: .semibold))
+            .font(.callout.weight(.semibold))
+            .symbolRenderingMode(.hierarchical)
             .foregroundStyle(display.style.iconTint)
+            .contentTransition(.symbolEffect(.replace))
             .thinkingPulse(isActive: display.style.pulseAnimation)
     }
 
     private var messageText: some View {
         Text(display.message)
-            .font(.system(size: 13))
+            .font(.callout)
             .italic(display.style.isItalic)
             .lineLimit(3)
+            .truncationMode(.tail)
             .multilineTextAlignment(.leading)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -97,10 +100,13 @@ public struct ChatQueueRowView: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "doc.text")
-                    .font(.system(size: 10))
+                    .font(.caption2)
+                    .symbolRenderingMode(.hierarchical)
+                    .accessibilityHidden(true)
                 Text(chip)
-                    .font(.system(size: 11))
+                    .font(.caption)
                     .lineLimit(1)
+                    .truncationMode(.tail)
             }
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
@@ -120,15 +126,19 @@ public struct ChatQueueRowView: View {
     private func replacesBadge(position: Int) -> some View {
         HStack(spacing: 4) {
             Image(systemName: "arrow.uturn.backward")
-                .font(.system(size: 9))
+                .font(.caption2)
+                .symbolRenderingMode(.hierarchical)
+                .accessibilityHidden(true)
             Text("replaces #\(position)")
-                .font(.system(size: 10, weight: .medium))
+                .font(.caption2.weight(.medium))
+                .monospacedDigit()
+                .lineLimit(1)
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 1)
         .foregroundStyle(.secondary)
         .background(
-            Capsule().fill(Color.secondary.opacity(0.12))
+            Capsule().fill(.quaternary)
         )
     }
 
@@ -138,16 +148,19 @@ public struct ChatQueueRowView: View {
                 .controlSize(.small)
                 .scaleEffect(0.6)
             Text(text)
-                .font(.system(size: 11))
+                .font(.caption)
                 .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .truncationMode(.tail)
         }
     }
 
     private func failureNote(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 11))
+            .font(.caption)
             .foregroundStyle(.red)
             .lineLimit(2)
+            .truncationMode(.tail)
     }
 
     @ViewBuilder
@@ -157,7 +170,7 @@ public struct ChatQueueRowView: View {
             Color.clear
         case .subtleHighlight:
             RoundedRectangle(cornerRadius: 6)
-                .fill(Color.yellow.opacity(0.08))
+                .fill(.quaternary)
         case .redFlash:
             RoundedRectangle(cornerRadius: 6)
                 .fill(Color.red.opacity(0.10))

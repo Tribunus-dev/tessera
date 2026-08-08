@@ -892,6 +892,13 @@ static void * ggml_backend_metal_get_proc_address(ggml_backend_reg_t reg, const 
     if (strcmp(name, "ggml_backend_get_features") == 0) {
         return (void *)ggml_backend_metal_get_features;
     }
+    if (strcmp(name, "ggml_backend_metal_dev_get_metal_device") == 0) {
+        // Helper for llama-layer code that needs the ggml_metal_device_t from
+        // a ggml_backend_dev_t without reaching into the internal struct.
+        return (void *) +[](ggml_backend_dev_t dev) -> ggml_metal_device_t {
+            return dev ? (ggml_metal_device_t) dev->context : nullptr;
+        };
+    }
 
     return NULL;
 

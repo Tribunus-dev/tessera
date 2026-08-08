@@ -6,6 +6,10 @@
 #include "llama-hparams.h"
 #include "llama.h"
 
+#if defined(__APPLE__) && defined(GGML_USE_ANE)
+#include "ggml-ane.h"
+#endif
+
 #include <algorithm>
 #include <array>
 #include <cinttypes>
@@ -611,6 +615,7 @@ llama_model_loader::llama_model_loader(
 
         files.emplace_back(new llama_file(fname.c_str(), "rb", use_direct_io));
         contexts.emplace_back(ctx);
+        gguf_path = fname;
 
         // Save tensors data offset of the main file.
         // For subsidiary files, `meta` tensor data offset must not be used,
@@ -1099,6 +1104,16 @@ static ggml_backend_buffer_type_t select_weight_buft(const llama_hparams & hpara
     for (const auto & cur : *buft_list) {
         ggml_backend_dev_t cur_dev = cur.first;
         ggml_backend_buffer_type_t cur_buft = cur.second;
+        // Slice 4.2a: the ANE_IOSURFACE buft is the 2-slot weight pool's
+        // backing store, reserved for FFN weights aliased by the heterog
+        // override. Skip it here so non-FFN tensors (norms, attention,
+        // output) don't accidentally land in the pool's ctx where they'd
+        // have no backing buffer (the pool only knows FFN tensor layouts).
+#if defined(__APPLE__) && defined(GGML_USE_ANE)
+        if (cur_buft == ggml_backend_ane_iosurface_buffer_type()) {
+            continue;
+        }
+#endif
         if (weight_buft_supported(hparams, tensor, op, cur_buft, cur_dev)) {
             return cur_buft;
         }
@@ -1606,6 +1621,17 @@ bool llama_model_loader::load_all_data(
         }
 
         size_t n_size = ggml_nbytes(cur);
+
+        // Slice 4.2a: tensors aliased into the 2-slot IOSurface weight pool
+        // are filled at runtime by the encoder (per-layer refill from the
+        // mmap). Skip the bulk load here so the pool's slots are the only
+        // backing store. size_done still advances for accurate progress.
+#if defined(__APPLE__) && defined(GGML_USE_ANE)
+        if (ggml_backend_ane_iosurface_buffer_check(cur->buffer)) {
+            size_done += n_size;
+            continue;
+        }
+#endif
 
         if (use_mmap) {
             const auto & mapping = mappings.at(weight->idx);

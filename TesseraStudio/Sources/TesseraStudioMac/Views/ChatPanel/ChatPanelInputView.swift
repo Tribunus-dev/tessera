@@ -54,7 +54,7 @@ public struct ChatPanelInputView: View {
     private var inputField: some View {
         TextField("Type a command…", text: $text, axis: .vertical)
             .textFieldStyle(.roundedBorder)
-            .font(.system(size: 13))
+            .font(.callout)
             .lineLimit(1...3)
             .focused($inputFocused)
             .onSubmit(onSubmit)
@@ -68,9 +68,13 @@ public struct ChatPanelInputView: View {
         Button(action: onHoldYourHorses) {
             HStack(spacing: 4) {
                 Image(systemName: holdIcon)
-                    .font(.system(size: 11))
+                    .font(.caption)
+                    .symbolRenderingMode(.hierarchical)
+                    .contentTransition(.symbolEffect(.replace))
+                    .accessibilityHidden(true)
                 Text(holdMode.footerButtonLabel)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.caption.weight(.medium))
+                    .lineLimit(1)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
@@ -88,15 +92,19 @@ public struct ChatPanelInputView: View {
         .help(holdMode.isUserPaused
             ? "Resume the agent"
             : "Pause the agent and open a conversation")
+        .accessibilityLabel(holdMode.isUserPaused ? "Resume" : "Hold your horses")
     }
 
     private var cancelButton: some View {
         Button(action: onCancelInProgress) {
             HStack(spacing: 4) {
                 Image(systemName: "stop.circle")
-                    .font(.system(size: 11))
+                    .font(.caption)
+                    .symbolRenderingMode(.hierarchical)
+                    .accessibilityHidden(true)
                 Text("Stop")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.caption.weight(.medium))
+                    .lineLimit(1)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
@@ -112,6 +120,7 @@ public struct ChatPanelInputView: View {
         }
         .buttonStyle(.plain)
         .help("Stop the agent's current work")
+        .accessibilityLabel("Stop")
     }
 
     private var holdIcon: String {

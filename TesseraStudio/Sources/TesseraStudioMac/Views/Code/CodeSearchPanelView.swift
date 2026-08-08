@@ -37,6 +37,7 @@ public struct CodeSearchPanelView: View {
     private var searchBar: some View {
         HStack(spacing: 4) {
             Image(systemName: "magnifyingglass")
+                .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.secondary)
             TextField("Search workspace", text: $viewModel.searchQuery)
                 .textFieldStyle(.plain)
@@ -45,6 +46,7 @@ public struct CodeSearchPanelView: View {
                     viewModel.searchQuery = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
+                        .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -72,21 +74,16 @@ public struct CodeSearchPanelView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 6) {
-            Image(systemName: "text.magnifyingglass")
-                .font(.system(size: 28))
-                .foregroundStyle(.secondary)
-            if viewModel.searchQuery.isEmpty {
-                Text("Type a query to search")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            } else {
-                Text("No matches")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+        ContentUnavailableView {
+            Label(
+                viewModel.searchQuery.isEmpty ? "Type a query to search" : "No matches",
+                systemImage: "text.magnifyingglass"
+            )
+        } description: {
+            if !viewModel.searchQuery.isEmpty {
+                Text("Try a different search term.")
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var resultsList: some View {

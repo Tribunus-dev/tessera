@@ -114,7 +114,7 @@ struct WorkflowCanvasView: View {
         .overlay(alignment: .bottomTrailing) {
             zoomControls.padding(10)
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(.background)
     }
 
     /// Zoom in / out / reset cluster, pinned to the canvas
@@ -126,27 +126,34 @@ struct WorkflowCanvasView: View {
                 zoom = WorkflowGeometry.clampedZoom(zoom / 1.25)
             } label: {
                 Image(systemName: "minus.magnifyingglass")
+                    .symbolRenderingMode(.hierarchical)
             }
             .keyboardShortcut("-", modifiers: .command)
             .help("Zoom out")
+            .accessibilityLabel("Zoom out")
             Text("\(Int(round(zoom * 100)))%")
                 .monospacedDigit()
                 .frame(minWidth: 44)
+                .accessibilityLabel("\(Int(round(zoom * 100))) percent")
             Button {
                 zoom = WorkflowGeometry.clampedZoom(zoom * 1.25)
             } label: {
                 Image(systemName: "plus.magnifyingglass")
+                    .symbolRenderingMode(.hierarchical)
             }
             .keyboardShortcut("=", modifiers: .command)
             .help("Zoom in")
+            .accessibilityLabel("Zoom in")
             Button {
                 zoom = 1
                 pan = .zero
             } label: {
                 Image(systemName: "arrow.up.left.and.down.right.magnifyingglass")
+                    .symbolRenderingMode(.hierarchical)
             }
             .keyboardShortcut("0", modifiers: .command)
             .help("Reset zoom and pan")
+            .accessibilityLabel("Reset zoom and pan")
         }
         .buttonStyle(.borderless)
         .padding(.horizontal, 8)
@@ -157,7 +164,7 @@ struct WorkflowCanvasView: View {
     private var gridBackground: some View {
         Canvas { ctx, size in
             let spacing: CGFloat = 24
-            let color = Color.secondary.opacity(0.08)
+            let color = Color(.separatorColor)
             var path = Path()
             var x: CGFloat = 0
             while x < size.width {

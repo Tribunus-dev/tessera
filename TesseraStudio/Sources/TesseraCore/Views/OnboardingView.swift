@@ -46,7 +46,8 @@ public struct OnboardingView: View {
     private var welcomePage: some View {
         VStack(spacing: 16) {
             Image(systemName: "square.grid.3x3.topleft.filled")
-                .font(.system(size: 56))
+                .symbolRenderingMode(.hierarchical)
+                .font(.largeTitle)
                 .foregroundStyle(.purple)
             Text("Welcome to Tessera Studio")
                 .font(.largeTitle.bold())
@@ -67,7 +68,8 @@ public struct OnboardingView: View {
     private var modelPage: some View {
         VStack(spacing: 16) {
             Image(systemName: "cube.box")
-                .font(.system(size: 56))
+                .symbolRenderingMode(.hierarchical)
+                .font(.largeTitle)
                 .foregroundStyle(.blue)
             Text("Set Up Models")
                 .font(.largeTitle.bold())
@@ -121,7 +123,8 @@ public struct OnboardingView: View {
     private var agentPage: some View {
         VStack(spacing: 16) {
             Image(systemName: "bubble.left.and.text.bubble.right")
-                .font(.system(size: 56))
+                .symbolRenderingMode(.hierarchical)
+                .font(.largeTitle)
                 .foregroundStyle(.green)
             Text("Meet the Agent")
                 .font(.largeTitle.bold())
@@ -142,6 +145,7 @@ public struct OnboardingView: View {
     private func feature(_ icon: String, _ title: String, _ detail: String) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
+                .symbolRenderingMode(.hierarchical)
                 .frame(width: 24)
                 .foregroundStyle(.purple)
             VStack(alignment: .leading, spacing: 1) {
@@ -165,16 +169,16 @@ public struct OnboardingView: View {
         HStack(spacing: 8) {
             ForEach(0..<pageCount, id: \.self) { index in
                 Circle()
-                    .fill(index == page ? Color.primary : Color.secondary.opacity(0.3))
+                    .foregroundStyle(index == page ? .primary : .quaternary)
                     .frame(width: 8, height: 8)
             }
         }
     }
 
-    // HIG 2.7 / 3.6: under Reduce Motion, page turns switch instantly
-    // instead of animating.
-    private var pageTurnAnimation: Animation? {
-        reduceMotion ? nil : .default
+    // HIG 2.7: matched spring per §2.7 — Reduce Motion falls back to
+    // a near-instant linear so withAnimation still fires without motion.
+    private var pageTurnAnimation: Animation {
+        reduceMotion ? .linear(duration: 0.01) : .spring(duration: 0.35, bounce: 0.15)
     }
 
     private var controls: some View {

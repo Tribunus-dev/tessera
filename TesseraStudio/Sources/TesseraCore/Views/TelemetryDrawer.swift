@@ -59,6 +59,7 @@ public final class TelemetryMonitor {
 public struct TelemetryDrawer: View {
     public let monitor: TelemetryMonitor
     @Binding var isExpanded: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var collapsed: Set<TelemetryCategory> = []
 
     public init(monitor: TelemetryMonitor, isExpanded: Binding<Bool>) {
@@ -85,9 +86,10 @@ public struct TelemetryDrawer: View {
     }
 
     private var handle: some View {
-        Button(action: { withAnimation { isExpanded.toggle() } }) {
+        Button(action: { withAnimation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0.2)) { isExpanded.toggle() } }) {
             HStack(spacing: 8) {
                 Image(systemName: "waveform.path.ecg")
+                    .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(.green)
                 Text("Telemetry")
                     .font(.caption.bold())
@@ -98,6 +100,7 @@ public struct TelemetryDrawer: View {
                 }
                 Spacer()
                 Image(systemName: "chevron.down")
+                    .symbolRenderingMode(.hierarchical)
                     .font(.caption2)
                     .rotationEffect(.degrees(isExpanded ? 0 : 180))
                     .foregroundStyle(.tertiary)
@@ -163,6 +166,7 @@ public struct TelemetryDrawer: View {
                         .font(.caption.bold())
                     Spacer()
                     Image(systemName: "chevron.right")
+                        .symbolRenderingMode(.hierarchical)
                         .font(.caption2)
                         .rotationEffect(.degrees(isCollapsed ? 0 : 90))
                         .foregroundStyle(.tertiary)

@@ -60,6 +60,10 @@ public struct GraphView: View {
             }
         }
         .navigationTitle("Graph")
+        .searchable(text: $viewModel.searchQuery, prompt: "Search graph")
+        .onChange(of: viewModel.searchQuery) { _, _ in
+            viewModel.recomputeVisible()
+        }
         .toolbar {
             GraphToolbar(viewModel: viewModel, graphStates: $graphStates)
         }
@@ -108,29 +112,29 @@ public struct GraphView: View {
                 .link(originalLength: 50.0, stiffness: .weightedByDegree { _, _ in 1.0 })
                 .collide(radius: 6.0)
             }
-            .background(Color(NSColor.controlBackgroundColor))
+            .background(.background)
         }
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "circle.dotted")
-                .font(.system(size: 48))
-                .foregroundStyle(.tertiary)
-            Text("No graph data yet")
-                .font(.headline)
-            Text("Add a contact, document, or task to populate the graph.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+        Group {
             if let err = viewModel.loadError {
-                Text(err)
-                    .font(.caption2)
-                    .foregroundStyle(.red)
-                    .multilineTextAlignment(.center)
+                ContentUnavailableView {
+                    Label("Couldn't load graph", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(err)
+                } actions: {
+                    Button("Retry") { Task { await viewModel.load() } }
+                        .buttonStyle(.borderedProminent)
+                }
+            } else {
+                ContentUnavailableView {
+                    Label("No graph data yet", systemImage: "circle.dotted")
+                } description: {
+                    Text("Add a contact, document, or task to populate the graph.")
+                }
             }
         }
-        .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -190,13 +194,6 @@ private struct GraphSidebar: View {
 
     var body: some View {
         List {
-            Section("Search") {
-                TextField("Find (⌘F)", text: $viewModel.searchQuery)
-                    .textFieldStyle(.roundedBorder)
-                    .onChange(of: viewModel.searchQuery) { _, _ in
-                        viewModel.recomputeVisible()
-                    }
-            }
             Section("Visibility") {
                 Picker("Radius", selection: $viewModel.radius) {
                     ForEach(GraphViewModel.VisibilityRadius.allCases) { r in
@@ -258,12 +255,17 @@ private struct GraphToolbar: ToolbarContent {
                 Task { await viewModel.load() }
             } label: {
                 Image(systemName: "arrow.clockwise")
+                    .font(.body)
+                    .symbolRenderingMode(.hierarchical)
             }
             .help("Reload graph")
             Button {
                 graphStates.isRunning.toggle()
             } label: {
                 Image(systemName: graphStates.isRunning ? "pause.fill" : "play.fill")
+                    .font(.body)
+                    .symbolRenderingMode(.hierarchical)
+                    .contentTransition(.symbolEffect(.replace))
             }
             .help(graphStates.isRunning ? "Pause simulation" : "Resume simulation")
         }
@@ -281,23 +283,29 @@ private struct GraphDetailPanel: View {
                 HStack(alignment: .center, spacing: 8) {
                     Image(systemName: node.iconName)
                         .font(.title2)
+                        .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(GraphNode.color(for: node.entityType, subtype: node.subtype))
                     VStack(alignment: .leading) {
                         Text(node.label)
                             .font(.headline)
                             .lineLimit(2)
+                            .truncationMode(.tail)
                         Text(node.entityType)
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
                     Spacer()
                     Button {
                         viewModel.clearSelection()
                     } label: {
                         Image(systemName: "xmark.circle.fill")
+                            .font(.body)
+                            .symbolRenderingMode(.hierarchical)
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
+                    .help("Clear selection")
                 }
                 // "Open in <native surface>" — only shown
                 // when a surface wired an open handler
@@ -357,14 +365,18 @@ private struct GraphDetailPanel: View {
                 let other = viewModel.snapshot.nodes.first { $0.id == otherID }
                 HStack {
                     Image(systemName: other?.iconName ?? "circle")
+                        .font(.caption)
+                        .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(GraphNode.color(for: other?.entityType ?? "", subtype: other?.subtype))
                     VStack(alignment: .leading) {
                         Text(other?.label ?? "Unknown")
                             .font(.caption)
                             .lineLimit(1)
+                            .truncationMode(.tail)
                         Text(edge.linkType)
                             .font(.caption2)
                             .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
                     Spacer()
                 }

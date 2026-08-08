@@ -39,7 +39,7 @@ public struct DocDetailView: View {
                 .padding(.vertical, 12)
             }
         }
-        .background(Color(nsColor: .textBackgroundColor))
+        .background(.background)
         .toolbar { detailToolbar }
         .sheet(isPresented: $showDeleteConfirm) { deleteSheet }
         .sheet(isPresented: $showLinkSearch) { linkSheet }
@@ -59,12 +59,12 @@ public struct DocDetailView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                 case .failure:
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.gray.opacity(0.12))
+                        .fill(.quaternary)
                         .frame(height: 80)
                         .overlay { Label("Cover unavailable", systemImage: "photo.slash").foregroundStyle(.secondary).font(.caption) }
                 case .empty:
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.gray.opacity(0.08))
+                        .fill(.quaternary.opacity(0.6))
                         .frame(height: 80)
                         .overlay { ProgressView() }
                 @unknown default:
@@ -121,6 +121,7 @@ public struct DocDetailView: View {
                     HStack(spacing: 4) {
                         Text("#\(tag)")
                         Image(systemName: "xmark").font(.caption2)
+                            .symbolRenderingMode(.hierarchical)
                     }
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .background(Capsule().fill(Color.accentColor.opacity(0.15)))
@@ -210,6 +211,7 @@ public struct DocDetailView: View {
                 Label("Delete", systemImage: "trash")
             }
             .help("Hard-delete this document")
+            .accessibilityLabel("Delete document")
         }
     }
 
@@ -275,11 +277,12 @@ struct DocLinkedEntityChip: View {
     var body: some View {
         HStack(spacing: 4) {
             Image(systemName: "link")
+                .symbolRenderingMode(.hierarchical)
             Text(id.uuidString.prefix(8) + "…")
         }
         .font(.caption)
         .padding(.horizontal, 8).padding(.vertical, 3)
-        .background(Capsule().fill(Color.gray.opacity(0.15)))
+        .background(Capsule().fill(.quaternary))
         .foregroundStyle(.secondary)
     }
 }

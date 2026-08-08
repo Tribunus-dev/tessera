@@ -35,6 +35,7 @@ public struct SheetsListView_iOS: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { Task { await createBlankSheet() } } label: {
                         Image(systemName: "tablecells.badge.ellipsis")
+                            .symbolRenderingMode(.hierarchical)
                     }
                 }
             }
@@ -73,15 +74,14 @@ public struct SheetsListView_iOS: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "tablecells").font(.system(size: 48)).foregroundStyle(.secondary)
-            Text(emptyStateTitle).font(.headline)
+        ContentUnavailableView {
+            Label(emptyStateTitle, systemImage: "tablecells")
+        } actions: {
             Button { Task { await createBlankSheet() } } label: {
                 Label("New Sheet", systemImage: "tablecells.badge.ellipsis")
             }
-            .controlSize(.large)
+            .buttonStyle(.borderedProminent)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var emptyStateTitle: String {
@@ -109,8 +109,11 @@ struct SheetRowView_iOS: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 if row.isFavorite { Image(systemName: "star.fill").foregroundStyle(.yellow).font(.caption) }
+                    .symbolRenderingMode(.hierarchical)
                 if row.isArchived { Image(systemName: "archivebox.fill").foregroundStyle(.secondary).font(.caption) }
+                    .symbolRenderingMode(.hierarchical)
                 if row.isTrashed { Image(systemName: "trash.fill").foregroundStyle(.secondary).font(.caption) }
+                    .symbolRenderingMode(.hierarchical)
                 Text(row.title).font(.headline).lineLimit(1)
             }
             if !row.snippet.isEmpty {

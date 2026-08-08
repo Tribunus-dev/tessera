@@ -95,13 +95,14 @@ public struct SlidesListView: View {
         }
         .searchable(text: searchTextBinding, prompt: "Search decks")
         .toolbar {
-            ToolbarItem(placement: .automatic) {
+            ToolbarItem(placement: .primaryAction) {
                 Button {
                     Task { await createBlankDeck() }
                 } label: {
                     Label("New Deck", systemImage: "rectangle.on.rectangle.badge.plus")
                 }
                 .help("Create a new deck (Cmd-N)")
+                .accessibilityLabel("New Deck")
                 .keyboardShortcut("n", modifiers: .command)
             }
         }
@@ -132,21 +133,18 @@ public struct SlidesListView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "rectangle.on.rectangle")
-                .font(.system(size: 48)).foregroundStyle(.secondary)
-            Text(emptyStateTitle).font(.headline)
-            Text(emptyStateSubtitle).foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+        ContentUnavailableView {
+            Label(emptyStateTitle, systemImage: "rectangle.on.rectangle")
+        } description: {
+            Text(emptyStateSubtitle)
+        } actions: {
             Button {
                 Task { await createBlankDeck() }
             } label: {
                 Label("New Deck", systemImage: "rectangle.on.rectangle.badge.plus")
             }
-            .controlSize(.large)
+            .buttonStyle(.borderedProminent)
         }
-        .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var emptyStateTitle: String {
@@ -168,16 +166,14 @@ public struct SlidesListView: View {
     }
 
     private func errorState(_ message: String) -> some View {
-        VStack(spacing: 12) {
-            Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 48)).foregroundStyle(.orange)
-            Text("Couldn't load decks").font(.headline)
-            Text(message).foregroundStyle(.secondary).font(.callout)
-                .multilineTextAlignment(.center)
+        ContentUnavailableView {
+            Label("Couldn't load decks", systemImage: "exclamationmark.triangle")
+        } description: {
+            Text(message)
+        } actions: {
             Button("Retry") { Task { await viewModel.refresh() } }
+                .buttonStyle(.borderedProminent)
         }
-        .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Detail column
@@ -197,13 +193,11 @@ public struct SlidesListView: View {
             )
             .id(editor.deck.id)
         } else {
-            VStack(spacing: 8) {
-                Image(systemName: "rectangle.on.rectangle")
-                    .font(.system(size: 56)).foregroundStyle(.secondary)
-                Text("Select or create a deck")
-                    .font(.title3).foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            ContentUnavailableView(
+                "Select or create a deck",
+                systemImage: "rectangle.on.rectangle",
+                description: Text("Choose a deck from the list or create a new one.")
+            )
         }
     }
 
@@ -211,11 +205,14 @@ public struct SlidesListView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        ToolbarItem(placement: .automatic) {
+        ToolbarItem(placement: .secondaryAction) {
             Button { Task { await viewModel.refresh() } } label: {
                 Label("Refresh", systemImage: "arrow.clockwise")
+                    .font(.body)
+                    .symbolRenderingMode(.hierarchical)
             }
             .help("Reload decks")
+            .accessibilityLabel("Reload decks")
         }
     }
 
@@ -238,20 +235,20 @@ struct SlideDeckRowView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 if row.isFavorite {
-                    Image(systemName: "star.fill").foregroundStyle(.yellow).font(.caption)
+                    Image(systemName: "star.fill").font(.caption).symbolRenderingMode(.hierarchical).foregroundStyle(.yellow)
                 }
                 if row.isArchived {
-                    Image(systemName: "archivebox.fill").foregroundStyle(.secondary).font(.caption)
+                    Image(systemName: "archivebox.fill").font(.caption).symbolRenderingMode(.hierarchical).foregroundStyle(.secondary)
                 }
                 if row.isTrashed {
-                    Image(systemName: "trash.fill").foregroundStyle(.secondary).font(.caption)
+                    Image(systemName: "trash.fill").font(.caption).symbolRenderingMode(.hierarchical).foregroundStyle(.secondary)
                 }
                 Text(row.title).font(.headline).lineLimit(1)
                 Spacer()
                 Text("\(row.slideCount) slide\(row.slideCount == 1 ? "" : "s")")
                     .font(.caption2).foregroundStyle(.secondary)
                     .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(Capsule().fill(Color.secondary.opacity(0.12)))
+                    .background(Capsule().fill(.quaternary))
             }
             if !row.snippet.isEmpty {
                 Text(row.snippet).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)

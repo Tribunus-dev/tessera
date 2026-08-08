@@ -39,6 +39,7 @@ public struct CodeOutlineView: View {
     private var filterBar: some View {
         HStack(spacing: 4) {
             Image(systemName: "list.bullet.indent")
+                .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.secondary)
             Picker("Kind", selection: $kindFilter) {
                 Text("All").tag(CodeOutlineItem.Kind?.none)
@@ -55,22 +56,13 @@ public struct CodeOutlineView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 6) {
-            Image(systemName: "list.bullet.rectangle")
-                .font(.system(size: 24))
-                .foregroundStyle(.secondary)
-            Text("No outline available")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+        ContentUnavailableView {
+            Label("No outline available", systemImage: "list.bullet.rectangle")
+        } description: {
             if outline.language == "plain" {
                 Text("This file's language is unknown. The outline is empty for unrecognized languages.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 16)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var outlineList: some View {
@@ -104,6 +96,7 @@ public struct CodeOutlineView: View {
     private func outlineRow(_ row: OutlineRow) -> some View {
         HStack(spacing: 6) {
             Image(systemName: iconName(for: row.kind))
+                .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.tint)
                 .frame(width: 14)
             Text(row.label)

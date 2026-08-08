@@ -3,6 +3,7 @@ import SwiftUI
 /// Renders a tool call record within a chat message.
 public struct ToolCallView: View {
     public let record: ToolCallRecord
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isExpanded = false
 
     public init(record: ToolCallRecord) {
@@ -12,26 +13,36 @@ public struct ToolCallView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             // Header row
-            Button(action: { withAnimation { isExpanded.toggle() } }) {
+            Button(action: { withAnimation(reduceMotion ? nil : .spring(duration: 0.25)) { isExpanded.toggle() } }) {
                 HStack(spacing: 6) {
                     Image(systemName: "wrench.and.screwdriver")
                         .font(.caption)
+                        .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(.purple)
+                        .accessibilityHidden(true)
 
                     Text(record.toolName)
                         .font(.system(.caption, design: .monospaced).bold())
+                        .lineLimit(1)
+                        .truncationMode(.tail)
 
                     Spacer()
 
                     statusIcon
 
                     Image(systemName: "chevron.right")
-                        .font(.caption2)
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .font(.caption2.weight(.semibold))
+                        .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(.tertiary)
+                        .contentTransition(.symbolEffect(.replace))
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .accessibilityHidden(true)
                 }
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(isExpanded ? "Hide \(record.toolName) details" : "Show \(record.toolName) details")
+            .accessibilityHint(isExpanded ? "Collapses the tool call" : "Expands the tool call")
+            .accessibilityAddTraits(.isButton)
 
             // Expanded details
             if isExpanded {
@@ -58,20 +69,26 @@ public struct ToolCallView: View {
                         HStack(spacing: 4) {
                             Image(systemName: result.success ? "checkmark.circle" : "xmark.circle")
                                 .font(.caption2)
+                                .symbolRenderingMode(.hierarchical)
+                                .contentTransition(.symbolEffect(.replace))
                                 .foregroundStyle(result.success ? .green : .red)
                             Text(result.success ? "Success" : "Failed")
                                 .font(.caption2.bold())
+                                .lineLimit(1)
                         }
                         if !result.output.isEmpty {
                             Text(result.output)
                                 .font(.system(.caption2, design: .monospaced))
                                 .lineLimit(10)
+                                .truncationMode(.tail)
                                 .textSelection(.enabled)
                         }
                         if let error = result.error {
                             Text(error)
                                 .font(.system(.caption2, design: .monospaced))
                                 .foregroundStyle(.red)
+                                .lineLimit(4)
+                                .truncationMode(.tail)
                         }
                     } else {
                         HStack(spacing: 4) {
@@ -101,6 +118,8 @@ public struct ToolCallView: View {
         if let result = record.result {
             Image(systemName: result.success ? "checkmark.circle.fill" : "xmark.circle.fill")
                 .font(.caption)
+                .symbolRenderingMode(.hierarchical)
+                .contentTransition(.symbolEffect(.replace))
                 .foregroundStyle(result.success ? .green : .red)
         } else {
             ProgressView()

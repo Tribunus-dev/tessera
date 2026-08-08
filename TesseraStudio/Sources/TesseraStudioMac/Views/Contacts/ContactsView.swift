@@ -54,13 +54,16 @@ public struct ContactsView: View {
         .navigationTitle("Contacts")
         .searchable(text: $searchText, prompt: "Search contacts")
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItem(placement: .secondaryAction) {
                 Button {
                     Task { await load() }
                 } label: {
                     Image(systemName: "arrow.clockwise")
+                        .font(.body)
+                        .symbolRenderingMode(.hierarchical)
                 }
                 .help("Reload contacts")
+                .accessibilityLabel("Reload contacts")
             }
             ToolbarItem(placement: .primaryAction) {
                 Menu {
@@ -90,6 +93,8 @@ public struct ContactsView: View {
                 } label: {
                     Label("Import", systemImage: "square.and.arrow.down")
                 }
+                .help("Import contacts")
+                .accessibilityLabel("Import contacts")
             }
         }
         .onAppear {
@@ -147,25 +152,24 @@ public struct ContactsView: View {
                     description: Text("Use the Import menu to bring in contacts from Apple, VCard, Google, or CardDAV.")
                 )
             } else if let err = loadError {
-                ContentUnavailableView(
-                    "Couldn't load contacts",
-                    systemImage: "exclamationmark.triangle",
-                    description: Text(err)
-                )
+                ContentUnavailableView {
+                    Label("Couldn't load contacts", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(err)
+                } actions: {
+                    Button("Retry") { Task { await load() } }
+                        .buttonStyle(.borderedProminent)
+                }
             }
         }
     }
 
     private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "person.crop.circle")
-                .font(.system(size: 64))
-                .foregroundStyle(.tertiary)
-            Text("Select a contact")
-                .font(.title3)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        ContentUnavailableView(
+            "Select a contact",
+            systemImage: "person.crop.circle",
+            description: Text("Choose a contact from the list.")
+        )
     }
 
     private func load() async {
@@ -193,19 +197,24 @@ private struct ContactRow: View {
                 subtype: contact.subtype.rawValue
             ))
             .font(.title3)
+            .symbolRenderingMode(.hierarchical)
             .foregroundStyle(GraphNode.color(for: "contact"))
             .frame(width: 28)
             VStack(alignment: .leading, spacing: 2) {
                 Text(contact.displayName)
                     .font(.body)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                 if let org = contact.organization, !org.isEmpty {
                     Text(org)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 } else if let email = contact.emails.first {
                     Text(email.value)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
             Spacer()
@@ -239,9 +248,10 @@ private struct ContactDetailView: View {
                 Button {
                     exportVCard()
                 } label: {
-                    Image(systemName: "square.and.arrow.up")
+                    Label("Export as VCard", systemImage: "square.and.arrow.up")
                 }
                 .help("Export as VCard")
+                .accessibilityLabel("Export as VCard")
             }
         }
         .task {
@@ -264,7 +274,8 @@ private struct ContactDetailView: View {
                 for: "contact",
                 subtype: contact.subtype.rawValue
             ))
-            .font(.system(size: 48))
+            .font(.largeTitle)
+            .symbolRenderingMode(.hierarchical)
             .foregroundStyle(GraphNode.color(for: "contact"))
             VStack(alignment: .leading, spacing: 4) {
                 Text(contact.displayName)
@@ -346,6 +357,8 @@ private struct ContactDetailView: View {
                 ForEach(receipts) { r in
                     HStack {
                         Image(systemName: "doc.text")
+                            .font(.caption)
+                            .symbolRenderingMode(.hierarchical)
                             .foregroundStyle(.tertiary)
                         VStack(alignment: .leading) {
                             Text(r.receiptType)

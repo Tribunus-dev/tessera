@@ -50,27 +50,28 @@ public struct HoldYourHorsesDialog: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 8) {
                 Image(systemName: "pause.circle.fill")
-                    .font(.system(size: 24))
+                    .symbolRenderingMode(.hierarchical)
+                    .font(.title3)
                     .foregroundStyle(.orange)
                 Text(state.title)
-                    .font(.system(size: 18, weight: .semibold))
+                    .font(.headline)
             }
 
             Text(state.message)
-                .font(.system(size: 13))
+                .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("What's working? What's not?")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.callout.weight(.medium))
                 TextEditor(text: $response)
-                    .font(.system(size: 13))
+                    .font(.callout)
                     .frame(minHeight: 80, maxHeight: 160)
                     .padding(4)
                     .background(
                         RoundedRectangle(cornerRadius: 5)
-                            .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                            .stroke(.separator, lineWidth: 1)
                     )
                     .focused($responseFocused)
                     .accessibilityLabel("Response to the agent")
@@ -88,6 +89,7 @@ public struct HoldYourHorsesDialog: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "play.fill")
+                            .symbolRenderingMode(.hierarchical)
                         Text("Resume")
                     }
                 }

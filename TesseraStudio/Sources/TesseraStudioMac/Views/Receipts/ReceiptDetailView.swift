@@ -55,11 +55,12 @@ public struct ReceiptDetailView: View {
             .padding(16)
         }
         .frame(minWidth: 320, idealWidth: 380)
-        .background(Color(NSColor.textBackgroundColor))
+        .background(.background)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
+                        .symbolRenderingMode(.hierarchical)
                 }
                 .help("Close receipt")
             }
@@ -77,25 +78,26 @@ public struct ReceiptDetailView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(receipt.summary)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.headline)
                     .lineLimit(2)
                 Spacer()
             }
             HStack(spacing: 6) {
                 Image(systemName: actorIcon)
-                    .font(.system(size: 11))
+                    .symbolRenderingMode(.hierarchical)
+                    .font(.caption)
                     .foregroundStyle(actorTint)
                 Text(actorLabel)
-                    .font(.system(size: 11))
+                    .font(.caption)
                 Text("·")
-                    .font(.system(size: 11))
+                    .font(.caption)
                     .foregroundStyle(.tertiary)
                 Text(timestampText(receipt.timestamp))
-                    .font(.system(size: 11))
+                    .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Text("Document: \(documentTitle)")
-                .font(.system(size: 10))
+                .font(.caption2)
                 .foregroundStyle(.secondary)
             HStack(spacing: 12) {
                 Button {
@@ -104,7 +106,7 @@ public struct ReceiptDetailView: View {
                     Label("Show in chat", systemImage: "bubble.left")
                 }
                 .buttonStyle(.borderless)
-                .font(.system(size: 11))
+                .font(.caption)
 
                 Button {
                     onShowInGraph()
@@ -112,7 +114,7 @@ public struct ReceiptDetailView: View {
                     Label("Show in graph", systemImage: "rectangle.connected.to.line.below")
                 }
                 .buttonStyle(.borderless)
-                .font(.system(size: 11))
+                .font(.caption)
             }
         }
     }
@@ -122,17 +124,17 @@ public struct ReceiptDetailView: View {
             sectionHeader("Mutations", count: receipt.mutations.count)
             if receipt.mutations.isEmpty {
                 Text("No mutations (e.g., this is an export receipt).")
-                    .font(.system(size: 11))
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 2)
             } else {
                 ForEach(Array(receipt.mutations.enumerated()), id: \.offset) { idx, mutation in
                     HStack(alignment: .top, spacing: 4) {
                         Text("\(idx + 1).")
-                            .font(.system(size: 11, design: .monospaced))
+                            .font(.caption.monospaced())
                             .foregroundStyle(.secondary)
                         Text(mutation.shortDescription)
-                            .font(.system(size: 11, design: .monospaced))
+                            .font(.caption.monospaced())
                             .foregroundStyle(.primary)
                     }
                 }
@@ -145,7 +147,7 @@ public struct ReceiptDetailView: View {
             sectionHeader("Diff", count: nil)
             if receipt.mutations.isEmpty {
                 Text("No content changes.")
-                    .font(.system(size: 11))
+                    .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
                 ReceiptDiffView(
@@ -159,7 +161,7 @@ public struct ReceiptDetailView: View {
         VStack(alignment: .leading, spacing: 6) {
             sectionHeader("Signature", count: nil)
             Text("ed25519: " + receipt.signature.prefix(16).map { String(format: "%02x", $0) }.joined() + "…")
-                .font(.system(size: 10, design: .monospaced))
+                .font(.caption2.monospaced())
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             HStack {
@@ -168,17 +170,19 @@ public struct ReceiptDetailView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "checkmark.shield")
-                            .font(.system(size: 11))
+                            .symbolRenderingMode(.hierarchical)
+                            .font(.caption)
                         Text("Verify")
-                            .font(.system(size: 11))
+                            .font(.caption)
                     }
                 }
                 if let result = verificationResult {
                     HStack(spacing: 4) {
                         Image(systemName: result.icon)
+                            .symbolRenderingMode(.hierarchical)
                             .foregroundStyle(result.tint)
                         Text(result.label)
-                            .font(.system(size: 11, weight: .medium))
+                            .font(.caption.weight(.medium))
                             .foregroundStyle(result.tint)
                     }
                 }
@@ -192,13 +196,13 @@ public struct ReceiptDetailView: View {
             if let manifest = receipt.c2paManifest {
                 HStack(spacing: 6) {
                     Text(manifest.format)
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(.caption2.monospaced())
                         .padding(.horizontal, 4)
                         .padding(.vertical, 1)
                         .background(Capsule().fill(Color.purple.opacity(0.15)))
                         .foregroundStyle(.purple)
                     Text(manifest.claimGenerator)
-                        .font(.system(size: 10))
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
                     Spacer()
                     Button {
@@ -206,19 +210,20 @@ public struct ReceiptDetailView: View {
                     } label: {
                         HStack(spacing: 4) {
                             Image(systemName: "doc.text.magnifyingglass")
-                                .font(.system(size: 10))
+                                .symbolRenderingMode(.hierarchical)
+                                .font(.caption2)
                             Text("View")
-                                .font(.system(size: 10))
+                                .font(.caption2)
                         }
                     }
                     .buttonStyle(.borderless)
                 }
                 Text("\(manifest.assertions.count) assertion\(manifest.assertions.count == 1 ? "" : "s")")
-                    .font(.system(size: 10))
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
             } else {
                 Text("No C2PA manifest.")
-                    .font(.system(size: 11))
+                    .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
@@ -229,15 +234,15 @@ public struct ReceiptDetailView: View {
     private func sectionHeader(_ title: String, count: Int?) -> some View {
         HStack {
             Text(title)
-                .font(.system(size: 11, weight: .semibold))
+                .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
             if let count {
                 Text("\(count)")
-                    .font(.system(size: 10))
+                    .font(.caption2)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 1)
-                    .background(Capsule().fill(Color.secondary.opacity(0.12)))
+                    .background(Capsule().fill(.quaternary))
             }
             Spacer()
         }
@@ -336,7 +341,7 @@ public struct ReceiptDiffView: View {
             }
             if diffEntries().isEmpty {
                 Text("No content changes.")
-                    .font(.system(size: 11))
+                    .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
@@ -416,16 +421,16 @@ public struct ReceiptDiffView: View {
         switch entry.kind {
         case .same:
             Text(entry.text)
-                .font(.system(size: 11, design: .monospaced))
+                .font(.caption.monospaced())
                 .foregroundStyle(.primary)
         case .deletion:
             Text(entry.text)
-                .font(.system(size: 11, design: .monospaced))
+                .font(.caption.monospaced())
                 .strikethrough(true, color: .red)
                 .foregroundStyle(.red)
         case .addition:
             Text(entry.text)
-                .font(.system(size: 11, design: .monospaced))
+                .font(.caption.monospaced())
                 .underline(true, color: .green)
                 .foregroundStyle(.green)
         }

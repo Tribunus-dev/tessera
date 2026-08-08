@@ -91,19 +91,10 @@ public struct CodeGitPanelView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "clock.arrow.circlepath")
-                .font(.system(size: 32))
-                .foregroundStyle(.secondary)
-            Text("No git history")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+        ContentUnavailableView {
+            Label("No git history", systemImage: "clock.arrow.circlepath")
+        } description: {
             Text("Open a file inside a git repository to see its history.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 16)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

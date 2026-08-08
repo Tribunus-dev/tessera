@@ -21,6 +21,7 @@ import TesseraCore
 /// — Phase 5 just reuses it).
 public struct NotesView_iOS: View {
 
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject public var viewModel: NotesViewModel
     @State private var searchText: String = ""
     @State private var newNotePending: Bool = false
@@ -51,6 +52,7 @@ public struct NotesView_iOS: View {
                         Task { await createBlankNote() }
                     } label: {
                         Image(systemName: "square.and.pencil")
+                            .symbolRenderingMode(.hierarchical)
                     }
                 }
             }
@@ -102,20 +104,16 @@ public struct NotesView_iOS: View {
     // MARK: - Empty state
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "note.text")
-                .font(.system(size: 48))
-                .foregroundStyle(.secondary)
-            Text(emptyStateTitle)
-                .font(.headline)
+        ContentUnavailableView {
+            Label(emptyStateTitle, systemImage: "note.text")
+        } actions: {
             Button {
                 Task { await createBlankNote() }
             } label: {
                 Label("New Note", systemImage: "square.and.pencil")
             }
-            .controlSize(.large)
+            .buttonStyle(.borderedProminent)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var emptyStateTitle: String {
@@ -150,11 +148,13 @@ struct NoteRowView_iOS: View {
             HStack(spacing: 6) {
                 if row.isPinned {
                     Image(systemName: "pin.fill")
+                        .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(.orange)
                         .font(.caption)
                 }
                 if row.isArchived {
                     Image(systemName: "archivebox.fill")
+                        .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(.secondary)
                         .font(.caption)
                 }
@@ -211,7 +211,7 @@ struct NoteEditorView_iOS: View {
             }
             TesseraEditorView(
                 mode: .notes,
-                theme: .light,
+                theme: EditorTheme.current(isDark: colorScheme == .dark),
                 document: documentBinding,
                 onMutationCommitted: { _, _ in
                     let ast = viewModel.document
@@ -230,6 +230,7 @@ struct NoteEditorView_iOS: View {
                     isFocusMode.toggle()
                 } label: {
                     Image(systemName: isFocusMode
+                        .symbolRenderingMode(.hierarchical)
                           ? "arrow.up.right.and.arrow.down.left.rectangle"
                           : "arrow.down.left.and.arrow.up.right.rectangle")
                 }
@@ -260,6 +261,7 @@ struct NoteEditorView_iOS: View {
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")
+                        .symbolRenderingMode(.hierarchical)
                 }
             }
         }
@@ -339,10 +341,8 @@ struct TagPill_iOS: View {
             .font(.caption)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
-            .background(
-                Capsule().fill(Color.accentColor.opacity(0.15))
-            )
-            .foregroundStyle(Color.accentColor)
+            .background(.quaternary, in: Capsule())
+            .foregroundStyle(.tint)
     }
 }
 

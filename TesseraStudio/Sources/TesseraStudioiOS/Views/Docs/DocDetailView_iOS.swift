@@ -9,6 +9,7 @@ import TesseraCore
 /// (cover, icon, word count, favorite/archive/trash toggles).
 public struct DocDetailView_iOS: View {
 
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject public var viewModel: DocEditorViewModel
     @State private var showDeleteConfirm: Bool = false
 
@@ -21,7 +22,7 @@ public struct DocDetailView_iOS: View {
             titleBar
             TesseraEditorView(
                 mode: .document,
-                theme: .light,
+                theme: EditorTheme.current(isDark: colorScheme == .dark),
                 document: documentBinding,
                 onMutationCommitted: { _, _ in
                     let ast = viewModel.document
@@ -53,6 +54,7 @@ public struct DocDetailView_iOS: View {
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")
+                        .symbolRenderingMode(.hierarchical)
                 }
             }
         }
@@ -74,11 +76,11 @@ public struct DocDetailView_iOS: View {
                         image.resizable().scaledToFill().frame(height: 120).clipped()
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                     case .failure:
-                        RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.12))
+                        RoundedRectangle(cornerRadius: 8).fill(.quaternary)
                             .frame(height: 60)
                             .overlay { Label("Cover unavailable", systemImage: "photo.slash").foregroundStyle(.secondary).font(.caption) }
                     case .empty:
-                        RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.08))
+                        RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.6))
                             .frame(height: 60).overlay { ProgressView() }
                     @unknown default: EmptyView()
                     }
@@ -98,8 +100,8 @@ public struct DocDetailView_iOS: View {
                             Text("#\(tag)")
                                 .font(.caption)
                                 .padding(.horizontal, 8).padding(.vertical, 3)
-                                .background(Capsule().fill(Color.accentColor.opacity(0.15)))
-                                .foregroundStyle(Color.accentColor)
+                                .background(.quaternary, in: Capsule())
+                                .foregroundStyle(.tint)
                         }
                     }
                 }

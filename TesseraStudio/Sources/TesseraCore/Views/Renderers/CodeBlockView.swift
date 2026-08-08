@@ -40,8 +40,7 @@ public struct CodeBlockView: View {
             }
         }
         .font(.system(.caption, design: .monospaced))
-        .background(Color(.sRGB, white: 0.1, opacity: 1).opacity(0.06))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
     }
 

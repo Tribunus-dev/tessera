@@ -36,7 +36,7 @@ public struct SheetDetailView: View {
                 .padding(.vertical, 12)
             }
         }
-        .background(Color(nsColor: .textBackgroundColor))
+        .background(.background)
         .toolbar { detailToolbar }
         .sheet(isPresented: $showDeleteConfirm) { deleteSheet }
         .sheet(isPresented: $showLinkSearch) { linkSheet }
@@ -87,6 +87,7 @@ public struct SheetDetailView: View {
                     HStack(spacing: 4) {
                         Text("#\(tag)")
                         Image(systemName: "xmark").font(.caption2)
+                            .symbolRenderingMode(.hierarchical)
                     }
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .background(Capsule().fill(Color.accentColor.opacity(0.15)))
@@ -158,6 +159,7 @@ public struct SheetDetailView: View {
     private var emptyGridState: some View {
         VStack(spacing: 8) {
             Image(systemName: "tablecells.badge.ellipsis").font(.title2).foregroundStyle(.secondary)
+                .symbolRenderingMode(.hierarchical)
             Text("No grid yet").font(.subheadline).foregroundStyle(.secondary)
             Button("Create 5 x 4 grid") {
                 // Insert an initial table via a throwaway blank sheet's AST.
@@ -177,7 +179,7 @@ public struct SheetDetailView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 24)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.06)))
+        .background(RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.6)))
     }
 
     // MARK: - Linked entities
@@ -214,6 +216,7 @@ public struct SheetDetailView: View {
                 Label("Delete", systemImage: "trash")
             }
             .help("Hard-delete this sheet")
+            .accessibilityLabel("Delete sheet")
         }
     }
 
@@ -279,11 +282,12 @@ struct SheetLinkedEntityChip: View {
     var body: some View {
         HStack(spacing: 4) {
             Image(systemName: "link")
+                .symbolRenderingMode(.hierarchical)
             Text(id.uuidString.prefix(8) + "…")
         }
         .font(.caption)
         .padding(.horizontal, 8).padding(.vertical, 3)
-        .background(Capsule().fill(Color.gray.opacity(0.15)))
+        .background(Capsule().fill(.quaternary))
         .foregroundStyle(.secondary)
     }
 }

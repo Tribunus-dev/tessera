@@ -20,6 +20,7 @@ public struct NoteEditorColumn: View {
     @Binding public var isFocusMode: Bool
     public let onDelete: () -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var formattingState: FormattingState = FormattingState()
     @State private var showDeleteConfirm: Bool = false
     @State private var showLinkSearch: Bool = false
@@ -55,7 +56,7 @@ public struct NoteEditorColumn: View {
                     .transition(.opacity)
             }
         }
-        .background(Color(nsColor: .textBackgroundColor))
+        .background(.background)
         .toolbar { editorToolbar }
         .sheet(isPresented: $showDeleteConfirm) {
             deleteConfirmationSheet
@@ -137,14 +138,13 @@ public struct NoteEditorColumn: View {
                         HStack(spacing: 4) {
                             Text("#\(tag)")
                             Image(systemName: "xmark")
+                                .symbolRenderingMode(.hierarchical)
                                 .font(.caption2)
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
-                        .background(
-                            Capsule().fill(Color.accentColor.opacity(0.15))
-                        )
-                        .foregroundStyle(Color.accentColor)
+                        .background(.quaternary, in: Capsule())
+                        .foregroundStyle(.tint)
                     }
                     .buttonStyle(.plain)
                 }
@@ -160,10 +160,12 @@ public struct NoteEditorColumn: View {
 
     // MARK: - Editor (TesseraEditorView in notes mode)
 
+    @Environment(\.colorScheme) private var editorColorScheme
+
     private var editor: some View {
         TesseraEditorView(
             mode: .notes,
-            theme: .light,
+            theme: EditorTheme.current(isDark: editorColorScheme == .dark),
             document: documentBinding,
             onMutationCommitted: { _, _ in
                 // The editor's coalescer already updates the
@@ -246,7 +248,7 @@ public struct NoteEditorColumn: View {
 
     @ToolbarContentBuilder
     private var editorToolbar: some ToolbarContent {
-        ToolbarItem(placement: .automatic) {
+        ToolbarItem(placement: .secondaryAction) {
             TesseraEditorToolbar(
                 mode: .notes,
                 formattingState: $formattingState,
@@ -257,7 +259,7 @@ public struct NoteEditorColumn: View {
         }
         ToolbarItem(placement: .primaryAction) {
             Button {
-                withAnimation(.easeInOut(duration: 0.25)) {
+                withAnimation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0.15)) {
                     isFocusMode.toggle()
                 }
             } label: {
@@ -269,6 +271,7 @@ public struct NoteEditorColumn: View {
                 )
             }
             .help("Toggle focus mode (Cmd-\\)")
+            .accessibilityLabel(isFocusMode ? "Exit Focus" : "Focus")
         }
         ToolbarItem(placement: .destructiveAction) {
             Button(role: .destructive) {
@@ -277,6 +280,7 @@ public struct NoteEditorColumn: View {
                 Label("Delete", systemImage: "trash")
             }
             .help("Delete this note")
+            .accessibilityLabel("Delete note")
         }
     }
 
@@ -382,14 +386,13 @@ struct LinkedEntityChip: View {
         Button(action: onClick) {
             HStack(spacing: 4) {
                 Image(systemName: "link")
+                    .symbolRenderingMode(.hierarchical)
                 Text(id.uuidString.prefix(8) + "…")
             }
             .font(.caption)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
-            .background(
-                Capsule().fill(Color.gray.opacity(0.15))
-            )
+            .background(.quaternary, in: Capsule())
             .foregroundStyle(.secondary)
         }
         .buttonStyle(.plain)

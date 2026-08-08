@@ -101,6 +101,11 @@ int ggml_metal_op_opt_step_adamw    (ggml_metal_op_t ctx, int idx);
 int ggml_metal_op_opt_step_sgd      (ggml_metal_op_t ctx, int idx);
 int ggml_metal_op_count_equal       (ggml_metal_op_t ctx, int idx);
 
+// Slice 4.2a: identify an FFN MUL_MAT op whose weight is IOSurface-backed
+// (i.e. aliased into the 2-slot weight pool). Used by the streamed compute
+// path to find layer boundaries. Returns the layer index in *layer_out.
+bool ggml_metal_op_is_streamed_ffn(const struct ggml_tensor * op, int32_t * layer_out);
+
 #ifdef __cplusplus
 }
 #endif

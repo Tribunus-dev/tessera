@@ -94,13 +94,14 @@ public struct DocsListView: View {
         }
         .searchable(text: searchTextBinding, prompt: "Search docs")
         .toolbar {
-            ToolbarItem(placement: .automatic) {
+            ToolbarItem(placement: .primaryAction) {
                 Button {
                     Task { await createBlankDoc() }
                 } label: {
                     Label("New Doc", systemImage: "doc.badge.plus")
                 }
                 .help("Create a new document (Cmd-N)")
+                .accessibilityLabel("New Doc")
                 .keyboardShortcut("n", modifiers: .command)
             }
         }
@@ -131,24 +132,18 @@ public struct DocsListView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "doc.text")
-                .font(.system(size: 48))
-                .foregroundStyle(.secondary)
-            Text(emptyStateTitle)
-                .font(.headline)
+        ContentUnavailableView {
+            Label(emptyStateTitle, systemImage: "doc.text")
+        } description: {
             Text(emptyStateSubtitle)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+        } actions: {
             Button {
                 Task { await createBlankDoc() }
             } label: {
                 Label("New Doc", systemImage: "doc.badge.plus")
             }
-            .controlSize(.large)
+            .buttonStyle(.borderedProminent)
         }
-        .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var emptyStateTitle: String {
@@ -170,20 +165,14 @@ public struct DocsListView: View {
     }
 
     private func errorState(_ message: String) -> some View {
-        VStack(spacing: 12) {
-            Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 48))
-                .foregroundStyle(.orange)
-            Text("Couldn't load docs")
-                .font(.headline)
+        ContentUnavailableView {
+            Label("Couldn't load docs", systemImage: "exclamationmark.triangle")
+        } description: {
             Text(message)
-                .foregroundStyle(.secondary)
-                .font(.callout)
-                .multilineTextAlignment(.center)
+        } actions: {
             Button("Retry") { Task { await viewModel.refresh() } }
+                .buttonStyle(.borderedProminent)
         }
-        .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Detail column
@@ -197,15 +186,11 @@ public struct DocsListView: View {
             )
             .id(editor.doc.id)
         } else {
-            VStack(spacing: 8) {
-                Image(systemName: "doc.text")
-                    .font(.system(size: 56))
-                    .foregroundStyle(.secondary)
-                Text("Select or create a document")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            ContentUnavailableView(
+                "Select or create a document",
+                systemImage: "doc.text",
+                description: Text("Choose a document from the list or create a new one.")
+            )
         }
     }
 
@@ -213,11 +198,14 @@ public struct DocsListView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        ToolbarItem(placement: .automatic) {
+        ToolbarItem(placement: .secondaryAction) {
             Button { Task { await viewModel.refresh() } } label: {
                 Label("Refresh", systemImage: "arrow.clockwise")
+                    .font(.body)
+                    .symbolRenderingMode(.hierarchical)
             }
             .help("Reload docs")
+            .accessibilityLabel("Reload docs")
         }
     }
 
@@ -245,23 +233,27 @@ struct DocRowView: View {
                 }
                 if row.isFavorite {
                     Image(systemName: "star.fill")
-                        .foregroundStyle(.yellow)
                         .font(.caption)
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(.yellow)
                 }
                 if row.isArchived {
                     Image(systemName: "archivebox.fill")
-                        .foregroundStyle(.secondary)
                         .font(.caption)
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(.secondary)
                 }
                 if row.isTrashed {
                     Image(systemName: "trash.fill")
-                        .foregroundStyle(.secondary)
                         .font(.caption)
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(.secondary)
                 }
                 if row.hasCover {
                     Image(systemName: "photo")
-                        .foregroundStyle(.secondary)
                         .font(.caption)
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(.secondary)
                 }
                 Text(row.title)
                     .font(.headline)

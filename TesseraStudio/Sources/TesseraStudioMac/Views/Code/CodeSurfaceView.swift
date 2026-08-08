@@ -85,10 +85,11 @@ public struct CodeSurfaceView: View {
         }
         .navigationTitle("Code")
         .toolbar {
-            ToolbarItem(placement: .status) {
+            ToolbarItem(placement: .secondaryAction) {
                 Text(viewModel.statusMessage)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
         }
         .onAppear {

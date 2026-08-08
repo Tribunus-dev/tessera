@@ -32,10 +32,10 @@ static ggml_metal_buffer_id ggml_metal_get_buffer_id(const ggml_tensor * t) {
     ggml_backend_buffer_t buffer = t->view_src ? t->view_src->buffer : t->buffer;
 
 #ifdef GGML_USE_ANE
-    // ANE cross-backend IOSurface buffer: zero-copy Metal view. The lazily
-    // wrapped MTLBuffer covers the whole IOSurface, so the tensor offset is
-    // its data pointer relative to the buffer base. The handle stays opaque
-    // here (void *); the ObjC cast happens in the encoder (.m side).
+    // ANE cross-backend IOSurface buffer: zero-copy Metal view (data plane).
+    // The lazily wrapped MTLBuffer covers the whole IOSurface
+    // (ggml-ane.mm:3527 newBufferWithBytesNoCopy), so offset = t->data - base
+    // stays correct. Verified via buffer id offset math at encoder setBuffer.
     if (ggml_backend_ane_iosurface_buffer_check(buffer)) {
         void * mtl_buf = ggml_backend_ane_iosurface_buffer_get_mtl_buffer(buffer);
         GGML_ASSERT(mtl_buf != nullptr);
@@ -48,6 +48,26 @@ static ggml_metal_buffer_id ggml_metal_get_buffer_id(const ggml_tensor * t) {
 
     return ggml_metal_buffer_get_id(ctx, t);
 }
+
+#ifdef GGML_USE_ANE
+// Slice 4.2a: identify an FFN MUL_MAT op whose weight is IOSurface-backed
+// (aliased into the 2-slot weight pool). The streamed compute path uses
+// this to find layer boundaries in the cgraph.
+bool ggml_metal_op_is_streamed_ffn(const ggml_tensor * op, int32_t * layer_out) {
+    if (!op || !op->src[0] || !op->src[0]->name[0]) return false;
+    const char * name = op->src[0]->name;
+    int32_t layer = -1;
+    if (!ggml_metal_device_stream_parse_layer(name, &layer)) return false;
+    if (strstr(name, ".ffn_") == nullptr) return false;
+    if (!ggml_backend_ane_iosurface_buffer_check(op->src[0]->buffer)) return false;
+    if (layer_out) *layer_out = layer;
+    return true;
+}
+// Retained for compatibility; the streamed compute path does the refill.
+static inline void ggml_metal_op_maybe_fence_ffn(ggml_metal_device_t,
+                                                  ggml_metal_cmd_buf_t,
+                                                  const ggml_tensor *) {}
+#endif
 
 struct ggml_metal_op {
     ggml_metal_op(
@@ -2340,6 +2360,10 @@ int ggml_metal_op_pool_2d(ggml_metal_op_t ctx, int idx) {
 int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
     ggml_tensor * op = ctx->node(idx);
 
+#ifdef GGML_USE_ANE
+    ggml_metal_op_maybe_fence_ffn(ctx->dev, ctx->cmd_buf, op);
+#endif
+
     // Tessera Layer 1: dump the dequantized weight to the sidecar before
     // the matmul kernel runs. No-op when the dequant debug hook is not
     // enabled (see metal-dump-dequant.h).
@@ -2597,6 +2621,10 @@ size_t ggml_metal_op_mul_mat_id_extra_ids(const ggml_tensor * op) {
 
 int ggml_metal_op_mul_mat_id(ggml_metal_op_t ctx, int idx) {
     ggml_tensor * op = ctx->node(idx);
+
+#ifdef GGML_USE_ANE
+    ggml_metal_op_maybe_fence_ffn(ctx->dev, ctx->cmd_buf, op);
+#endif
 
     // Tessera Layer 1: dump the dequantized weight to the sidecar before
     // the matmul kernel runs. No-op when the dequant debug hook is not

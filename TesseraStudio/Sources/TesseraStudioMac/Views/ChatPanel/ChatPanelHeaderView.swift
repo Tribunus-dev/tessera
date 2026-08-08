@@ -50,7 +50,7 @@ public struct ChatPanelHeaderView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text(title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.callout.weight(.semibold))
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 4)
@@ -72,14 +72,16 @@ public struct ChatPanelHeaderView: View {
         HStack(spacing: 2) {
             Button(action: { onUndo?() }) {
                 Image(systemName: "arrow.uturn.backward")
-                    .font(.system(size: 11))
+                    .font(.caption)
+                    .symbolRenderingMode(.hierarchical)
             }
             .buttonStyle(.borderless)
             .disabled(!canUndo)
             .help("Undo last receipt")
             Button(action: { onRedo?() }) {
                 Image(systemName: "arrow.uturn.forward")
-                    .font(.system(size: 11))
+                    .font(.caption)
+                    .symbolRenderingMode(.hierarchical)
             }
             .buttonStyle(.borderless)
             .disabled(!canRedo)
@@ -90,15 +92,19 @@ public struct ChatPanelHeaderView: View {
     private var receiptCountBadge: some View {
         HStack(spacing: 3) {
             Image(systemName: "doc.text")
-                .font(.system(size: 9))
+                .font(.caption2)
+                .symbolRenderingMode(.hierarchical)
+                .accessibilityHidden(true)
             Text("\(receiptCount)")
-                .font(.system(size: 11, weight: .medium))
+                .font(.caption.weight(.medium))
                 .monospacedDigit()
+                .contentTransition(.numericText())
+                .lineLimit(1)
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
         .background(
-            Capsule().fill(Color.secondary.opacity(0.12))
+            Capsule().fill(.quaternary)
         )
         .help("\(receiptCount) receipt\(receiptCount == 1 ? "" : "s") in the chain")
     }
@@ -106,24 +112,27 @@ public struct ChatPanelHeaderView: View {
     private var backgroundChip: some View {
         HStack(spacing: 6) {
             Image(systemName: "person.2.fill")
-                .font(.system(size: 10))
+                .font(.caption2)
+                .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.orange)
+                .accessibilityHidden(true)
             Text(backgroundText)
-                .font(.system(size: 11))
+                .font(.caption)
                 .lineLimit(1)
+                .truncationMode(.tail)
             Spacer(minLength: 4)
             if let first = backgroundDocuments.first {
                 Button("Switch") {
                     onSwitchToDocument?(first.documentID)
                 }
                 .buttonStyle(.borderless)
-                .font(.system(size: 10, weight: .medium))
+                .font(.caption2.weight(.medium))
             }
             Button("Pause all") {
                 onPauseAll?()
             }
             .buttonStyle(.borderless)
-            .font(.system(size: 10, weight: .medium))
+            .font(.caption2.weight(.medium))
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)

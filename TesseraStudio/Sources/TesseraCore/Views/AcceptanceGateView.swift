@@ -64,6 +64,7 @@ public struct AcceptanceGateView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
                 Image(systemName: verdict.acceptancePassed ? "checkmark.circle.fill" : "xmark.circle.fill")
+                    .symbolRenderingMode(.hierarchical)
                     .font(.title)
                 Text(verdict.acceptancePassed ? "PASS" : "FAIL")
                     .font(.system(.title, design: .rounded).bold())

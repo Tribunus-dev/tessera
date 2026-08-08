@@ -51,6 +51,7 @@ public struct RemindersView_iOS: View {
                         Task { await viewModel.load() }
                     } label: {
                         Image(systemName: "arrow.clockwise")
+                            .symbolRenderingMode(.hierarchical)
                     }
                 }
             }
@@ -84,6 +85,7 @@ public struct RemindersView_iOS: View {
                         VStack(spacing: 4) {
                             HStack(spacing: 6) {
                                 Image(systemName: filter.systemImage)
+                                    .symbolRenderingMode(.hierarchical)
                                 Text(filter.displayName)
                                     .font(.subheadline)
                                     .fontWeight(.medium)
@@ -93,7 +95,7 @@ public struct RemindersView_iOS: View {
                             .background(
                                 viewModel.filter == filter
                                     ? Color.accentColor.opacity(0.2)
-                                    : Color.gray.opacity(0.1),
+                                    : .quaternary,
                                 in: Capsule()
                             )
                             Text("\(filter.apply(to: viewModel.reminders).count)")
@@ -218,6 +220,7 @@ private struct ReminderRow_iOS: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: rowIcon)
+                .symbolRenderingMode(.hierarchical)
                 .font(.title3)
                 .foregroundStyle(rowColor)
                 .frame(width: 28)

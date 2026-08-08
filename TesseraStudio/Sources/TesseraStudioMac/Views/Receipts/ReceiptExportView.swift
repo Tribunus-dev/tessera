@@ -52,10 +52,10 @@ public struct ReceiptExportView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Export receipt chain")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.subheadline.weight(.semibold))
 
             Text("Export the full receipt chain for this document. The export is signed with your device's signing key, logged as a chain entry, and saved to disk.")
-                .font(.system(size: 11))
+                .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -67,7 +67,7 @@ public struct ReceiptExportView: View {
             .padding(8)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(Color.secondary.opacity(0.06))
+                    .fill(.quaternary.opacity(0.6))
             )
 
             if let last = lastArtifact {
@@ -76,7 +76,7 @@ public struct ReceiptExportView: View {
 
             if let error = errorMessage {
                 Text(error)
-                    .font(.system(size: 11))
+                    .font(.caption)
                     .foregroundStyle(.red)
             }
 
@@ -109,13 +109,14 @@ public struct ReceiptExportView: View {
         } label: {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: format == fmt ? "largecircle.fill.circle" : "circle")
-                    .font(.system(size: 14))
+                    .symbolRenderingMode(.hierarchical)
+                    .font(.body)
                     .foregroundStyle(format == fmt ? Color.accentColor : .secondary)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(fmt.displayName)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.caption.weight(.medium))
                     Text(formatDescription(fmt))
-                        .font(.system(size: 10))
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -136,16 +137,17 @@ public struct ReceiptExportView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Image(systemName: "checkmark.circle.fill")
+                    .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(.green)
                 Text("Exported")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.caption.weight(.medium))
                 Spacer()
             }
             Text(artifact.filename)
-                .font(.system(size: 11, design: .monospaced))
+                .font(.caption.monospaced())
                 .foregroundStyle(.secondary)
             Text("Receipt: \(artifact.receiptID.uuidString.prefix(12))…")
-                .font(.system(size: 10, design: .monospaced))
+                .font(.caption2.monospaced())
                 .foregroundStyle(.tertiary)
         }
         .padding(8)

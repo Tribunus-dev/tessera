@@ -7,6 +7,7 @@
 #include "llama-mmap.h"
 #include "llama-cparams.h"
 #include "llama-model-loader.h"
+#include "llama-weight-pool.h"
 
 #include "llama-kv-cache.h"
 #include "llama-kv-cache-iswa.h"
@@ -21,6 +22,42 @@
 
 #include "ggml.h"
 #include "ggml-cpp.h"
+
+#if defined(__APPLE__) && defined(GGML_USE_ANE)
+#include "ggml-ane.h"
+// Forward-declare the Metal device pool-attachment API rather than including
+// ggml-metal-device.h (which is internal to the metal backend and not on the
+// llama target's include path). Resolved at link via libggml-metal.
+struct ggml_metal_device;
+typedef struct ggml_metal_device * ggml_metal_device_t;
+typedef int  (*ggml_metal_stream_ensure_fn)(void * pool, int32_t layer);
+typedef void (*ggml_metal_stream_poke_fn) (void * pool, int32_t layer);
+typedef int  (*ggml_metal_stream_ensure_experts_fn)(void * pool, int32_t layer,
+                                                    const char * tensor_suffix,
+                                                    const int32_t * expert_ids,
+                                                    int32_t n_experts_used);
+typedef void (*ggml_metal_stream_poke_experts_fn)(void * pool, int32_t layer,
+                                                  const char * tensor_suffix,
+                                                  const int32_t * expert_ids,
+                                                  int32_t n_experts_used);
+extern "C" {
+void ggml_metal_device_stream_set_pool(ggml_metal_device_t dev,
+                                       void * pool,
+                                       ggml_metal_stream_ensure_fn ensure_fn,
+                                       ggml_metal_stream_poke_fn  poke_fn,
+                                       ggml_metal_stream_ensure_experts_fn ensure_experts_fn,
+                                       ggml_metal_stream_poke_experts_fn  poke_experts_fn);
+void ggml_metal_device_stream_set_fence(ggml_metal_device_t dev, void * shared_event);
+}
+// Forward-declare the MTLSharedEvent helpers (ggml-metal-event.mm).
+struct ggml_mtl_shared_event;
+typedef struct ggml_mtl_shared_event * ggml_mtl_shared_event_t;
+extern "C" {
+ggml_mtl_shared_event_t ggml_mtl_shared_event_new(void);
+void ggml_mtl_shared_event_free(ggml_mtl_shared_event_t event);
+void ggml_mtl_shared_event_wait(ggml_mtl_shared_event_t event, uint64_t value);
+}
+#endif
 
 #include <algorithm>
 #include <cassert>
@@ -1034,7 +1071,18 @@ static buft_list_t make_gpu_buft_list(ggml_backend_dev_t dev, llama_split_mode s
 
 struct llama_model::impl {
     impl() = default;
-    ~impl() = default;
+    ~impl() {
+        if (weight_pool) {
+            llama_weight_pool_close(weight_pool);
+            weight_pool = nullptr;
+        }
+#if defined(__APPLE__) && defined(GGML_USE_ANE)
+        if (stream_event) {
+            ggml_mtl_shared_event_free(stream_event);
+            stream_event = nullptr;
+        }
+#endif
+    }
 
     uint64_t n_elements = 0;
 
@@ -1069,6 +1117,16 @@ struct llama_model::impl {
     bool has_tensor_overrides;
 
     std::vector<float> tensor_split_owned;
+
+    // Slice 4.2a: 2-slot IOSurface weight pool. Non-null when the FFN tensors
+    // are aliased into the pool's two slots instead of bulk-resident in MTL0.
+    // Owned by the model; freed in ~impl.
+    llama_weight_pool_t * weight_pool = nullptr;
+#if defined(__APPLE__) && defined(GGML_USE_ANE)
+    // The MTLSharedEvent for fence-based slot sync (Phase 2). Created once,
+    // attached to the Metal device and the pool's sync_fn. Freed in ~impl.
+    ggml_mtl_shared_event_t stream_event = nullptr;
+#endif
 };
 
 llama_model::llama_model(const llama_model_params & params) : params(params), pimpl(std::make_unique<impl>()) {
@@ -1082,6 +1140,28 @@ llama_model::llama_model(const llama_model_params & params) : params(params), pi
 }
 
 llama_model::~llama_model() {
+    // Bug 2 fix: clear the dangling pool pointer on the Metal device before
+    // ~impl frees the pool. The device is a process-global singleton that
+    // outlives the model; without this, a subsequent model load hits the
+    // streamed path with a freed pool pointer.
+#if defined(__APPLE__) && defined(GGML_USE_ANE)
+    if (pimpl && pimpl->weight_pool) {
+        for (const auto & dev : devices) {
+            if (!dev.dev) continue;
+            const char * name = ggml_backend_dev_name(dev.dev);
+            if (!name || std::strncmp(name, "Metal", 5) != 0) continue;
+            auto * reg = ggml_backend_dev_backend_reg(dev.dev);
+            if (!reg) continue;
+            using get_metal_dev_fn = ggml_metal_device_t (*)(ggml_backend_dev_t);
+            auto fn = (get_metal_dev_fn) ggml_backend_reg_get_proc_address(reg, "ggml_backend_metal_dev_get_metal_device");
+            if (!fn) continue;
+            ggml_metal_device_t metal_dev = fn(dev.dev);
+            if (metal_dev) {
+                ggml_metal_device_stream_set_pool(metal_dev, nullptr, nullptr, nullptr, nullptr, nullptr);
+            }
+        }
+    }
+#endif
     for (auto * lora : loras) {
         delete lora;
     }
@@ -1601,6 +1681,59 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
         bool is_default_buft = buft == ggml_backend_dev_buffer_type(dev);
 
         std::vector<ggml_backend_buffer_ptr> bufs;
+#if defined(__APPLE__) && defined(GGML_USE_ANE)
+        // Slice 4.2a: when this ctx's buft is the cross-backend IOSurface buft
+        // (FFN tensors under the heterog override), skip the bulk alloc that
+        // would size one ~21.6 GiB buffer and OOM. Instead alias every tensor
+        // in the ctx into the 2-slot weight pool: each tensor's ->buffer and
+        // ->data are set to a slot + offset, and the encoder refills the slot
+        // per layer at compute time.
+        const bool is_iosurface_pool_buft =
+            buft == ggml_backend_ane_iosurface_buffer_type();
+        if (is_iosurface_pool_buft && !ml.no_alloc) {
+            if (pimpl->weight_pool == nullptr) {
+                char err[512] = {};
+                llama_weight_pool_t * pool = nullptr;
+                if (!llama_weight_pool_open(ml.gguf_path.c_str(), n_layer_all, &pool, err, sizeof(err)) || !pool) {
+                    throw std::runtime_error(format("%s: weight pool open failed: %s", __func__, err));
+                }
+                pimpl->weight_pool = pool;
+                LLAMA_LOG_INFO("%s: weight streaming enabled: 2x IOSurface %.1f MiB (file=%s)\n",
+                    __func__,
+                    (double) llama_weight_pool_slot_bytes(pool) / (1024.0*1024.0),
+                    ml.gguf_path.c_str());
+            }
+            // Alias every tensor in this ctx into the pool's slots. The pool's
+            // callback resolves the (name, layer, slot, offset, slot_buffer)
+            // tuple; we look the tensor up by name in tensors_by_name and set
+            // ->buffer and ->data directly. This mirrors the mmap path's
+            // aliasing (llama-model-loader.cpp:1616,1626) but the backing
+            // store is the pool's 2 IOSurface slots instead of one mmap.
+            llama_weight_pool_alias_tensors(pimpl->weight_pool,
+                [](llama_weight_pool_alias_info info, void * user_data) -> bool {
+                    auto * self = (llama_model *) user_data;
+                    for (const auto & [name, tensor] : self->tensors_by_name) {
+                        if (name == info.tensor_name && tensor != nullptr) {
+                            tensor->buffer = info.slot_buffer;
+                            tensor->data   = (char *) info.slot_base + info.offset;
+                            return true;
+                        }
+                    }
+                    return false;
+                }, this);
+            // Mark the pool's slot buffers as weights so the backend scheduler
+            // routes FFN ops correctly. The pool owns the buffers (freed in
+            // ~impl); we deliberately do NOT add them to `bufs`, which would
+            // double-free via ctxs_bufs' unique_ptr deleter.
+            for (int i = 0; i < 2; ++i) {
+                auto * sb = llama_weight_pool_slot_buffer(pimpl->weight_pool, i);
+                if (sb) {
+                    ggml_backend_buffer_set_usage(sb, GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
+                }
+            }
+            LLAMA_LOG_INFO("%s: FFN tensors aliased into 2 weight-pool slots\n", __func__);
+        } else
+#endif
         if (ml.use_mmap && use_mmap_buffer && buffer_from_host_ptr_supported && is_default_buft) {
             GGML_ASSERT(!ml.no_alloc);
             for (uint32_t idx = 0; idx < ml.files.size(); idx++) {
@@ -1657,6 +1790,66 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
 
         ctx_buf_maps.emplace_back(ctx, buf_map);
     }
+
+#if defined(__APPLE__) && defined(GGML_USE_ANE)
+    // Slice 4.2a: attach the weight pool to the Metal device so the encoder
+    // can call ensure_fn (per-layer refill) and poke_fn (Phase 2 prefetch).
+    // Create a MTLSharedEvent for fence-based slot sync: the GPU signals
+    // event=layer+1 after each segment; the fill thread waits on it before
+    // reusing a slot. This replaces the coarse waitUntilCompleted.
+    if (pimpl->weight_pool != nullptr) {
+        auto ensure_trampoline = +[](void * pool, int32_t layer) -> int {
+            return llama_weight_pool_ensure_layer((llama_weight_pool_t *) pool, layer);
+        };
+        auto poke_trampoline = +[](void * pool, int32_t layer) -> void {
+            llama_weight_pool_poke_prefetch((llama_weight_pool_t *) pool, layer);
+        };
+        auto ensure_experts_trampoline = +[](void * pool, int32_t layer,
+                                              const char * suffix,
+                                              const int32_t * ids, int32_t n) -> int {
+            return llama_weight_pool_ensure_experts(
+                (llama_weight_pool_t *) pool, layer, suffix, ids, n);
+        };
+        auto poke_experts_trampoline = +[](void * pool, int32_t layer,
+                                           const char * suffix,
+                                           const int32_t * ids, int32_t n) -> void {
+            llama_weight_pool_poke_expert_prefetch(
+                (llama_weight_pool_t *) pool, layer, suffix, ids, n);
+        };
+        // Create the fence event and register the fill thread's sync callback.
+        pimpl->stream_event = ggml_mtl_shared_event_new();
+        if (pimpl->stream_event) {
+            auto sync_trampoline = +[](void * ud, int32_t wait_for_layer) -> void {
+                auto * ev = (ggml_mtl_shared_event_t) ud;
+                // Wait for the GPU to finish the layer that previously
+                // occupied this slot (signaled at value = layer + 1).
+                ggml_mtl_shared_event_wait(ev, (uint64_t)(wait_for_layer + 1));
+            };
+            llama_weight_pool_set_sync_fn(pimpl->weight_pool, pimpl->stream_event, sync_trampoline);
+        }
+        // Phase 2: start the background fill thread before the first compute.
+        llama_weight_pool_start(pimpl->weight_pool);
+        for (const auto & dev : devices) {
+            if (!dev.dev) continue;
+            const char * name = ggml_backend_dev_name(dev.dev);
+            if (!name || std::strncmp(name, "Metal", 5) != 0) continue;
+            auto * reg = ggml_backend_dev_backend_reg(dev.dev);
+            if (!reg) continue;
+            using get_metal_dev_fn = ggml_metal_device_t (*)(ggml_backend_dev_t);
+            auto fn = (get_metal_dev_fn) ggml_backend_reg_get_proc_address(reg, "ggml_backend_metal_dev_get_metal_device");
+            if (!fn) continue;
+            ggml_metal_device_t metal_dev = fn(dev.dev);
+            if (metal_dev) {
+                ggml_metal_device_stream_set_pool(metal_dev, pimpl->weight_pool,
+                    ensure_trampoline, poke_trampoline,
+                    ensure_experts_trampoline, poke_experts_trampoline);
+                if (pimpl->stream_event) {
+                    ggml_metal_device_stream_set_fence(metal_dev, pimpl->stream_event);
+                }
+            }
+        }
+    }
+#endif
 
     if (llama_supports_gpu_offload()) {
         const int n_gpu = std::min(n_gpu_layers, n_layer_all);
@@ -2175,6 +2368,10 @@ ggml_backend_buffer_type_t llama_model::select_buft(int il) const {
 
 bool llama_model::has_tensor_overrides() const {
     return pimpl->has_tensor_overrides;
+}
+
+bool llama_model::weight_pool_enabled() const {
+    return pimpl->weight_pool != nullptr;
 }
 
 const ggml_tensor * llama_model::get_tensor(const char * name) const {

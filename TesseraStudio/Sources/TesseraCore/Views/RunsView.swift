@@ -121,6 +121,7 @@ struct StatusBadge: View {
     var body: some View {
         HStack(spacing: 4) {
             Image(systemName: symbol)
+                .symbolRenderingMode(.hierarchical)
             Text(status.rawValue)
         }
         .font(.caption2.bold())
@@ -158,6 +159,7 @@ struct AcceptanceBadge: View {
     var body: some View {
         HStack(spacing: 4) {
             Image(systemName: passed ? "checkmark.seal" : "xmark.seal")
+                .symbolRenderingMode(.hierarchical)
             Text(passed ? "PASS" : "FAIL")
         }
         .font(.caption2.bold())

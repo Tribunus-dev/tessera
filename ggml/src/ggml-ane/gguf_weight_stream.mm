@@ -110,43 +110,47 @@ static bool skip_gguf_kv(const uint8_t * base,
     if (*pos + 4 > file_size) return false;
     const uint32_t vtype = read_u32(base + *pos);
     *pos += 4;
+    // GGUF KV type enum — must match ggml/include/gguf.h (0..12).
+    // UINT8=0 INT8=1 UINT16=2 INT16=3 UINT32=4 INT32=5 FLOAT32=6 BOOL=7
+    // STRING=8 ARRAY=9 UINT64=10 INT64=11 FLOAT64=12
     switch (vtype) {
-        case 0: // uint8
-        case 1: // int8
-        case 24: // bool
+        case 0: // GGUF_TYPE_UINT8
+        case 1: // GGUF_TYPE_INT8
+        case 7: // GGUF_TYPE_BOOL
             *pos += 1; return true;
-        case 2: // uint16
-        case 3: // int16
+        case 2: // GGUF_TYPE_UINT16
+        case 3: // GGUF_TYPE_INT16
             *pos += 2; return true;
-        case 4: // uint32
-        case 5: // int32
-        case 6: // f32
+        case 4: // GGUF_TYPE_UINT32
+        case 5: // GGUF_TYPE_INT32
+        case 6: // GGUF_TYPE_FLOAT32
             *pos += 4; return true;
-        case 7: // uint64
-        case 8: // int64
-        case 9: // f64
+        case 10: // GGUF_TYPE_UINT64
+        case 11: // GGUF_TYPE_INT64
+        case 12: // GGUF_TYPE_FLOAT64
             *pos += 8; return true;
-        case 10: // f16
-            *pos += 2; return true;
-        case 11: // string
+        case 8: // GGUF_TYPE_STRING
             return read_gguf_string(base, file_size, pos, &key);
-        case 12: // array
+        case 9: // GGUF_TYPE_ARRAY
         {
             if (*pos + 12 > file_size) return false;
             const uint32_t  elem_type = read_u32(base + *pos);
             const uint64_t n_elems    = read_u64(base + *pos + 4);
             *pos += 12;
-            // Recurse for each element. We pick conservative
-            // element sizes for the common cases; the
-            // streaming path doesn't read kvs so an inaccurate
-            // skip is acceptable as long as we don't overflow
-            // the file.
+            if (elem_type == 8) { // GGUF_TYPE_STRING array — variable-length entries
+                for (uint64_t i = 0; i < n_elems; ++i) {
+                    std::string tmp;
+                    if (!read_gguf_string(base, file_size, pos, &tmp)) return false;
+                }
+                return true;
+            }
             const size_t elem_size =
-                elem_type == 0 || elem_type == 1 || elem_type == 24 ? 1 :
-                elem_type == 2 || elem_type == 3 || elem_type == 10 ? 2 :
+                elem_type == 0 || elem_type == 1 || elem_type == 7  ? 1 :
+                elem_type == 2 || elem_type == 3                     ? 2 :
                 elem_type == 4 || elem_type == 5 || elem_type == 6  ? 4 :
-                elem_type == 7 || elem_type == 8 || elem_type == 9  ? 8 : 0;
+                elem_type == 10 || elem_type == 11 || elem_type == 12 ? 8 : 0;
             if (elem_size == 0) return false; // unknown array element
+            if (n_elems > SIZE_MAX / (elem_size ? elem_size : 1)) return false;
             *pos += n_elems * elem_size;
             return *pos <= file_size;
         }
@@ -194,9 +198,14 @@ static uint64_t ggml_type_size(uint32_t type, uint64_t n_elems) {
         case 1:  return n_elems * 2; // GGML_TYPE_F16
         case 2:  return n_elems * 4; // GGML_TYPE_Q4_0
         case 3:  return n_elems * 4; // GGML_TYPE_Q4_1
-        case 6:  return n_elems * 4; // GGML_TYPE_I32
-        case 4:  return n_elems * 1; // GGML_TYPE_I8
-        case 24: return n_elems * 1; // GGML_TYPE_BOOL
+        case 6:  return n_elems * 4; // GGML_TYPE_Q5_0 (block-size approx; unknown types fall through to estimate)
+        case 4:  return n_elems * 1; // GGML_TYPE_I8 (legacy alias)
+        case 24: return n_elems * 1; // GGML_TYPE_I8
+        case 25: return n_elems * 2; // GGML_TYPE_I16
+        case 26: return n_elems * 4; // GGML_TYPE_I32
+        case 27: return n_elems * 8; // GGML_TYPE_I64
+        case 28: return n_elems * 8; // GGML_TYPE_F64
+        case 30: return n_elems * 2; // GGML_TYPE_BF16
         // Tessera T640 packed (large enum value; matches
         // the value ggml-quants.h uses for the conversion
         // tool's emitted type). The exact enum depends on
@@ -204,7 +213,7 @@ static uint64_t ggml_type_size(uint32_t type, uint64_t n_elems) {
         // values as "T640 packed" and let the caller size
         // via the dim shape (page_count * row_bytes).
         default:
-            return 0; // unknown
+            return 0; // unknown -> t640 estimate
     }
 }
 
@@ -530,6 +539,56 @@ int64_t ane_weight_stream_block_tensor(
     const uint8_t * src = (const uint8_t *) stream->mmap_base + file_pos;
     std::memcpy(dst, src, (size_t) ti.size_bytes);
     return (int64_t) ti.size_bytes;
+}
+
+// Copy one expert slice of a 3D tensor. The tensor must have n_dim >= 3;
+// the expert slice is size_bytes / shape[2] bytes at offset
+// expert_idx * per_expert_bytes within the tensor's on-disk data.
+int64_t ane_weight_stream_expert_slice(
+        ane_weight_stream_t * stream,
+        int32_t layer_idx,
+        uint32_t index,
+        int32_t expert_idx,
+        void * dst,
+        size_t dst_size_bytes) {
+    if (stream == nullptr || dst == nullptr) {
+        GGML_LOG_ERROR("ane: stream_expert_slice: null stream or dst\n");
+        return -1;
+    }
+    std::vector<std::map<std::string, ane_gguf_tensor_info>::const_iterator> indices;
+    const uint32_t n = collect_block_tensor_indices(stream, layer_idx, &indices);
+    if (index >= n) {
+        GGML_LOG_ERROR("ane: stream_expert_slice: index %u out of range\n", index);
+        return -1;
+    }
+    const auto & it = indices[index];
+    const ane_gguf_tensor_info & ti = it->second;
+    if (ti.n_dim < 3 || ti.shape[2] == 0) {
+        GGML_LOG_ERROR("ane: stream_expert_slice: %s is not 3D (n_dim=%u)\n",
+                       it->first.c_str(), ti.n_dim);
+        return -1;
+    }
+    const uint64_t per_expert = ti.size_bytes / ti.shape[2];
+    if (expert_idx < 0 || (uint64_t) expert_idx >= ti.shape[2]) {
+        GGML_LOG_ERROR("ane: stream_expert_slice: expert %d out of range (n_expert=%llu)\n",
+                       expert_idx, (unsigned long long) ti.shape[2]);
+        return -1;
+    }
+    if (per_expert > dst_size_bytes) {
+        GGML_LOG_ERROR("ane: stream_expert_slice: dst %zu < per_expert %llu\n",
+                       dst_size_bytes, (unsigned long long) per_expert);
+        return -1;
+    }
+    const uint64_t file_pos = stream->data_section_offset + ti.offset +
+                              (uint64_t) expert_idx * per_expert;
+    if (file_pos + per_expert > stream->mmap_size) {
+        GGML_LOG_ERROR("ane: stream_expert_slice: %s expert %d past EOF\n",
+                       it->first.c_str(), expert_idx);
+        return -1;
+    }
+    const uint8_t * src = (const uint8_t *) stream->mmap_base + file_pos;
+    std::memcpy(dst, src, (size_t) per_expert);
+    return (int64_t) per_expert;
 }
 
 int64_t ane_weight_stream_layer(ane_weight_stream_t * stream,

@@ -203,6 +203,7 @@ public struct ExportView: View {
         NavigationStack {
             VStack(spacing: 16) {
                 Image(systemName: "square.and.arrow.up")
+                    .symbolRenderingMode(.hierarchical)
                     .font(.largeTitle)
                     .foregroundStyle(.secondary)
                 Text(item.title)

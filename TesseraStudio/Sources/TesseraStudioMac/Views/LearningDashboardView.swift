@@ -25,8 +25,10 @@ struct LearningDashboardView: View {
         }
         .navigationTitle("Learning")
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItem(placement: .secondaryAction) {
                 Button("Refresh", systemImage: "arrow.clockwise") { load() }
+                    .help("Refresh learning data")
+                    .accessibilityLabel("Refresh")
             }
         }
         .onAppear { load() }

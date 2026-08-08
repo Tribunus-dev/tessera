@@ -85,6 +85,10 @@ struct llama_model_loader {
     llama_ftype ftype;
     llama_fver  fver;
 
+    // path of the first (main) GGUF file. Used by the weight pool to mmap
+    // the file for per-layer streaming (Slice 4.2a).
+    std::string gguf_path;
+
     llama_mmaps mappings;
 
     std::map<std::string, llama_tensor_weight, weight_name_comparer> weights_map;

@@ -128,9 +128,8 @@ private struct ReportView: View {
     @ViewBuilder
     private func stepRow(_ step: PleadTheFifthExecutor.WipeStep) -> some View {
         HStack(alignment: .top, spacing: 8) {
-            Image(systemName: step.outcome == .success
-                  ? "checkmark.circle.fill"
-                  : "exclamationmark.triangle.fill")
+            Image(systemName: step.outcome == .success ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(step.outcome == .success ? .green : .orange)
             VStack(alignment: .leading, spacing: 2) {
                 Text(step.name).font(.system(.body, design: .monospaced))

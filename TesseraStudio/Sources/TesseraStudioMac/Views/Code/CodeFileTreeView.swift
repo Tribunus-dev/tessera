@@ -41,6 +41,8 @@ public struct CodeFileTreeView: View {
     private var searchBar: some View {
         HStack(spacing: 4) {
             Image(systemName: "magnifyingglass")
+                .font(.callout)
+                .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.secondary)
             TextField("Filter files", text: $searchText)
                 .textFieldStyle(.plain)
@@ -49,7 +51,10 @@ public struct CodeFileTreeView: View {
                     searchText = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
+                        .font(.callout)
+                        .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(.secondary)
+                        .contentTransition(.symbolEffect(.replace))
                 }
                 .buttonStyle(.plain)
             }
@@ -76,35 +81,27 @@ public struct CodeFileTreeView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "folder.badge.questionmark")
-                .font(.system(size: 32))
-                .foregroundStyle(.secondary)
-            Text("No files yet")
-                .font(.headline)
+        ContentUnavailableView {
+            Label("No files yet", systemImage: "folder.badge.questionmark")
+        } description: {
             if viewModel.watchedRoot == nil {
                 Text("Pick a root directory to start watching.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
             } else {
                 Text("The watched root has no supported source files.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
             }
         }
-        .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func directoryRow(_ node: CodeFileTreeNode) -> some View {
         HStack(spacing: 4) {
             Image(systemName: node.iconName)
+                .font(.caption)
+                .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.tint)
                 .frame(width: 16)
             Text(node.name)
                 .lineLimit(1)
+                .truncationMode(.tail)
         }
         .contentShape(Rectangle())
     }
@@ -112,6 +109,8 @@ public struct CodeFileTreeView: View {
     private func fileRow(_ node: CodeFileTreeNode) -> some View {
         HStack(spacing: 4) {
             Image(systemName: node.iconName)
+                .font(.caption)
+                .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.secondary)
                 .frame(width: 16)
             Text(node.name)

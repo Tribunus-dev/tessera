@@ -53,12 +53,12 @@ struct WorkflowNodeView: View {
         .frame(width: 200)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color(nsColor: .controlBackgroundColor))
+                .fill(.background)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8)
                 .stroke(
-                    isSelected ? Color.accentColor : Color.secondary.opacity(0.4),
+                    isSelected ? Color.accentColor : Color(.separatorColor),
                     lineWidth: isSelected ? 2 : 1
                 )
         )
@@ -106,10 +106,14 @@ struct WorkflowNodeView: View {
     private var header: some View {
         HStack(spacing: 6) {
             Image(systemName: "square.dashed")
+                .font(.callout)
+                .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
             Text(type.displayName)
                 .font(.system(.subheadline, design: .rounded).weight(.semibold))
                 .lineLimit(1)
+                .truncationMode(.tail)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 10)
@@ -193,7 +197,7 @@ struct WorkflowPortView: View {
                     Circle().stroke(
                         dragFeedback == .compatible
                             ? Color.accentColor
-                            : Color.primary.opacity(0.2),
+                            : Color(.separatorColor),
                         lineWidth: dragFeedback == .compatible ? 1.5 : 0.5
                     )
                 )
@@ -201,7 +205,8 @@ struct WorkflowPortView: View {
                 .overlay {
                     if dragFeedback == .incompatible {
                         Image(systemName: "circle.slash")
-                            .font(.system(size: 10))
+                            .font(.caption2)
+                            .symbolRenderingMode(.hierarchical)
                             .foregroundStyle(.secondary)
                             .accessibilityHidden(true)
                     }

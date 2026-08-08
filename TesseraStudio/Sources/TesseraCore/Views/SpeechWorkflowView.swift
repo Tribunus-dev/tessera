@@ -168,7 +168,7 @@ public struct SpeechWorkflowView: View {
                 .frame(minHeight: 80)
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.secondary.opacity(0.3))
+                        .stroke(.separator)
                 )
                 .accessibilityLabel("Sentence to speak")
                 .help("The text the Talker will speak. Empty input is refused.")
@@ -284,6 +284,7 @@ public struct SpeechWorkflowView: View {
     private func statusBadge(outcome: SpeechWorkflowOutcome) -> some View {
         HStack(spacing: 6) {
             Image(systemName: outcome.success ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(outcome.success ? .green : .orange)
             Text(outcome.success ? "Last run OK" : "Last run failed")
                 .font(.callout)

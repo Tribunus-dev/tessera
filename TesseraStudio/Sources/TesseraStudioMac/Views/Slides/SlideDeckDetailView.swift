@@ -54,7 +54,7 @@ public struct SlideDeckDetailView: View {
                 .padding(.vertical, 12)
             }
         }
-        .background(Color(nsColor: .textBackgroundColor))
+        .background(.background)
         .toolbar { detailToolbar }
         .sheet(isPresented: $showDeleteConfirm) { deleteSheet }
         .sheet(isPresented: $showLinkSearch) { linkSheet }
@@ -68,6 +68,7 @@ public struct SlideDeckDetailView: View {
     private var headerSection: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: "rectangle.on.rectangle")
+                .symbolRenderingMode(.hierarchical)
                 .font(.title3).foregroundStyle(.secondary)
             TextField("Title", text: $viewModel.draftTitle, onCommit: {
                 Task { await viewModel.commitTitle() }
@@ -107,6 +108,7 @@ public struct SlideDeckDetailView: View {
                     HStack(spacing: 4) {
                         Text("#\(tag)")
                         Image(systemName: "xmark").font(.caption2)
+                            .symbolRenderingMode(.hierarchical)
                     }
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .background(Capsule().fill(Color.accentColor.opacity(0.15)))
@@ -225,7 +227,7 @@ public struct SlideDeckDetailView: View {
                         Text(slide.layout.displayName)
                             .font(.caption2).foregroundStyle(.secondary)
                             .padding(.horizontal, 6).padding(.vertical, 3)
-                            .background(Capsule().fill(Color.secondary.opacity(0.12)))
+                            .background(Capsule().fill(.quaternary))
                         Menu {
                             ForEach(SlideLayout.allCases, id: \.self) { layout in
                                 Button(layout.displayName) {
@@ -234,6 +236,7 @@ public struct SlideDeckDetailView: View {
                             }
                         } label: {
                             Image(systemName: "ellipsis.circle").font(.caption)
+                                .symbolRenderingMode(.hierarchical)
                         }
                         .menuStyle(.borderlessButton)
                     }
@@ -259,7 +262,7 @@ public struct SlideDeckDetailView: View {
             }
             .controlSize(.small)
         } else {
-            RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.08))
+            RoundedRectangle(cornerRadius: 10).fill(.quaternary)
                 .frame(height: 160)
                 .overlay { Text("No slide selected").foregroundStyle(.secondary) }
         }
@@ -283,7 +286,7 @@ public struct SlideDeckDetailView: View {
                 } else {
                     Text(slide.notes).font(.callout).foregroundStyle(.primary)
                         .padding(8)
-                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(0.08)))
+                        .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary))
                 }
             }
         }
@@ -336,10 +339,12 @@ public struct SlideDeckDetailView: View {
 
     @ToolbarContentBuilder
     private var detailToolbar: some ToolbarContent {
-        ToolbarItem(placement: .automatic) {
+        ToolbarItem(placement: .destructiveAction) {
             Button(role: .destructive) { showDeleteConfirm = true } label: {
                 Label("Delete Deck", systemImage: "trash")
             }
+            .help("Delete this deck")
+            .accessibilityLabel("Delete deck")
         }
     }
 
@@ -392,9 +397,10 @@ private struct SlideLinkedEntityChip: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "link").font(.caption2).foregroundStyle(.secondary)
+                .symbolRenderingMode(.hierarchical)
             Text(id.uuidString.prefix(8) + "…").font(.caption).foregroundStyle(.primary)
         }
         .padding(.horizontal, 8).padding(.vertical, 4)
-        .background(Capsule().fill(Color.secondary.opacity(0.10)))
+        .background(Capsule().fill(.quaternary))
     }
 }

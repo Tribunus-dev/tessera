@@ -75,17 +75,27 @@ public struct TasksView: View {
         .navigationTitle("Tasks")
         .searchable(text: $searchText, prompt: "Search tasks")
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItem(placement: .secondaryAction) {
                 Button {
                     Task { await load() }
                 } label: {
                     Image(systemName: "arrow.clockwise")
+                        .font(.body)
+                        .symbolRenderingMode(.hierarchical)
                 }
                 .help("Reload tasks")
+                .accessibilityLabel("Reload")
             }
             ToolbarItem(placement: .primaryAction) {
-                Toggle("Completed", isOn: $showCompleted)
-                    .help("Show completed tasks")
+                Menu {
+                    Toggle(isOn: $showCompleted) {
+                        Label("Show completed", systemImage: "checkmark.circle")
+                    }
+                } label: {
+                    Label("Filter", systemImage: "line.3.horizontal.decrease.circle")
+                }
+                .help("Filter tasks")
+                .accessibilityLabel("Filter tasks")
             }
         }
         .onAppear {
@@ -101,34 +111,16 @@ public struct TasksView: View {
         List(selection: $selectedList) {
             Section("Smart lists") {
                 ForEach([ProductivityTask.List.today, .upcoming], id: \.self) { list in
-                    Label {
-                        HStack {
-                            Text(list.displayName)
-                            Spacer()
-                            Text("\(count(in: list))")
-                                .foregroundStyle(.secondary)
-                        }
-                    } icon: {
-                        Image(systemName: list.systemImageName)
-                            .foregroundStyle(GraphNode.color(for: ProductivityTask.entityType))
-                    }
-                    .tag(list as ProductivityTask.List?)
+                    Label(list.displayName, systemImage: list.systemImageName)
+                        .badge(count(in: list))
+                        .tag(list as ProductivityTask.List?)
                 }
             }
             Section("Manual lists") {
                 ForEach([ProductivityTask.List.inbox, .anytime, .someday], id: \.self) { list in
-                    Label {
-                        HStack {
-                            Text(list.displayName)
-                            Spacer()
-                            Text("\(count(in: list))")
-                                .foregroundStyle(.secondary)
-                        }
-                    } icon: {
-                        Image(systemName: list.systemImageName)
-                            .foregroundStyle(.secondary)
-                    }
-                    .tag(list as ProductivityTask.List?)
+                    Label(list.displayName, systemImage: list.systemImageName)
+                        .badge(count(in: list))
+                        .tag(list as ProductivityTask.List?)
                 }
             }
         }
@@ -149,6 +141,7 @@ public struct TasksView: View {
         HStack(alignment: .center, spacing: 8) {
             Image(systemName: "plus.circle")
                 .font(.title3)
+                .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.secondary)
             TextField(
                 "Type a task — try \"tomorrow at 3pm, call John\"",
@@ -182,31 +175,31 @@ public struct TasksView: View {
         .overlay {
             if isLoading {
                 ProgressView().controlSize(.large)
+            } else if let err = loadError {
+                ContentUnavailableView {
+                    Label("Couldn't load tasks", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(err)
+                } actions: {
+                    Button("Retry") { Task { await load() } }
+                        .buttonStyle(.borderedProminent)
+                }
             } else if filteredTasks.isEmpty {
                 ContentUnavailableView(
                     emptyTitle,
                     systemImage: "checkmark.square",
                     description: Text(emptyDescription)
                 )
-            } else if let err = loadError {
-                ContentUnavailableView(
-                    "Couldn't load tasks",
-                    systemImage: "exclamationmark.triangle",
-                    description: Text(err)
-                )
             }
         }
     }
 
     private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "checkmark.square")
-                .font(.system(size: 64))
-                .foregroundStyle(.tertiary)
-            Text("Select a task")
-                .font(.title3)
-                .foregroundStyle(.secondary)
-        }
+        ContentUnavailableView(
+            "Select a task",
+            systemImage: "checkmark.square",
+            description: Text("Choose a task from the list to view its details.")
+        )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -357,9 +350,14 @@ private struct TaskRow: View {
             } label: {
                 Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
                     .font(.title3)
+                    .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(task.isCompleted ? .green : .secondary)
+                    .contentTransition(.symbolEffect(.replace))
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(task.isCompleted ? "Reopen \(task.title)" : "Complete \(task.title)")
+            .accessibilityHint(task.isCompleted ? "Marks the task as not completed" : "Marks the task as completed")
+            .accessibilityAddTraits(.isButton)
             VStack(alignment: .leading, spacing: 2) {
                 Text(task.title)
                     .strikethrough(task.isCompleted)
@@ -370,6 +368,8 @@ private struct TaskRow: View {
                             Text(due.formatted(date: .abbreviated, time: .shortened))
                         } icon: {
                             Image(systemName: "calendar")
+                                .font(.caption)
+                                .symbolRenderingMode(.hierarchical)
                         }
                         .font(.caption)
                         .foregroundStyle(due < Date() && !task.isCompleted ? .red : .secondary)
@@ -391,9 +391,13 @@ private struct TaskRow: View {
             if task.priority != .none {
                 Image(systemName: task.prioritySystemImageName)
                     .font(.caption)
+                    .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(priorityColor(task.priority))
+                    .accessibilityLabel("\(task.priority.displayName) priority")
             }
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(task.title), \(task.isCompleted ? "completed" : "not completed")\(task.priority != .none ? ", \(task.priority.displayName) priority" : "")")
         .padding(.vertical, 2)
     }
 
@@ -550,6 +554,8 @@ private struct TaskDetailView: View {
                 ForEach(receipts) { r in
                     HStack {
                         Image(systemName: "doc.text")
+                            .font(.caption)
+                            .symbolRenderingMode(.hierarchical)
                             .foregroundStyle(.tertiary)
                         VStack(alignment: .leading) {
                             Text(r.receiptType)

@@ -36,6 +36,7 @@ public struct SlidesListView_iOS: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { Task { await createBlankDeck() } } label: {
                         Image(systemName: "rectangle.on.rectangle.badge.plus")
+                            .symbolRenderingMode(.hierarchical)
                     }
                 }
             }
@@ -84,15 +85,14 @@ public struct SlidesListView_iOS: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "rectangle.on.rectangle").font(.system(size: 48)).foregroundStyle(.secondary)
-            Text(emptyStateTitle).font(.headline)
+        ContentUnavailableView {
+            Label(emptyStateTitle, systemImage: "rectangle.on.rectangle")
+        } actions: {
             Button { Task { await createBlankDeck() } } label: {
                 Label("New Deck", systemImage: "rectangle.on.rectangle.badge.plus")
             }
-            .controlSize(.large)
+            .buttonStyle(.borderedProminent)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var emptyStateTitle: String {
@@ -120,8 +120,11 @@ struct SlideDeckRowView_iOS: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 if row.isFavorite { Image(systemName: "star.fill").foregroundStyle(.yellow).font(.caption) }
+                    .symbolRenderingMode(.hierarchical)
                 if row.isArchived { Image(systemName: "archivebox.fill").foregroundStyle(.secondary).font(.caption) }
+                    .symbolRenderingMode(.hierarchical)
                 if row.isTrashed { Image(systemName: "trash.fill").foregroundStyle(.secondary).font(.caption) }
+                    .symbolRenderingMode(.hierarchical)
                 Text(row.title).font(.headline).lineLimit(1)
                 Spacer()
                 Text("\(row.slideCount) slide\(row.slideCount == 1 ? "" : "s")")

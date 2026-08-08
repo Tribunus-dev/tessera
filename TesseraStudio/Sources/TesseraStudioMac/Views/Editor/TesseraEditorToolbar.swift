@@ -228,7 +228,7 @@ struct ToolbarButton: View {
                     .strikethrough(strikethrough)
                 if let shortcut {
                     Text(shortcut)
-                        .font(.system(size: 8))
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -251,6 +251,7 @@ struct ToolbarIconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
+                .symbolRenderingMode(.hierarchical)
                 .frame(minWidth: 24, minHeight: 22)
                 .padding(.horizontal, 4)
         }

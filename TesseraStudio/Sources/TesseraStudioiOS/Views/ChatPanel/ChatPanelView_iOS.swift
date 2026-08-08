@@ -67,7 +67,11 @@ public struct ChatPanelView_iOS: View {
                         showReceiptsSheet = true
                     } label: {
                         Image(systemName: "doc.text.magnifyingglass")
+                            .symbolRenderingMode(.hierarchical)
                     }
+                    .accessibilityLabel("View receipts")
+                    .accessibilityHint("Opens the receipts list")
+                    .help("View receipts")
                 }
             }
             .sheet(isPresented: $showHoldSheet) {
@@ -144,17 +148,11 @@ public struct ChatPanelView_iOS: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "bubble.left")
-                .font(.system(size: 32))
-                .foregroundStyle(.tertiary)
-            Text("No commands yet")
-                .font(.headline)
-            Text("Type a command for the agent below.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-        }
+        ContentUnavailableView(
+            "No commands yet",
+            systemImage: "bubble.left",
+            description: Text("Type a command for the agent below.")
+        )
         .frame(maxWidth: .infinity)
         .padding(.vertical, 60)
     }
@@ -207,30 +205,32 @@ public struct ChatQueueRowView_iOS: View {
         Button(action: onTap) {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: display.style.iconSystemName)
-                    .font(.system(size: 14, weight: .semibold))
+                    .symbolRenderingMode(.hierarchical)
+                    .font(.body.weight(.semibold))
                     .foregroundStyle(display.style.iconTint)
                     .frame(width: 22, height: 22)
+                    .accessibilityHidden(true)
                     .thinkingPulse(isActive: display.style.pulseAnimation)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(display.message)
-                        .font(.system(size: 14))
+                        .font(.body)
                         .italic(display.style.isItalic)
                         .lineLimit(3)
                         .multilineTextAlignment(.leading)
                     if display.style.state == .applied {
                         Button(action: onReceiptChipTap) {
                             Label("Receipt", systemImage: "doc.text")
-                                .font(.system(size: 12))
+                                .font(.callout)
                                 .foregroundStyle(.green)
                         }
                         .buttonStyle(.plain)
                     }
                     if let badge = display.style.replaceBadge {
                         Text("replaces #\(badge)")
-                            .font(.system(size: 10, weight: .medium))
+                            .font(.caption2.weight(.medium))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(Capsule().fill(Color.secondary.opacity(0.12)))
+                            .background(Capsule().fill(.quaternary))
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -242,6 +242,24 @@ public struct ChatQueueRowView_iOS: View {
             .opacity(display.style.opacity)
         }
         .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var accessibilityLabel: String {
+        var parts: [String] = []
+        switch display.style.state {
+        case .pending: parts.append("pending")
+        case .inProgress: parts.append("in progress")
+        case .applied: parts.append("applied")
+        case .failed: parts.append("failed")
+        case .superseded: parts.append("superseded")
+        }
+        parts.append(display.message)
+        if let badge = display.style.replaceBadge {
+            parts.append("replaces #\(badge)")
+        }
+        return parts.joined(separator: ", ")
     }
 
     @ViewBuilder
@@ -250,7 +268,7 @@ public struct ChatQueueRowView_iOS: View {
         case .clear:
             Color.clear
         case .subtleHighlight:
-            RoundedRectangle(cornerRadius: 8).fill(Color.yellow.opacity(0.10))
+            RoundedRectangle(cornerRadius: 8).fill(.quaternary)
         case .redFlash:
             RoundedRectangle(cornerRadius: 8).fill(Color.red.opacity(0.10))
         }
@@ -270,7 +288,8 @@ struct HoldYourHorsesDialog_iOS: View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 16) {
                 Image(systemName: "pause.circle.fill")
-                    .font(.system(size: 36))
+                    .symbolRenderingMode(.hierarchical)
+                    .font(.title)
                     .foregroundStyle(.orange)
                 Text(state.title)
                     .font(.title2.bold())
@@ -285,7 +304,7 @@ struct HoldYourHorsesDialog_iOS: View {
                         .padding(8)
                         .background(
                             RoundedRectangle(cornerRadius: 8)
-                                .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                                .stroke(.separator, lineWidth: 1)
                         )
                 }
                 Spacer()

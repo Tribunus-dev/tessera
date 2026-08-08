@@ -88,7 +88,7 @@ public struct ChatBubbleView: View {
     private var bubbleColor: Color {
         switch role {
         case .user: .blue.opacity(0.15)
-        case .assistant: .gray.opacity(0.1)
+        case .assistant: Color(.quaternaryLabelColor).opacity(0.18)
         case .system: .yellow.opacity(0.1)
         case .tool: .green.opacity(0.1)
         }

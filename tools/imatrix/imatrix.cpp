@@ -12,6 +12,7 @@
 // staging API: llama_set_embeddings_layer_inp / llama_get_embeddings_layer_inp
 // (per-layer hidden-state capture used by the offline feature pass)
 #include "../../src/llama-ext.h"
+#include "../../src/llama-weight-pool.h"
 
 // offline DFlash feature-capture file format (shared with the training driver)
 #include "tessera-features.h"
@@ -38,6 +39,12 @@
 #include <sys/stat.h>
 
 #include "imatrix-safeguards.h"
+
+#if defined(__APPLE__) && defined(GGML_USE_ANE)
+#include "../../src/llama-weight-stream.h"
+#include "ggml-backend.h"
+#include "ggml-ane.h"
+#endif
 
 #if defined(_WIN32)
 #  define WIN32_LEAN_AND_MEAN
@@ -1725,10 +1732,15 @@ static bool compute_imatrix(llama_context * ctx, const common_params & params, c
 
     std::vector<std::thread> workers(std::thread::hardware_concurrency() - 1);
 
-    // Wall-time anchor for the dynamic save-frequency ladder. The first
-    // chunk's per-iteration t_start would include model load + first
-    // decode; we anchor t=0 at the start of the chunk loop so the ladder
-    // reflects runtime stability, not startup.
+    // Slice 4.2a: the 2-slot IOSurface weight pool is now owned by the model
+    // (opened in llama_model::load_tensors when FFN routes to the IOSurface
+    // buft). The per-layer refill is driven by the Metal encoder's streamed
+    // compute path (ggml_metal_graph_compute_streamed). imatrix no longer
+    // manages stream state; it just reports whether the pool is active.
+    if (llama_model_weight_pool_enabled(model)) {
+        LOG_INF("%s: weight pool active (2-slot IOSurface streaming)\n", __func__);
+    }
+
     const auto t_loop_start = std::chrono::steady_clock::now();
 
     for (int i = 0; i < n_chunk; i += n_seq) {

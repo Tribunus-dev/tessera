@@ -88,6 +88,7 @@ public struct EmailView_iOS: View {
                             startNewCompose()
                         } label: {
                             Image(systemName: "square.and.pencil")
+                                .symbolRenderingMode(.hierarchical)
                         }
                     }
                 }
@@ -138,6 +139,7 @@ public struct EmailView_iOS: View {
                         Task { _ = try? await store.setStarred(email.id, starred: !email.isStarred); await load() }
                     } label: {
                         Image(systemName: email.isStarred ? "star.slash" : "star")
+                            .symbolRenderingMode(.hierarchical)
                     }
                     .tint(.yellow)
                 }
@@ -235,6 +237,7 @@ private struct EmailRow_iOS: View {
         HStack(alignment: .top, spacing: 10) {
             if email.isStarred {
                 Image(systemName: "star.fill")
+                    .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(.yellow)
                     .font(.caption)
             }
@@ -297,6 +300,7 @@ private struct EmailDetailView_iOS: View {
                         ForEach(email.attachments) { a in
                             HStack {
                                 Image(systemName: "paperclip")
+                                    .symbolRenderingMode(.hierarchical)
                                 Text(a.filename)
                                 Spacer()
                                 Text("\(a.size) bytes").font(.caption2).foregroundStyle(.secondary)
@@ -309,13 +313,14 @@ private struct EmailDetailView_iOS: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .bottomBar) {
-                Button(action: onReply) { Image(systemName: "arrowshape.turn.up.left") }
-                Button(action: onForward) { Image(systemName: "arrowshape.turn.up.right") }
+                Button(action: onReply) { Image(systemName: "arrowshape.turn.up.left").symbolRenderingMode(.hierarchical) }
+                Button(action: onForward) { Image(systemName: "arrowshape.turn.up.right").symbolRenderingMode(.hierarchical) }
                 Button(action: onToggleStar) {
                     Image(systemName: email.isStarred ? "star.fill" : "star")
+                        .symbolRenderingMode(.hierarchical)
                 }
-                Button(action: onArchive) { Image(systemName: "archivebox") }
-                Button(action: onTrash) { Image(systemName: "trash") }
+                Button(action: onArchive) { Image(systemName: "archivebox").symbolRenderingMode(.hierarchical) }
+                Button(action: onTrash) { Image(systemName: "trash").symbolRenderingMode(.hierarchical) }
             }
         }
     }

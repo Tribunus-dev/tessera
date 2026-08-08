@@ -75,6 +75,7 @@ public struct SheetDetailView_iOS: View {
                         HStack(spacing: 4) {
                             Text("#\(tag)")
                             Image(systemName: "xmark").font(.caption2)
+                                .symbolRenderingMode(.hierarchical)
                         }
                         .padding(.horizontal, 8).padding(.vertical, 3)
                         .background(Capsule().fill(Color.accentColor.opacity(0.15)))
@@ -137,7 +138,7 @@ public struct SheetDetailView_iOS: View {
                 Text("No grid yet. Use the Mac detail to create one.")
                     .font(.caption).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity).padding(.vertical, 16)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.06)))
+                    .background(RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.6)))
             } else {
                 ScrollView(.horizontal, showsIndicators: true) {
                     SheetGridView_iOS(viewModel: viewModel)
@@ -155,10 +156,11 @@ public struct SheetDetailView_iOS: View {
                 ForEach(viewModel.sheet.linkedEntityIDs, id: \.self) { id in
                     HStack(spacing: 4) {
                         Image(systemName: "link").font(.caption)
+                            .symbolRenderingMode(.hierarchical)
                         Text(id.uuidString.prefix(8) + "…").font(.caption)
                     }
                     .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(Capsule().fill(Color.gray.opacity(0.15)))
+                    .background(Capsule().fill(.quaternary))
                     .foregroundStyle(.secondary)
                 }
             }
@@ -174,6 +176,7 @@ public struct SheetDetailView_iOS: View {
                 Button("Delete", role: .destructive) { showDeleteConfirm = true }
             } label: {
                 Image(systemName: "ellipsis.circle")
+                    .symbolRenderingMode(.hierarchical)
             }
         }
     }
@@ -222,13 +225,13 @@ private struct SheetGridView_iOS: View {
             // Header row
             HStack(spacing: 0) {
                 Text("#").frame(width: 36).font(.caption2).foregroundStyle(.secondary)
-                    .frame(height: 28).background(Color.gray.opacity(0.08))
+                    .frame(height: 28).background(.quaternary)
                 ForEach(Array(viewModel.sheet.columns.enumerated()), id: \.offset) { idx, col in
                     let label = col.label.isEmpty ? defaultLabel(index: idx) : col.label
                     Text(label).font(.caption).fontWeight(.semibold).lineLimit(1)
                         .frame(width: 100, height: 28)
-                        .background(Color.gray.opacity(0.08))
-                        .overlay(Rectangle().frame(width: 1).foregroundStyle(Color.gray.opacity(0.12)), alignment: .trailing)
+                        .background(.quaternary)
+                        .overlay(Rectangle().frame(width: 1).foregroundStyle(.separator), alignment: .trailing)
                 }
             }
             // Data rows
@@ -236,7 +239,7 @@ private struct SheetGridView_iOS: View {
                 HStack(spacing: 0) {
                     Text("\(row + 1)").font(.caption2).foregroundStyle(.secondary)
                         .frame(width: 36, height: 36)
-                        .background(Color.gray.opacity(0.04))
+                        .background(.quaternary.opacity(0.5))
                     ForEach(0..<viewModel.sheet.columnCount, id: \.self) { col in
                         let coord = SheetCellCoord(row: row, col: col)
                         let isSelected = viewModel.selectedCell == coord
@@ -259,8 +262,8 @@ private struct SheetGridView_iOS: View {
                         .frame(width: 100, height: 36)
                         .background(isEditing ? Color.accentColor.opacity(0.08) : (isSelected ? Color.accentColor.opacity(0.12) : Color.clear))
                         .overlay(RoundedRectangle(cornerRadius: 2).stroke(isSelected || isEditing ? Color.accentColor : Color.clear, lineWidth: 1))
-                        .overlay(Rectangle().frame(width: 1).foregroundStyle(Color.gray.opacity(0.1)), alignment: .trailing)
-                        .overlay(Rectangle().frame(height: 1).foregroundStyle(Color.gray.opacity(0.08)), alignment: .bottom)
+                        .overlay(Rectangle().frame(width: 1).foregroundStyle(.separator), alignment: .trailing)
+                        .overlay(Rectangle().frame(height: 1).foregroundStyle(.separator), alignment: .bottom)
                         .onTapGesture {
                             if isEditing { return }
                             if isSelected { viewModel.beginEditingCell(coord) }
@@ -271,7 +274,7 @@ private struct SheetGridView_iOS: View {
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.2), lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.separator, lineWidth: 1))
     }
 
     private func defaultLabel(index: Int) -> String {

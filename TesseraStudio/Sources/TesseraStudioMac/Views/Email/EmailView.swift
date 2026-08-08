@@ -160,24 +160,25 @@ public struct EmailView: View {
         .navigationTitle("Email")
         .searchable(text: $searchText, prompt: "Search subject, sender, body")
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItem(placement: .secondaryAction) {
                 Button {
                     Task { await load() }
                 } label: {
                     Image(systemName: "arrow.clockwise")
+                        .font(.body)
+                        .symbolRenderingMode(.hierarchical)
                 }
-                .help("Reload")
+                .help("Reload the message list")
+                .accessibilityLabel("Reload")
             }
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItemGroup(placement: .primaryAction) {
                 Button {
                     startNewCompose()
                 } label: {
                     Label("Compose", systemImage: "square.and.pencil")
                 }
                 .keyboardShortcut("c", modifiers: [])
-                .help("Compose (c)")
-            }
-            ToolbarItem(placement: .primaryAction) {
+                .help("Compose a new message (c)")
                 Menu {
                     Button(".eml file…") { presentOpenPanel(allowed: [.emailMessage]) }
                     Button(".mbox file…") { presentOpenPanel(allowed: [.plainText, .data]) }
@@ -186,15 +187,19 @@ public struct EmailView: View {
                 } label: {
                     Label("Import", systemImage: "square.and.arrow.down")
                 }
-                .help("Import email files")
+                .help("Import messages from a file")
+                .accessibilityLabel("Import")
             }
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItem(placement: .secondaryAction) {
                 Button {
                     isPresentingKeyHint = true
                 } label: {
                     Image(systemName: "questionmark.circle")
+                        .font(.body)
+                        .symbolRenderingMode(.hierarchical)
                 }
-                .help("Keyboard shortcuts")
+                .help("Show keyboard shortcuts")
+                .accessibilityLabel("Keyboard shortcuts")
             }
         }
         .onAppear {
@@ -338,12 +343,14 @@ public struct EmailView: View {
                             Spacer()
                             if let c = folderCounts[folder], c > 0 {
                                 Text("\(c)")
-                                    .font(.caption2)
+                                    .font(.caption2.monospacedDigit())
                                     .foregroundStyle(.secondary)
                             }
                         }
                     } icon: {
                         Image(systemName: icon(for: folder))
+                            .font(.callout)
+                            .symbolRenderingMode(.hierarchical)
                     }
                     .tag(Optional(folder))
                 }
@@ -429,7 +436,7 @@ public struct EmailView: View {
     private var emptyState: some View {
         VStack(spacing: 8) {
             Image(systemName: "envelope")
-                .font(.system(size: 64))
+                .font(.largeTitle)
                 .foregroundStyle(.tertiary)
             Text("Select an email")
                 .font(.title3)
@@ -611,9 +618,12 @@ private struct EmailRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            // Star indicator
-            Image(systemName: email.isStarred ? "star.fill" : "star")
-                .foregroundStyle(email.isStarred ? Color.yellow : Color.secondary)
+            Image(systemName: "star")
+                .symbolVariant(email.isStarred ? .fill : .none)
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(email.isStarred ? .yellow : .secondary)
+                .font(.caption.weight(.medium))
+                .contentTransition(.symbolEffect(.replace))
                 .frame(width: 16)
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
@@ -639,16 +649,19 @@ private struct EmailRow: View {
                     if email.hasAttachments {
                         Image(systemName: "paperclip")
                             .font(.caption2)
+                            .symbolRenderingMode(.hierarchical)
                             .foregroundStyle(.tertiary)
                     }
                     if email.isReplied {
                         Image(systemName: "arrowshape.turn.up.left.fill")
                             .font(.caption2)
+                            .symbolRenderingMode(.hierarchical)
                             .foregroundStyle(.tertiary)
                     }
                     if email.isForwarded {
                         Image(systemName: "arrowshape.turn.up.right.fill")
                             .font(.caption2)
+                            .symbolRenderingMode(.hierarchical)
                             .foregroundStyle(.tertiary)
                     }
                 }
@@ -693,28 +706,50 @@ private struct EmailDetailView: View {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button(action: onReply) {
                     Image(systemName: "arrowshape.turn.up.left")
+                        .font(.body)
+                        .symbolRenderingMode(.hierarchical)
                 }
-                .help("Reply (r)")
+                .help("Reply to this message (r)")
+                .accessibilityLabel("Reply")
                 Button(action: onReplyAll) {
                     Image(systemName: "arrowshape.turn.up.left.2")
+                        .font(.body)
+                        .symbolRenderingMode(.hierarchical)
                 }
-                .help("Reply All (R)")
+                .help("Reply to all recipients (R)")
+                .accessibilityLabel("Reply all")
                 Button(action: onForward) {
                     Image(systemName: "arrowshape.turn.up.right")
+                        .font(.body)
+                        .symbolRenderingMode(.hierarchical)
                 }
-                .help("Forward (f)")
+                .help("Forward this message (f)")
+                .accessibilityLabel("Forward")
                 Button(action: onToggleStar) {
-                    Image(systemName: email.isStarred ? "star.fill" : "star")
+                    Image(systemName: "star")
+                        .font(.body)
+                        .symbolRenderingMode(.hierarchical)
+                        .symbolVariant(email.isStarred ? .fill : .none)
+                        .contentTransition(.symbolEffect(.replace))
                 }
-                .help("Star (s)")
+                .help("Toggle star on this message (s)")
+                .accessibilityLabel(email.isStarred ? "Unstar" : "Star")
                 Button(action: onArchive) {
                     Image(systemName: "archivebox")
+                        .font(.body)
+                        .symbolRenderingMode(.hierarchical)
                 }
-                .help("Archive (a)")
+                .help("Archive this message (a)")
+                .accessibilityLabel("Archive")
+            }
+            ToolbarItem(placement: .destructiveAction) {
                 Button(action: onTrash) {
                     Image(systemName: "trash")
+                        .font(.body)
+                        .symbolRenderingMode(.hierarchical)
                 }
-                .help("Trash (#)")
+                .help("Move this message to Trash (#)")
+                .accessibilityLabel("Move to Trash")
             }
         }
         .task {
@@ -797,12 +832,14 @@ private struct EmailDetailView: View {
             ForEach(email.attachments) { a in
                 HStack {
                     Image(systemName: "paperclip")
+                        .font(.caption)
+                        .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(.tertiary)
                     Text(a.filename)
                         .font(.caption)
                     Spacer()
                     Text("\(a.size) bytes")
-                        .font(.caption2)
+                        .font(.caption2.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
             }
@@ -822,6 +859,8 @@ private struct EmailDetailView: View {
                 ForEach(receipts) { r in
                     HStack {
                         Image(systemName: "doc.text")
+                            .font(.caption)
+                            .symbolRenderingMode(.hierarchical)
                             .foregroundStyle(.tertiary)
                         VStack(alignment: .leading) {
                             Text(r.receiptType)
@@ -909,7 +948,7 @@ private struct EmailComposerSheet: View {
             TextEditor(text: $bodyText)
                 .font(.body)
                 .frame(minHeight: 240)
-                .border(Color.gray.opacity(0.2))
+                .border(.separator)
             if let err = sendError {
                 Text(err)
                     .font(.caption)

@@ -11,6 +11,15 @@
 
 #import <Metal/Metal.h>
 
+#include <stdlib.h>
+
+// Forward-declare the MTLSharedEvent helpers (defined in ggml-metal-event.mm)
+// so context.m can encode GPU-side signal/wait for fence-based slot sync.
+struct ggml_mtl_shared_event;
+typedef struct ggml_mtl_shared_event * ggml_mtl_shared_event_t;
+GGML_BACKEND_API void ggml_mtl_shared_event_encode_signal(ggml_mtl_shared_event_t event, void * cmd_buf, uint64_t value);
+GGML_BACKEND_API void ggml_mtl_shared_event_encode_wait  (ggml_mtl_shared_event_t event, void * cmd_buf, uint64_t value);
+
 #undef MIN
 #undef MAX
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -435,11 +444,341 @@ bool ggml_metal_cpy_tensor_async(ggml_metal_t ctx_src, ggml_metal_t ctx_dst, con
     }
 }
 
+enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph * gf);
+
+#ifdef GGML_USE_ANE
+// Slice 4.2a: streamed graph compute for IOSurface-backed FFN weights.
+//
+// The standard graph_compute encodes the whole cgraph into command buffers
+// before the GPU executes any of it. With 2 weight slots shared across 48
+// layers that is wrong: all per-layer refills would land before execution,
+// leaving the GPU reading only the last layer's data.
+//
+// This path paces compute one layer at a time:
+//   1. Scan the cgraph for streamed FFN MUL_MAT nodes (layer boundaries).
+//   2. For each segment between boundaries, create a command buffer, encode
+//      the segment, and commit (GPU starts asynchronously).
+//   3. Before encoding a layer's FFN segment, call the pool's ensure_fn to
+//      refill slot[L%2] from the mmap. Before reusing a slot (layer L+2),
+//      wait for the command buffer that consumed it (L) to complete.
+//
+// Non-FFN nodes (attention, norms, etc.) are encoded in the same segment as
+// the FFN that follows them, so they run on the same command buffer.
+//
+// Phase 1: synchronous refill (blocks the encode thread). No overlap yet.
+static enum ggml_status ggml_metal_graph_compute_streamed(ggml_metal_t ctx, struct ggml_cgraph * gf) {
+    @autoreleasepool {
+        ctx->gf = gf;
+
+        id<MTLCommandQueue> queue = ggml_metal_device_get_queue(ctx->dev);
+        void * pool = ggml_metal_device_stream_get_pool(ctx->dev);
+        ggml_metal_stream_ensure_fn ensure = ggml_metal_device_stream_get_ensure_fn(ctx->dev);
+        if (!pool || !ensure) {
+            // No pool attached; fall back to the standard path.
+            return ggml_metal_graph_compute(ctx, gf);
+        }
+
+        // Walk the cgraph and split it into segments at FFN layer boundaries.
+        // A segment starts at the node after a boundary and ends at the next
+        // boundary (or end of graph). The first segment runs from node 0.
+        // Use C arrays (this is a .m file, not ObjC++).
+        const int max_segments = gf->n_nodes; // upper bound: at most 1 segment per node
+        int * seg_start_arr = (int *) malloc(sizeof(int) * max_segments);
+        int * seg_end_arr   = (int *) malloc(sizeof(int) * max_segments);
+        int32_t * seg_layer = (int32_t *) malloc(sizeof(int32_t) * max_segments);
+        int n_segments = 0;
+        int seg_start = 0;
+        int32_t cur_layer = -1;
+        for (int i = 0; i < gf->n_nodes; ++i) {
+            struct ggml_tensor * node = ggml_graph_node(gf, i);
+            if (!node) continue;
+            int32_t layer = -1;
+            if (ggml_metal_op_is_streamed_ffn(node, &layer)) {
+                if (layer != cur_layer) {
+                    if (cur_layer >= 0) {
+                        seg_start_arr[n_segments] = seg_start;
+                        seg_end_arr[n_segments]   = i;
+                        seg_layer[n_segments]     = cur_layer;
+                        n_segments++;
+                    }
+                    seg_start = i;
+                    cur_layer = layer;
+                }
+            }
+        }
+        if (cur_layer >= 0) {
+            seg_start_arr[n_segments] = seg_start;
+            seg_end_arr[n_segments]   = gf->n_nodes;
+            seg_layer[n_segments]     = cur_layer;
+            n_segments++;
+        } else {
+            // No streamed FFN in this graph; fall back.
+            free(seg_start_arr); free(seg_end_arr); free(seg_layer);
+            return ggml_metal_graph_compute(ctx, gf);
+        }
+
+        // Track per-slot in-flight command buffers so we can wait before reuse.
+        // slot_cb[s] is the command buffer that most recently read slot s.
+        id<MTLCommandBuffer> slot_cb[2] = { nil, nil };
+        int32_t slot_layer[2] = { -1, -1 };
+
+        bool ok = true;
+        // Fence-based sync: the GPU signals event = layer+1 after each
+        // segment finishes. Slot reuse encodes a GPU-side wait for the
+        // previous layer's signal, so the encode thread never blocks on
+        // the CPU. Falls back to CPU waitUntilCompleted when no fence.
+        ggml_mtl_shared_event_t fence =
+            (ggml_mtl_shared_event_t) ggml_metal_device_stream_get_fence(ctx->dev);
+
+        for (int si = 0; si < n_segments; ++si) {
+            const int seg_lo = seg_start_arr[si];
+            const int seg_hi = seg_end_arr[si];
+            const int32_t seg_lyr = seg_layer[si];
+            const int slot = seg_lyr % 2;
+
+            // Release the previous cmd_buf for this slot (fix retain leak).
+            // The GPU-side fence handles ordering; we only need the cmd_buf
+            // reference for the final status check.
+            if (slot_cb[slot]) {
+                [slot_cb[slot] release];
+                slot_cb[slot] = nil;
+            }
+
+            // Refill the slot with this layer's bytes. The fill thread (Phase
+            // 2) may have already prefetched it; ensure_layer is a cache hit
+            // in that case. The fill thread's own slot-reuse guard uses the
+            // fence's CPU-side wait via sync_fn.
+            //
+            // MoE two-pass: if this segment contains MUL_MAT_ID nodes, the
+            // expert IDs are computed on GPU (router pass) and are not
+            // available at encode time. Split the segment: encode+commit+wait
+            // the router pass (nodes before the first MUL_MAT_ID), read the
+            // expert IDs from src[2]->data, sparse-fill the active expert
+            // slices, then encode the expert pass.
+            ggml_metal_stream_ensure_experts_fn ensure_experts =
+                ggml_metal_device_stream_get_ensure_experts_fn(ctx->dev);
+
+            // Scan for the first MUL_MAT_ID node in this segment.
+            int mul_mat_id_idx = -1;
+            if (ensure_experts) {
+                for (int i = seg_lo; i < seg_hi; ++i) {
+                    struct ggml_tensor * node = ggml_graph_node(gf, i);
+                    if (node && node->op == GGML_OP_MUL_MAT_ID) {
+                        mul_mat_id_idx = i;
+                        break;
+                    }
+                }
+            }
+
+            if (mul_mat_id_idx >= 0) {
+                // --- MoE two-pass ---
+
+                // Sub-segment 1: router pass [seg_lo, mul_mat_id_idx).
+                // Encode, commit, and wait — the CPU needs the expert IDs.
+                if (mul_mat_id_idx > seg_lo) {
+                    id<MTLCommandBuffer> router_cb = [queue commandBufferWithUnretainedReferences];
+                    [router_cb retain];
+                    if (fence) {
+                        const int32_t prev_in_slot = seg_lyr - 2;
+                        if (prev_in_slot >= 0) {
+                            ggml_mtl_shared_event_encode_wait(fence, router_cb, (uint64_t)(prev_in_slot + 1));
+                        }
+                    }
+                    ggml_metal_op_t router_op = ggml_metal_op_init(
+                        ctx->dev, router_cb, gf,
+                        seg_lo, mul_mat_id_idx,
+                        ctx->use_fusion, ctx->use_concurrency,
+                        ctx->capture_compute >= 0, ctx->debug_graph, ctx->debug_fusion);
+                    for (int idx = 0; idx < ggml_metal_op_n_nodes(router_op); ++idx) {
+                        const int res = ggml_metal_op_encode(router_op, idx);
+                        if (res == 0) break;
+                        idx += res - 1;
+                    }
+                    ggml_metal_op_free(router_op);
+                    [router_cb enqueue];
+                    [router_cb commit];
+                    [router_cb waitUntilCompleted]; // CPU blocks until router done
+                    MTLCommandBufferStatus rst = [router_cb status];
+                    if (rst != MTLCommandBufferStatusCompleted) {
+                        GGML_LOG_ERROR("%s: MoE router pass layer %d failed (status %lu)\n",
+                                       __func__, seg_lyr, (unsigned long) rst);
+                        ctx->has_error = true;
+                        ok = false;
+                        [router_cb release];
+                        break;
+                    }
+                    [router_cb release];
+                }
+
+                // Read expert IDs from the first MUL_MAT_ID node's src[2].
+                // src[2] is [n_expert_used, n_tokens] I32. Collect unique IDs.
+                struct ggml_tensor * mmid_node = ggml_graph_node(gf, mul_mat_id_idx);
+                struct ggml_tensor * ids_tensor = mmid_node ? mmid_node->src[2] : NULL;
+                if (!ids_tensor || !ids_tensor->data) {
+                    GGML_LOG_ERROR("%s: MoE layer %d — expert IDs not available\n", __func__, seg_lyr);
+                    ok = false;
+                    break;
+                }
+                const int32_t * ids_data = (const int32_t *) ids_tensor->data;
+                const int n_ids = (int)(ids_tensor->ne[0] * ids_tensor->ne[1]);
+
+                // Collect unique expert IDs (simple O(n^2) — n_ids is small).
+                int32_t unique_ids[256]; // top-k * n_tokens, but top-k is typically 2-16
+                int n_unique = 0;
+                for (int i = 0; i < n_ids && n_unique < 256; ++i) {
+                    int32_t id = ids_data[i];
+                    bool found = false;
+                    for (int j = 0; j < n_unique; ++j) {
+                        if (unique_ids[j] == id) { found = true; break; }
+                    }
+                    if (!found) unique_ids[n_unique++] = id;
+                }
+
+                // Sparse-fill: for each unique MoE weight tensor in the expert
+                // pass, call ensure_experts with the active expert IDs. We
+                // collect unique weight suffixes from the MUL_MAT_ID nodes.
+                // The slot reuse guard is handled inside ensure_experts.
+                for (int i = mul_mat_id_idx; i < seg_hi; ++i) {
+                    struct ggml_tensor * node = ggml_graph_node(gf, i);
+                    if (!node || node->op != GGML_OP_MUL_MAT_ID) continue;
+                    if (!node->src[0] || !node->src[0]->name[0]) continue;
+                    // Extract the suffix from "blk.L.<suffix>" — skip "blk.N."
+                    const char * name = node->src[0]->name;
+                    const char * suffix = name;
+                    if (name[0]=='b'&&name[1]=='l'&&name[2]=='k'&&name[3]=='.') {
+                        const char * p = name + 4;
+                        while (*p >= '0' && *p <= '9') ++p;
+                        if (*p == '.') suffix = p + 1;
+                    }
+                    if (ensure_experts(pool, seg_lyr, suffix, unique_ids, n_unique) < 0) {
+                        GGML_LOG_ERROR("%s: MoE ensure_experts layer %d %s failed\n",
+                                       __func__, seg_lyr, suffix);
+                        ok = false;
+                        break;
+                    }
+                    // Phase MoE-2: poke the fill thread to prefetch these
+                    // expert IDs for the next chunk (temporal routing hint).
+                    // The fill thread pre-fills the same experts so the next
+                    // ensure_experts is a cache hit if routing is stable.
+                    ggml_metal_stream_poke_experts_fn poke_ex =
+                        ggml_metal_device_stream_get_poke_experts_fn(ctx->dev);
+                    if (poke_ex) {
+                        poke_ex(pool, seg_lyr, suffix, unique_ids, n_unique);
+                    }
+                }
+                if (!ok) break;
+                slot_layer[slot] = seg_lyr;
+
+                // Sub-segment 2: expert pass [mul_mat_id_idx, seg_hi).
+                id<MTLCommandBuffer> cmd_buf = [queue commandBufferWithUnretainedReferences];
+                [cmd_buf retain];
+                ggml_metal_op_t ctx_op = ggml_metal_op_init(
+                    ctx->dev, cmd_buf, gf,
+                    mul_mat_id_idx, seg_hi,
+                    ctx->use_fusion, ctx->use_concurrency,
+                    ctx->capture_compute >= 0, ctx->debug_graph, ctx->debug_fusion);
+                for (int idx = 0; idx < ggml_metal_op_n_nodes(ctx_op); ++idx) {
+                    const int res = ggml_metal_op_encode(ctx_op, idx);
+                    if (res == 0) break;
+                    idx += res - 1;
+                }
+                ggml_metal_op_free(ctx_op);
+                if (fence) {
+                    ggml_mtl_shared_event_encode_signal(fence, cmd_buf, (uint64_t)(seg_lyr + 1));
+                }
+                [cmd_buf enqueue];
+                [cmd_buf commit];
+                ctx->cmd_buf_last = cmd_buf;
+                slot_cb[slot] = cmd_buf;
+
+            } else {
+                // --- Dense (no MUL_MAT_ID) — original path ---
+                if (ensure(pool, seg_lyr) < 0) {
+                    GGML_LOG_ERROR("%s: weight pool ensure_layer %d failed\n", __func__, seg_lyr);
+                    ok = false;
+                    break;
+                }
+                slot_layer[slot] = seg_lyr;
+
+                id<MTLCommandBuffer> cmd_buf = [queue commandBufferWithUnretainedReferences];
+                [cmd_buf retain];
+                if (fence) {
+                    const int32_t prev_in_slot = seg_lyr - 2;
+                    if (prev_in_slot >= 0) {
+                        ggml_mtl_shared_event_encode_wait(fence, cmd_buf, (uint64_t)(prev_in_slot + 1));
+                    }
+                }
+                ggml_metal_op_t ctx_op = ggml_metal_op_init(
+                    ctx->dev, cmd_buf, gf,
+                    seg_lo, seg_hi,
+                    ctx->use_fusion, ctx->use_concurrency,
+                    ctx->capture_compute >= 0, ctx->debug_graph, ctx->debug_fusion);
+                for (int idx = 0; idx < ggml_metal_op_n_nodes(ctx_op); ++idx) {
+                    const int res = ggml_metal_op_encode(ctx_op, idx);
+                    if (res == 0) break;
+                    idx += res - 1;
+                }
+                ggml_metal_op_free(ctx_op);
+                if (fence) {
+                    ggml_mtl_shared_event_encode_signal(fence, cmd_buf, (uint64_t)(seg_lyr + 1));
+                }
+                [cmd_buf enqueue];
+                [cmd_buf commit];
+                ctx->cmd_buf_last = cmd_buf;
+                slot_cb[slot] = cmd_buf;
+            }
+
+            // Phase 2: poke the fill thread to prefetch the next layer while
+            // the GPU computes this one. Non-blocking; falls back to Phase 1
+            // (synchronous ensure) when poke_fn is NULL.
+            ggml_metal_stream_poke_fn poke = ggml_metal_device_stream_get_poke_fn(ctx->dev);
+            if (poke && si + 1 < n_segments) {
+                poke(pool, seg_layer[si + 1]);
+            }
+        }
+
+        // Wait for the final command buffers to complete so status is checked.
+        for (int s = 0; s < 2; ++s) {
+            if (slot_cb[s]) {
+                [slot_cb[s] waitUntilCompleted];
+                MTLCommandBufferStatus st = [slot_cb[s] status];
+                if (st != MTLCommandBufferStatusCompleted) {
+                    GGML_LOG_ERROR("%s: streamed final cmd_buf slot %d failed (status %lu)\n",
+                                   __func__, s, (unsigned long) st);
+                    if (st == MTLCommandBufferStatusError) {
+                        GGML_LOG_ERROR("error: %s\n", [slot_cb[s].error.localizedDescription UTF8String]);
+                    }
+                    ctx->has_error = true;
+                    ok = false;
+                }
+                [slot_cb[s] release];
+                slot_cb[s] = nil;
+            }
+        }
+
+        // Reset the device's last-streamed-layer cache for the next graph.
+        ggml_metal_device_stream_set_last_layer(ctx->dev, -1);
+
+        free(seg_start_arr); free(seg_end_arr); free(seg_layer);
+
+        return ok ? GGML_STATUS_SUCCESS : GGML_STATUS_FAILED;
+    }
+}
+#endif
+
 enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph * gf) {
     if (ctx->has_error) {
         GGML_LOG_ERROR("%s: backend is in error state from a previous command buffer failure - recreate the backend to recover\n", __func__);
         return GGML_STATUS_FAILED;
     }
+
+#ifdef GGML_USE_ANE
+    // Slice 4.2a: if a weight pool is attached, use the streamed path that
+    // paces compute one layer at a time (refill + commit + wait per segment).
+    if (ggml_metal_device_stream_get_pool(ctx->dev) != NULL) {
+        return ggml_metal_graph_compute_streamed(ctx, gf);
+    }
+#endif
 
     // number of nodes encoded by the main thread (empirically determined)
     const int n_main = MAX(64, 0.1*gf->n_nodes);

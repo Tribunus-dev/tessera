@@ -60,16 +60,17 @@ public struct RemindersView: View {
         }
         .navigationTitle("Reminders")
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItem(placement: .secondaryAction) {
                 Button {
                     Task {
                         await viewModel.load()
                         await refreshAuthorization()
                     }
                 } label: {
-                    Image(systemName: "arrow.clockwise")
+                    Label("Reload", systemImage: "arrow.clockwise")
                 }
                 .help("Reload reminders")
+                .accessibilityLabel("Reload reminders")
             }
         }
         .overlay(alignment: .bottom) {
@@ -187,15 +188,11 @@ public struct RemindersView: View {
     // MARK: - Detail empty state
 
     private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "bell")
-                .font(.system(size: 64))
-                .foregroundStyle(.tertiary)
-            Text("Select a reminder")
-                .font(.title3)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        ContentUnavailableView(
+            "Select a reminder",
+            systemImage: "bell",
+            description: Text("Choose a reminder from the list.")
+        )
     }
 
     // MARK: - Notifications-disabled banner
@@ -203,6 +200,7 @@ public struct RemindersView: View {
     private var notificationsDisabledBanner: some View {
         HStack(spacing: 8) {
             Image(systemName: "bell.slash")
+                .symbolRenderingMode(.hierarchical)
             Text("Notifications are disabled. Open System Settings to enable them.")
                 .font(.caption)
             Spacer()
@@ -234,6 +232,7 @@ private struct ReminderRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: rowIcon)
+                .symbolRenderingMode(.hierarchical)
                 .font(.title3)
                 .foregroundStyle(rowColor)
                 .frame(width: 28)

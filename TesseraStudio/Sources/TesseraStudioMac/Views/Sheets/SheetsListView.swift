@@ -94,13 +94,14 @@ public struct SheetsListView: View {
         }
         .searchable(text: searchTextBinding, prompt: "Search sheets")
         .toolbar {
-            ToolbarItem(placement: .automatic) {
+            ToolbarItem(placement: .primaryAction) {
                 Button {
                     Task { await createBlankSheet() }
                 } label: {
                     Label("New Sheet", systemImage: "tablecells.badge.ellipsis")
                 }
                 .help("Create a new sheet (Cmd-N)")
+                .accessibilityLabel("New Sheet")
                 .keyboardShortcut("n", modifiers: .command)
             }
         }
@@ -131,23 +132,18 @@ public struct SheetsListView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "tablecells")
-                .font(.system(size: 48))
-                .foregroundStyle(.secondary)
-            Text(emptyStateTitle)
-                .font(.headline)
+        ContentUnavailableView {
+            Label(emptyStateTitle, systemImage: "tablecells")
+        } description: {
             Text(emptyStateSubtitle)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+        } actions: {
             Button {
                 Task { await createBlankSheet() }
             } label: {
                 Label("New Sheet", systemImage: "tablecells.badge.ellipsis")
             }
-            .controlSize(.large)
+            .buttonStyle(.borderedProminent)
         }
-        .padding()
     }
 
     private var emptyStateTitle: String {
@@ -169,14 +165,14 @@ public struct SheetsListView: View {
     }
 
     private func errorState(_ error: String) -> some View {
-        VStack(spacing: 12) {
-            Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange).font(.title)
-            Text("Could not load sheets").font(.headline)
-            Text(error).foregroundStyle(.secondary).font(.callout).multilineTextAlignment(.center)
+        ContentUnavailableView {
+            Label("Could not load sheets", systemImage: "exclamationmark.triangle")
+        } description: {
+            Text(error)
+        } actions: {
             Button("Retry") { Task { await viewModel.refresh() } }
+                .buttonStyle(.borderedProminent)
         }
-        .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var detailColumn: some View {
@@ -186,21 +182,27 @@ public struct SheetsListView: View {
                     Task { await viewModel.deleteSelected() }
                 })
             } else {
-                Text("Select a sheet")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                ContentUnavailableView(
+                    "Select a sheet",
+                    systemImage: "tablecells",
+                    description: Text("Choose a sheet from the list or create a new one.")
+                )
             }
         }
     }
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        ToolbarItem(placement: .primaryAction) {
+        ToolbarItem(placement: .secondaryAction) {
             Button {
-                Task { await createBlankSheet() }
+                Task { await viewModel.refresh() }
             } label: {
-                Label("New Sheet", systemImage: "plus")
+                Label("Refresh", systemImage: "arrow.clockwise")
+                    .font(.body)
+                    .symbolRenderingMode(.hierarchical)
             }
+            .help("Reload sheets")
+            .accessibilityLabel("Reload sheets")
         }
     }
 
@@ -219,9 +221,9 @@ struct SheetRowView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                if row.isFavorite { Image(systemName: "star.fill").foregroundStyle(.yellow).font(.caption) }
-                if row.isArchived { Image(systemName: "archivebox.fill").foregroundStyle(.secondary).font(.caption) }
-                if row.isTrashed { Image(systemName: "trash.fill").foregroundStyle(.secondary).font(.caption) }
+                if row.isFavorite { Image(systemName: "star.fill").font(.caption).symbolRenderingMode(.hierarchical).foregroundStyle(.yellow) }
+                if row.isArchived { Image(systemName: "archivebox.fill").font(.caption).symbolRenderingMode(.hierarchical).foregroundStyle(.secondary) }
+                if row.isTrashed { Image(systemName: "trash.fill").font(.caption).symbolRenderingMode(.hierarchical).foregroundStyle(.secondary) }
                 Text(row.title).font(.headline).lineLimit(1)
             }
             if !row.snippet.isEmpty {
@@ -237,7 +239,7 @@ struct SheetRowView: View {
                     ForEach(row.tags.prefix(3), id: \.self) { tag in
                         Text("#\(tag)").font(.caption2).foregroundStyle(.secondary)
                             .padding(.horizontal, 4).padding(.vertical, 1)
-                            .background(Capsule().fill(Color.gray.opacity(0.12)))
+                            .background(Capsule().fill(.quaternary))
                     }
                 }
             }
@@ -260,9 +262,7 @@ struct SheetsTagChipsView: View {
                     Text("#\(tag)")
                         .font(.caption)
                         .padding(.horizontal, 8).padding(.vertical, 3)
-                        .background(
-                            Capsule().fill(activeTag == tag ? Color.accentColor : Color.gray.opacity(0.15))
-                        )
+                        .background(activeTag == tag ? Color.accentColor : Color(.quaternaryLabelColor).opacity(0.18), in: Capsule())
                         .foregroundStyle(activeTag == tag ? Color.white : Color.primary)
                 }
                 .buttonStyle(.plain)

@@ -23,7 +23,7 @@ public struct C2PAManifestSheet: View {
         VStack(spacing: 0) {
             HStack {
                 Text("C2PA manifest")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.headline)
                 Spacer()
                 Button("Copy") {
                     let pb = NSPasteboard.general
@@ -39,12 +39,12 @@ public struct C2PAManifestSheet: View {
             Divider()
             ScrollView {
                 Text(jsonString)
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(.caption.monospaced())
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(12)
             }
-            .background(Color(NSColor.textBackgroundColor))
+            .background(.background)
         }
         .frame(minWidth: 480, idealWidth: 600, minHeight: 320)
         .onAppear { jsonString = encodeJSON() }
