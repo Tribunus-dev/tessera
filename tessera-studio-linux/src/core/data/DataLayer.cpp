@@ -60,6 +60,33 @@ StartOutcome DataLayer::connect(){
     if(!pg_url.empty()){
         std::string h; int p; if(probe_url(pg_url,h,p)) pg_ok = can_connect(h,p);
         else pg_ok = true;
+        if(!pg_ok){
+            // Embedded: try to start or init via tessera-init-db (Flatpak) or pg_ctl
+            if(embedded_exists){
+                if(system("tessera-init-db >/tmp/tessera-init-db.log 2>&1")==0 || system(("pg_ctl -D '" + embedded_pg + "' start -l '" + embedded_pg + "/postgres.log' 2>/dev/null").c_str())==0){
+                    if(probe_url(pg_url,h,p)) pg_ok = can_connect(h,p);
+                }
+            } else {
+                // No pgdata yet — try to init embedded (will create pgdata and start)
+                if(system("tessera-init-db >/tmp/tessera-init-db.log 2>&1")==0){
+                    // After init, update pg_url to embedded
+                    if(pg_url.empty()) pg_url = "postgres://tessera:tessera@127.0.0.1:5432/tessera?host=" + embedded_pg;
+                    if(probe_url(pg_url,h,p)) pg_ok = can_connect(h,p);
+                    cfg_.postgres_url = pg_url;
+                }
+            }
+        }
+    } else if(!embedded_exists){
+        // pg_url empty and no embedded — try to init embedded as last resort
+        if(system("tessera-init-db >/tmp/tessera-init-db.log 2>&1")==0){
+            std::string try_url = "postgres://tessera:tessera@127.0.0.1:5432/tessera?host=" + embedded_pg;
+            std::string h; int p;
+            if(probe_url(try_url,h,p) && can_connect(h,p)){
+                pg_url = try_url;
+                cfg_.postgres_url = pg_url;
+                pg_ok = true;
+            }
+        }
     }
     if(!vk_url.empty()){
         std::string h; int p; if(probe_url(vk_url,h,p)) cache_ok = can_connect(h,p);
