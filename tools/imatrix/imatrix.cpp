@@ -165,7 +165,7 @@ public:
     bool load_imatrix(const char * file_name);
     const std::unordered_map<stats_key, Stats, stats_key_hash> & get_mstats() const { return m_stats; }
 private:
-    static constexpr size_t k_observer_slots = 2;
+    static constexpr size_t k_observer_slots = 4;
     struct graph_observer_snapshot {
         std::string names;
         std::string backend_name;
@@ -198,8 +198,10 @@ private:
     std::vector<char>                      m_ids; // the expert ids from ggml_mul_mat_id
     std::vector<ggml_tensor *>             m_graph_observers;
     std::set<std::string>                  m_observer_backends;
-    // Two slots let CPU reduction overlap the following Metal graph while
-    // keeping staging and completion ownership one-to-one.
+    // Four slots pipeline: decode N+1 overlaps copy N overlaps reduce N-2/N-3.
+    // k=2 stalled when reduce > decode (slot_wait dominates); k=4 gives the
+    // 11 TiB imatrix pass enough queue depth on M1 68 GB/s.
+    // Staging and completion ownership remain one-to-one per slot.
     std::array<std::vector<float>, k_observer_slots> m_observer_staging;
     std::vector<size_t>                    m_observer_offsets;
     std::array<std::future<bool>, k_observer_slots> m_observer_reduction;
@@ -592,8 +594,8 @@ void IMatrixCollector::begin_graph_observers() {
 }
 
 bool IMatrixCollector::collect_graph_observers() {
-    // Reuse one of two persistent arenas. The other arena may still be
-    // reducing the preceding graph while Metal executes this graph.
+    // Reuse one of four persistent arenas. Three arenas may still be
+    // reducing preceding graphs while Metal/BLAS executes this graph.
     // Keep producer and completion ownership in the same bounded ring.  This
     // must be derived from the completion array: a stale binary once had
     // three staging vectors and two futures, which allowed slot 2 to escape
@@ -1749,8 +1751,14 @@ static bool compute_imatrix(llama_context * ctx, const common_params & params, c
 
         const auto t_start = std::chrono::high_resolution_clock::now();
 
-        // clear the KV cache
-        llama_memory_clear(llama_get_memory(ctx), true);
+        // KV clear: metadata reset (v_cells/head) is required, but the
+        // data memset is redundant. Each chunk writes n_ctx tokens
+        // contiguously from cell 0 via find_slot->cpy_k/v, overwriting
+        // every physical cell before it is read (n_kv via slot_info).
+        // Skipping the ggml_backend_buffer_clear saves ~700 MiB memset
+        // per chunk (~333 GiB over 476 chunks) and removes the serial
+        // barrier that blocked the k=4 observer pipeline.
+        llama_memory_clear(llama_get_memory(ctx), false);
 
         for (int j = 0; j < num_batches; ++j) {
             const int batch_start = start + j * n_batch;
@@ -2024,7 +2032,7 @@ static bool compute_features(llama_context * ctx, const common_params & params, 
 
         const auto t_start = std::chrono::high_resolution_clock::now();
 
-        llama_memory_clear(llama_get_memory(ctx), true);
+        llama_memory_clear(llama_get_memory(ctx), false); // KV data memset skipped, same rationale as compute_imatrix
 
         for (int j = 0; j < num_batches; ++j) {
             const int batch_start = start + j * n_batch;

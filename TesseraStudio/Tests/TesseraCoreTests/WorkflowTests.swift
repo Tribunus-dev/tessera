@@ -132,7 +132,7 @@ final class WorkflowRoundTripTests: XCTestCase {
         let reg = WorkflowNodeRegistry.default
         XCTAssertEqual(reg.allTypeIds.sorted(), [
             "calibrate", "evaluate", "inspect_sidecar",
-            "load_model", "quantize",
+            "load_model", "quantize", "speak_text",
         ])
     }
 

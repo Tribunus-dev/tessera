@@ -576,19 +576,20 @@ bool copy_tile640_cluster(
     // Cluster sub-tensor defs (n_dims / ne for the destination; the
     // outlier_cols / outlier_vals read the source's ne[0] for the
     // real size).
-    cluster_member_def members[] = {
-        { "weight_packed",              GGML_TYPE_I32, 2, { pages * TS_WORDS_PER_PAGE, out_dim, 1, 1 } },
-        { "weight_page_scales",         GGML_TYPE_F16, 2, { pages,                    out_dim, 1, 1 } },
-        { "weight_lane_scales",         GGML_TYPE_I8,  2, { pages * TS_WORDS_PER_PAGE, out_dim, 1, 1 } },
+    // Capacity 7: the six static members plus the optional
+    // weight_act_scale appended below when the source carries it.
+    // Cluster members are flat 1D (the ggml_tile640 ops derive out_dim from
+    // page_scales->ne[0] / pages_per_row); the source's ne[] is authoritative.
+    cluster_member_def members[7] = {
+        { "weight_packed",              GGML_TYPE_I32, 1, { out_dim * pages * TS_WORDS_PER_PAGE, 1, 1, 1 } },
+        { "weight_page_scales",         GGML_TYPE_F16, 1, { out_dim * pages,                     1, 1, 1 } },
+        { "weight_lane_scales",         GGML_TYPE_I8,  1, { out_dim * pages * TS_WORDS_PER_PAGE, 1, 1, 1 } },
         { "weight_outlier_row_offsets", GGML_TYPE_I32, 1, { out_dim + 1,                1, 1, 1 } },
         { "weight_outlier_cols",        GGML_TYPE_I32, 1, { 0,                          0, 0, 0 } }, // size from source
         { "weight_outlier_vals",        GGML_TYPE_F16, 1, { 0,                          0, 0, 0 } }, // size from source
     };
     if (has_act_scale) {
-        cluster_member_def act = {
-            "weight_act_scale", GGML_TYPE_F16, 1, { in_dim, 1, 1, 1 }
-        };
-        members[6] = act;
+        members[6] = { "weight_act_scale", GGML_TYPE_F16, 1, { in_dim, 1, 1, 1 } };
     }
     const size_t n_members = has_act_scale ? 7 : 6;
 
@@ -645,6 +646,82 @@ bool copy_tile640_cluster(
     gguf_add_tensor(dst, base_dst);
     (*out_copied) += (int)n_members + 1;
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// unified-tts: KV namespace sidecar (plan Phase 1.4)
+// ---------------------------------------------------------------------------
+//
+// The destination's arch is gemma4-assistant, so the qwen3-tts talker's
+// KV cannot live under its own arch name at the top level. The talker's
+// loader view (llama_model_loader with component_prefix = "tts.")
+// resolves every key K as "tts." + K first (scoped_key), so the writer
+// re-emits the talker's ENTIRE source KV namespace under the "tts."
+// prefix: tts.general.architecture = "qwen3-tts-talker" (the loader's
+// arch resolution), tts.qwen3-tts-talker.* (load_arch_hparams), and
+// tts.tokenizer.* when present. code2wav routes under "tts.c2w.".
+//
+// The copy is additive: old readers ignore unknown keys, and the
+// gemma-side keys are untouched. Every KV type the gguf format defines
+// is copied; an unknown type fails closed (the caller aborts the write)
+// rather than silently dropping a key the talker's loader would need.
+
+// Returns the destination KV prefix for a component role, or "" when
+// the role's KV is not sidecar-copied (every gemma-side role: their
+// hparams are re-emitted from the CLI's hparams JSON, not copied).
+static std::string tts_kv_prefix_for_role(const std::string & role) {
+    if (role == "tts_talker")   return "tts.";
+    if (role == "tts_code2wav") return "tts.c2w.";
+    return "";
+}
+
+// Copy every KV pair of src into dst under the given key prefix.
+// Returns the number of keys copied, or -1 on an unsupported KV type
+// (message in *err). The caller treats -1 as a hard error.
+static int copy_kv_namespace(gguf_context * src, gguf_context * dst,
+                             const std::string & prefix, std::string * err) {
+    const int64_t n_kv = gguf_get_n_kv(src);
+    int n_copied = 0;
+    for (int64_t i = 0; i < n_kv; i++) {
+        const char * src_key = gguf_get_key(src, i);
+        if (src_key == nullptr) continue;
+        const std::string dst_key = prefix + src_key;
+        const gguf_type t = gguf_get_kv_type(src, i);
+        switch (t) {
+            case GGUF_TYPE_UINT8:   gguf_set_val_u8 (dst, dst_key.c_str(), gguf_get_val_u8 (src, i)); break;
+            case GGUF_TYPE_INT8:    gguf_set_val_i8 (dst, dst_key.c_str(), gguf_get_val_i8 (src, i)); break;
+            case GGUF_TYPE_UINT16:  gguf_set_val_u16(dst, dst_key.c_str(), gguf_get_val_u16(src, i)); break;
+            case GGUF_TYPE_INT16:   gguf_set_val_i16(dst, dst_key.c_str(), gguf_get_val_i16(src, i)); break;
+            case GGUF_TYPE_UINT32:  gguf_set_val_u32(dst, dst_key.c_str(), gguf_get_val_u32(src, i)); break;
+            case GGUF_TYPE_INT32:   gguf_set_val_i32(dst, dst_key.c_str(), gguf_get_val_i32(src, i)); break;
+            case GGUF_TYPE_FLOAT32: gguf_set_val_f32(dst, dst_key.c_str(), gguf_get_val_f32(src, i)); break;
+            case GGUF_TYPE_UINT64:  gguf_set_val_u64(dst, dst_key.c_str(), gguf_get_val_u64(src, i)); break;
+            case GGUF_TYPE_INT64:   gguf_set_val_i64(dst, dst_key.c_str(), gguf_get_val_i64(src, i)); break;
+            case GGUF_TYPE_FLOAT64: gguf_set_val_f64(dst, dst_key.c_str(), gguf_get_val_f64(src, i)); break;
+            case GGUF_TYPE_BOOL:    gguf_set_val_bool(dst, dst_key.c_str(), gguf_get_val_bool(src, i)); break;
+            case GGUF_TYPE_STRING:  gguf_set_val_str(dst, dst_key.c_str(), gguf_get_val_str(src, i)); break;
+            case GGUF_TYPE_ARRAY: {
+                const gguf_type at = gguf_get_arr_type(src, i);
+                const size_t    n  = gguf_get_arr_n(src, i);
+                if (at == GGUF_TYPE_STRING) {
+                    std::vector<const char *> strs(n);
+                    for (size_t k = 0; k < n; k++) {
+                        strs[k] = gguf_get_arr_str(src, i, k);
+                    }
+                    gguf_set_arr_str(dst, dst_key.c_str(), strs.data(), n);
+                } else {
+                    gguf_set_arr_data(dst, dst_key.c_str(), at, gguf_get_arr_data(src, i), n);
+                }
+                break;
+            }
+            default:
+                if (err) *err = "unsupported KV type for key '" + std::string(src_key) +
+                                "' (gguf_type " + std::to_string((int)t) + ")";
+                return -1;
+        }
+        n_copied++;
+    }
+    return n_copied;
 }
 
 } // namespace
@@ -846,6 +923,11 @@ ts_unified_writer::~ts_unified_writer() {
 //                   component wins by component order; the writer
 //                   does not error on the conflict, matching the
 //                   pre-M0a shared_embd contract).
+//   * tts_talker:   copy with a "tts." prefix (see the route body
+//                   comment below). Load-bearing: the talker's
+//                   blk.N.* names collide with the trunk's.
+//   * tts_code2wav: copy with a "tts.c2w." prefix so one prefix
+//                   family scopes the whole qwen3-tts side.
 //
 // Returns "" for tensors the writer does not route. The writer
 // skips "" silently (the tensor is in the source but the unified
@@ -855,12 +937,40 @@ static std::string route_destination_name(const std::string & component_role,
     if (component_role == "dflash") {
         return "dflash." + src_name;
     }
+    // unified-tts: the talker's source tensors are named blk.N.* -
+    // byte-identical to the trunk's names but unrelated weights -
+    // so the talker is prefix-routed like dflash. The code2wav
+    // source names are conv/upsampler blocks that do not collide
+    // with the trunk either, but they route under their own tts
+    // sub-namespace so the loader's component_prefix can scope the
+    // whole qwen3-tts side with one prefix family.
+    if (component_role == "tts_talker") {
+        return "tts." + src_name;
+    }
+    if (component_role == "tts_code2wav") {
+        return "tts.c2w." + src_name;
+    }
     // trunk / dspark / mtp_nextn / shared_embd / vision_tower /
     // audio_tower / mm_projector: copy as-is. The mmproj source
     // GGUFs already namespace their tensors with "v.", "a.", and
     // "mm." prefixes (see the per-component comment above), so the
     // destination names are byte-identical to the source names.
     return src_name;
+}
+
+bool ts_unified_writer_roles_reconcile(const std::string & a,
+                                       const std::string & b) {
+    // A role-less entry is a legacy sidecar record; it matches every
+    // component (the pre-tts name-only contract).
+    if (a.empty() || b.empty()) return true;
+    if (a == b) return true;
+    // The tts_ prefix marks the qwen3-tts calibration pipeline. Its
+    // tensor names collide with the gemma-side trunk by pure naming
+    // coincidence (blk.N.attn_q.weight on both), never by shared
+    // weight, so a tts_ role folds verdicts only with itself.
+    const bool a_tts = a.rfind("tts_", 0) == 0;
+    const bool b_tts = b.rfind("tts_", 0) == 0;
+    return !a_tts && !b_tts;
 }
 
 // --- Phase 16.6 worst-of qtype resolution ------------------------------------
@@ -889,16 +999,26 @@ static std::string route_destination_name(const std::string & component_role,
 // side keeps the destination tensors distinct even when the
 // source names collide.
 //
+// Role-awareness (unified-tts plan 1.3): the name-based fold is
+// gated by ts_unified_writer_roles_reconcile(entry.role, src_role).
+// The gemma-side roles keep the full cross-fold (unchanged); the
+// tts_* roles are name-isolated so the talker's blk.N.* verdicts
+// never fold into the trunk's identically-named tensors. src_role
+// is the role of the component whose source tensor is being
+// copied; a role-less (legacy) entry matches every src_role.
+//
 // Returns GGML_TYPE_COUNT (== 45) when no entry matches; the
 // caller treats that as "no override" and copies the source's
 // qtype as-is.
 static int qtype_for_tensor(
     const std::string & name,
-    const std::vector<ts_unified_policy_entry> & entries) {
+    const std::vector<ts_unified_policy_entry> & entries,
+    const std::string & src_role) {
     int result = GGML_TYPE_COUNT;
     for (const auto & e : entries) {
         if (e.name != name) continue;
         if (e.dtype.empty()) continue;
+        if (!ts_unified_writer_roles_reconcile(e.model_role, src_role)) continue;
         int q = ts_unified_qtype_from_string(e.dtype);
         if (q == GGML_TYPE_COUNT) continue;   // unknown dtype, skip
         if (result == GGML_TYPE_COUNT) {
@@ -921,17 +1041,22 @@ static int qtype_for_tensor(
 static int resolve_tensor_qtype(
     const std::string & name,
     const ts_unified_policy & policy,
-    std::vector<ts_unified_budget_event> * events) {
+    std::vector<ts_unified_budget_event> * events,
+    const std::string & src_role) {
     // Fast path: no budgets -> plain worst-of (pre-16.8 contract).
     if (policy.role_budgets.empty()) {
-        return qtype_for_tensor(name, policy.entries);
+        return qtype_for_tensor(name, policy.entries, src_role);
     }
     // Collect per-role verdicts, folding duplicates within a role via
-    // worst-of (a role may emit more than one entry for the same name).
+    // worst-of (a role may emit more than one entry for the same
+    // name). Entries from non-reconciling namespaces (the tts_
+    // isolation rule) never enter the verdict set of a foreign
+    // component's tensor.
     std::map<std::string, int> role_qtype;
     for (const auto & e : policy.entries) {
         if (e.name != name) continue;
         if (e.dtype.empty()) continue;
+        if (!ts_unified_writer_roles_reconcile(e.model_role, src_role)) continue;
         int q = ts_unified_qtype_from_string(e.dtype);
         if (q == GGML_TYPE_COUNT) continue;   // unknown dtype, skip
         auto it = role_qtype.find(e.model_role);
@@ -945,7 +1070,7 @@ static int resolve_tensor_qtype(
     if (role_qtype.size() < 2) {
         // Single owning role: cross-role budget propagation cannot
         // happen, so keep the plain worst-of result.
-        return qtype_for_tensor(name, policy.entries);
+        return qtype_for_tensor(name, policy.entries, src_role);
     }
     // Build the verdict list with each role's budget + weight attached.
     std::vector<ts_unified_role_verdict> verdicts;
@@ -992,9 +1117,25 @@ int ts_unified_writer::write_all(std::string * err) {
     // The old (role, name) map is gone; the qtype_for_tensor
     // helper does the lookup on demand for each source tensor.
     int64_t total_bytes = 0;
-    int n_copied = 0;
     int n_skipped = 0;
     int n_overrides = 0;
+
+    // unified-tts (plan 1.4): re-emit the tts components' KV namespaces
+    // under their destination prefixes so the talker / code2wav loaders
+    // resolve arch + hparams through component_prefix. Runs before the
+    // tensor loop; purely additive KV, the gemma-side keys are untouched.
+    for (size_t ci = 0; ci < p_->components.size(); ci++) {
+        const std::string kv_prefix = tts_kv_prefix_for_role(p_->components[ci].model_role);
+        if (kv_prefix.empty()) continue;
+        std::string kv_err;
+        const int n_kv = copy_kv_namespace(p_->sources[ci].ctx, p_->dst, kv_prefix, &kv_err);
+        if (n_kv < 0) {
+            if (err) *err = "component " + std::to_string(ci) + " (" +
+                            p_->components[ci].path + ") KV sidecar: " + kv_err;
+            return 1;
+        }
+        stats_.n_kv_copied += n_kv;
+    }
 
     // Track which destination names we've already used so a name
     // collision in the source GGUFs (e.g. trunk and dflash both
@@ -1057,7 +1198,8 @@ int ts_unified_writer::write_all(std::string * err) {
             ggml_type src_type = gguf_get_tensor_type(src.ctx, ti);
 
             int override_qtype = resolve_tensor_qtype(src_name, p_->policy,
-                                                       &p_->budget_events);
+                                                       &p_->budget_events,
+                                                       comp.model_role);
             if (override_qtype != GGML_TYPE_COUNT) {
                 // Only count as an override when the policy's
                 // resolved qtype actually differs from the
@@ -1098,7 +1240,6 @@ int ts_unified_writer::write_all(std::string * err) {
                     if (err) *err = "cluster " + src_name + " (" + comp.model_role + "): " + *err;
                     return 1;
                 }
-                n_copied += copied_cluster;
             } else {
                 // Standard qtype copy.
                 ggml_tensor * s = src.find(src_name);
@@ -1143,17 +1284,11 @@ int ts_unified_writer::write_all(std::string * err) {
                 }
                 gguf_add_tensor(p_->dst, d);
                 total_bytes += (int64_t)ggml_nbytes(d);
-                n_copied++;
             }
 
-            if      (comp.model_role == "trunk")        stats_.n_tensors_trunk++;
-            else if (comp.model_role == "dflash")       stats_.n_tensors_dflash++;
-            else if (comp.model_role == "dspark")       stats_.n_tensors_dspark++;
-            else if (comp.model_role == "mtp_nextn")    stats_.n_tensors_mtp_nextn++;
-            else if (comp.model_role == "shared_embd")  stats_.n_tensors_shared_embd++;
-            else if (comp.model_role == "vision_tower") stats_.n_tensors_vision_tower++;
-            else if (comp.model_role == "audio_tower")  stats_.n_tensors_audio_tower++;
-            else if (comp.model_role == "mm_projector") stats_.n_tensors_mm_projector++;
+            // Per-role count (plan 1.2: role additions stop touching
+            // write_all; the CLI and tests read the map).
+            stats_.n_tensors_by_role[comp.model_role]++;
         }
     }
     stats_.n_tensors_skipped = n_skipped;

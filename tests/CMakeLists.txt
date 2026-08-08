@@ -267,6 +267,11 @@ if (NOT LLAMA_SANITIZE_ADDRESS AND NOT GGML_SCHED_NO_REALLOC)
   llama_build_and_test(test-opt.cpp)
 endif()
 llama_build_and_test(test-backend-ops.cpp)
+# TQ2_0 CPU vs Metal parity harness (isolated - avoids tessera_paged_attn coverage path).
+# Small graphs: MUL_MAT TQ2_0 x F32 and GET_ROWS TQ2_0.
+if (NOT GGML_BACKEND_DL)
+    llama_build(test-tq2-parity.cpp)
+endif()
 # Project B (auto backend selector) + Project C (memory
 # residency tracker) smoke test. Self-contained (no model
 # fixture); only the CPU backend is registered, the auto-select
@@ -312,6 +317,38 @@ target_include_directories(test-dflash-loader PRIVATE ${PROJECT_SOURCE_DIR}/src)
 llama_build(test-dspark-markov-head.cpp)
 llama_test(test-dspark-markov-head)
 target_include_directories(test-dspark-markov-head PRIVATE ${PROJECT_SOURCE_DIR}/src)
+llama_build(test-qwen3tts-talker.cpp)
+llama_test(test-qwen3tts-talker)
+target_include_directories(test-qwen3tts-talker PRIVATE ${PROJECT_SOURCE_DIR}/src)
+# unified-tts round-trip stage: the test drives the real ts_unified_writer
+# (defined in tools/quantize, added later; CMake resolves the target at
+# generate time) and loads the unified file back via component_prefix.
+target_link_libraries(test-qwen3tts-talker PRIVATE llama-quantize-impl)
+
+# W8: real-weight forward parity test for the qwen3-tts-talker C++ class.
+# Loads the BF16 W2 talker GGUF and the F32 W5c code2wav GGUF, runs
+# llama_decode / llama_encode, and asserts the output shapes + ranges
+# are well-formed. argv[1] = talker, argv[2] = code2wav.
+llama_build(test-qwen3tts-w8-parity.cpp)
+llama_test(test-qwen3tts-w8-parity)
+target_include_directories(test-qwen3tts-w8-parity PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
+# W7: chained end-to-end calibration. Drives the real BF16 talker
+# through 100 text tokens, captures per-frame s2s.v1 records via
+# the W5 tessera_rt_s2s_append C API, and asserts the NDJSON output
+# is well-formed (>=100 valid records, b64 round-trips, fail-closed
+# provenance, no-key per C3). Standalone binary: links the capture
+# source directly so the test is independent of the full quantize-impl
+# graph and runs in seconds.
+llama_build(test-tessera-s2s-w7-calibration.cpp
+            ${PROJECT_SOURCE_DIR}/common/tessera-s2s-capture.cpp)
+target_include_directories(test-tessera-s2s-w7-calibration
+                            PRIVATE ${PROJECT_SOURCE_DIR}/src)
+if(APPLE)
+    target_link_libraries(test-tessera-s2s-w7-calibration PRIVATE -lz)
+else()
+    target_link_libraries(test-tessera-s2s-w7-calibration PRIVATE ZLIB::ZLIB)
+endif()
 llama_build(test-telemetry-record.cpp ${PROJECT_SOURCE_DIR}/tools/imatrix/telemetry-record.cpp)
 target_include_directories(test-telemetry-record PRIVATE ${PROJECT_SOURCE_DIR}/tools/imatrix)
 llama_test(test-telemetry-record)
@@ -630,31 +667,76 @@ if (NOT GGML_BACKEND_DL)
     llama_build_and_test(test-quantize-perf.cpp)
     llama_build_and_test(test-rope.cpp)
     llama_build_and_test(test-col2im-1d.cpp)
-    # TILE640 v2 (Accelerate + NEON) parity test for the 5 quant
-    # helpers in ggml/src/ggml-quants-v2.c. Verifies bit-identical
-    # output vs the C references in ggml/src/ggml-quants.c.
-    llama_build_and_test(test-tessera-quants-v2.cpp)
-    if (TARGET test-tessera-quants-v2)
-        target_include_directories(test-tessera-quants-v2 PRIVATE
+    # TILE640 quant path-parity test: each batched helper in
+    # ggml/src/ggml-quants.c is one implementation with an
+    # Accelerate + NEON accel path and a scalar fallback; the
+    # test pins both paths and asserts they agree.
+    llama_build_and_test(test-tessera-quants.cpp)
+    if (TARGET test-tessera-quants)
+        target_include_directories(test-tessera-quants PRIVATE
             ${PROJECT_SOURCE_DIR}/ggml/src)
     endif()
-    # TILE640 v2 throughput benchmark. Times each of the 5
-    # functions on the canonical Phase 0 shapes; reports
-    # speedup vs the C reference. Not a ctest target (it's
+    # TILE640 quant throughput benchmark. Times the accel and
+    # scalar paths of each helper on the canonical Phase 0
+    # shapes and reports the speedup. Not a ctest target (it's
     # a manual benchmark binary, not a pass/fail test).
-    llama_build(bench-tessera-quants-v2.cpp)
-    if (TARGET bench-tessera-quants-v2)
-        target_include_directories(bench-tessera-quants-v2 PRIVATE
+    llama_build(bench-tessera-quants.cpp)
+    if (TARGET bench-tessera-quants)
+        target_include_directories(bench-tessera-quants PRIVATE
             ${PROJECT_SOURCE_DIR}/ggml/src)
     endif()
-    # TILE640 v2 dynamic dispatch test. Asserts the cost model
-    # helpers in ggml/src/ggml-quants-v2-dispatch.h return the
-    # right bool per shape, and that the C ref fallback helpers
-    # are self-consistent with the v2's scalar fallback.
+    # TILE640 dispatch test. Asserts the static cost model
+    # helpers in ggml/src/ggml-quants.h return the right bool
+    # per shape, and that the batched helpers' accel and
+    # scalar paths are bit-identical.
     llama_build_and_test(test-ane-tile640-dispatch.cpp)
     if (TARGET test-ane-tile640-dispatch)
         target_include_directories(test-ane-tile640-dispatch PRIVATE
             ${PROJECT_SOURCE_DIR}/ggml/src)
+    endif()
+    # Phase 2 (iPhone demo): GGUF -> IOSurface weight streamer
+    # unit test. Validates open/close, header parse, per-tensor
+    # accessors, and stream_layer against a synthetic 6-tensor
+    # GGUF (2 layers x 2 F32 tensors + 2 out-of-block tensors).
+    # The real-12B end-to-end test is gated on the
+    # TEST_TESSERA_UNIFIED_GGUF_PATH env var; this unit test
+    # runs unconditionally and runs in <100 ms.
+    llama_build_and_test(test-ane-gguf-stream.cpp)
+    if (TARGET test-ane-gguf-stream)
+        target_include_directories(test-ane-gguf-stream PRIVATE
+            ${PROJECT_SOURCE_DIR}/ggml/src
+            ${PROJECT_SOURCE_DIR}/ggml/src/ggml-ane)
+        target_link_libraries(test-ane-gguf-stream PRIVATE ggml-ane)
+    endif()
+    # Regime router test. With the empty .gen.h baseline
+    # the test asserts the FALLBACK CONTRACT: every
+    # (family, shape_bucket) lookup returns the static cost
+    # model helper's bool. The same test stays green as the
+    # .gen.h grows (it only ever asserts the fallback
+    # contract; the per-(family, shape) coverage test is in
+    # the dispatch test, not here).
+    llama_build_and_test(test-regime-router.cpp)
+    if (TARGET test-regime-router)
+        target_include_directories(test-regime-router PRIVATE
+            ${PROJECT_SOURCE_DIR}/ggml/src)
+        # The determinism test re-runs the calibration
+        # runner and asserts the .gen.h bytes are stable.
+        # The runner is in tools/quantize/, so wire the
+        # path via a compile definition. The runner target
+        # is added in tools/quantize/CMakeLists.txt AFTER
+        # tests/ is processed (add_subdirectory order), so
+        # we use a hard-coded path to the expected binary
+        # location instead of $<TARGET_FILE:...>. The test
+        # SKIPs the determinism check if the file is not
+        # present (e.g. on a build that didn't build the
+        # tools).
+        target_compile_definitions(test-regime-router PRIVATE
+            "TS_REGIME_ROUTER_RUNNER=\"${CMAKE_BINARY_DIR}/bin/calibrate_regime_router\"")
+        # Pass the source dir so the test's determinism check can
+        # resolve the .gen.h absolute path under ctest (which runs
+        # tests from the build dir, not the source dir).
+        target_compile_definitions(test-regime-router PRIVATE
+            "TS_REGIME_ROUTER_SOURCE_DIR=\"${CMAKE_SOURCE_DIR}\"")
     endif()
 endif()
 

@@ -417,8 +417,9 @@ std::string llama_model_loader::scoped_key(const std::string & key) const {
     template bool llama_model_loader::get_arr<std::array<uint32_t, LLAMA_MAX_LAYERS>>(enum llm_kv kid, std::array<uint32_t, LLAMA_MAX_LAYERS> & result, bool required);
 
     // raw-key variants (arch-specific metadata without LLM_KV entries)
-    template bool llama_model_loader::get_arr<uint32_t>(const std::string & key, std::vector<uint32_t> & result, bool required);
-    template bool llama_model_loader::get_arr<int32_t> (const std::string & key, std::vector<int32_t> & result, bool required);
+    template bool llama_model_loader::get_arr<uint32_t>      (const std::string & key, std::vector<uint32_t>      & result, bool required);
+    template bool llama_model_loader::get_arr<int32_t>       (const std::string & key, std::vector<int32_t>       & result, bool required);
+    template bool llama_model_loader::get_arr<std::string>   (const std::string & key, std::vector<std::string>   & result, bool required);
 
     template<typename T>
     bool llama_model_loader::get_key(const std::string & key, T & result, bool required) {
@@ -1062,6 +1063,18 @@ static bool weight_buft_supported(const llama_hparams & hparams, ggml_tensor * w
                 ggml_tensor * b = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, n_embd_inp, w->ne[1], 1, 1);
                 op_tensor = ggml_im2col(ctx, w, b, 1, 0, 0, 0, 1, 0, false, GGML_TYPE_F16);
             } break;
+        case GGML_OP_CONV_TRANSPOSE_1D:
+            {
+                // W8: c2w's upsample + per-block transposed convs use this
+                // op. ggml's conv_transpose_1d asserts a->ne[2] == b->ne[1]
+                // (the input's second dim must match the weight's third
+                // dim = IC). Pick a small probe with the right shape.
+                const int64_t n_tokens = 4;
+                ggml_tensor * b = ggml_new_tensor_3d(ctx, GGML_TYPE_F32,
+                                                     n_tokens, w->ne[2], 1);
+                op_tensor = ggml_conv_transpose_1d(ctx, w, b, /*stride=*/1,
+                                                   /*p0=*/0, /*dilation=*/1);
+            } break;
         case GGML_OP_SCALE:
             {
                 op_tensor = ggml_scale(ctx, w, 1.0f);
@@ -1331,7 +1344,10 @@ struct ggml_tensor * llama_model_loader::create_tensor(
     const bool duplicated = flags & TENSOR_DUPLICATED;
 
     struct ggml_tensor * tensor = ggml_dup_tensor(ctx, cur);
-    ggml_set_name(tensor, ggml_get_name(cur));
+    // use the exposed view name, not the raw file name: under a
+    // component_prefix the bound tensor carries the stripped name;
+    // with no prefix both are identical
+    ggml_set_name(tensor, tn.str().c_str());
 
     if (duplicated) {
         size_data += ggml_nbytes(cur);

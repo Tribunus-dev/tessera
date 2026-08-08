@@ -140,8 +140,9 @@ int ts_quantize_2d(const float * weights,
 // recon/packed buffers (700 MB -> ~132 KB per call for a 4096x11008 tensor).
 //
 // Returns the mean squared reconstruction error, or -1.0f on error. The MSE
-// is bit-identical to ts_quantize_2d's because the per-row scale/ternarize/
-// dequant computation is the same, just streamed.
+// matches ts_quantize_2d's: same per-row scale/clip/ternarize/dequant, and
+// the error is measured against the UNCLIPPED scaled weights (the clip only
+// shapes the ternary codes). Only the reduction precision may differ.
 //
 // When the caller needs the full ts_quant_result_2d (for the winning
 // candidate), call ts_quantize_2d separately - it runs once per layer, not

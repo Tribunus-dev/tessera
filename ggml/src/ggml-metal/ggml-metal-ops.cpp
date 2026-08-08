@@ -14,12 +14,35 @@
 #include <limits>
 #include <cmath>
 
+#ifdef GGML_USE_ANE
+// ANE cross-backend IOSurface buffer helpers (defined in ggml-ane.mm,
+// declared in ggml-ane.h). Extern-declared here so ggml-metal keeps no
+// build dependency on ggml-ane; both backends link into the same libggml.
+extern "C" {
+GGML_BACKEND_API bool ggml_backend_ane_iosurface_buffer_check(ggml_backend_buffer_t buffer);
+GGML_BACKEND_API void * ggml_backend_ane_iosurface_buffer_get_mtl_buffer(ggml_backend_buffer_t buffer);
+}
+#endif
+
 static ggml_metal_buffer_id ggml_metal_get_buffer_id(const ggml_tensor * t) {
     if (!t) {
         return { nullptr, 0 };
     }
 
     ggml_backend_buffer_t buffer = t->view_src ? t->view_src->buffer : t->buffer;
+
+#ifdef GGML_USE_ANE
+    // ANE cross-backend IOSurface buffer: zero-copy Metal view. The lazily
+    // wrapped MTLBuffer covers the whole IOSurface, so the tensor offset is
+    // its data pointer relative to the buffer base. The handle stays opaque
+    // here (void *); the ObjC cast happens in the encoder (.m side).
+    if (ggml_backend_ane_iosurface_buffer_check(buffer)) {
+        void * mtl_buf = ggml_backend_ane_iosurface_buffer_get_mtl_buffer(buffer);
+        GGML_ASSERT(mtl_buf != nullptr);
+        const char * base = (const char *) ggml_backend_buffer_get_base(buffer);
+        return { mtl_buf, (size_t) ((const char *) t->data - base) };
+    }
+#endif
 
     ggml_metal_buffer_t ctx = (ggml_metal_buffer_t) buffer->context;
 
@@ -2360,6 +2383,7 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
            op->src[0]->type == GGML_TYPE_BF16 ||
            op->src[0]->type == GGML_TYPE_Q1_0 ||
            op->src[0]->type == GGML_TYPE_Q2_0 ||
+           op->src[0]->type == GGML_TYPE_TQ2_0 ||
            op->src[0]->type == GGML_TYPE_Q4_0 ||
            op->src[0]->type == GGML_TYPE_Q4_1 ||
            op->src[0]->type == GGML_TYPE_Q5_0 ||

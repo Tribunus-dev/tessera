@@ -8,7 +8,7 @@ import Foundation
 /// use ``StaticContactsAdapter``. Sync on purpose: the
 /// parser is a pure rule engine and must stay testable
 /// without async plumbing.
-public protocol ContactsAdapter: Sendable {
+public protocol CalendarContactsAdapter: Sendable {
     /// Contacts whose display name or first name matches
     /// `name` (case-insensitive prefix or substring).
     func contacts(matching name: String) -> [Contact]
@@ -50,7 +50,7 @@ public protocol LocationResolver: Sendable {
 
 /// In-memory contacts adapter for tests and for the
 /// snapshot the view model preloads.
-public struct StaticContactsAdapter: ContactsAdapter {
+public struct StaticContactsAdapter: CalendarContactsAdapter {
     public var contacts: [Contact]
 
     public init(contacts: [Contact] = []) {
@@ -175,7 +175,7 @@ public struct ParsedEvent: Codable, Sendable, Equatable {
 ///     (Foundation). The detector handles "tomorrow",
 ///     "next monday", "2pm-4pm", "noon", "jan 1 3pm".
 ///  3. **Attendees** come from the "with <names>" span,
-///     resolved against the ``ContactsAdapter``.
+///     resolved against the ``CalendarContactsAdapter``.
 ///  4. **Location** comes from the trailing "in / at / @
 ///     <place>" span, geocoded against the
 ///     ``LocationResolver`` cache.
@@ -214,7 +214,7 @@ public struct CalendarNLUParser: Sendable {
         }
     }
 
-    private let contacts: ContactsAdapter
+    private let contacts: CalendarContactsAdapter
     private let documents: DocumentResolver
     private let locations: LocationResolver
     private let defaults: Defaults
@@ -224,7 +224,7 @@ public struct CalendarNLUParser: Sendable {
     private let referenceDate: Date
 
     public init(
-        contacts: ContactsAdapter,
+        contacts: CalendarContactsAdapter,
         documents: DocumentResolver,
         locations: LocationResolver,
         defaults: Defaults = Defaults(),
@@ -372,13 +372,64 @@ public struct CalendarNLUParser: Sendable {
         let matches = detector.matches(in: input, options: [], range: NSRange(location: 0, length: ns.length))
         return matches.compactMap { m in
             guard let date = m.date, let r = Range(m.range, in: input) else { return nil }
+            let text = String(input[r])
+            var normalized = date
+            if let remapped = self.normalizedDate(forText: text, originalDate: date) {
+                normalized = remapped
+            }
             return DateHit(
                 range: r,
-                date: date,
+                date: normalized,
                 duration: m.duration > 0 ? m.duration : nil,
-                matchedText: String(input[r])
+                matchedText: text
             )
         }
+    }
+
+    private func normalizedDate(forText text: String, originalDate: Date) -> Date? {
+        let lower = text.lowercased()
+        // "tomorrow" / "today" / "tonight" / "yesterday" are
+        // resolved against referenceDate so tests are
+        // deterministic.
+        if lower.contains("tomorrow") {
+            let day = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: referenceDate))!
+            return combined(day: day, time: originalDate)
+        }
+        if lower.contains("today") || lower.contains("tonight") {
+            let day = calendar.startOfDay(for: referenceDate)
+            return combined(day: day, time: originalDate)
+        }
+        if lower.contains("yesterday") {
+            let day = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: referenceDate))!
+            return combined(day: day, time: originalDate)
+        }
+        let weekdays: [(name: String, num: Int)] = [
+            ("monday", 2), ("tuesday", 3), ("wednesday", 4),
+            ("thursday", 5), ("friday", 6), ("saturday", 7), ("sunday", 1),
+        ]
+        for (name, num) in weekdays where lower.contains(name) {
+            let target = nextWeekday(num, after: referenceDate)
+            return combined(day: target, time: originalDate)
+        }
+        return nil
+    }
+
+    private func nextWeekday(_ weekday: Int, after date: Date) -> Date {
+        var day = calendar.startOfDay(for: date)
+        for _ in 1...7 {
+            day = calendar.date(byAdding: .day, value: 1, to: day)!
+            if calendar.component(.weekday, from: day) == weekday { return day }
+        }
+        return day
+    }
+
+    private func combined(day: Date, time: Date) -> Date {
+        let hm = calendar.dateComponents([.hour, .minute, .second], from: time)
+        var c = calendar.dateComponents([.year, .month, .day], from: day)
+        c.hour = hm.hour
+        c.minute = hm.minute
+        c.second = hm.second
+        return calendar.date(from: c) ?? day
     }
 
     /// True when a matched date expression carries no

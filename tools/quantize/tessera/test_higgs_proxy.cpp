@@ -19,7 +19,7 @@
 //   - L1-agnostic alpha scaling with a custom measurement_fn,
 //   - empty / 1-element / zero-norm tensors do not crash,
 //   - L1-on-ANE measurement (the new default): packing layout,
-//     guards, determinism, L1-vs-offline range, v2 dispatch
+//     guards, determinism, L1-vs-offline range, accel dispatch
 //     branch, legacy env opt-out, alpha parity with offline.
 //
 // 30+ tests, runs in <1s on a tiny synthetic GGUF.
@@ -976,17 +976,17 @@ static void test_l1_measurement_vs_offline_range() {
           off > 0.0f && l1 / off >= 1.0f && l1 / off <= 2.5f);
 }
 
-static void test_l1_measurement_v2_branch() {
-    // in_dim >= GGML_TESSERA_T640_V2_MIN_K (1024) exercises the v2
-    // dequant branch (v2 is enabled by default on Apple Silicon);
-    // below the cutoff the C reference runs.
+static void test_l1_measurement_accel_branch() {
+    // in_dim >= GGML_TESSERA_T640_ACCEL_MIN_K (1024) exercises the
+    // accel dequant branch (the accel path is enabled by default on
+    // Apple Silicon); below the cutoff the scalar path runs.
     std::vector<float> w = make_test_weights(2 * 1024, 9u, 2.0f);
     std::vector<uint8_t> packed;
     ts_higgs_proxy_pack_tile640(w.data(), 2, 1024, packed);
     float a = ts_higgs_proxy_measure_l1(w.data(), packed.data(), 2, 1024, 0, nullptr);
     float b = ts_higgs_proxy_measure_l1(w.data(), packed.data(), 2, 1024, 0, nullptr);
-    check("l1-v2: positive at in_dim=1024", a > 0.0f);
-    check("l1-v2: deterministic", a == b);
+    check("l1-accel: positive at in_dim=1024", a > 0.0f);
+    check("l1-accel: deterministic", a == b);
 }
 
 static void test_estimator_l1_default_source(const std::string & fixture_path) {
@@ -1188,7 +1188,7 @@ int main() {
     test_l1_measurement_guards();
     test_l1_measurement_determinism();
     test_l1_measurement_vs_offline_range();
-    test_l1_measurement_v2_branch();
+    test_l1_measurement_accel_branch();
     test_estimator_l1_default_source(fixture_path);
     test_estimator_legacy_offline_env(fixture_path);
     test_estimator_l1_json_shape(fixture_path);

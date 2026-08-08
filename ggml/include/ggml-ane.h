@@ -10,6 +10,7 @@
 
 #include "ggml.h"
 #include "ggml-backend.h"
+#include "gguf_weight_stream.h"
 
 #include <stddef.h>
 #include <stdbool.h>
@@ -47,6 +48,14 @@ GGML_BACKEND_API struct ggml_backend_ane_program * ggml_backend_ane_program_load
 
 GGML_BACKEND_API void ggml_backend_ane_program_free(
         struct ggml_backend_ane_program * program);
+
+// Phase 2 test-only: construct a minimal program with the
+// streaming fields initialized but no .mlmodelc loaded.
+// The returned program is only useful for the streaming
+// helpers (refresh, lookup, parse_layer); the dispatch
+// path will refuse because the Core ML model is absent.
+GGML_BACKEND_API struct ggml_backend_ane_program *
+ggml_backend_ane_program_create_empty(void);
 
 // Bind a loaded program to a specific backend instance. Pass nullptr to
 // detach. Returns true on success.
@@ -92,6 +101,13 @@ GGML_BACKEND_API int64_t ggml_backend_ane_tile640_tile_size(void);
 GGML_BACKEND_API ggml_backend_buffer_t ggml_backend_ane_iosurface_buffer_alloc(
         size_t bytes);
 
+// The buffer type behind ggml_backend_ane_iosurface_buffer_alloc. Exposed
+// so the CPU, BLAS, Metal, and ANE backends can advertise the type from
+// their supports_buft, letting ggml_backend_sched place tensors in it
+// without inserting cross-backend copies. The type is process-global and
+// not owned by any single device (buft->device == nullptr).
+GGML_BACKEND_API ggml_backend_buffer_type_t ggml_backend_ane_iosurface_buffer_type(void);
+
 // Returns true if the buffer is an ANE cross-backend IOSurface buffer.
 GGML_BACKEND_API bool ggml_backend_ane_iosurface_buffer_check(
         ggml_backend_buffer_t buffer);
@@ -113,6 +129,66 @@ GGML_BACKEND_API void * ggml_backend_ane_iosurface_buffer_get_iosurface(
 // is not an ANE IOSurface buffer.
 GGML_BACKEND_API void * ggml_backend_ane_iosurface_buffer_get_mtl_buffer(
         ggml_backend_buffer_t buffer);
+
+// Phase 2 (iPhone demo, gguf -> IOSurface weight streaming).
+//
+// The per-program weight stream lets the TILE640_MATMUL dispatch
+// read the layer's packed T640_3D weight + meta tensors from a
+// mmap'd unified GGUF instead of from the op's source ggml_tensor
+// pointers. The per-program cache keeps the current layer's bytes
+// in CPU memory across consecutive dispatches; the cache is
+// refreshed only on layer-index change (decode is M=1 per layer,
+// so the same layer fires N times before the index advances).
+//
+// ggml_backend_ane_program_set_weight_stream:
+//   Attach a stream to a program. The stream is held for the
+//   program's lifetime; the runtime does NOT own it (caller
+//   closes it via ane_weight_stream_close after the program is
+//   freed). Pass NULL to detach (the dispatch falls back to the
+//   legacy op->src[0..5] path).
+//
+// ggml_backend_ane_program_last_streamed_layer:
+//   Diagnostic. Returns the most-recently-streamed layer index,
+//   or -1 if no stream is attached or no layer has been streamed
+//   yet.
+GGML_BACKEND_API void ggml_backend_ane_program_set_weight_stream(
+        struct ggml_backend_ane_program * program,
+        struct ane_weight_stream_t * stream);
+GGML_BACKEND_API int32_t ggml_backend_ane_program_last_streamed_layer(
+        const struct ggml_backend_ane_program * program);
+
+// Phase 2 helpers (also exposed for tests):
+//
+// ggml_backend_ane_stream_parse_layer:
+//   Parse the layer index from a tensor name in the
+//   `blk.L.<family>[.weight[_meta]]` convention. Returns
+//   the layer index (>= 0) on success, or -1 if the name
+//   doesn't match the convention.
+//
+// ggml_backend_ane_stream_refresh_program:
+//   Refresh the per-program layer cache for `layer_idx`.
+//   Reads the layer's tensors from the program's stream
+//   into the program's CPU cache and rebuilds the per-
+//   tensor lookup. Returns true on success; false on
+//   failure (reason logged). Refreshing for a layer
+//   that's already cached is a no-op (the caller is
+//   expected to skip when the layer hasn't changed).
+//
+// ggml_backend_ane_stream_program_lookup:
+//   Look up a streamed tensor by name in the program's
+//   cache. Returns true on hit (sets *base_out to the
+//   cache pointer and *size_out to the byte count);
+//   false on miss.
+GGML_BACKEND_API int32_t ggml_backend_ane_stream_parse_layer(
+        const char * name);
+GGML_BACKEND_API bool ggml_backend_ane_stream_refresh_program(
+        struct ggml_backend_ane_program * program,
+        int32_t layer_idx);
+GGML_BACKEND_API bool ggml_backend_ane_stream_program_lookup(
+        const struct ggml_backend_ane_program * program,
+        const char * name,
+        const void ** base_out,
+        size_t * size_out);
 
 #ifdef __cplusplus
 }

@@ -170,3 +170,18 @@ AGENTS.local.md
 # script writes the final .pkg installer here. It is rebuilt by the
 # packaging script on every release.
 /dist/
+
+# Local worktrees. Created by `git worktree add` for parallel feature
+# work; the worktrees themselves live outside the index (the index
+# holds a gitlink). Ignoring the directory keeps `git status` quiet
+# while the imatrix worktree at `worktrees/unified-tts-talker-tile640`
+# stays alive.
+/worktrees/
+
+# Local s2s reference checkout + scratch. Used by agents for
+# verification against `qwen3-tts-model` safetensors.
+/.zcode/
+
+# Personal notes / transcripts. Not part of the repo.
+notes/
+Apply to Founders, Inc_.pdf

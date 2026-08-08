@@ -31,7 +31,7 @@ public struct TasksView: View {
     public init(
         store: ProductivityTaskStore,
         userID: UserID = UUID(),
-        contacts: ContactsAdapter? = nil,
+        contacts: TaskContactsAdapter? = nil,
         documents: DocumentStoreNLU? = nil
     ) {
         self.store = store
@@ -42,7 +42,7 @@ public struct TasksView: View {
 
     private let store: ProductivityTaskStore
     private let userID: UserID
-    private let contacts: ContactsAdapter?
+    private let contacts: TaskContactsAdapter?
     private let documents: DocumentStoreNLU?
 
     @State private var allTasks: [ProductivityTask] = []

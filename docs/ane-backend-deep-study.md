@@ -2008,4 +2008,172 @@ marginally).
 
 ---
 
+## 6.10 Regime router (v1)
+
+The v1 regime router replaces the v1 static v2 dispatch cost
+model in `ggml/src/ggml-quants-v2-dispatch.h` with a learned
+per-`(family, shape)` device-preference table. The router is
+a static-include lookup table in `ggml/src/ggml-regime-router.h`
+with the generated policy in `ggml/src/ggml-regime-router.gen.h`.
+The dispatch in `ggml/src/ggml-ane/ggml-ane.mm`'s
+`GGML_OP_TILE640_MATMUL` case consults the router on every call;
+the router's contract is **strict no-op fallback to the v1
+static helpers** when the policy table has no entry for the
+caller's `(family, shape_bucket)`.
+
+### 6.10.1 Why a router, not better static thresholds
+
+The v1 static thresholds were hand-tuned against M1 Pro bench
+data (commit `cd1279e5f`, Phase 0 + Part 6.9). On M1 base
+(16 GB, ~68 GB/s DRAM bandwidth) the M1 Pro constants were
+**10% off** in the meta-decode decision at large N
+(`ts_regime_family_kind_t::TS_REGIME_FAM_FFN_GATE` at
+`n_total_pages >= 4096`: the M1 Pro threshold always picked
+C ref, but on M1 base the v2 bulk vDSP + NEON calls win
+1.09x because the lower DRAM bandwidth makes the
+per-call setup tax cheaper relative to the work). Re-tuning
+the static thresholds per target is a non-scaling solution:
+every new hardware class (M2, A15, M3, ...) requires another
+bench + constant change.
+
+The regime router solves this structurally: the calibration
+runner measures the actual per-`(family, shape)` v2 vs C ref
+latency on the actual hardware, and the dispatch consults
+the result. Re-targeting is "re-run the runner on the new
+hardware and commit the new `.gen.h`," not "change a
+constant and re-bench."
+
+### 6.10.2 Data model
+
+The policy is a flat array of `(family, shape_bucket,
+use_v2_outlier, use_v2_meta)` entries. The lookup is
+`O(N_entries)` with a linear scan; the table is
+**36 entries** for the gemma 4 12B trunk shape set, so the
+linear scan is a no-op (the dispatch's hot path is one
+bounds check + a 32-bit compare per call; the entries are
+small enough to fit in a single cache line group).
+
+**Family kind** (`ts_regime_family_kind_t`, 16 values):
+`TS_REGIME_FAM_ATTN_Q`, `..._ATTN_K`, `..._ATTN_V`,
+`..._ATTN_OUTPUT`, `..._FFN_GATE`, `..._FFN_UP`,
+`..._FFN_DOWN`, `..._TOKEN_EMBD`, `..._OUTPUT`,
+`..._PATCH_EMBD`, `..._POSITION_EMBD`,
+`..._MM_INPUT_PROJECTION`, `..._MM_UP`, `..._MM_GATE`,
+and `TS_REGIME_FAM_OTHER` (the catch-all for unrecognised
+tensor names). Family is inferred from the tensor's GGUF
+name via `ts_regime_infer_family(op->name)` — a suffix
+match against the family table (e.g. `blk.16.attn_v` ->
+`TS_REGIME_FAM_ATTN_V`).
+
+**Shape bucket** (`ts_regime_shape_bucket_t`, 5 values):
+`tiny` (in_dim 0..128), `small` (129..512), `medium`
+(513..2048), `large` (2049..4096), `xlarge` (4097+).
+Derived from `in_dim` via `ts_regime_shape_bucket_for_in_dim`.
+
+**Use-v2 decision** (per `(family, shape_bucket)` cell): the
+runner records `use_v2 = true` iff the v2 path is at least
+**5% faster** than the C ref at this cell on the bench
+hardware. On a tie the entry defers to the v1 static
+cost model in `ggml/src/ggml-quants-v2-dispatch.h`
+(equivalent to `use_v2 = false` in the current M1 base
+table, where the v2 wins are concentrated in the outlier
+addback at small/medium shapes; the meta decode cells are
+all `use_v2_meta = false`).
+
+### 6.10.3 Fallback contract
+
+Both lookup helpers (`ts_regime_router_lookup_outlier`,
+`ts_regime_router_lookup_meta`) return the v1 static helper
+result when **any** of the following is true:
+
+- the policy table is empty (the Commit 1 baseline; the
+  empty `.gen.h` shipped at scaffold time);
+- the `(family, shape_bucket)` pair has no entry;
+- the family is `TS_REGIME_FAM_OTHER` (unrecognised tensor
+  names must not influence the dispatch; the v1 static
+  threshold is the safe default);
+- the `in_dim` is non-positive (degenerate call);
+- the family index or shape-bucket index is out of
+  range.
+
+This contract guarantees the router is a strict no-op when
+the calibration runner has not yet produced entries: the
+dispatch sees the same bools it would have seen without the
+router, and the v1 cost model is the single source of truth.
+
+### 6.10.4 Scoring formula
+
+The runner scores each `(family, shape)` candidate as:
+
+```
+score_v2  = t_l2_v2_path   * mean_latency_v2_path
+score_ref = t_l2_ref_path  * mean_latency_ref_path
+winner    = (score_v2  < score_ref * 0.95) ? v2 : ref
+```
+
+The score combines the kernel-direct L1 fidelity (the
+`ts_regime_family_kind_t`-aware `ts_higgs_proxy_measure_l1`
+t_l2 estimate; the L1 measurement is the **ground truth**
+from the just-landed L1 wire-up) with the measured
+per-call latency (5 warmup + adaptive stable-batches
+median, capped at 200 iterations to bound wall-clock). The
+5% threshold is the **v2 wins iff v2 is at least 5% better
+on the score**; ties go to the C ref so the router never
+wins on noise.
+
+### 6.10.5 Codegen workflow
+
+The committed `.gen.h` is the source of truth. To
+regenerate after a model fixture or bench methodology
+change:
+
+```sh
+# (in the build dir) build the runner
+cmake --build . --target calibrate_regime_router
+# run it with a fixed seed
+./bin/calibrate_regime_router \
+    --out ggml/src/ggml-regime-router.gen.h \
+    --shape gemma4-12b-trunk
+# visually inspect the new .gen.h, then commit
+```
+
+The runner's bytes are **not** byte-stable across runs
+(adaptive median bench stops at different iterations per
+cell on the noisy DRAM-bound C ref path; see Part 6.9
+"Per-shape wins (verified)" for the M1 Pro 10x variance).
+The committed `.gen.h` is the manual codegen output; the
+runner is the **regeneration path** for model-fixture
+changes, not an automated CI assertion. The
+`test-regime-router` `test_determinism` check is
+intentionally disabled (the test is a SKIP, with a comment
+explaining why; re-enable when a fixed-N runner mode
+exists).
+
+### 6.10.6 Per-target retuning
+
+The table is M1 base values. The A15 is a separate target;
+an on-device re-bench on the iPhone 13 Pro Max A15 is a
+follow-up. The threshold model is intentionally simple
+(15 families * 5 shape buckets = 75 cells max, currently
+36 covered for gemma 4 12B) so per-target retuning is one
+bench run + one `.gen.h` swap. The dispatch header documents
+the source of each constant; the .h / .gen.h contract is
+the per-target table, the fallback is the v1 static cost
+model.
+
+### 6.10.7 Regime router follow-on (replaces v1 static)
+
+When the router has a policy for the caller's
+`(family, shape_bucket)`, the dispatch uses the router's
+decision. When it does not, the dispatch falls back to
+the v1 static cost model. Over time, as the runner
+extends the table to cover more `(family, shape)` cells
+(including A15-specific and M2+ AMX-specific ones), the
+fallback path narrows and the router's coverage grows.
+The v1 static cost model is the **safety net** for the
+zero-coverage case; it is not the production policy on
+hardware the runner has bench'd.
+
+---
+
 ## Appendix A: Source References

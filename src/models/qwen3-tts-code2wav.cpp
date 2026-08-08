@@ -46,21 +46,24 @@
 
 namespace {
 
-// frame positions for RoPE: every frame takes the position of its first
-// code token (callers give all tokens of a frame the same position)
+// frame positions for RoPE: the c2w graph has no KV cache, so every
+// forward sees its frames at the relative positions 0..F-1 (the HF
+// decoder uses cache_position = arange per forward, and chunked_decode
+// restarts the positions for each chunk). The ubatch token positions
+// are caller-defined spacing and must not leak into the vocoder's RoPE.
 class llm_graph_input_c2w_frame_pos : public llm_graph_input_i {
 public:
     llm_graph_input_c2w_frame_pos(int64_t n_codebooks) : n_codebooks(n_codebooks) {}
 
     void set_input(const llama_ubatch * ubatch) override {
-        if (ubatch->pos && pos) {
+        if (pos) {
             const int64_t n_frames = pos->ne[0];
 
             GGML_ASSERT(ubatch->n_tokens == n_frames*n_codebooks);
 
             std::vector<llama_pos> fp(n_frames);
             for (int64_t f = 0; f < n_frames; ++f) {
-                fp[f] = ubatch->pos[f*n_codebooks];
+                fp[f] = (llama_pos) f;
             }
 
             ggml_backend_tensor_set(pos, fp.data(), 0, n_frames*ggml_element_size(pos));
@@ -92,14 +95,19 @@ public:
     }
 
     void set_input(const llama_ubatch * /*ubatch*/) override {
-        ggml_backend_tensor_set(mask, arr.data(), 0, arr.size()*ggml_element_size(mask));
+        // flash_attn_ext requires an F16 mask
+        std::vector<ggml_fp16_t> h(arr.size());
+        for (size_t i = 0; i < arr.size(); ++i) {
+            h[i] = ggml_fp32_to_fp16(arr[i]);
+        }
+        ggml_backend_tensor_set(mask, h.data(), 0, h.size()*ggml_element_size(mask));
     }
 
     bool can_reuse(const llm_graph_params & /*params*/) override {
         return true;
     }
 
-    ggml_tensor * mask = nullptr; // F32 [n_frames, n_frames]
+    ggml_tensor * mask = nullptr; // F16 [n_frames, n_frames]
 
     std::vector<float> arr;
 };
@@ -152,28 +160,42 @@ void llama_model_qwen3_tts_code2wav::load_arch_tensors(llama_model_loader & ml) 
     const int64_t n_up        = upsample_ratios.size();  // convnext stages
     const int64_t n_blk       = upsample_rates.size();   // decoder blocks
 
-    // codebook tables: width comes from the checkpoint itself
+    // codebook tables: width comes from the checkpoint itself. The c2w
+    // arch has no text vocab - its "vocab" is the codec codebook size
+    // (= 2048 in the W3/W5c artifacts, written as <arch>.vocab_size so
+    // the "none" tokenizer loads 2048 dummy tokens and llama_encode's
+    // batch validation accepts codec ids; distinct from the talker's
+    // n_codec_vocab=3072). The loader reads vq_dim and codec_vocab from
+    // the first codebook tensor rather than asserting against n_vocab.
+    //
+    // The cid is encoded in the SUFFIX (matching the talker's
+    // cp_codec_embd / cp_head pattern), so the LLM_TENSOR name has no
+    // %d and the loader's bid stays -1 (LAYER_INPUT, not
+    // LAYER_REPEATING — the c2w codebooks are model-level, not per-
+    // layer; their index cid is not a layer index).
     c2w_codebook_embd.resize(n_codebooks, nullptr);
     {
-        const std::string name0 = tn(LLM_TENSOR_C2W_CODEBOOK_EMBD, "weight", 0);
+        char cid_str[16];
+        std::snprintf(cid_str, sizeof(cid_str), "0.weight");
+        const std::string name0 = tn(LLM_TENSOR_C2W_CODEBOOK_EMBD, cid_str, -1);
         const struct ggml_tensor * meta = ml.get_tensor_meta(name0.c_str());
-        GGML_ASSERT(meta != nullptr && "missing c2w codebook table");
-        vq_dim = meta->ne[0];
-        GGML_ASSERT(meta->ne[1] == n_vocab);
+        GGML_ASSERT(meta != nullptr && "missing c2w codebook 0 table");
+        vq_dim        = meta->ne[0];
+        codec_vocab   = meta->ne[1];
     }
     for (uint32_t j = 0; j < n_codebooks; ++j) {
-        const std::string name = tn(LLM_TENSOR_C2W_CODEBOOK_EMBD, "weight", j);
+        char cid_str[16];
+        std::snprintf(cid_str, sizeof(cid_str), "%u.weight", j);
+        const std::string name = tn(LLM_TENSOR_C2W_CODEBOOK_EMBD, cid_str, -1);
         LLAMA_LOG_WARN("c2w: creating codebook %u, name=%s\n", j, name.c_str());
         try {
-            LLAMA_LOG_WARN("c2w: pre lookup name\n");
             const struct ggml_tensor * meta = ml.get_tensor_meta(name.c_str());
-            LLAMA_LOG_WARN("c2w: meta ptr %p\n", (const void *) meta);
             if (meta) {
                 LLAMA_LOG_WARN("c2w: meta ne=[%lld,%lld,%lld,%lld]\n",
                     (long long) meta->ne[0], (long long) meta->ne[1],
                     (long long) meta->ne[2], (long long) meta->ne[3]);
             }
-            c2w_codebook_embd[j] = create_tensor(tn(LLM_TENSOR_C2W_CODEBOOK_EMBD, "weight", j), { vq_dim, n_vocab }, 0);
+            c2w_codebook_embd[j] = create_tensor(tn(LLM_TENSOR_C2W_CODEBOOK_EMBD, cid_str, -1), { vq_dim, codec_vocab }, 0);
         } catch (const std::exception & e) {
             LLAMA_LOG_WARN("c2w: codebook %u FAILED: %s\n", j, e.what());
             throw;
@@ -197,11 +219,11 @@ void llama_model_qwen3_tts_code2wav::load_arch_tensors(llama_model_loader & ml) 
     }
 
     c2w_pre_conv   = create_tensor(tn(LLM_TENSOR_C2W_PRE_CONV, "weight"), { 3, n_embd, latent_dim }, 0);
-    c2w_pre_conv_b = create_tensor(tn(LLM_TENSOR_C2W_PRE_CONV, "bias"),   { 1, latent_dim }, 0);
+    c2w_pre_conv_b = create_tensor(tn(LLM_TENSOR_C2W_PRE_CONV, "bias"),   { latent_dim, 1 }, 0);
 
     // transformer
     c2w_tf_in_proj   = create_tensor(tn(LLM_TENSOR_C2W_TF_IN_PROJ, "weight"), { latent_dim, n_embd }, 0);
-    c2w_tf_in_proj_b = create_tensor(tn(LLM_TENSOR_C2W_TF_IN_PROJ, "bias"),   { 1, n_embd }, 0);
+    c2w_tf_in_proj_b = create_tensor(tn(LLM_TENSOR_C2W_TF_IN_PROJ, "bias"),   { n_embd, 1 }, 0);
 
     tf_attn_norm.resize(n_layer);
     tf_wq.resize(n_layer); tf_wk.resize(n_layer); tf_wv.resize(n_layer); tf_wo.resize(n_layer);
@@ -210,24 +232,31 @@ void llama_model_qwen3_tts_code2wav::load_arch_tensors(llama_model_loader & ml) 
     tf_ffn_gate.resize(n_layer); tf_ffn_up.resize(n_layer); tf_ffn_down.resize(n_layer);
     tf_ffn_scale.resize(n_layer);
 
+    // Per-layer TF tensors use the c2w naming convention: no .weight
+    // suffix (the original HF model uses descriptive names like
+    // "attn_norm", "wq", "ffn_gate" — not "attn_norm.weight" etc.).
+    // The W5c converter writes these names as-is; the C++ side matches
+    // by passing nullptr for the suffix. (The input/output projections
+    // and the final norm DO use the .weight/.bias convention; only
+    // the per-layer tensors drop the suffix.)
     for (int i = 0; i < n_layer; ++i) {
-        tf_attn_norm[i]  = create_tensor(tn(LLM_TENSOR_C2W_TF_ATTN_NORM, "weight", i), { n_embd }, 0);
-        tf_wq[i]         = create_tensor(tn(LLM_TENSOR_C2W_TF_ATTN_Q,    "weight", i), { n_embd, n_embd_attn }, 0);
-        tf_wk[i]         = create_tensor(tn(LLM_TENSOR_C2W_TF_ATTN_K,    "weight", i), { n_embd, n_embd_attn }, 0);
-        tf_wv[i]         = create_tensor(tn(LLM_TENSOR_C2W_TF_ATTN_V,    "weight", i), { n_embd, n_embd_attn }, 0);
-        tf_wo[i]         = create_tensor(tn(LLM_TENSOR_C2W_TF_ATTN_O,    "weight", i), { n_embd_attn, n_embd }, 0);
+        tf_attn_norm[i]  = create_tensor(tn(LLM_TENSOR_C2W_TF_ATTN_NORM,  nullptr, i), { n_embd }, 0);
+        tf_wq[i]         = create_tensor(tn(LLM_TENSOR_C2W_TF_ATTN_Q,     nullptr, i), { n_embd, n_embd_attn }, 0);
+        tf_wk[i]         = create_tensor(tn(LLM_TENSOR_C2W_TF_ATTN_K,     nullptr, i), { n_embd, n_embd_attn }, 0);
+        tf_wv[i]         = create_tensor(tn(LLM_TENSOR_C2W_TF_ATTN_V,     nullptr, i), { n_embd, n_embd_attn }, 0);
+        tf_wo[i]         = create_tensor(tn(LLM_TENSOR_C2W_TF_ATTN_O,     nullptr, i), { n_embd_attn, n_embd }, 0);
         tf_attn_scale[i] = create_tensor(tn(LLM_TENSOR_C2W_TF_ATTN_SCALE, nullptr, i), { n_embd }, 0);
 
-        tf_ffn_norm[i]  = create_tensor(tn(LLM_TENSOR_C2W_TF_FFN_NORM, "weight", i), { n_embd }, 0);
-        tf_ffn_gate[i]  = create_tensor(tn(LLM_TENSOR_C2W_TF_FFN_GATE, "weight", i), { n_embd, n_ff }, 0);
-        tf_ffn_up[i]    = create_tensor(tn(LLM_TENSOR_C2W_TF_FFN_UP,   "weight", i), { n_embd, n_ff }, 0);
-        tf_ffn_down[i]  = create_tensor(tn(LLM_TENSOR_C2W_TF_FFN_DOWN, "weight", i), { n_ff, n_embd }, 0);
-        tf_ffn_scale[i] = create_tensor(tn(LLM_TENSOR_C2W_TF_FFN_SCALE, nullptr, i), { n_embd }, 0);
+        tf_ffn_norm[i]   = create_tensor(tn(LLM_TENSOR_C2W_TF_FFN_NORM,   nullptr, i), { n_embd }, 0);
+        tf_ffn_gate[i]   = create_tensor(tn(LLM_TENSOR_C2W_TF_FFN_GATE,   nullptr, i), { n_embd, n_ff }, 0);
+        tf_ffn_up[i]     = create_tensor(tn(LLM_TENSOR_C2W_TF_FFN_UP,     nullptr, i), { n_embd, n_ff }, 0);
+        tf_ffn_down[i]   = create_tensor(tn(LLM_TENSOR_C2W_TF_FFN_DOWN,   nullptr, i), { n_ff, n_embd }, 0);
+        tf_ffn_scale[i]  = create_tensor(tn(LLM_TENSOR_C2W_TF_FFN_SCALE,  nullptr, i), { n_embd }, 0);
     }
 
     c2w_tf_norm      = create_tensor(tn(LLM_TENSOR_C2W_TF_NORM,     "weight"), { n_embd }, 0);
     c2w_tf_out_proj  = create_tensor(tn(LLM_TENSOR_C2W_TF_OUT_PROJ, "weight"), { n_embd, latent_dim }, 0);
-    c2w_tf_out_proj_b = create_tensor(tn(LLM_TENSOR_C2W_TF_OUT_PROJ, "bias"),  { 1, latent_dim }, 0);
+    c2w_tf_out_proj_b = create_tensor(tn(LLM_TENSOR_C2W_TF_OUT_PROJ, "bias"),  { latent_dim, 1 }, 0);
 
     // convnext upsample stages; widths come from the transposed conv meta
     up_transconv.resize(n_up); up_transconv_b.resize(n_up);
@@ -247,10 +276,10 @@ void llama_model_qwen3_tts_code2wav::load_arch_tensors(llama_model_loader & ml) 
         const int64_t c_in  = meta->ne[2];
 
         up_transconv[s]   = create_tensor(tn(LLM_TENSOR_C2W_UP_TRANSCONV, "weight", s), { meta->ne[0], c_out, c_in }, 0);
-        up_transconv_b[s] = create_tensor(tn(LLM_TENSOR_C2W_UP_TRANSCONV, "bias",   s), { 1, c_out }, 0);
+        up_transconv_b[s] = create_tensor(tn(LLM_TENSOR_C2W_UP_TRANSCONV, "bias", s), { c_out, 1 }, 0);
 
         up_dwconv[s]   = create_tensor(tn(LLM_TENSOR_C2W_UP_DWCONV, "weight", s), { 7, 1, c_out }, 0);
-        up_dwconv_b[s] = create_tensor(tn(LLM_TENSOR_C2W_UP_DWCONV, "bias",   s), { 1, c_out }, 0);
+        up_dwconv_b[s] = create_tensor(tn(LLM_TENSOR_C2W_UP_DWCONV, "bias", s), { c_out, 1 }, 0);
 
         up_norm[s]   = create_tensor(tn(LLM_TENSOR_C2W_UP_NORM, "weight", s), { c_out }, 0);
         up_norm_b[s] = create_tensor(tn(LLM_TENSOR_C2W_UP_NORM, "bias",   s), { c_out }, 0);
@@ -262,9 +291,9 @@ void llama_model_qwen3_tts_code2wav::load_arch_tensors(llama_model_loader & ml) 
         const int64_t c_mid = meta_pw1->ne[1];
 
         up_pw1[s]   = create_tensor(tn(LLM_TENSOR_C2W_UP_PW1, "weight", s), { c_out, c_mid }, 0);
-        up_pw1_b[s] = create_tensor(tn(LLM_TENSOR_C2W_UP_PW1, "bias",   s), { 1, c_mid }, 0);
+        up_pw1_b[s] = create_tensor(tn(LLM_TENSOR_C2W_UP_PW1, "bias", s), { c_mid, 1 }, 0);
         up_pw2[s]   = create_tensor(tn(LLM_TENSOR_C2W_UP_PW2, "weight", s), { c_mid, c_out }, 0);
-        up_pw2_b[s] = create_tensor(tn(LLM_TENSOR_C2W_UP_PW2, "bias",   s), { 1, c_out }, 0);
+        up_pw2_b[s] = create_tensor(tn(LLM_TENSOR_C2W_UP_PW2, "bias", s), { c_out, 1 }, 0);
 
         up_gamma[s] = create_tensor(tn(LLM_TENSOR_C2W_UP_GAMMA, nullptr, s), { c_out }, 0);
     }
@@ -280,7 +309,7 @@ void llama_model_qwen3_tts_code2wav::load_arch_tensors(llama_model_loader & ml) 
     }
 
     c2w_stem   = create_tensor(tn(LLM_TENSOR_C2W_STEM, "weight"), { 7, latent_dim, decoder_dim }, 0);
-    c2w_stem_b = create_tensor(tn(LLM_TENSOR_C2W_STEM, "bias"),   { 1, decoder_dim }, 0);
+    c2w_stem_b = create_tensor(tn(LLM_TENSOR_C2W_STEM, "bias"),   { decoder_dim, 1 }, 0);
 
     // decoder blocks: width halves per block
     blk_snake_a.resize(n_blk); blk_snake_b.resize(n_blk);
@@ -299,7 +328,7 @@ void llama_model_qwen3_tts_code2wav::load_arch_tensors(llama_model_loader & ml) 
         blk_snake_b[b] = create_tensor(tn(LLM_TENSOR_C2W_BLOCK_SNAKE_B, nullptr, b), { c_in }, 0);
 
         blk_transconv[b]   = create_tensor(tn(LLM_TENSOR_C2W_BLOCK_TRANSCONV, "weight", b), { 2*upsample_rates[b], c_out, c_in }, 0);
-        blk_transconv_b[b] = create_tensor(tn(LLM_TENSOR_C2W_BLOCK_TRANSCONV, "bias",   b), { 1, c_out }, 0);
+        blk_transconv_b[b] = create_tensor(tn(LLM_TENSOR_C2W_BLOCK_TRANSCONV, "bias", b), { c_out, 1 }, 0);
 
         for (uint32_t u = 0; u < n_res_units; ++u) {
             const int64_t uid = b*n_res_units + u;
@@ -307,12 +336,12 @@ void llama_model_qwen3_tts_code2wav::load_arch_tensors(llama_model_loader & ml) 
             res_a1[uid]    = create_tensor(tn(LLM_TENSOR_C2W_RES_SNAKE1_A, nullptr, b, u), { c_out }, 0);
             res_b1[uid]    = create_tensor(tn(LLM_TENSOR_C2W_RES_SNAKE1_B, nullptr, b, u), { c_out }, 0);
             res_conv1[uid] = create_tensor(tn(LLM_TENSOR_C2W_RES_CONV1, "weight", b, u), { 7, c_out, c_out }, 0);
-            res_conv1_b[uid] = create_tensor(tn(LLM_TENSOR_C2W_RES_CONV1, "bias", b, u), { 1, c_out }, 0);
+            res_conv1_b[uid] = create_tensor(tn(LLM_TENSOR_C2W_RES_CONV1, "bias", b, u), { c_out, 1 }, 0);
 
             res_a2[uid]    = create_tensor(tn(LLM_TENSOR_C2W_RES_SNAKE2_A, nullptr, b, u), { c_out }, 0);
             res_b2[uid]    = create_tensor(tn(LLM_TENSOR_C2W_RES_SNAKE2_B, nullptr, b, u), { c_out }, 0);
             res_conv2[uid] = create_tensor(tn(LLM_TENSOR_C2W_RES_CONV2, "weight", b, u), { 1, c_out, c_out }, 0);
-            res_conv2_b[uid] = create_tensor(tn(LLM_TENSOR_C2W_RES_CONV2, "bias", b, u), { 1, c_out }, 0);
+            res_conv2_b[uid] = create_tensor(tn(LLM_TENSOR_C2W_RES_CONV2, "bias", b, u), { c_out, 1 }, 0);
         }
     }
 
@@ -320,7 +349,7 @@ void llama_model_qwen3_tts_code2wav::load_arch_tensors(llama_model_loader & ml) 
 
     c2w_out_snake_a = create_tensor(tn(LLM_TENSOR_C2W_OUT_SNAKE_A, nullptr), { c_last }, 0);
     c2w_out_snake_b = create_tensor(tn(LLM_TENSOR_C2W_OUT_SNAKE_B, nullptr), { c_last }, 0);
-    c2w_output      = create_tensor(tn(LLM_TENSOR_C2W_OUTPUT, "weight"), { 7, 1, c_last }, 0);
+    c2w_output      = create_tensor(tn(LLM_TENSOR_C2W_OUTPUT, "weight"), { 7, c_last, 1 }, 0);
     c2w_output_b    = create_tensor(tn(LLM_TENSOR_C2W_OUTPUT, "bias"),   { 1 }, 0);
 }
 
@@ -331,11 +360,32 @@ std::unique_ptr<llm_graph_context> llama_model_qwen3_tts_code2wav::build_arch_gr
 llama_model_qwen3_tts_code2wav::graph::graph(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
     const auto & m = static_cast<const llama_model_qwen3_tts_code2wav &>(model);
 
+    // The framework's init-time "dummy graph" (used to reserve output
+    // buffer space) is built with a small n_tokens; for the c2w's
+    // n_codebooks=16 the smallest valid batch is 16. Produce a
+    // placeholder zero-frame output when the divisibility fails; the
+    // real llama_encode will pass a valid n_tokens and rebuild the
+    // graph with the real PCM path.
     if (n_tokens % m.n_codebooks != 0) {
-        GGML_ABORT("code2wav: n_tokens (%d) must be a multiple of n_codebooks (%u)",
-                   (int) n_tokens, m.n_codebooks);
+        LLAMA_LOG_WARN("code2wav: n_tokens (%d) is not a multiple of n_codebooks (%u); "
+                       "producing a zero-frame placeholder output\n", (int) n_tokens, m.n_codebooks);
+        // 1 frame worth of PCM samples, with the right per-frame shape
+        // (the framework reads n_embd_out * n_tokens_max for the output
+        // buffer; emitting a 0-batch placeholder of the per-frame dim
+        // is the smallest valid output that the framework will accept).
+        const int64_t n_embd_out = hparams.n_embd_out();
+        ggml_tensor * placeholder = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_embd_out, 1);
+        // an orphan leaf gets no backend assignment in the scheduler; the
+        // INPUT flag pins it to the CPU backend so the init-time reserve
+        // probes can allocate it
+        ggml_set_input(placeholder);
+        res->t_embd = placeholder;
+        ggml_build_forward_expand(gf, placeholder);
+        return;
     }
     const int64_t n_frames = n_tokens / m.n_codebooks;
+    LLAMA_LOG_INFO("code2wav: real graph n_tokens=%d n_frames=%d n_codebooks=%d\n",
+                   (int) n_tokens, (int) n_frames, m.n_codebooks);
 
     const int64_t n_embd_head = hparams.n_embd_head_k();
     const int64_t n_head      = hparams.n_head();
@@ -358,7 +408,7 @@ llama_model_qwen3_tts_code2wav::graph::graph(const llama_model & model, const ll
     res->add_input(std::move(inp_pos));
 
     auto inp_mask = std::make_unique<llm_graph_input_c2w_mask>(n_frames, hparams.n_swa);
-    inp_mask->mask = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_frames, n_frames);
+    inp_mask->mask = ggml_new_tensor_2d(ctx0, GGML_TYPE_F16, n_frames, n_frames);
     ggml_set_input(inp_mask->mask);
     ggml_tensor * kq_mask = inp_mask->mask;
     cb(kq_mask, "inp_kq_mask", -1);
@@ -392,16 +442,18 @@ llama_model_qwen3_tts_code2wav::graph::graph(const llama_model & model, const ll
         cur = ggml_cast(ctx0, cur, GGML_TYPE_F32);
     }
 
-    // ---- pre_conv (time-major) ----
+    // ---- pre_conv ----
+    // the RVQ sum is channel-major ne (n_embd, F); the conv ops want
+    // (L, C): ne[0] = frames, ne[1] = channels
 
-    cur = ggml_cont(ctx0, ggml_transpose(ctx0, cur)); // [F, latent]
+    cur = ggml_cont(ctx0, ggml_transpose(ctx0, cur)); // ne (F, n_embd)
 
     cur = build_causal_conv(m.c2w_pre_conv, m.c2w_pre_conv_b, cur, 1);
     cb(cur, "pre_conv", -1);
 
-    // ---- pre-transformer (channel-major) ----
+    // ---- pre-transformer: norms and linears read ne[0] = channels ----
 
-    cur = ggml_cont(ctx0, ggml_transpose(ctx0, cur)); // [latent, F]
+    cur = ggml_cont(ctx0, ggml_transpose(ctx0, cur)); // ne (latent, F)
 
     cur = ggml_add(ctx0, ggml_mul_mat(ctx0, m.c2w_tf_in_proj, cur), m.c2w_tf_in_proj_b);
 
@@ -456,9 +508,9 @@ llama_model_qwen3_tts_code2wav::graph::graph(const llama_model & model, const ll
     cur = ggml_add(ctx0, ggml_mul_mat(ctx0, m.c2w_tf_out_proj, cur), m.c2w_tf_out_proj_b);
     cb(cur, "tf_out", -1);
 
-    // ---- convnext upsample stages (time-major) ----
+    // ---- convnext upsample stages: back to the conv layout (L, C) ----
 
-    cur = ggml_cont(ctx0, ggml_transpose(ctx0, cur)); // [F, latent]
+    cur = ggml_cont(ctx0, ggml_transpose(ctx0, cur)); // ne (F, latent)
 
     for (size_t s = 0; s < m.upsample_ratios.size(); ++s) {
         cur = build_upsample(m.up_transconv[s], m.up_transconv_b[s], cur, m.upsample_ratios[s]);
@@ -468,7 +520,7 @@ llama_model_qwen3_tts_code2wav::graph::graph(const llama_model & model, const ll
 
         cur = build_causal_conv_dw(m.up_dwconv[s], m.up_dwconv_b[s], cur);
 
-        cur = ggml_cont(ctx0, ggml_transpose(ctx0, cur)); // [C, L]
+        cur = ggml_cont(ctx0, ggml_transpose(ctx0, cur)); // ne (C, L): norm + linears read ne[0]
         cur = ggml_norm(ctx0, cur, m.f_convnext_eps);
         cur = ggml_mul(ctx0, cur, m.up_norm[s]);
         cur = ggml_add(ctx0, cur, m.up_norm_b[s]);
@@ -476,7 +528,7 @@ llama_model_qwen3_tts_code2wav::graph::graph(const llama_model & model, const ll
         cur = ggml_gelu(ctx0, cur);
         cur = ggml_add(ctx0, ggml_mul_mat(ctx0, m.up_pw2[s], cur), m.up_pw2_b[s]);
         cur = ggml_mul(ctx0, cur, m.up_gamma[s]);
-        cur = ggml_cont(ctx0, ggml_transpose(ctx0, cur)); // [L, C]
+        cur = ggml_cont(ctx0, ggml_transpose(ctx0, cur)); // ne (L, C): back to the conv layout
 
         cur = ggml_add(ctx0, cur, x);
         cb(cur, "up_convnext", s);
@@ -530,7 +582,7 @@ llama_model_qwen3_tts_code2wav::graph::graph(const llama_model & model, const ll
 }
 
 ggml_tensor * llama_model_qwen3_tts_code2wav::graph::build_snake(ggml_tensor * x, ggml_tensor * a, ggml_tensor * b) const {
-    // x is time-major [L, C]; broadcast the per-channel vectors over time
+    // x is ne (L, C); broadcast the per-channel vectors over time
     ggml_tensor * a2 = ggml_reshape_2d(ctx0, a, 1, a->ne[0]);
     ggml_tensor * b2 = ggml_reshape_2d(ctx0, b, 1, b->ne[0]);
 
@@ -551,7 +603,9 @@ ggml_tensor * llama_model_qwen3_tts_code2wav::graph::build_causal_conv(ggml_tens
     cur = ggml_cont(ctx0, ggml_view_2d(ctx0, cur, n_in, cur->ne[1], cur->nb[1], 0));
 
     if (b != nullptr) {
-        cur = ggml_add(ctx0, cur, b);
+        // the bias loads as (C, 1); the conv output is (L, C), so the
+        // bias must broadcast as (1, C)
+        cur = ggml_add(ctx0, cur, ggml_reshape_2d(ctx0, b, 1, b->ne[0]));
     }
 
     return cur;
@@ -565,7 +619,7 @@ ggml_tensor * llama_model_qwen3_tts_code2wav::graph::build_causal_conv_dw(ggml_t
     cur = ggml_cont(ctx0, ggml_view_2d(ctx0, cur, n_in, cur->ne[1], cur->nb[1], 0));
 
     if (b != nullptr) {
-        cur = ggml_add(ctx0, cur, b);
+        cur = ggml_add(ctx0, cur, ggml_reshape_2d(ctx0, b, 1, b->ne[0]));
     }
 
     return cur;
@@ -580,7 +634,7 @@ ggml_tensor * llama_model_qwen3_tts_code2wav::graph::build_upsample(ggml_tensor 
     cur = ggml_cont(ctx0, ggml_view_2d(ctx0, cur, n_in*rate, cur->ne[1], cur->nb[1], 0));
 
     if (b != nullptr) {
-        cur = ggml_add(ctx0, cur, b);
+        cur = ggml_add(ctx0, cur, ggml_reshape_2d(ctx0, b, 1, b->ne[0]));
     }
 
     return cur;

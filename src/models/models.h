@@ -1604,6 +1604,93 @@ struct llama_model_wavtokenizer_dec : public llama_model_base {
 };
 
 
+// Qwen3-TTS-12Hz Talker (Qwen3TTSForConditionalGeneration talker).
+//
+// A 28-layer speech-code LM that autoregressively emits codebook-0 codec
+// tokens at ~12.5 Hz, plus a 5-layer code predictor ("sub-talker") that
+// emits codebooks 1..15 per frame conditioned on the backbone hidden
+// state. Two distinct vocabs: the text vocab (151,936) is consumed for
+// the answer text; the codec vocab (3,072) is emitted (the cp codebooks
+// have a SEPARATE per-codebook size of 2,048, asserted at load time).
+//
+// The backbone is a Qwen3-style 28-block dense decoder with per-block
+// Q/K/V/O/FFN tensors + per-head Q/K RMSNorms, mrope sections [24,20,20]
+// (sum=64, half the 128-dim head), causal full attention, no SWA.
+//
+// The cp block lives at blk.{block_count + 0..n_pred_layers - 1} in the
+// same GGUF (deliberately NOT carried as n_layer_nextn layers: the cp
+// block is a sub-talker, not an MTP drafter for the backbone). It uses
+// cp_hidden=1024 dims and the same 16/8 head counts as the backbone.
+// Per-codebook embeddings cp_codec_embd.{cid} and heads cp_head.{cid}
+// cover codebooks 1..15 (cid 0..14) with 2,048 entries each.
+//
+// The forward path is staged in the graph:
+//   1. text tokens (or already-emitted codec tokens) feed the backbone
+//      with mrope positions [T, T, T, 0] (auto-1D-to-4D in the framework).
+//   2. output_norm -> codec_head (codebook 0 logits) over codec vocab.
+//   3. backbone hidden at the last token + sum of cp_codec_embd.{cid}[c]
+//      is projected through cp_proj (2048 -> 1024) into the cp block.
+//   4. the cp block runs 5 attention layers and emits, per cid, logits
+//      from cp_head.{cid} (1024 -> 2048) over the cp codebook size.
+//
+// Streaming: the W5 CLI calls llama_decode per frame after the prefill;
+// this class hands the resulting 16-code frame to the caller (the code2wav
+// graph runs in a separate llama_model loaded by the caller).
+struct llama_model_qwen3tts_talker : public llama_model_base {
+    llama_model_qwen3tts_talker(const struct llama_model_params & params) : llama_model_base(params) {}
+    void load_arch_hparams(llama_model_loader & ml) override;
+    void load_arch_tensors(llama_model_loader & ml) override;
+
+    struct graph : public llm_graph_context {
+        graph(const llama_model & model, const llm_graph_params & params);
+
+        ggml_tensor * tile640_mul_mat(
+            const llama_tile640_tensor * tensor,
+            ggml_tensor * input) const;
+    };
+
+    std::unique_ptr<llm_graph_context> build_arch_graph(const llm_graph_params & params) const override;
+
+    // arch-specific hparams (the W2 GGUF metadata, not in the standard KV table)
+    uint32_t n_codec_vocab           = 0;   // codec vocab size (codebook-0 head; 3072 in W2)
+    uint32_t n_cp_per_codebook       = 0;   // per-cp-codebook vocab size (2048 in W2)
+    uint32_t n_pred_layers           = 0;   // cp block depth (5 in W2)
+    uint32_t n_cp_embd               = 0;   // cp block hidden size (1024 in W2)
+    uint32_t n_cp_ff                 = 0;   // cp block FF size (3072 in W2)
+    uint32_t n_cp_head               = 0;   // cp block attention heads (16 in W2)
+    uint32_t n_cp_head_kv            = 0;   // cp block KV heads (8 in W2)
+    uint32_t position_id_per_seconds = 0;   // mrope-T rate (13 in W2)
+    uint32_t codec_pad_id            = 0;
+    uint32_t codec_bos_id            = 0;
+    uint32_t codec_eos_id            = 0;
+    uint32_t codec_think_id          = 0;
+    uint32_t codec_nothink_id        = 0;
+    uint32_t codec_think_bos_id      = 0;
+    uint32_t codec_think_eos_id      = 0;
+    std::vector<std::string>         codec_language_names;
+    std::vector<int32_t>             codec_language_ids;
+
+    // codec-side (separate from text tok_embd / output) tensors
+    struct ggml_tensor * codec_embd     = nullptr;   // [n_embd, n_codec_vocab]
+    struct ggml_tensor * codec_head     = nullptr;   // [n_embd, n_codec_vocab] (codebook-0 head)
+    struct ggml_tensor * text_proj_1    = nullptr;   // [n_embd, n_embd]  (+ bias)
+    struct ggml_tensor * text_proj_1_b  = nullptr;
+    struct ggml_tensor * text_proj_2    = nullptr;   // [n_embd, n_embd]  (+ bias)
+    struct ggml_tensor * text_proj_2_b  = nullptr;
+
+    // code predictor bridge + per-layer
+    struct ggml_tensor * cp_proj         = nullptr;   // [n_cp_embd, n_embd]  (backbone -> cp)  + bias
+    struct ggml_tensor * cp_proj_b       = nullptr;
+    struct ggml_tensor * cp_norm         = nullptr;   // [n_cp_embd]
+    std::vector<struct ggml_tensor *> cp_codec_embd;  // cp_per_codebook tensors: [n_embd, n_cp_per_codebook]
+    std::vector<struct ggml_tensor *> cp_head;        // cp_per_codebook tensors: [n_cp_embd, n_cp_per_codebook]
+    // n_layer_nextn in hparams carries the cp block depth; the cp block
+    // layers live at hparams.n_layer()..hparams.n_layer_all-1 in layers[]
+    // so the standard layer loop in the graph (which iterates n_layer()-1)
+    // skips them automatically; the cp sub-graph operates on layers[cp_bid].
+};
+
+
 // Qwen3-TTS-12Hz Code2Wav vocoder (Qwen3TTSTokenizerV2Decoder).
 //
 // One frame = n_codebooks interleaved code ids (12.5 Hz); the graph turns
@@ -1641,6 +1728,7 @@ struct llama_model_qwen3_tts_code2wav : public llama_model_base {
 
     // arch config from GGUF metadata
     uint32_t n_codebooks    = 0;
+    uint32_t codec_vocab    = 0;   // codebook entry count (2048 in W3/W5c, distinct from the talker's 3072)
     uint32_t vq_dim         = 0;   // codebook embedding width
     uint32_t latent_dim     = 0;   // pre_conv output / upsample width
     uint32_t decoder_dim    = 0;   // stem output / first block width

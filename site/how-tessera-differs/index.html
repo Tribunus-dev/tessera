@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en" data-theme="dark" data-ent="root" data-has="theme">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>How Tessera differs - vs llama.cpp, MLX, and vLLM.</title>
+<meta name="description" content="Tessera isn't a quantizer wrapper or a faster serving engine. It's a calibrated, audited quantization system with a local-first consumer product, a data flywheel, and a privacy contract. None of llama.cpp, MLX, or vLLM have all four.">
+<link rel="canonical" href="https://tessera.tribunus.dev/how-tessera-differs/">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta name="generator" content="tessera-docs-ssg">
+<meta name="build-id" content="regen-002">
+<meta property="og:title" content="How Tessera differs - vs llama.cpp, MLX, and vLLM.">
+<meta property="og:description" content="Tessera isn't a quantizer wrapper or a faster serving engine. It's a calibrated, audited quantization system with a local-first consumer product, a data flywheel, and a privacy contract.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://tessera.tribunus.dev/how-tessera-differs/">
+<meta property="og:image" content="https://tessera.tribunus.dev/og-image.svg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="How Tessera differs - vs llama.cpp, MLX, and vLLM.">
+<meta name="twitter:description" content="Tessera is calibrated, audited, local-first, with a data flywheel and a privacy contract. None of llama.cpp, MLX, or vLLM have all four.">
+<meta name="twitter:image" content="https://tessera.tribunus.dev/og-image.svg">
+<link rel="stylesheet" href="/styles/site.css">
+<script>
+(function(){try{
+  var k='tessera-theme';
+  var v=null;
+  try{v=localStorage.getItem(k);}catch(e){}
+  if(v!=='dark'&&v!=='light'){
+    try{
+      if(window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches){v='light';}
+      else{v='dark';}
+    }catch(e){v='dark';}
+  }
+  document.documentElement.setAttribute('data-theme',v);
+  try{document.documentElement.style.colorScheme=v;}catch(e){}
+}catch(e){}})();
+</script>
+<script type="module" src="/scripts/boot.js"></script>
+</head>
+<body>
+<a href="#top" class="skip-link">Skip to main content</a>
+<header class="site-header" data-ent="site-header" data-has="measure">
+<a class="brand" href="/"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tessera</span></a>
+<nav class="site-nav" aria-label="Primary navigation">
+<a class="site-nav-link" href="/studio/">Studio</a>
+<a class="site-nav-link" href="/how-it-works/">How it works</a>
+<a class="site-nav-link" href="/how-tessera-differs/" aria-current="page">How Tessera differs</a>
+<a class="site-nav-link" href="/concepts/">Concepts</a>
+<a class="site-nav-link" href="/start/">Start</a>
+<a class="site-nav-link" href="/architecture/">Architecture</a>
+<a class="site-nav-link" href="/evidence/">Evidence</a>
+<a class="site-nav-link" href="/changelog/">Changelog</a>
+<a class="site-nav-link" rel="external" target="_blank" href="https://github.com/Tribunus-dev/tessera">GitHub</a>
+</nav>
+<button type="button" class="theme-toggle" aria-label="Toggle dark and light theme" data-theme-toggle><span class="theme-toggle-icon" aria-hidden="true"></span><span class="theme-toggle-label">Dark</span></button>
+</header>
+<aside class="standalone-anchor" aria-label="Page context">
+<span class="standalone-anchor-mark">Tessera</span>
+<p class="standalone-anchor-body">You are on <strong>How Tessera differs</strong>, the comparison page. <a href="/">Back to home</a> · <a href="/studio/">Studio</a> · <a href="/start/">Install</a></p>
+</aside>
+<main class="page-body" id="top">
+
+<header class="page-header">
+<span class="page-header-eyebrow">Comparison</span>
+<h1 class="page-header-headline">How Tessera differs. From llama.cpp, MLX, and vLLM.</h1>
+<p class="page-header-blurb">Tessera is not a quantizer wrapper or a faster serving engine. It is a calibrated, audited quantization system with a local-first consumer product, a data flywheel, and a privacy contract. None of llama.cpp, MLX, or vLLM have all four.</p>
+</header>
+
+<section class="chapter">
+<div class="chapter-eyebrow">The four alternatives</div>
+<h2 class="chapter-title">What each one does. Honestly.</h2>
+<p class="chapter-body">A fair comparison starts with what each project is. All three are good projects. Tessera is a different project.</p>
+
+<h3 class="chapter-subtitle">llama.cpp</h3>
+<p class="chapter-body">CPU-first C/C++ inference via ggml, the de facto standard for local LLM. MIT licensed, wide model coverage via GGUF conversion, the substrate most other local projects build on. Tessera is a <em>fork</em> of llama.cpp: same C++ substrate, but extended with the <a class="gloss" href="/concepts/#concept-kernel-fidelity-loop">kernel-fidelity loop</a>, the per-tensor <a class="gloss" href="/concepts/#concept-receipt">policy and signed receipt</a>, ANE prefill, the <a class="gloss" href="/concepts/#concept-hybrid-drafters">hybrid drafters</a>, Tessera Studio, and the flywheel. If you already use llama.cpp and don't need any of those, you don't need Tessera.</p>
+
+<h3 class="chapter-subtitle">MLX</h3>
+<p class="chapter-body">Apple's array framework for ML on Apple Silicon, NumPy-like API, unified memory, tight Metal integration. Designed for research and small-to-medium models. MLX is a general-purpose ML framework — not a serving stack and not a quantization system. Tessera could theoretically consume an MLX-trained model, but the quantization is the differentiator, not the framework. If you are prototyping on Apple Silicon with a general framework, MLX is the right tool. If you want calibrated quantization, the kernel-fidelity loop, and a consumer product, Tessera is.</p>
+
+<h3 class="chapter-subtitle">vLLM</h3>
+<p class="chapter-body">High-throughput LLM serving for production. PagedAttention, continuous batching, prefix caching, GPU-first (CUDA, ROCm, TPU, Neuron). The standard for cloud-scale LLM serving. vLLM is for thousands of QPS in a data center; Tessera is for one user on a Mac. Different deployment target, different design constraints. If you are serving production traffic at scale, vLLM is the right tool. If you want local AI on your own hardware, Tessera is.</p>
+</section>
+
+<section class="chapter">
+<div class="chapter-eyebrow">The four axes of difference</div>
+<h2 class="chapter-title">What Tessera is doing that none of the three are.</h2>
+<div class="table-wrap">
+<table class="tier-table">
+<thead>
+<tr><th>Axis</th><th>llama.cpp</th><th>MLX</th><th>vLLM</th><th>Tessera</th></tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Calibrated &amp; audited quantization</strong></td>
+<td>No (vanilla K-quants, no per-tensor policy)</td>
+<td>No (general framework, no quantization system)</td>
+<td>No (serving engine, no quantization)</td>
+<td><strong>Yes</strong> — <a class="gloss" href="/concepts/#concept-kernel-fidelity-loop">kernel-fidelity loop</a>, per-tensor GA, schema-versioned evidence, signed receipt on every artifact</td>
+</tr>
+<tr>
+<td><strong>Local-first consumer product</strong></td>
+<td>No (CLI / library)</td>
+<td>No (framework)</td>
+<td>No (serving engine)</td>
+<td><strong>Yes</strong> — <a href="/studio/">Tessera Studio</a> for Mac and iOS, the three destinations, the eight tools, AION, the agent loop</td>
+</tr>
+<tr>
+<td><strong>Data flywheel</strong></td>
+<td>No</td>
+<td>No</td>
+<td>No</td>
+<td><strong>Yes</strong> — distributed training improves the model over time, every user benefits</td>
+</tr>
+<tr>
+<td><strong>Privacy contract</strong></td>
+<td>Implicit (you can run locally)</td>
+<td>Implicit (you can run locally)</td>
+<td>No (cloud serving)</td>
+<td><strong>Yes</strong> — <a href="/how-it-works/">sanitization pipeline</a>, public audit trail, raw data never leaves device</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p class="chapter-aside">The four axes are the spine. The prose above is the unpacking. The reader walks away with "I get it, Tessera is doing something none of these are doing."</p>
+</section>
+
+<section class="chapter">
+<div class="chapter-eyebrow">Technical depth</div>
+<h2 class="chapter-title">The two architectural mechanisms that make it work.</h2>
+<p class="chapter-body">The four-axis table above answers <em>what</em> Tessera is doing. The next two sections answer <em>how</em>. These are the architectural mechanisms the other three don't have; the rest of the comparison falls out of them.</p>
+
+<h3 class="chapter-subtitle">Heterogeneous dynamic execution across CPU, GPU, and ANE</h3>
+<p class="chapter-body">Apple Silicon has three compute engines: the M-series CPU, the GPU, and the Neural Engine. The right engine depends on the operation: ANE for matrix prefill, GPU for general compute and the drafter, CPU for control flow and serial bookkeeping. Tessera dispatches <em>dynamically at runtime</em>, not statically at compile time. The ANE prefill hands off to the GPU via IOSurface async, so the data flows without a sync barrier. <a href="/architecture/#dispatch">Full dispatch policy on the architecture page.</a></p>
+<p class="chapter-body">llama.cpp uses CPU and Metal GPU but does not touch the ANE. MLX is GPU-focused. vLLM does not run on Apple Silicon in the same way (CUDA-first). Heterogeneous dynamic execution is unique to Tessera in this comparison.</p>
+
+<h3 class="chapter-subtitle">Quantization-on-transport to go around the memory wall</h3>
+<p class="chapter-body">The bottleneck in modern local inference is not compute, it is <a class="gloss" href="/concepts/#concept-memory-wall">memory bandwidth</a> — loading weights from HBM into the compute units. Standard quantization reduces the data size but at a fixed accuracy cost. Tessera does quantization <em>as data moves between compute stages</em>, not as a one-time pre-processing step. The calibration kernel — the one that grades the dequant at calibration time — is the same kernel that does the runtime dequant, so the quantization is kernel-aware and effectively lossless for the model's purposes. Idle compute during transport is the resource that makes this free. <a href="/architecture/#memory-wall">Full treatment on the architecture page.</a></p>
+<p class="chapter-body">None of llama.cpp, MLX, or vLLM do this. Their quantization is a static pre-processing step with a fixed accuracy cost. Quantization-on-transport is the architectural reason the kernel-fidelity loop and the runtime performance can coexist.</p>
+</section>
+
+<section class="chapter">
+<div class="chapter-eyebrow">When to use Tessera</div>
+<h2 class="chapter-title">The positive case.</h2>
+<p class="chapter-body">Use Tessera if you want local AI on your Mac that gets better the more people use it, and you want the receipts to prove the model is honest.</p>
+<p class="chapter-body">Use <strong>llama.cpp</strong> if you want a fast, minimal local inference engine and you are not building on a flywheel or kernel-aware calibration.</p>
+<p class="chapter-body">Use <strong>MLX</strong> if you are prototyping on Apple Silicon with a general framework, training from scratch, or doing research that does not need a quantized inference stack.</p>
+<p class="chapter-body">Use <strong>vLLM</strong> if you are serving thousands of QPS in a data center and your deployment is GPU-bound.</p>
+<p class="chapter-body">If you are unsure which one fits, the <a href="/how-it-works/">how-it-works page</a> explains the deal in plain language. If you are ready to install, <a href="/start/">start here</a>.</p>
+</section>
+
+<section class="chapter" id="next-step">
+<div class="chapter-eyebrow">Where to go next</div>
+<h2 class="chapter-title">Pick the question that brought you here.</h2>
+<div class="chapter-grid chapter-grid-3">
+<a class="next-step-card" href="/architecture/">
+<span class="next-step-card-eyebrow">Want the technical proof?</span>
+<h3 class="next-step-card-title">Architecture</h3>
+<p class="next-step-card-body">The kernel-fidelity loop, the dispatch policy, the memory wall.</p>
+</a>
+<a class="next-step-card" href="/concepts/">
+<span class="next-step-card-eyebrow">Hit a term you don't know?</span>
+<h3 class="next-step-card-title">Concepts</h3>
+<p class="next-step-card-body">The ML vocabulary, with concise analogies.</p>
+</a>
+<a class="next-step-card" href="/start/">
+<span class="next-step-card-eyebrow">Ready to install?</span>
+<h3 class="next-step-card-title">Start</h3>
+<p class="next-step-card-body">Build, run, and load your first model.</p>
+</a>
+</div>
+</section>
+
+</main>
+<aside class="secondary-nav">
+<ul class="secondary-nav-list">
+<li class="secondary-nav-label">Navigate</li>
+<li><a href="/">Home</a></li>
+<li><a href="/studio/">Studio</a></li>
+<li><a href="/how-it-works/">How it works</a></li>
+<li><a href="/how-tessera-differs/" aria-current="page">How Tessera differs</a></li>
+<li><a href="/concepts/">Concepts</a></li>
+<li><a href="/start/">Start</a></li>
+<li><a href="/architecture/">Architecture</a></li>
+<li><a href="/evidence/">Evidence</a></li>
+<li><a href="/changelog/">Changelog</a></li>
+<li><a href="/colophon/">Colophon</a></li>
+</ul>
+</aside>
+<footer class="site-footer">
+<div class="site-footer-inner">
+<p>Tessera is independently developed by <strong>Julian Torres</strong>. Source-available under the Tessera Research and Education License 1.0; trained models under CC BY-NC-SA 4.0. <a href="/colophon/">Colophon</a> · <a rel="external" target="_blank" href="https://github.com/Tribunus-dev/tessera">Repository</a> · <a href="mailto:julian@tribunus.dev">Commercial</a></p>
+<p><a href="https://tessera.tribunus.dev">tessera.tribunus.dev</a></p>
+</div>
+</footer>
+</body>
+</html>

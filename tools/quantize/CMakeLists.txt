@@ -135,15 +135,30 @@ add_library(${TARGET}
     # bulk insert. Used for the unified tessera.duckdb schema (ga_evaluations,
     # tensor_stats, l3/l4/l5/ple summary tables).
     tessera/tessera-db-buffer.cpp
+    # W5: per-utterance s2s record append hook (s2s design 4.1). Pulls in
+    # system zlib for the codes compression. Linked into the FFI surface
+    # transitively so the Swift TesseraS2SRecord producer can call
+    # tessera_rt_s2s_append later.
+    ../../common/tessera-s2s-capture.cpp
 )
+
+# W5: zlib is required by tessera-s2s-capture.cpp (compress2 / uncompress).
+# macOS provides libz at /usr/lib/libz.dylib but it is NOT auto-linked
+# by the compiler driver; pass -lz explicitly. On Linux find_package(ZLIB)
+# exposes ZLIB::ZLIB. Same pattern as the tessera-s2s-cli target below.
+if(APPLE)
+    target_link_libraries(${TARGET} PUBLIC -lz)
+else()
+    find_package(ZLIB REQUIRED)
+    target_link_libraries(${TARGET} PUBLIC ZLIB::ZLIB)
+endif()
 set_target_properties(${TARGET} PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
 
 target_include_directories(${TARGET} PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/tessera)
 
-# ggml internal headers (ggml-quants.h, ggml-quants-v2.h,
-# ggml-quants-v2-dispatch.h): tessera-higgs-proxy.cpp drives the same
+# ggml internal headers (ggml-quants.h): tessera-higgs-proxy.cpp drives the same
 # TILE640 quant/dequant dispatch the GGML_OP_TILE640_MATMUL inference
 # path uses. PRIVATE: the headers never leak into downstream consumers.
 target_include_directories(${TARGET} PRIVATE
@@ -291,6 +306,38 @@ if(LLAMA_TOOLS_INSTALL)
     install(TARGETS ${TARGET} RUNTIME)
 endif()
 
+# calibrate_regime_router: regime router calibration runner.
+# Sweeps (family, shape_bucket) for a given shape set, picks
+# the accel vs scalar winner per cell, and emits
+# ggml/src/ggml-regime-router.gen.h. The committed .gen.h is
+# the source of truth; the runner is `make regime-router-regen`
+# (the custom target below) when the model fixtures change.
+# Links llama-quantize-impl for the TILE640 batched helpers
+# (ts_apply_outlier_addback, ts_decode_per_row_meta) + the
+# L1-on-ANE proxy (ts_higgs_proxy_measure_l1).
+set(TARGET calibrate_regime_router)
+add_executable(${TARGET} tessera/calibrate_regime_router.cpp)
+target_link_libraries(${TARGET} PRIVATE llama-quantize-impl)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+target_include_directories(${TARGET} PRIVATE
+    ${PROJECT_SOURCE_DIR}/ggml/src)
+if(LLAMA_TOOLS_INSTALL)
+    install(TARGETS ${TARGET} RUNTIME)
+endif()
+
+# regime-router-regen: custom target that regenerates the
+# .gen.h with the pinned seed. The committed .gen.h is the
+# source of truth; the custom target is for the model-fixture
+# refresh path. The seed is hard-coded in the runner so the
+# bytes are bit-stable across re-runs.
+add_custom_target(regime-router-regen
+    COMMAND $<TARGET_FILE:calibrate_regime_router>
+        --out ${PROJECT_SOURCE_DIR}/ggml/src/ggml-regime-router.gen.h
+        --shape gemma4-12b-trunk
+    DEPENDS calibrate_regime_router
+    COMMENT "Regenerating ggml-regime-router.gen.h from gemma 4 12B trunk shapes"
+    VERBATIM)
+
 # tessera-train-dflash: native DFlash / D-PACE block-drafter training driver.
 # Reads llama.tessera.dflash-block.v1 records (from tessera-dataset
 # --tessera-dataset-mode dflash) and trains a drafter with weighted
@@ -302,6 +349,34 @@ set(TARGET tessera-train-dflash)
 
 add_executable(${TARGET} tessera/tessera-train-dflash.cpp)
 target_link_libraries(${TARGET} PRIVATE llama-quantize-impl)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
+if(LLAMA_TOOLS_INSTALL)
+    install(TARGETS ${TARGET} RUNTIME)
+endif()
+
+# tessera-s2s-cli: native Route A end-to-end CLI (s2s design 3.3, 4.1).
+# Text in -> 16-codebook frames -> Qwen3-TTS code2wav GGUF -> 24 kHz
+# 16-bit PCM stream, with a per-utterance s2s record appended to
+# --trace-out. The talker C++ graph is the next-wave deliverable; in
+# this wave the CLI detects the missing arch and returns exit 3 (GGUF
+# load failure) with a precise, named error, and the --talker-mode skip
+# + --codes-in path exercises the code2wav + capture pipeline end to
+# end. See docs/tessera-s2s-design.md.
+
+set(TARGET tessera-s2s-cli)
+
+add_executable(${TARGET} tessera/tessera-s2s-cli.cpp)
+target_link_libraries(${TARGET} PRIVATE llama-quantize-impl)
+# zlib for tessera-s2s-capture.cpp (compress2 / uncompress). macOS
+# provides libz at /usr/lib/libz.dylib but it is NOT auto-linked by the
+# compiler driver; pass -lz explicitly. On Linux find_package(ZLIB)
+# above exposes ZLIB::ZLIB.
+if(APPLE)
+    target_link_libraries(${TARGET} PRIVATE -lz)
+else()
+    target_link_libraries(${TARGET} PRIVATE ZLIB::ZLIB)
+endif()
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 if(LLAMA_TOOLS_INSTALL)
@@ -466,6 +541,25 @@ if(LLAMA_BUILD_TESTS)
     set(TARGET test-unified-writer)
     add_executable(${TARGET} tessera/test_unified_writer.cpp)
     target_link_libraries(${TARGET} PRIVATE llama-quantize-impl)
+    target_compile_features(${TARGET} PRIVATE cxx_std_17)
+    add_test(NAME ${TARGET} COMMAND ${TARGET})
+
+    # W5: tessera_rt_s2s_append + the standalone zlib+base64 codes
+    # codec. Exercises the s2s record schema, the codes round-trip, the
+    # provenance stamp (s2s design 5 golden parity Tests 2 + 3), the
+    # multi-append ordering, and the fail-closed null-arg path.
+    # Standalone binary: it links the capture source directly so the
+    # test is independent of the full quantize-impl graph and runs in
+    # <0.1 s.
+    set(TARGET test-tessera-s2s-capture)
+    add_executable(${TARGET} tessera/test_tessera_s2s_capture.cpp
+                                  ../../common/tessera-s2s-capture.cpp)
+    target_link_libraries(${TARGET} PRIVATE llama-common ${CMAKE_THREAD_LIBS_INIT})
+    if(APPLE)
+        target_link_libraries(${TARGET} PRIVATE -lz)
+    else()
+        target_link_libraries(${TARGET} PRIVATE ZLIB::ZLIB)
+    endif()
     target_compile_features(${TARGET} PRIVATE cxx_std_17)
     add_test(NAME ${TARGET} COMMAND ${TARGET})
 endif()

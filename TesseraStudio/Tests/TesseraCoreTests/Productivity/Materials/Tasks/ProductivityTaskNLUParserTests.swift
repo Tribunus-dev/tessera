@@ -241,10 +241,10 @@ final class ProductivityTaskNLUParserTests: XCTestCase {
 
 // MARK: - Mock contact / document adapters for NLU tests
 
-/// In-memory `ContactsAdapter` for tests. Matches a contact
+/// In-memory `TaskContactsAdapter` for tests. Matches a contact
 /// when any of the candidate words appears in the contact's
 /// display name (case-insensitive).
-final class MockContactsAdapter: ContactsAdapter {
+final class MockContactsAdapter: TaskContactsAdapter {
     private let contacts: [Contact]
 
     init(contacts: [Contact]) {

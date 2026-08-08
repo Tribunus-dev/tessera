@@ -461,6 +461,14 @@ static int save_models(const llm_arch target_arch, const size_t seed, const ggml
         if (arch == LLM_ARCH_EAGLE3 || arch == LLM_ARCH_DFLASH) {
             continue;
         }
+        if (arch == LLM_ARCH_QWEN3TTS_TALKER || arch == LLM_ARCH_QWEN3_TTS_CODE2WAV) {
+            // The qwen3-tts-* archs have non-standard hparams sets
+            // (raw-key TTS metadata) that the test's get_gguf_ctx does
+            // not emit. The dedicated test-qwen3tts-talker test covers
+            // the talker; the generic arch roundtrip test is for
+            // standard LM archs.
+            continue;
+        }
         for (bool moe : {false, true}) {
             if (moe && !moe_implemented(arch)) {
                 continue;
@@ -565,6 +573,14 @@ static int test_backends(const llm_arch target_arch, const size_t seed, const gg
             continue; // FIXME: ISWA KV cache initialization needs more fixture params
         }
         if (arch == LLM_ARCH_EAGLE3 || arch == LLM_ARCH_DFLASH) {
+            continue;
+        }
+        if (arch == LLM_ARCH_QWEN3TTS_TALKER || arch == LLM_ARCH_QWEN3_TTS_CODE2WAV) {
+            // The qwen3-tts-* archs have non-standard hparams sets
+            // (raw-key TTS metadata) that the test's get_gguf_ctx does
+            // not emit. The dedicated test-qwen3tts-talker test covers
+            // the talker; the generic arch roundtrip test is for
+            // standard LM archs.
             continue;
         }
 

@@ -10,6 +10,8 @@
 #include "speculative.h"
 #include "unicode.h"
 
+#include "ggml-backend.h"
+
 #include <algorithm>
 #include <cinttypes>
 #include <climits>
@@ -22,6 +24,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <list>
 #include <regex>
 #include <sstream>
 #include <string>
@@ -1550,6 +1553,60 @@ struct llama_model_params common_model_params_to_llama(common_params & params) {
     } else {
         GGML_ASSERT(params.kv_overrides.back().key[0] == 0 && "KV overrides not terminated with empty key");
         mparams.kv_overrides = params.kv_overrides.data();
+    }
+
+    // Batch 2 — default heterog tensor_buft table (ffn -> MTL0) for the 10GB
+    // M1 pipeline. Only when the user left overrides empty (explicit
+    // --override-tensor still wins) and Metal is in the device list and
+    // fitting is off. The table is injected here (after arg parsing's
+    // ntbo padding) so it survives --fit off but does not trip the
+    // fit.cpp "already set" guard. Non-Metal or no-device runs keep the
+    // CPU-only default. See src/llama-weight-stream.h for the 2-slot
+    // per-layer streaming that makes this residency viable (Batch 3).
+    {
+        bool has_real_overrides = false;
+        for (auto & ov : params.tensor_buft_overrides) {
+            if (ov.pattern != nullptr) { has_real_overrides = true; break; }
+        }
+        if (!has_real_overrides && !params.fit_params) {
+            bool has_metal = false;
+            ggml_backend_buffer_type_t mtl_buft = nullptr;
+            for (auto * d : params.devices) {
+                if (!d) continue;
+                const char * name = ggml_backend_dev_name(d);
+                if (name && std::strncmp(name, "MTL", 3) == 0) {
+                    has_metal = true;
+                    auto * buft = ggml_backend_dev_buffer_type(d);
+                    if (buft && !ggml_backend_buft_is_host(buft)) {
+                        mtl_buft = buft;
+                    }
+                    break;
+                }
+                if (ggml_backend_dev_type(d) == GGML_BACKEND_DEVICE_TYPE_GPU ||
+                    ggml_backend_dev_type(d) == GGML_BACKEND_DEVICE_TYPE_IGPU) {
+                    has_metal = true;
+                }
+            }
+            if (has_metal && mtl_buft != nullptr) {
+                // The arg parser already padded tensor_buft_overrides to
+                // ntbo = 4096 with nullptr terminators. Reuse the leading
+                // slots so the existing terminator stays at the back.
+                const size_t need = 3;
+                if (params.tensor_buft_overrides.size() < need + 1) {
+                    params.tensor_buft_overrides.resize(need + 1, {nullptr, nullptr});
+                }
+                static std::list<std::string> s_heterog_patterns;
+                s_heterog_patterns.push_back("blk\\.[0-9]+\\.ffn_gate.*");
+                params.tensor_buft_overrides[0] = {s_heterog_patterns.back().c_str(), mtl_buft};
+                s_heterog_patterns.push_back("blk\\.[0-9]+\\.ffn_up.*");
+                params.tensor_buft_overrides[1] = {s_heterog_patterns.back().c_str(), mtl_buft};
+                s_heterog_patterns.push_back("blk\\.[0-9]+\\.ffn_down.*");
+                params.tensor_buft_overrides[2] = {s_heterog_patterns.back().c_str(), mtl_buft};
+                // terminator already at back from padding; if we grew the
+                // vector above, the new last entry is also a terminator.
+                GGML_ASSERT(params.tensor_buft_overrides.back().pattern == nullptr);
+            }
+        }
     }
 
     if (params.tensor_buft_overrides.empty()) {

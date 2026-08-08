@@ -81,7 +81,13 @@ int main() {
 
     ts_gguf_write_tensor_cluster(out_ctx, out_ggml_ctx, "blk.0.attn_q", &qr, out_dim, in_dim);
 
-    check("cluster added >= 6 tensors", gguf_get_n_tensors(out_ctx) >= 6);
+    // the dispatch passes the full tensor name including the trailing
+    // ".weight"; the cluster members must be named after the stripped
+    // logical name (blk.1.attn_k.weight_packed, matching the loader-side
+    // lookup in create_tensor_or_tile640), not blk.1.attn_k.weight.weight_packed
+    ts_gguf_write_tensor_cluster(out_ctx, out_ggml_ctx, "blk.1.attn_k.weight", &qr, out_dim, in_dim);
+
+    check("cluster added >= 12 tensors", gguf_get_n_tensors(out_ctx) >= 12);
 
     const char * path = "tessera_gguf_write_test.gguf";
     check("gguf_write_to_file", gguf_write_to_file(out_ctx, path, false));
@@ -106,6 +112,10 @@ int main() {
                               (memcmp(pt->data, packed_copy.data(), cmp_bytes) == 0);
             check("weight_packed round-trips byte-identical", same);
         }
+        check("full-name base strips trailing .weight",
+              ggml_get_tensor(rin_ctx, "blk.1.attn_k.weight_packed") != nullptr);
+        check("no double .weight.weight naming",
+              ggml_get_tensor(rin_ctx, "blk.1.attn_k.weight.weight_packed") == nullptr);
         gguf_free(rin);
         ggml_free(rin_ctx);
     }

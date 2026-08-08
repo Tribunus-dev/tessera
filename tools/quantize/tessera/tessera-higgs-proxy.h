@@ -148,10 +148,12 @@ float ts_higgs_proxy_measure_offline(const float * W_flat, int64_t n_elem,
 //     per-row flat rows [packed words | fp16 page_scales |
 //     int8 lane_scales] (the quantize_row_tessera_t640_ref row
 //     layout), out_dim rows of in_dim elements each;
-//   - each row is dequantized with dequantize_row_tessera_t640_v2
-//     (pre-decoded meta) when the dispatch cost model picks v2
-//     (in_dim >= GGML_TESSERA_T640_V2_MIN_K and v2 enabled), the
-//     C reference dequantize_row_tessera_t640 below the cutoff;
+//   - each row is dequantized with
+//     dequantize_row_tessera_t640_with_meta (pre-decoded meta)
+//     when the dispatch cost model picks the accel path
+//     (in_dim >= GGML_TESSERA_T640_ACCEL_MIN_K and accel
+//     enabled), the flat dequantize_row_tessera_t640 below the
+//     cutoff;
 //   - the dequantized row is round-tripped through fp16 (the
 //     bundle's pinned slot dtype - the F16 pre-dequant) before
 //     the abs-diff, so the measurement captures both the ternary

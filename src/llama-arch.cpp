@@ -133,6 +133,7 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
     { LLM_ARCH_MISTRAL3,         "mistral3"         },
     { LLM_ARCH_EAGLE3,           "eagle3"           },
     { LLM_ARCH_DFLASH,           "dflash"           },
+    { LLM_ARCH_QWEN3TTS_TALKER,   "qwen3-tts-talker" },
     { LLM_ARCH_QWEN3_TTS_CODE2WAV, "qwen3-tts-code2wav" },
     { LLM_ARCH_MISTRAL4,         "mistral4"         },
     { LLM_ARCH_PADDLEOCR,        "paddleocr"        },
@@ -617,7 +618,12 @@ static const std::map<llm_tensor, const char *> LLM_TENSOR_NAMES = {
     { LLM_TENSOR_DSPARK_MARKOV_W1,                       "markov_w1" },
     { LLM_TENSOR_DSPARK_MARKOV_W2,                       "markov_w2" },
     { LLM_TENSOR_DSPARK_CONF_PROJ,                       "conf_proj" },
-    { LLM_TENSOR_C2W_CODEBOOK_EMBD,                      "c2w.codebook_embd.%d" },
+    // The c2w codebook names are c2w.codebook_embd.{cid}.weight on disk,
+    // but the LLM_TN_IMPL format is name + "." + suffix. Encode the cid
+    // in the suffix (matching the talker's cp_codec_embd / cp_head
+    // pattern) so the bid can stay -1 and the loader doesn't trip the
+    // LAYER_REPEATING vs LAYER_INPUT layer-number check.
+    { LLM_TENSOR_C2W_CODEBOOK_EMBD,                      "c2w.codebook_embd" },
     { LLM_TENSOR_C2W_VQ_FIRST_PROJ,                      "c2w.vq_first_proj" },
     { LLM_TENSOR_C2W_VQ_REST_PROJ,                       "c2w.vq_rest_proj" },
     { LLM_TENSOR_C2W_PRE_CONV,                           "c2w.pre_conv" },
@@ -654,6 +660,15 @@ static const std::map<llm_tensor, const char *> LLM_TENSOR_NAMES = {
     { LLM_TENSOR_C2W_OUT_SNAKE_A,                        "c2w.output.alpha" },
     { LLM_TENSOR_C2W_OUT_SNAKE_B,                        "c2w.output.beta" },
     { LLM_TENSOR_C2W_OUTPUT,                             "c2w.output" },
+    // qwen3-tts-talker
+    { LLM_TENSOR_TTS_CODEC_EMBD,                         "codec_embd" },
+    { LLM_TENSOR_TTS_CODEC_HEAD,                         "codec_head" },
+    { LLM_TENSOR_TTS_TEXT_PROJ_1,                        "text_proj_1" },
+    { LLM_TENSOR_TTS_TEXT_PROJ_2,                        "text_proj_2" },
+    { LLM_TENSOR_TTS_CP_PROJ,                            "cp_proj" },
+    { LLM_TENSOR_TTS_CP_NORM,                            "cp_norm" },
+    { LLM_TENSOR_TTS_CP_CODEC_EMBD,                      "cp_codec_embd" },
+    { LLM_TENSOR_TTS_CP_HEAD,                            "cp_head" },
 };
 
 // declare information about the model weight tensors:
@@ -916,7 +931,14 @@ static const std::map<llm_tensor, llm_tensor_info> LLM_TENSOR_INFOS = {
     {LLM_TENSOR_DSPARK_MARKOV_W2,           {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL_MAT}},
     {LLM_TENSOR_DSPARK_CONF_PROJ,           {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL_MAT}},
     // qwen3-tts-code2wav
-    {LLM_TENSOR_C2W_CODEBOOK_EMBD,          {LLM_TENSOR_LAYER_REPEATING, GGML_OP_GET_ROWS}},
+    // qwen3-tts-code2wav: the 16 codebook tables are model-level (not
+    // per-layer), so LAYER_INPUT, not LAYER_REPEATING. The %d in
+    // "c2w.codebook_embd.%d" indexes the 16 codebooks, not the 8
+    // transformer layers; the loader's create_tensor uses bid for
+    // pimpl->dev_layer.at(bid), which is sized to n_layer_all — a
+    // LAYER_REPEATING classification would throw std::out_of_range
+    // on cid >= n_layer (e.g. cid=8 with n_layer=8).
+    {LLM_TENSOR_C2W_CODEBOOK_EMBD,          {LLM_TENSOR_LAYER_INPUT,     GGML_OP_GET_ROWS}},
     {LLM_TENSOR_C2W_VQ_FIRST_PROJ,          {LLM_TENSOR_LAYER_INPUT,     GGML_OP_MUL_MAT}},
     {LLM_TENSOR_C2W_VQ_REST_PROJ,           {LLM_TENSOR_LAYER_INPUT,     GGML_OP_MUL_MAT}},
     {LLM_TENSOR_C2W_PRE_CONV,               {LLM_TENSOR_LAYER_INPUT,     GGML_OP_IM2COL}},
@@ -953,6 +975,15 @@ static const std::map<llm_tensor, llm_tensor_info> LLM_TENSOR_INFOS = {
     {LLM_TENSOR_C2W_OUT_SNAKE_A,            {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL}},
     {LLM_TENSOR_C2W_OUT_SNAKE_B,            {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL}},
     {LLM_TENSOR_C2W_OUTPUT,                 {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_IM2COL}},
+    // qwen3-tts-talker
+    {LLM_TENSOR_TTS_CODEC_EMBD,             {LLM_TENSOR_LAYER_INPUT,     GGML_OP_GET_ROWS}},
+    {LLM_TENSOR_TTS_CODEC_HEAD,             {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL_MAT}},
+    {LLM_TENSOR_TTS_TEXT_PROJ_1,            {LLM_TENSOR_LAYER_INPUT,     GGML_OP_MUL_MAT}},
+    {LLM_TENSOR_TTS_TEXT_PROJ_2,            {LLM_TENSOR_LAYER_INPUT,     GGML_OP_MUL_MAT}},
+    {LLM_TENSOR_TTS_CP_PROJ,                {LLM_TENSOR_LAYER_INPUT,     GGML_OP_MUL_MAT}},
+    {LLM_TENSOR_TTS_CP_NORM,                {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL}},
+    {LLM_TENSOR_TTS_CP_CODEC_EMBD,          {LLM_TENSOR_LAYER_INPUT,     GGML_OP_GET_ROWS}},
+    {LLM_TENSOR_TTS_CP_HEAD,                {LLM_TENSOR_LAYER_INPUT,     GGML_OP_MUL_MAT}},
 };
 
 LLM_KV::LLM_KV(llm_arch arch, const char * suffix) : arch(arch), suffix(suffix) {}

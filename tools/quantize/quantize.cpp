@@ -811,8 +811,13 @@ static int ts_cli_unified_writer(const common_tessera_params & tp) {
     add_component(tp.unified_vision_tower, "vision_tower");
     add_component(tp.unified_audio_tower,  "audio_tower");
     add_component(tp.unified_mm_projector, "mm_projector");
+    // unified-tts: the qwen3-tts talker + code2wav vocoder. The writer
+    // prefix-routes their tensors (tts.* / tts.c2w.*) and sidecar-copies
+    // each source's KV namespace under the same prefix.
+    add_component(tp.unified_tts_talker,   "tts_talker");
+    add_component(tp.unified_tts_code2wav, "tts_code2wav");
     if (components.empty()) {
-        fprintf(stderr, "error: `unified-writer` requires at least one --{trunk,dflash,dspark,mtp,shared-embd,vision-tower,audio-tower,mm-projector} flag\n");
+        fprintf(stderr, "error: `unified-writer` requires at least one --{trunk,dflash,dspark,mtp,shared-embd,vision-tower,audio-tower,mm-projector,tts-talker,tts-code2wav} flag\n");
         return 1;
     }
 
@@ -993,17 +998,16 @@ static int ts_cli_unified_writer(const common_tessera_params & tp) {
     const auto & s = w.get_stats();
     printf("unified-writer: %s -> %s\n", tp.unified_out.c_str(),
            "ok");
-    printf("  tensors: trunk=%d dflash=%d dspark=%d mtp_nextn=%d shared_embd=%d\n",
-           s.n_tensors_trunk, s.n_tensors_dflash, s.n_tensors_dspark,
-           s.n_tensors_mtp_nextn, s.n_tensors_shared_embd);
-    // Phase M0a: include the three new mmproj counters in the
-    // summary so the CLI consumer (operator or a downstream log
-    // scraper) can confirm the multimodal component was actually
-    // absorbed. Zero values are still printed (the operator is
-    // expected to know whether they passed --vision-tower / etc.).
-    printf("  tensors (M0a mmproj): vision_tower=%d audio_tower=%d mm_projector=%d\n",
-           s.n_tensors_vision_tower, s.n_tensors_audio_tower,
-           s.n_tensors_mm_projector);
+    // Per-role tensor counts (plan 1.2: the stats struct carries a
+    // role -> count map, so role additions do not touch this summary).
+    // std::map iterates in sorted role order; the output is stable.
+    printf("  tensors by role:\n");
+    for (const auto & kv : s.n_tensors_by_role) {
+        printf("    %-14s %d\n", kv.first.c_str(), kv.second);
+    }
+    if (s.n_kv_copied > 0) {
+        printf("  tts KV sidecar keys: %d\n", s.n_kv_copied);
+    }
     printf("  qtype overrides: %d (per-tensor calibration policy)\n",
            s.n_qtype_overrides);
     if (s.n_budget_relaxed > 0 || s.n_budget_enforced > 0) {
@@ -1116,6 +1120,14 @@ int llama_quantize(int argc, char ** argv) {
                 }
             } else {
                 usage(argv[0]);
+            }
+        } else if (const int tessera_kind = common_tessera_flag_kind(argv[arg_idx]); tessera_kind > 0) {
+            // Tessera-owned top-level flag (--progress-file, --tessera-db,
+            // ...): already consumed into tessera_params by
+            // common_tessera_params_parse. Skip it here, including its
+            // value when the flag takes one.
+            if (tessera_kind == 2 && arg_idx + 1 < argc) {
+                arg_idx++;
             }
         } else {
             // Tessera fork (Tier 2 HARD BREAK): unknown --flag here means
@@ -1300,8 +1312,9 @@ int llama_quantize(int argc, char ** argv) {
         arg_idx++;
     }
 
-    // parse nthreads
-    if (argc > arg_idx) {
+    // parse nthreads; a trailing --flag is tessera-owned and was already
+    // consumed by common_tessera_params_parse, so leave it alone
+    if (argc > arg_idx && strncmp(argv[arg_idx], "--", 2) != 0) {
         try {
             params.nthread = std::stoi(argv[arg_idx]);
         }
@@ -1519,11 +1532,13 @@ int llama_tessera_main(int argc, char ** argv) {
         const_cast<common_tessera_params &>(tp).w4a4 = true;
     }
 
-    // Subcommand-less path or tuning subcommand: rebuild the argv for
-    // the legacy llama_quantize subroutine. common_tessera_params_parse
-    // already shifted the subcommand token out of argv (it was a bare
-    // word in argv[1], not a flag), so argv[0] is still the binary name
-    // and the remaining args are the flag set + positional <input>
-    // <ftype> args that llama_quantize parses.
+    // Subcommand-less path or tuning subcommand: hand the argv to the
+    // legacy llama_quantize subroutine, which parses the positional
+    // <input> <output> <ftype> [nthreads] syntax. A tuning subcommand
+    // sits as a bare token in argv[1] (common_tessera_params_parse
+    // shifted its own local copy only), so shift it out here too.
+    if (sc != TESSERA_SC_NONE) {
+        return llama_quantize(argc - 1, argv + 1);
+    }
     return llama_quantize(argc, argv);
 }

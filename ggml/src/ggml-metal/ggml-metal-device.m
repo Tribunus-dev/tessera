@@ -1300,14 +1300,53 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
         case GGML_OP_GATED_DELTA_NET:
             return has_simdgroup_reduction && op->src[2]->ne[0] % 32 == 0;
         case GGML_OP_SOLVE_TRI:
-        case GGML_OP_MUL_MAT:
-        case GGML_OP_MUL_MAT_ID:
         case GGML_OP_TILE640_MATMUL:
         case GGML_OP_TILE640_MATMUL_ID:
         case GGML_OP_TILE640_GET_ROWS:
         case GGML_OP_TILE640_DEQUANT:
         case GGML_OP_IMATRIX_OBSERVER:
             return has_simdgroup_reduction;
+        case GGML_OP_MUL_MAT:
+        case GGML_OP_MUL_MAT_ID:
+            if (!has_simdgroup_reduction) {
+                return false;
+            }
+            // The Metal kernels only cover a fixed set of tsrc0 types. Any
+            // type not listed here has no kernel (e.g. TQ1_0/NVFP4
+            // before the next wave lands (TQ2_0 now served)) and must fall back to CPU rather
+            // than pipeline-compile-failing. tsrc1==F32 is fixed by
+            // ggml_metal_library_get_pipeline_mul_{mm,mv,mv_ext}.
+            switch (op->src[0]->type) {
+                case GGML_TYPE_F32:
+                case GGML_TYPE_F16:
+                case GGML_TYPE_BF16:
+                case GGML_TYPE_Q1_0:
+                case GGML_TYPE_Q2_0:
+                case GGML_TYPE_TQ2_0:
+                case GGML_TYPE_Q4_0:
+                case GGML_TYPE_Q4_1:
+                case GGML_TYPE_Q5_0:
+                case GGML_TYPE_Q5_1:
+                case GGML_TYPE_Q8_0:
+                case GGML_TYPE_Q2_K:
+                case GGML_TYPE_Q3_K:
+                case GGML_TYPE_Q4_K:
+                case GGML_TYPE_Q5_K:
+                case GGML_TYPE_Q6_K:
+                case GGML_TYPE_IQ1_S:
+                case GGML_TYPE_IQ1_M:
+                case GGML_TYPE_IQ2_XXS:
+                case GGML_TYPE_IQ2_XS:
+                case GGML_TYPE_IQ2_S:
+                case GGML_TYPE_IQ3_XXS:
+                case GGML_TYPE_IQ3_S:
+                case GGML_TYPE_IQ4_NL:
+                case GGML_TYPE_IQ4_XS:
+                case GGML_TYPE_MXFP4:
+                    return true;
+                default:
+                    return false;
+            }
         case GGML_OP_SET:
         case GGML_OP_CPY:
         case GGML_OP_DUP:
@@ -1369,7 +1408,38 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
                 };
             }
         case GGML_OP_GET_ROWS:
-            return op->src[0]->type != GGML_TYPE_NVFP4;
+            switch (op->src[0]->type) {
+                case GGML_TYPE_F32:
+                case GGML_TYPE_F16:
+                case GGML_TYPE_BF16:
+                case GGML_TYPE_I32:
+                case GGML_TYPE_Q1_0:
+                case GGML_TYPE_Q2_0:
+                case GGML_TYPE_TQ2_0:
+                case GGML_TYPE_Q4_0:
+                case GGML_TYPE_Q4_1:
+                case GGML_TYPE_Q5_0:
+                case GGML_TYPE_Q5_1:
+                case GGML_TYPE_Q8_0:
+                case GGML_TYPE_Q2_K:
+                case GGML_TYPE_Q3_K:
+                case GGML_TYPE_Q4_K:
+                case GGML_TYPE_Q5_K:
+                case GGML_TYPE_Q6_K:
+                case GGML_TYPE_IQ1_S:
+                case GGML_TYPE_IQ1_M:
+                case GGML_TYPE_IQ2_XXS:
+                case GGML_TYPE_IQ2_XS:
+                case GGML_TYPE_IQ2_S:
+                case GGML_TYPE_IQ3_XXS:
+                case GGML_TYPE_IQ3_S:
+                case GGML_TYPE_IQ4_NL:
+                case GGML_TYPE_IQ4_XS:
+                case GGML_TYPE_MXFP4:
+                    return true;
+                default:
+                    return false;
+            }
         case GGML_OP_SET_ROWS:
             {
                 if (op->src[0]->type == GGML_TYPE_F16) {

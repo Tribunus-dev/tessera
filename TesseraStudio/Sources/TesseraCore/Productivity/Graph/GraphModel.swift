@@ -62,6 +62,14 @@ public struct GraphNode: Identifiable, Sendable, Equatable, Hashable {
     /// knows about; unknown types get the generic "circle"
     /// placeholder.
     public static func iconName(for entityType: String, subtype: String? = nil) -> String {
+        if entityType == "document", let st = subtype {
+            switch st {
+            case "doc": return "doc.text"
+            case "sheet": return "tablecells"
+            case "slide": return "rectangle.on.rectangle"
+            default: break
+            }
+        }
         switch entityType {
         case "document", "note", "doc": return "doc.text"
         case "task", "todo": return "checkmark.square"
@@ -84,7 +92,15 @@ public struct GraphNode: Identifiable, Sendable, Equatable, Hashable {
     /// Map an entity type to a base color (in RGB) for the
     /// graph view. The view uses this to set the node's
     /// foreground style.
-    public static func color(for entityType: String) -> Color {
+    public static func color(for entityType: String, subtype: String? = nil) -> Color {
+        if entityType == "document", let st = subtype {
+            switch st {
+            case "doc": return .blue
+            case "sheet": return .teal
+            case "slide": return .indigo
+            default: break
+            }
+        }
         switch entityType {
         case "document", "note", "doc": return .blue
         case "task", "todo": return .green

@@ -147,6 +147,7 @@ enum llm_arch {
     LLM_ARCH_MELLUM,
     LLM_ARCH_EAGLE3,
     LLM_ARCH_DFLASH,
+    LLM_ARCH_QWEN3TTS_TALKER,
     LLM_ARCH_QWEN3_TTS_CODE2WAV,
     LLM_ARCH_UNKNOWN,
 };
@@ -662,6 +663,15 @@ enum llm_tensor {
     LLM_TENSOR_C2W_OUT_SNAKE_A,
     LLM_TENSOR_C2W_OUT_SNAKE_B,
     LLM_TENSOR_C2W_OUTPUT,
+    // qwen3-tts-talker: text + codec embeddings, text projection MLP, code-predictor bridge
+    LLM_TENSOR_TTS_CODEC_EMBD,        // codec token input embedding (separate from text tok_embd)
+    LLM_TENSOR_TTS_CODEC_HEAD,        // codebook-0 output head (separate from text output)
+    LLM_TENSOR_TTS_TEXT_PROJ_1,       // text embedding MLP layer 1
+    LLM_TENSOR_TTS_TEXT_PROJ_2,       // text embedding MLP layer 2
+    LLM_TENSOR_TTS_CP_PROJ,           // code predictor: backbone hidden (2048) -> cp hidden (1024)
+    LLM_TENSOR_TTS_CP_NORM,           // code predictor: final RMSNorm
+    LLM_TENSOR_TTS_CP_CODEC_EMBD,     // code predictor: per-codebook embedding (suffix .{cid})
+    LLM_TENSOR_TTS_CP_HEAD,           // code predictor: per-codebook head (suffix .{cid})
 };
 
 

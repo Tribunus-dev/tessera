@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en" data-theme="dark" data-ent="root" data-has="theme">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>How Tessera works - The flywheel, the privacy contract, the data path.</title>
+<meta name="description" content="Tessera Studio runs models locally. The flywheel improves the model as more people use it. The privacy contract: raw data never leaves the device; the sanitization method is private; the audit trail is public.">
+<link rel="canonical" href="https://tessera.tribunus.dev/how-it-works/">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta name="generator" content="tessera-docs-ssg">
+<meta name="build-id" content="regen-002">
+<meta property="og:title" content="How Tessera works - The flywheel, the privacy contract, the data path.">
+<meta property="og:description" content="Tessera Studio runs models locally. The flywheel improves the model as more people use it. The privacy contract: raw data never leaves the device.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://tessera.tribunus.dev/how-it-works/">
+<meta property="og:image" content="https://tessera.tribunus.dev/og-image.svg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="How Tessera works - The flywheel, the privacy contract, the data path.">
+<meta name="twitter:description" content="Tessera Studio runs models locally. The flywheel improves the model as more people use it.">
+<meta name="twitter:image" content="https://tessera.tribunus.dev/og-image.svg">
+<link rel="stylesheet" href="/styles/site.css">
+<script>
+(function(){try{
+  var k='tessera-theme';
+  var v=null;
+  try{v=localStorage.getItem(k);}catch(e){}
+  if(v!=='dark'&&v!=='light'){
+    try{
+      if(window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches){v='light';}
+      else{v='dark';}
+    }catch(e){v='dark';}
+  }
+  document.documentElement.setAttribute('data-theme',v);
+  try{document.documentElement.style.colorScheme=v;}catch(e){}
+}catch(e){}})();
+</script>
+<script type="module" src="/scripts/boot.js"></script>
+</head>
+<body>
+<a href="#top" class="skip-link">Skip to main content</a>
+<header class="site-header" data-ent="site-header" data-has="measure">
+<a class="brand" href="/"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tessera</span></a>
+<nav class="site-nav" aria-label="Primary navigation">
+<a class="site-nav-link" href="/studio/">Studio</a>
+<a class="site-nav-link" href="/how-it-works/" aria-current="page">How it works</a>
+<a class="site-nav-link" href="/how-tessera-differs/">How Tessera differs</a>
+<a class="site-nav-link" href="/concepts/">Concepts</a>
+<a class="site-nav-link" href="/start/">Start</a>
+<a class="site-nav-link" href="/architecture/">Architecture</a>
+<a class="site-nav-link" href="/evidence/">Evidence</a>
+<a class="site-nav-link" href="/changelog/">Changelog</a>
+<a class="site-nav-link" rel="external" target="_blank" href="https://github.com/Tribunus-dev/tessera">GitHub</a>
+</nav>
+<button type="button" class="theme-toggle" aria-label="Toggle dark and light theme" data-theme-toggle><span class="theme-toggle-icon" aria-hidden="true"></span><span class="theme-toggle-label">Dark</span></button>
+</header>
+<aside class="standalone-anchor" aria-label="Page context">
+<span class="standalone-anchor-mark">Tessera</span>
+<p class="standalone-anchor-body">You are on <strong>How Tessera works</strong>, the deal explained. <a href="/">Back to home</a> · <a href="/studio/">Studio</a> · <a href="/start/">Install</a></p>
+</aside>
+<main class="page-body" id="top">
+
+<header class="page-header">
+<span class="page-header-eyebrow">The deal</span>
+<h1 class="page-header-headline">The flywheel. The privacy contract. The data path.</h1>
+<p class="page-header-blurb">Three things to understand about Tessera: what the flywheel does, why your data is safe, and what each release proves. In plain language. The technical depth lives on the <a href="/architecture/">architecture page</a>.</p>
+</header>
+
+<section class="chapter">
+<div class="chapter-eyebrow">The flywheel</div>
+<h2 class="chapter-title">It gets better the more people use it.</h2>
+<p class="chapter-body">Tessera is not just an inference engine. It is a system that improves the model through collective usage. The pattern is straightforward: a user runs a model on their device, the system observes a sanitized baseline of that usage, the observation ships to the Calibration Commons, the next Tessera release carries the improvement, and every Tessera user gets the new model. The user's local experience drives the global improvement; the global improvement is delivered to the user's local experience.</p>
+
+<h3 class="chapter-subtitle">What improves, in concrete terms</h3>
+<div class="chapter-grid chapter-grid-2">
+<article class="feature-card">
+<h3 class="feature-card-title">The model gets smarter.</h3>
+<p class="feature-card-body">Better reasoning on harder problems. As more diverse usage arrives, the next-token prediction sharpens toward SOTA-class on the eval suite.</p>
+</article>
+<article class="feature-card">
+<h3 class="feature-card-title">The hybrid drafters get more accurate.</h3>
+<p class="feature-card-body">The drafter proposes tokens; the verifier accepts or rejects. Higher acceptance rate means the same quality with fewer forward passes. Faster and more accurate, not just one or the other.</p>
+</article>
+<article class="feature-card">
+<h3 class="feature-card-title">The engine / harness gets faster.</h3>
+<p class="feature-card-body">The <a class="gloss" href="/concepts/#concept-heterogeneous-dynamic-execution">dispatch policy</a> learns to put the right operation on the right silicon. <a class="gloss" href="/concepts/#concept-quantization-on-transport">Quantization-on-transport</a> learns the access patterns the model actually exhibits.</p>
+</article>
+<article class="feature-card">
+<h3 class="feature-card-title">The next-token prediction sharpens.</h3>
+<p class="feature-card-body">As the training distribution grows, the model's per-token loss on held-out evaluation sets drops. The flywheel's primary observable is the eval deltas on each release.</p>
+</article>
+</div>
+</section>
+
+<section class="chapter">
+<div class="chapter-eyebrow">The privacy contract</div>
+<h2 class="chapter-title">Raw data never leaves. The audit trail is public.</h2>
+<p class="chapter-body">Tessera is built on a strict separation between what is public and what is private. The privacy contract is short, and it is enforced by the design, not by promises.</p>
+
+<div class="chapter-grid chapter-grid-2">
+<article class="feature-card">
+<h3 class="feature-card-title">Public: the contract</h3>
+<p class="feature-card-body">What the user agrees to, what the system is allowed to do, what the audit trail proves. The <a href="/colophon/">license</a>, the <a href="/concepts/#concept-receipt">receipt schema</a>, the eval results, the snapshot fingerprints. Anyone can read this; no NDA required.</p>
+</article>
+<article class="feature-card">
+<h3 class="feature-card-title">Public: the audit trail</h3>
+<p class="feature-card-body">Every Tessera release ships with the recipe that produced it: the upstream model SHA, the calibration corpus snapshot, the per-tensor policy, the eval results, and a signed receipt. Anyone can verify what the model is. The <em>method</em> by which the data was sanitized is private; the <em>proof</em> that it was sanitized is public.</p>
+</article>
+<article class="feature-card">
+<h3 class="feature-card-title">Private: the sanitization method</h3>
+<p class="feature-card-body">The pipeline that turns raw usage signals into license-clean, anonymized training material. The method is the proprietary data work that makes the trained models defensible. Public, the method could be copied; private, the auditability stands on its own.</p>
+</article>
+<article class="feature-card">
+<h3 class="feature-card-title">Private: the raw inputs</h3>
+<p class="feature-card-body">Your device's raw usage data — the actual text, audio, or video that flows through Tessera Studio — never leaves the device. The sanitization runs on the device; only the sanitized output is eligible to ship, and only with your opt-in. There is no cloud collection step.</p>
+</article>
+</div>
+<p class="chapter-aside">The same posture governs the S2S (speech-to-speech) consent lane. The contract and the auditability are public. The method is not. <a href="https://github.com/Tribunus-dev/tessera/blob/main/docs/tessera-s2s-design.md">S2S design doc</a> for the precedent.</p>
+</section>
+
+<section class="chapter">
+<div class="chapter-eyebrow">The data path</div>
+<h2 class="chapter-title">What flows where, step by step.</h2>
+<p class="chapter-body">The flywheel is opt-in. With opt-in on, the path is the same every time:</p>
+<ol class="chapter-steps">
+<li class="chapter-step">
+<span class="chapter-step-number">01</span>
+<h3 class="chapter-step-title">Local usage</h3>
+<p class="chapter-step-body">You use Tessera Studio. Your text, vision, audio, and speech prompts run on your Mac. The model answers. Nothing leaves yet.</p>
+</li>
+<li class="chapter-step">
+<span class="chapter-step-number">02</span>
+<h3 class="chapter-step-title">Sanitization on device</h3>
+<p class="chapter-step-body">During idle time, Tessera Studio runs the sanitization pipeline locally. The pipeline transforms the recent usage into a license-clean, anonymized baseline. The raw inputs are discarded; the sanitized output is the only thing eligible to ship.</p>
+</li>
+<li class="chapter-step">
+<span class="chapter-step-number">03</span>
+<h3 class="chapter-step-title">Consent, then ship</h3>
+<p class="chapter-step-body">You see a one-line summary of what would be shipped. You can read the sanitized output, edit it, or skip the upload. With your consent, the sanitized output is added to the Calibration Commons with a snapshot fingerprint.</p>
+</li>
+<li class="chapter-step">
+<span class="chapter-step-number">04</span>
+<h3 class="chapter-step-title">Next release</h3>
+<p class="chapter-step-body">The next Tessera model release includes the contributions from the most recent Commons snapshot. Every Tessera user gets the new model. The signed receipt on the new model includes the Commons snapshot fingerprint, so you can verify which contributions went into the model you are using.</p>
+</li>
+</ol>
+</section>
+
+<section class="chapter">
+<div class="chapter-eyebrow">Reciprocity</div>
+<h2 class="chapter-title">The community tier is not a charity.</h2>
+<p class="chapter-body">Tessera Studio is free. Tessera-trained models are CC BY-NC-SA 4.0. The engine is source-available under the Tessera Research and Education License 1.0. None of that is philanthropy. It is the front door of a relationship.</p>
+<p class="chapter-body">When you use Tessera Studio, you are part of the flywheel. The flywheel is what makes the model get smarter. The model getting smarter is what makes Tessera worth using. The relationship is structural, not transactional: you do not need to "join the Commons" or "contribute compute" by name. You just use the app, opt in to the flywheel, and the rest happens.</p>
+<p class="chapter-body">Commercial use is a separate path. <a href="mailto:julian@tribunus.dev">julian@tribunus.dev</a> for a commercial license. The commercial licensee gets the right to redistribute under their own terms; the community tier does not change.</p>
+</section>
+
+<section class="chapter" id="next-step">
+<div class="chapter-eyebrow">Where to go next</div>
+<h2 class="chapter-title">Pick the question that brought you here.</h2>
+<div class="chapter-grid chapter-grid-3">
+<a class="next-step-card" href="/studio/">
+<span class="next-step-card-eyebrow">What does the product look like?</span>
+<h3 class="next-step-card-title">Tessera Studio</h3>
+<p class="next-step-card-body">The product surface, the eight tools, the agent loop.</p>
+</a>
+<a class="next-step-card" href="/architecture/">
+<span class="next-step-card-eyebrow">Want the technical proof?</span>
+<h3 class="next-step-card-title">Architecture</h3>
+<p class="next-step-card-body">The kernel-fidelity loop, the dispatch policy, the memory wall.</p>
+</a>
+<a class="next-step-card" href="/concepts/">
+<span class="next-step-card-eyebrow">Hit a term you don't know?</span>
+<h3 class="next-step-card-title">Concepts</h3>
+<p class="next-step-card-body">The ML vocabulary, with concise analogies.</p>
+</a>
+</div>
+</section>
+
+</main>
+<aside class="secondary-nav">
+<ul class="secondary-nav-list">
+<li class="secondary-nav-label">Navigate</li>
+<li><a href="/">Home</a></li>
+<li><a href="/studio/">Studio</a></li>
+<li><a href="/how-it-works/" aria-current="page">How it works</a></li>
+<li><a href="/how-tessera-differs/">How Tessera differs</a></li>
+<li><a href="/concepts/">Concepts</a></li>
+<li><a href="/start/">Start</a></li>
+<li><a href="/architecture/">Architecture</a></li>
+<li><a href="/evidence/">Evidence</a></li>
+<li><a href="/changelog/">Changelog</a></li>
+<li><a href="/colophon/">Colophon</a></li>
+</ul>
+</aside>
+<footer class="site-footer">
+<div class="site-footer-inner">
+<p>Tessera is independently developed by <strong>Julian Torres</strong>. Source-available under the Tessera Research and Education License 1.0; trained models under CC BY-NC-SA 4.0. <a href="/colophon/">Colophon</a> · <a rel="external" target="_blank" href="https://github.com/Tribunus-dev/tessera">Repository</a> · <a href="mailto:julian@tribunus.dev">Commercial</a></p>
+<p><a href="https://tessera.tribunus.dev">tessera.tribunus.dev</a></p>
+</div>
+</footer>
+</body>
+</html>

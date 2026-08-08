@@ -257,6 +257,8 @@ static llama_model * llama_model_mapping(llm_arch arch, const llama_model_params
             return new llama_model_chameleon(params);
         case LLM_ARCH_WAVTOKENIZER_DEC:
             return new llama_model_wavtokenizer_dec(params);
+        case LLM_ARCH_QWEN3TTS_TALKER:
+            return new llama_model_qwen3tts_talker(params);
         case LLM_ARCH_QWEN3_TTS_CODE2WAV:
             return new llama_model_qwen3_tts_code2wav(params);
         case LLM_ARCH_PLM:
@@ -2758,6 +2760,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
         case LLM_ARCH_QWEN3VLMOE:
         case LLM_ARCH_QWEN35:
         case LLM_ARCH_QWEN35MOE:
+        case LLM_ARCH_QWEN3TTS_TALKER:
             return LLAMA_ROPE_TYPE_IMROPE;
 
         case LLM_ARCH_GLM4:

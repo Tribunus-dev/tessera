@@ -489,3 +489,15 @@ public actor TesseraEncryptedVolume {
     }
     #endif
 }
+
+// MARK: - PleadTheFifthVolume conformance
+
+extension TesseraEncryptedVolume: PleadTheFifthVolume {
+    public func isMounted() async -> Bool {
+        isMounted
+    }
+
+    public var encryptedArtifacts: [URL] {
+        get async { [config.bundleURL] }
+    }
+}

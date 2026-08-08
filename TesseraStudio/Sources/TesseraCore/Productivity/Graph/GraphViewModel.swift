@@ -138,10 +138,13 @@ public final class GraphViewModel {
     /// current `radius` / `typeFilter` / `searchQuery`.
     /// Called on any of those changes AND after `load()`.
     public func recomputeVisible() {
-        // Step 1: apply the type filter.
+        // Step 1: apply the type filter. Supports both entity_type
+        // and document subtype. "document" matches any document
+        // regardless of subtype; "doc"/"sheet"/"slide" match the
+        // specific document subtype.
         let typeFiltered: [GraphNode] = typeFilter.isEmpty
             ? snapshot.nodes
-            : snapshot.nodes.filter { typeFilter.contains($0.entityType) }
+            : snapshot.nodes.filter { Self.matchesTypeFilter($0, filter: typeFilter) }
 
         // Step 2: apply the search query (label contains,
         // case-insensitive). An empty query means no
@@ -243,6 +246,8 @@ public final class GraphViewModel {
 
     /// Toggle a type in the type filter. Empty set means
     /// "all types". The view binds the chip UI to this.
+    /// Supports both entity_type and document subtype
+    /// chips (e.g. "doc", "sheet", "slide").
     public func toggleType(_ entityType: String) {
         if typeFilter.contains(entityType) {
             typeFilter.remove(entityType)
@@ -250,6 +255,18 @@ public final class GraphViewModel {
             typeFilter.insert(entityType)
         }
         recomputeVisible()
+    }
+
+    /// Whether a node matches the type filter. Handles the
+    /// document/subtype expansion: "document" matches any
+    /// document node; "doc"/"sheet"/"slide" match the
+    /// specific document subtype.
+    nonisolated static func matchesTypeFilter(_ node: GraphNode, filter: Set<String>) -> Bool {
+        if filter.contains(node.entityType) { return true }
+        if node.entityType == "document", let st = node.subtype {
+            if filter.contains(st) { return true }
+        }
+        return false
     }
 
     /// Reset every filter. The "clear" toolbar button.

@@ -101,6 +101,14 @@ struct common_tessera_params {
     // gemma4-assistant.vision.* / .audio.* / .mm.* KV keys as
     // "no mmproj in this GGUF" (the pre-M0a contract).
     std::string unified_mmproj_hparams;
+    // unified-tts: qwen3-tts components. The writer routes the talker's
+    // tensors under "tts." and the vocoder's under "tts.c2w.", and
+    // re-emits each source's KV namespace under the same prefix, so the
+    // talker / code2wav loaders read the unified file back via
+    // component_prefix = "tts." / "tts.c2w.". No hparams JSON: the
+    // source GGUF's own KV IS the hparams source (copied verbatim).
+    std::string unified_tts_talker;
+    std::string unified_tts_code2wav;
     // Structured progress reporting for the quantize pipeline. When
     // progress_file is non-empty, the dispatch writes one NDJSON event per
     // tick to that path for the Studio UI to tail.
@@ -166,6 +174,13 @@ const common_tessera_params & common_get_tessera_params();
 // common_params_parse. Use the subcommand syntax: `llama-tessera
 // <subcommand> [flags]` or omit the subcommand for the main quantize path.
 bool common_tessera_params_parse(int argc, char ** argv, common_params & params, void(*print_usage)(int, char **) = nullptr);
+
+// Tessera fork: classify a flag registered for LLAMA_EXAMPLE_TESSERA.
+// Returns 0 if `flag` is not a tessera flag, 1 if it is a switch (no
+// value), 2 if it takes a value. Lets the legacy quantize argv loop
+// skip tessera-owned flags that common_tessera_params_parse already
+// consumed into tessera_params.
+int common_tessera_flag_kind(const char * flag);
 
 // Tessera fork: the subcommand selected by the most recent
 // common_tessera_params_parse call. TESSERA_SC_NONE = no subcommand.

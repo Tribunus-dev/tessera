@@ -3,67 +3,32 @@
 #include "ggml.h"
 #include "ggml-impl.h"
 #include "ggml-backend-impl.h"
-#include "ggml-quants-v2-dispatch.h"
+#include "gguf_weight_stream.h"
+// Regime router: learned per-(family, shape) path-preference
+// override of the static TILE640 cost model in ggml-quants.h.
+// The router is a static-include lookup table in
+// ggml-regime-router.h with the generated policy in
+// ggml-regime-router.gen.h. The router is a strict no-op when
+// the calibration runner has not yet produced any entries: the
+// lookup helpers fall back to ts_t640_*_accel_wins on FAM_OTHER
+// / out-of-range shape_bucket / no matching entry.
+// See docs/ane-backend-deep-study.md Part 6.10 for the design.
+#include "ggml-regime-router.h"
+#include "ggml-regime-router.gen.h"
 
 #import <CoreML/CoreML.h>
 #import <Foundation/Foundation.h>
 #import <IOSurface/IOSurface.h>
 #import <Metal/Metal.h>
 
-// ggml's TILE640 row dequant (ggml-quants.c). The L1 dispatch
-// path calls this per row to dequant the TILE640 weight into
-// the bundle's pinned fp16 slot. The function is extern "C"
-// and declared in ggml-quants.h (which is included transitively
-// via ggml.h). The forward declaration below is a defensive
-// include-guard for the case where the header is unavailable.
-extern "C" void dequantize_row_tessera_t640(const void * GGML_RESTRICT x,
-                                             float * GGML_RESTRICT y,
-                                             int64_t k);
-// v2 variant (Accelerate + NEON). The v2 API takes the
-// packed words, the pre-decoded page_max + lane_scale
-// (fp32, /127) arrays, k, and the output. The caller is
-// responsible for the pre-decode; the dispatch's
-// GGML_OP_TILE640_MATMUL path calls decode_per_row_meta_v2
-// once for the whole tile and hands each per-row dequant
-// the pre-decoded arrays. The C reference in ggml-quants.c
-// is the documented fallback when v2 is disabled or k is
-// below the cutoff; the dispatch routes to the C ref
-// directly without going through the v2.
-extern "C" void dequantize_row_tessera_t640_v2(const void * GGML_RESTRICT packed,
-                                               const float * GGML_RESTRICT page_max,
-                                               const float * GGML_RESTRICT lane_scale,
-                                               int64_t k,
-                                               float * GGML_RESTRICT y);
-// Batched meta decode (one call for the whole TILE of rows).
-// Reads (n_rows * n_pages) page_scales + (n_rows * n_lanes)
-// lane_scales; writes (n_rows * n_pages) page_max + (n_rows
-// * n_lanes) lane_scale (fp32, /127). Used by the dispatch
-// to hoist the per-row meta decode out of the per-row
-// dequant loop.
-extern "C" void decode_per_row_meta_v2(const void * GGML_RESTRICT page_scales_packed,
-                                       const void * GGML_RESTRICT lane_scales_packed,
-                                       int64_t n_rows,
-                                       int64_t n_pages,
-                                       float * GGML_RESTRICT page_max_out,
-                                       float * GGML_RESTRICT lane_scale_out);
-// Batched outlier addback (one call for the whole BUFFER of
-// rows). Reads n_rows * row_len rows + per-row CSR offsets +
-// cols + vals; writes outlier addback into the rows buffer.
-// Used by the dispatch to hoist the per-row outlier addback
-// out of the per-row dequant loop.
-extern "C" void apply_outlier_addback_v2(float * GGML_RESTRICT rows,
-                                         int64_t row_len,
-                                         int64_t n_rows,
-                                         const int32_t * GGML_RESTRICT outlier_row_offsets,
-                                         const int32_t * GGML_RESTRICT outlier_cols,
-                                         const void * GGML_RESTRICT outlier_vals);
-extern "C" int  ggml_tessera_t640_v2_enabled(void);
-
-// GGML_TESSERA_T640_V2_MIN_K is the v2 dispatch cutoff
-// (defined in ggml-quants-v2.h). We include the header
-// here for the constant; the v2 function declarations are
-// already covered by the extern "C" block above.
-#include "ggml-quants-v2.h"
+// TILE640 host dequant + batched helpers (ggml-quants.c):
+// dequantize_row_tessera_t640 (flat row buffer),
+// dequantize_row_tessera_t640_with_meta (pre-decoded meta),
+// ts_decode_per_row_meta / ts_apply_outlier_addback (batched,
+// accel + scalar paths selected per call), and the accel
+// feature flag. The GGML_OP_TILE640_MATMUL path below dequants
+// the weight on the host into the bundle's pinned fp16 slot.
+#include "ggml-quants.h"
 
 #include <Accelerate/Accelerate.h>
 
@@ -507,6 +472,33 @@ struct ggml_backend_ane_program {
     void *                warmup_scratch  = nullptr;
     size_t                warmup_scratch_size = 0;
 
+    // Phase 2 streaming: optional weight stream + per-program
+    // cache. The stream is NULL in the legacy path (op->src[0..5]
+    // carry the weight bytes in CPU memory, the dispatch reads
+    // them directly). When set (via
+    // ggml_backend_ane_program_set_weight_stream), the dispatch
+    // overrides the op->src[i]->data pointers with bytes read
+    // from the streamer's mmap'd GGUF. The cache (cached_layer +
+    // cached_offsets + last_streamed_layer) keeps the current
+    // layer's bytes warm in CPU memory across consecutive
+    // dispatches; decode is M=1 per layer, so the same layer
+    // fires N times before the layer index advances and a re-
+    // stream is needed. Slice 3 wires the sync path; slice 4
+    // adds the async prefetch that keeps the next layer warm
+    // while the current layer dispatches.
+    ane_weight_stream_t * weight_stream         = nullptr;
+    // CPU-side copy of the most recently streamed layer. The
+    // size is the max of any layer's total bytes (we recompute
+    // it when the streamer is first attached).
+    std::vector<uint8_t>  cached_layer_bytes;
+    // Per-tensor (name -> (offset, size)) inside cached_layer_bytes,
+    // matching the streamer's name-sorted layout. Built by the
+    // refresh path; looked up by the dispatch via
+    // ane_weight_stream_program_lookup.
+    std::unordered_map<std::string, std::pair<size_t, size_t>>
+                         cached_lookup;
+    int32_t               last_streamed_layer  = -1;
+
     std::string        source_path;
     std::string        function_name;
     std::atomic<bool>  warm         {false};
@@ -810,13 +802,233 @@ static ggml_backend_ane_program * ggml_ane_program_load(const char * mlmodelc_di
     }
 }
 
+// Device-level view of the bound program. The device supports_op
+// runs before any backend context exists (weight-placement probes
+// at model load, scheduler assignment at graph build), so it cannot
+// reach the per-backend program pointer; it reads this instead.
+// ggml_backend_ane_set_program keeps it in sync. ANE advertises the
+// bundle-gated ops only while a program is bound: honest advertising,
+// so the scheduler is free to route to every available device without
+// ever handing ANE an op it has no bundle to run.
+static std::atomic<ggml_backend_ane_program *> g_ane_bound_program { nullptr };
+
 GGML_BACKEND_API struct ggml_backend_ane_program * ggml_backend_ane_program_load_from_dir(
         const char * mlmodelc_dir, const char * function_name) {
     return ggml_ane_program_load(mlmodelc_dir, function_name);
 }
 
 GGML_BACKEND_API void ggml_backend_ane_program_free(struct ggml_backend_ane_program * program) {
+    // un-advertise the bundle-gated ops if this was the bound program
+    ggml_backend_ane_program * expected = program;
+    g_ane_bound_program.compare_exchange_strong(expected, nullptr);
     delete program;
+}
+
+// Phase 2 test-only: construct a minimal program with just
+// the streaming fields initialized. No .mlmodelc, no Core ML
+// model, no warmup. The returned program is only useful for
+// the streaming helpers (refresh, lookup, parse_layer); the
+// dispatch path will return false because the Core ML model
+// isn't loaded. The caller frees the program with
+// ggml_backend_ane_program_free.
+GGML_BACKEND_API struct ggml_backend_ane_program *
+ggml_backend_ane_program_create_empty(void) {
+    auto * program = new ggml_backend_ane_program;
+    program->weight_stream        = nullptr;
+    program->last_streamed_layer  = -1;
+    return program;
+}
+
+// Phase 2 (iPhone demo): attach a per-program weight stream
+// to the program. The stream is held for the program's
+// lifetime; ownership stays with the caller (the test or the
+// role-aware loader). Passing NULL detaches (the dispatch
+// falls back to the legacy op->src[0..5] path).
+//
+// The stream must remain valid until either
+// ggml_backend_ane_program_set_weight_stream(program, NULL)
+// is called or the program is freed. The runtime does not
+// own the stream and does not close it.
+GGML_BACKEND_API void ggml_backend_ane_program_set_weight_stream(
+        struct ggml_backend_ane_program * program,
+        struct ane_weight_stream_t * stream) {
+    if (program == nullptr) return;
+    program->weight_stream = stream;
+    program->last_streamed_layer = -1;
+    program->cached_lookup.clear();
+    // The cache buffer is sized to the largest layer's total
+    // bytes on first refresh. The dispatch's stream call will
+    // grow it as needed (the streamer's stream_layer returns
+    // the layer's total bytes; we resize the vector to that).
+    program->cached_layer_bytes.clear();
+}
+
+// Phase 2: parse the layer index out of a tensor name.
+// Returns the layer index (>= 0) on success, or -1 if the
+// name doesn't match the `blk.L.` prefix convention. The
+// conversion tool emits the trunk's per-layer tensors under
+// the `blk.L.<family>.weight[_meta]` convention; the dispatch
+// uses this helper to know which layer's stream to refresh
+// for the current op.
+//
+// The parser is intentionally strict: the name must START with
+// "blk." followed by digits and a dot. Names like "blk.5."
+// (with no family) are accepted (the layer is the index);
+// names like "blk.5a.attn_q" are rejected (non-digit after
+// the layer number).
+static int32_t ane_weight_stream_parse_layer(const char * name) {
+    if (name == nullptr) return -1;
+    if (name[0] != 'b' || name[1] != 'l' || name[2] != 'k' || name[3] != '.') {
+        return -1;
+    }
+    const char * p = name + 4;
+    int32_t layer = 0;
+    if (*p < '0' || *p > '9') return -1;
+    while (*p >= '0' && *p <= '9') {
+        layer = layer * 10 + (*p - '0');
+        ++p;
+        // Cap at the maximum realistic layer count (4-digit
+        // index is 9999; gemma 4 12B has 28 layers, no
+        // realistic model is > 1000).
+        if (layer > 9999) return -1;
+    }
+    if (*p != '.') return -1;
+    return layer;
+}
+
+// Phase 2: refresh the per-program layer cache. Reads the
+// given layer's tensors from the streamer into the program's
+// CPU cache and rebuilds the per-tensor (offset, size) lookup
+// table. Returns true on success, false on failure (reason
+// logged via ggml log).
+//
+// The cache is keyed on (streamer, layer); the caller is
+// expected to skip the refresh when the layer hasn't changed
+// (the dispatch checks program->last_streamed_layer before
+// calling this). The helper does NOT check that invariant;
+// it's the caller's responsibility.
+static bool ane_weight_stream_program_refresh(
+        struct ggml_backend_ane_program * program,
+        int32_t layer_idx) {
+    if (program == nullptr || program->weight_stream == nullptr) return false;
+    if (layer_idx < 0) return false;
+    // Build the per-tensor lookup from the streamer's index.
+    // The streamer's n_block_tensors tells us how many tensors
+    // belong to this layer; we walk the indices to capture
+    // (name, size_bytes) for each.
+    const uint32_t n = ane_weight_stream_n_block_tensors(
+        program->weight_stream, layer_idx);
+    if (n == 0) {
+        GGML_LOG_ERROR("ane: refresh: layer %d has no tensors in the stream\n",
+                       layer_idx);
+        return false;
+    }
+    // Compute the layer's total bytes (sum of all per-tensor
+    // sizes). The streamer's stream_layer also reports this
+    // but we need the per-tensor breakdown to build the
+    // lookup; doing it ourselves avoids a double-pass.
+    uint64_t total = 0;
+    std::vector<std::pair<std::string, uint64_t>> sizes;
+    sizes.reserve(n);
+    for (uint32_t i = 0; i < n; ++i) {
+        const char * tname = nullptr;
+        size_t      tsize  = 0;
+        if (!ane_weight_stream_block_tensor_info(
+                program->weight_stream, layer_idx, i,
+                &tname, &tsize, nullptr, nullptr)) {
+            return false;
+        }
+        sizes.emplace_back(tname ? std::string(tname) : std::string(), tsize);
+        total += tsize;
+    }
+    if (total == 0 || total > SIZE_MAX) {
+        GGML_LOG_ERROR("ane: refresh: layer %d has implausible total bytes "
+                       "(%llu)\n", layer_idx, (unsigned long long) total);
+        return false;
+    }
+    // Resize the cache buffer if needed.
+    if (program->cached_layer_bytes.size() < (size_t) total) {
+        program->cached_layer_bytes.resize((size_t) total);
+    }
+    // Stream into the cache. The streamer's stream_layer
+    // writes name-sorted, contiguous bytes matching the
+    // per-tensor offsets we compute below.
+    const int64_t wrote = ane_weight_stream_layer(
+        program->weight_stream, layer_idx,
+        program->cached_layer_bytes.data(), (size_t) total);
+    if (wrote != (int64_t) total) {
+        GGML_LOG_ERROR("ane: refresh: layer %d stream_layer returned %lld, "
+                       "expected %llu\n", layer_idx,
+                       (long long) wrote, (unsigned long long) total);
+        return false;
+    }
+    // Rebuild the per-tensor lookup. The streamer writes
+    // tensors in the same name-sorted order we iterated
+    // above, so the offsets match the running sum of sizes.
+    program->cached_lookup.clear();
+    uint64_t cursor = 0;
+    for (const auto & kv : sizes) {
+        if (cursor + kv.second > total) {
+            GGML_LOG_ERROR("ane: refresh: per-tensor offset overflow for %s\n",
+                           kv.first.c_str());
+            return false;
+        }
+        program->cached_lookup[kv.first] =
+            std::make_pair((size_t) cursor, (size_t) kv.second);
+        cursor += kv.second;
+    }
+    program->last_streamed_layer = layer_idx;
+    return true;
+}
+
+// Phase 2: look up a streamed tensor by name. Returns true
+// if the name is in the cache; on success, sets *base_out to
+// the byte pointer (inside program->cached_layer_bytes) and
+// *size_out to the byte count. Returns false if the name
+// isn't in the cache (caller should fall back to op->src[i]->
+// data in that case).
+static bool ane_weight_stream_program_lookup(
+        const struct ggml_backend_ane_program * program,
+        const char * name,
+        const void ** base_out,
+        size_t * size_out) {
+    if (program == nullptr || name == nullptr || base_out == nullptr) {
+        return false;
+    }
+    auto it = program->cached_lookup.find(name);
+    if (it == program->cached_lookup.end()) return false;
+    if (size_out) *size_out = it->second.second;
+    *base_out = program->cached_layer_bytes.data() + it->second.first;
+    return true;
+}
+
+// Public C API wrappers (also exposed via ggml-ane.h for tests
+// and the role-aware loader). The internal helpers above are
+// static; these are the GGML_BACKEND_API entry points.
+
+GGML_BACKEND_API int32_t ggml_backend_ane_program_last_streamed_layer(
+        const struct ggml_backend_ane_program * program) {
+    if (program == nullptr) return -1;
+    return program->last_streamed_layer;
+}
+
+GGML_BACKEND_API int32_t ggml_backend_ane_stream_parse_layer(
+        const char * name) {
+    return ane_weight_stream_parse_layer(name);
+}
+
+GGML_BACKEND_API bool ggml_backend_ane_stream_refresh_program(
+        struct ggml_backend_ane_program * program,
+        int32_t layer_idx) {
+    return ane_weight_stream_program_refresh(program, layer_idx);
+}
+
+GGML_BACKEND_API bool ggml_backend_ane_stream_program_lookup(
+        const struct ggml_backend_ane_program * program,
+        const char * name,
+        const void ** base_out,
+        size_t * size_out) {
+    return ane_weight_stream_program_lookup(program, name, base_out, size_out);
 }
 
 // Read an MLMultiArray into a host fp32 buffer. The common/ane-mtp.mm variant
@@ -1105,6 +1317,8 @@ static float * ggml_ane_tensor_f32_view(ggml_tensor * tensor, std::vector<float>
     // Returns either the tensor's own data (when already fp32 contiguous) or
     // a scratch buffer of fp32-converted data. Callers must hold the result
     // only across a single op because the scratch is overwritten per call.
+    // Returns nullptr for a dtype the elementwise path cannot view; the
+    // caller must fail the op loudly instead of miscomputing.
     const size_t n = ggml_nelements(tensor);
     if (tensor->type == GGML_TYPE_F32 && ggml_is_contiguous(tensor)) {
         return (float *) tensor->data;
@@ -1118,20 +1332,21 @@ static float * ggml_ane_tensor_f32_view(ggml_tensor * tensor, std::vector<float>
             scratch[i] = ((const float *) tensor->data)[i];
         }
     } else {
-        // Unsupported dtype for the elementwise path; zero-fill so the caller
-        // can still detect a wrong-dtype input via the op result.
-        std::memset(scratch.data(), 0, n * sizeof(float));
+        return nullptr;
     }
     return scratch.data();
 }
 
-static void ggml_ane_tensor_write_f32(ggml_tensor * tensor, const float * src) {
+static bool ggml_ane_tensor_write_f32(ggml_tensor * tensor, const float * src) {
     const size_t n = ggml_nelements(tensor);
     if (tensor->type == GGML_TYPE_F32) {
         std::memcpy(tensor->data, src, n * sizeof(float));
     } else if (tensor->type == GGML_TYPE_F16) {
         ggml_fp32_to_fp16_row(src, (ggml_fp16_t *) tensor->data, (int64_t) n);
+    } else {
+        return false;
     }
+    return true;
 }
 
 // Apply an elementwise op on fp32 views of src[0] (and src[1] for binary ops).
@@ -1143,23 +1358,63 @@ static bool ggml_ane_compute_elementwise(ggml_tensor * op) {
 
     std::vector<float> a_scratch;
     float * a = ggml_ane_tensor_f32_view(src0, a_scratch);
-
-    float * b = nullptr;
-    std::vector<float> b_scratch;
-    if (op->src[1] && (size_t) ggml_nelements(op->src[1]) == n) {
-        b = ggml_ane_tensor_f32_view(op->src[1], b_scratch);
+    if (a == nullptr) {
+        return false;
     }
 
+    std::vector<float> b_scratch;
     std::vector<float> out(n);
 
     switch (op->op) {
-        case GGML_OP_ADD: {
-            if (!b) return false;
-            vDSP_vadd(a, 1, b, 1, out.data(), 1, n);
-        } break;
+        case GGML_OP_ADD:
         case GGML_OP_MUL: {
-            if (!b) return false;
-            vDSP_vmul(a, 1, b, 1, out.data(), 1, n);
+            // Binary elementwise with ggml broadcast: src1 repeats over
+            // src0's shape (ggml_can_repeat(src1, src0)), so the src1
+            // index along each dim is i % ne1[d]. Fast paths cover the
+            // equal-count and scalar cases; the generic loop walks rows.
+            ggml_tensor * src1 = op->src[1];
+            if (src1 == nullptr || !ggml_can_repeat(src1, src0)) {
+                return false;
+            }
+            float * b = ggml_ane_tensor_f32_view(src1, b_scratch);
+            if (b == nullptr) {
+                return false;
+            }
+            const bool mul = (op->op == GGML_OP_MUL);
+            const size_t n1 = ggml_nelements(src1);
+            if (n1 == n) {
+                if (mul) vDSP_vmul(a, 1, b, 1, out.data(), 1, n);
+                else     vDSP_vadd(a, 1, b, 1, out.data(), 1, n);
+            } else if (n1 == 1) {
+                if (mul) vDSP_vsmul(a, 1, b, out.data(), 1, n);
+                else     vDSP_vsadd(a, 1, b, out.data(), 1, n);
+            } else {
+                const int64_t * ne  = src0->ne;
+                const int64_t * ne1 = src1->ne;
+                for (int64_t i3 = 0; i3 < ne[3]; ++i3) {
+                    const int64_t j3 = i3 % ne1[3];
+                    for (int64_t i2 = 0; i2 < ne[2]; ++i2) {
+                        const int64_t j2 = i2 % ne1[2];
+                        for (int64_t i1 = 0; i1 < ne[1]; ++i1) {
+                            const int64_t j1 = i1 % ne1[1];
+                            const size_t row  = (size_t) ((i3*ne[2] + i2)*ne[1] + i1) * ne[0];
+                            const size_t row1 = (size_t) ((j3*ne1[2] + j2)*ne1[1] + j1) * ne1[0];
+                            if (ne1[0] == ne[0]) {
+                                if (mul) vDSP_vmul(a + row, 1, b + row1, 1, out.data() + row, 1, ne[0]);
+                                else     vDSP_vadd(a + row, 1, b + row1, 1, out.data() + row, 1, ne[0]);
+                            } else if (ne1[0] == 1) {
+                                if (mul) vDSP_vsmul(a + row, 1, b + row1, out.data() + row, 1, ne[0]);
+                                else     vDSP_vsadd(a + row, 1, b + row1, out.data() + row, 1, ne[0]);
+                            } else {
+                                for (int64_t i0 = 0; i0 < ne[0]; ++i0) {
+                                    const float bv = b[row1 + (size_t) (i0 % ne1[0])];
+                                    out[row + i0] = mul ? a[row + i0]*bv : a[row + i0] + bv;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         } break;
         case GGML_OP_SCALE: {
             // ggml_scale stores the scalar in op_params[0].
@@ -1173,13 +1428,32 @@ static bool ggml_ane_compute_elementwise(ggml_tensor * op) {
             vDSP_vclip(a, 1, &lo, &hi, out.data(), 1, n);
         } break;
         case GGML_OP_REPEAT: {
-            // Tile src0 over dst. n_dst must be a whole multiple of n_src.
-            const size_t ns = ggml_nelements(src0);
-            if (ns == 0 || n % ns != 0) {
+            // Repeat src0 over dst per the ggml_repeat contract
+            // (ggml_can_repeat(src0, dst)); the src0 index along each dim
+            // is i % nes[d]. A flat tile is only correct when the repeat
+            // is along the outermost non-unit dim, so walk rows instead.
+            const int64_t * ne  = dst->ne;
+            const int64_t * nes = src0->ne;
+            if (!ggml_can_repeat(src0, dst)) {
                 return false;
             }
-            for (size_t i = 0; i < n; i += ns) {
-                std::memcpy(out.data() + i, a, ns * sizeof(float));
+            for (int64_t i3 = 0; i3 < ne[3]; ++i3) {
+                const int64_t j3 = i3 % nes[3];
+                for (int64_t i2 = 0; i2 < ne[2]; ++i2) {
+                    const int64_t j2 = i2 % nes[2];
+                    for (int64_t i1 = 0; i1 < ne[1]; ++i1) {
+                        const int64_t j1 = i1 % nes[1];
+                        const size_t row  = (size_t) ((i3*ne[2] + i2)*ne[1] + i1) * ne[0];
+                        const size_t rows = (size_t) ((j3*nes[2] + j2)*nes[1] + j1) * nes[0];
+                        if (nes[0] == ne[0]) {
+                            std::memcpy(out.data() + row, a + rows, (size_t) ne[0] * sizeof(float));
+                        } else {
+                            for (int64_t i0 = 0; i0 < ne[0]; ++i0) {
+                                out[row + i0] = a[rows + (size_t) (i0 % nes[0])];
+                            }
+                        }
+                    }
+                }
             }
         } break;
         case GGML_OP_LEAKY_RELU: {
@@ -1255,8 +1529,7 @@ static bool ggml_ane_compute_elementwise(ggml_tensor * op) {
             return false;
     }
 
-    ggml_ane_tensor_write_f32(dst, out.data());
-    return true;
+    return ggml_ane_tensor_write_f32(dst, out.data());
 }
 
 // Copy a leaf tensor's data into `dst` in fp32. Used to feed Core ML inputs.
@@ -1298,57 +1571,52 @@ static bool ggml_ane_gather_input_fp32(ggml_tensor * tensor, std::vector<float> 
 //                         ANE fp16 matmul; shape must match the
 //                         bound bundle's baked shape, otherwise
 //                         fall through to ggml-cpu/Metal)
-//                         The host-side dequant uses the v2
+//                         The host-side dequant uses the accel
 //                         (Accelerate + NEON) path in
-//                         ggml/src/ggml-quants-v2.c when
-//                         ggml_tessera_t640_v2_enabled() is
+//                         ggml-quants.c when
+//                         ggml_tessera_t640_accel_enabled() is
 //                         true and in_dim >=
-//                         GGML_TESSERA_T640_V2_MIN_K (1024);
-//                         the C reference in ggml-quants.c is
-//                         the documented fallback. The v2
-//                         dequant is 1.26-1.66x faster than the
-//                         C ref at in_dim >= 640 on M1 base
+//                         GGML_TESSERA_T640_ACCEL_MIN_K (1024);
+//                         the scalar path is the documented
+//                         fallback. The accel dequant is
+//                         1.26-1.66x faster than the scalar
+//                         path at in_dim >= 640 on M1 base
 //                         (16 GB, ~68 GB/s; the radix-243 trit
-//                         decode is the bottleneck); the v2
+//                         decode is the bottleneck); the accel
 //                         quant is 1.0-5.1x (small k ties,
-//                         large k wins 3-5x because the C ref
-//                         hits DRAM bandwidth on M1 base); the
-//                         v2 act_scale is 1.0-2.1x (small/med
-//                         wins, large k ties). These three
-//                         keep static dispatch rules
-//                         (v2 above the cutoff, C ref
+//                         large k wins 3-5x because the scalar
+//                         path hits DRAM bandwidth on M1 base);
+//                         ts_apply_act_scale is 1.0-2.1x
+//                         (small/med wins, large k ties). These
+//                         three keep static dispatch rules
+//                         (accel above the cutoff, scalar
 //                         below).
 //
-//                         Dynamic dispatch (v2 cost model):
-//                         the two batched v2 functions
-//                         (decode_per_row_meta_v2,
-//                         apply_outlier_addback_v2) are
-//                         decided per call by the helpers in
-//                         ggml/src/ggml-quants-v2-dispatch.h:
+//                         Per-call path selection (cost model):
+//                         the two batched helpers
+//                         (ts_decode_per_row_meta,
+//                         ts_apply_outlier_addback) select
+//                         their accel/scalar path per call,
+//                         decided by the regime router with the
+//                         static cost model in ggml-quants.h as
+//                         the fallback:
 //
-//                           apply_outlier_addback_v2:
-//                             v2 iff n_total in (0, 1024].
-//                             The v2's NEON bulk fp16->fp32
+//                           ts_apply_outlier_addback:
+//                             accel iff n_total in (0, 1024].
+//                             The accel NEON bulk fp16->fp32
 //                             path is active for n_total
-//                             <= 1024 (the 4 KB stack
-//                             scratch cap); above that the
-//                             v2 falls back to a scalar
-//                             convert + scatter that is
-//                             identical to the C ref. The
-//                             dispatch calls the C ref
-//                             directly above the threshold
-//                             to avoid a wasted function
-//                             call + the n_total > 1024
-//                             check inside v2. On M1 base:
-//                             1.66-1.88x at n_total=51-409
-//                             (the iPhone drafter's single-
-//                             row tail), ties at 3264-52224,
-//                             1.23x at 208896.
+//                             <= 1024 (the 4 KB stack scratch
+//                             cap); above that the scalar
+//                             convert + scatter runs. On M1
+//                             base: 1.66-1.88x at
+//                             n_total=51-409 (the iPhone
+//                             drafter's single-row tail), ties
+//                             at 3264-52224, 1.23x at 208896.
 //
-//                           decode_per_row_meta_v2:
-//                             v2 iff n_total_pages
+//                           ts_decode_per_row_meta:
+//                             accel iff n_total_pages
 //                             (= n_rows * n_pages) >= 4096.
-//                             On M1 base the v2 wins 1.09x
+//                             On M1 base accel wins 1.09x
 //                             at 135168+ elems (the vDSP +
 //                             NEON bulk calls amortise their
 //                             per-call setup tax), but
@@ -1356,19 +1624,17 @@ static bool ggml_ane_gather_input_fp32(ggml_tensor * tensor, std::vector<float> 
 //                             elems and ties at 33792. The
 //                             4096 threshold is conservative
 //                             (it routes the 33792-elem tie
-//                             to the C ref to avoid the
+//                             to the scalar path to avoid the
 //                             per-call tax on the hot path).
 //
-//                         The v2 dequant takes pre-decoded
-//                         meta as separate inputs; the C ref
-//                         meta produces those pre-decoded
-//                         arrays via ts_decode_per_row_meta_ref.
-//                         The C ref outlier scatters into the
-//                         v2 dequant's output buffer via
-//                         ts_apply_outlier_addback_ref. See
-//                         tests/bench-tessera-quants-v2.cpp
-//                         for the per-shape numbers and the
-//                         cost model constants.
+//                         dequantize_row_tessera_t640_with_meta
+//                         consumes the pre-decoded meta arrays
+//                         produced by ts_decode_per_row_meta;
+//                         the outlier addback scatters into the
+//                         dequant output buffer. See
+//                         tests/bench-tessera-quants.cpp for
+//                         the per-shape numbers and the cost
+//                         model constants.
 //   MUL_MAT (BF16/fp16)-> ANE if the bound bundle's function matches
 //                         the op's shape; otherwise fall through
 //                         to Accelerate BLAS (the W0 spike's path
@@ -2095,64 +2361,127 @@ static bool ggml_ane_program_dispatch_op(ggml_backend_ane_program * program,
             // (matching the L0.5 reference's behaviour per
             // test_b5_tile640_metal_dequant.cpp:343-349).
             //
-            // For the v2 (Accelerate + NEON) path, the dispatch
-            // hoists the per-row meta decode + outlier addback
-            // out of the per-row dequant loop:
-            //   1. decode_per_row_meta_v2: one call for the
+            // For the accel (Accelerate + NEON) path, the
+            // dispatch hoists the per-row meta decode + outlier
+            // addback out of the per-row dequant loop:
+            //   1. ts_decode_per_row_meta: one call for the
             //      whole TILE of meta (out_dim * pages_per_row
             //      page_scales + out_dim * pages_per_row * 32
             //      lane_scales). Amortises the vDSP setup cost
             //      across the whole tile.
             //   2. per-row dequant with the pre-decoded meta
-            //      (the v2 dequant takes the pre-decoded
-            //      page_max + lane_scale arrays as separate
-            //      inputs; the per-row dequant skips the inline
-            //      meta decode).
-            //   3. apply_outlier_addback_v2: one call for the
-            //      whole BUFFER of outliers (out_dim rows, n_total
-            //      outliers). Amortises the NEON bulk-convert
-            //      setup across the whole buffer.
+            //      (dequantize_row_tessera_t640_with_meta takes
+            //      the pre-decoded page_max + lane_scale arrays
+            //      as separate inputs; the per-row dequant
+            //      skips the inline meta decode).
+            //   3. ts_apply_outlier_addback: one call for the
+            //      whole BUFFER of outliers (out_dim rows,
+            //      n_total outliers). Amortises the NEON
+            //      bulk-convert setup across the whole buffer.
             //
-            // For the C ref path (v2 disabled or k < MIN_K),
+            // For the scalar path (accel disabled or k < MIN_K),
             // the dispatch falls back to the per-row scalar
             // loop with the flat [packed | page_scales |
-            // lane_scales] row buffer (the C ref's documented
-            // contract).
+            // lane_scales] row buffer.
             std::vector<ggml_fp16_t> weight_fp16((size_t) out_dim * in_dim);
             const int64_t pages_per_row = (in_dim + 639) / 640;
             const int64_t words_per_page = 32;
+            // Default: read the T640_3D meta tensors from the
+            // op's source pointers (the standard ggml path; the
+            // weight bytes are in CPU memory as ggml tensors).
             const int32_t * packed = (const int32_t *) op->src[0]->data;
             const ggml_fp16_t * page_scales = (const ggml_fp16_t *) op->src[1]->data;
             const int8_t * lane_scales = (const int8_t *) op->src[2]->data;
             const int32_t * outlier_row_offsets = (const int32_t *) op->src[3]->data;
             const int32_t * outlier_cols = (const int32_t *) op->src[4]->data;
             const ggml_fp16_t * outlier_vals = (const ggml_fp16_t *) op->src[5]->data;
-            const bool use_v2 = ggml_tessera_t640_v2_enabled() &&
-                                in_dim >= GGML_TESSERA_T640_V2_MIN_K;
-            if (use_v2) {
-                // Dynamic dispatch (v2 cost model):
-                //   - dequant: v2 per-row (with pre-decoded meta).
-                //     The v2 dequant is always faster than the
-                //     C ref at in_dim >= 1024 (1.30-1.63x on M1
-                //     Pro). Static rule; no per-call decision.
-                //   - meta decode: v2 batched or C ref batched.
-                //     v2 is 0.41-0.65x of C across all shapes
-                //     (the vDSP bulk calls don't amortise for
-                //     the typical Phase 0 shapes). The cost
-                //     model always picks the C ref.
-                //   - outlier addback: v2 batched or C ref
-                //     batched. v2 wins iff n_total in
-                //     (0, 1024] (the v2's internal NEON path
-                //     scratch cap; above it the v2 falls back
-                //     to scalar which is the same as the C
-                //     ref, so calling v2 wastes a function
-                //     call).
-                // The v2 dequant takes pre-decoded meta as
-                // separate inputs (the v2's API); the C ref
-                // meta produces those pre-decoded arrays. The
-                // C ref outlier scatters into the v2 dequant's
-                // output buffer. The per-row fp16 cast is
-                // unchanged.
+            // Phase 2 (iPhone demo): if the program has a
+            // weight stream attached, override the meta tensor
+            // pointers with bytes read from the mmap'd GGUF.
+            // The cache is refreshed only on layer-index change
+            // (decode M=1 reuses the same layer N times before
+            // the index advances; the cache hit rate during
+            // decode is ~99% for batch-1 inference). On a
+            // cache miss, the stream copies the layer's bytes
+            // into the per-program CPU buffer; on a hit, the
+            // pointers just rebind and the dequant runs as
+            // before. The legacy path (no stream) is byte-
+            // identical to the pre-Phase-2 dispatch.
+            if (program->weight_stream != nullptr) {
+                const int32_t cur_layer =
+                    ane_weight_stream_parse_layer(op->src[0]->name);
+                if (cur_layer >= 0 &&
+                    cur_layer != program->last_streamed_layer) {
+                    if (!ane_weight_stream_program_refresh(
+                            program, cur_layer)) {
+                        // Refresh failed (layer not in the GGUF
+                        // or the mmap range is out of bounds).
+                        // The legacy op->src[i]->data pointers
+                        // remain valid; the dispatch continues
+                        // with them. Slice 3 is fail-soft on
+                        // the refresh; the layer-not-found case
+                        // is logged so the operator sees it.
+                    }
+                }
+                if (cur_layer >= 0) {
+                    const void * base = nullptr;
+                    size_t sz = 0;
+                    if (op->src[0]->name != nullptr &&
+                        ane_weight_stream_program_lookup(
+                            program, op->src[0]->name, &base, &sz)) {
+                        packed = (const int32_t *) base;
+                    }
+                    if (op->src[1]->name != nullptr &&
+                        ane_weight_stream_program_lookup(
+                            program, op->src[1]->name, &base, &sz)) {
+                        page_scales = (const ggml_fp16_t *) base;
+                    }
+                    if (op->src[2]->name != nullptr &&
+                        ane_weight_stream_program_lookup(
+                            program, op->src[2]->name, &base, &sz)) {
+                        lane_scales = (const int8_t *) base;
+                    }
+                    if (op->src[3]->name != nullptr &&
+                        ane_weight_stream_program_lookup(
+                            program, op->src[3]->name, &base, &sz)) {
+                        outlier_row_offsets = (const int32_t *) base;
+                    }
+                    if (op->src[4]->name != nullptr &&
+                        ane_weight_stream_program_lookup(
+                            program, op->src[4]->name, &base, &sz)) {
+                        outlier_cols = (const int32_t *) base;
+                    }
+                    if (op->src[5]->name != nullptr &&
+                        ane_weight_stream_program_lookup(
+                            program, op->src[5]->name, &base, &sz)) {
+                        outlier_vals = (const ggml_fp16_t *) base;
+                    }
+                }
+            }
+            const bool use_accel = ggml_tessera_t640_accel_enabled() &&
+                                   in_dim >= GGML_TESSERA_T640_ACCEL_MIN_K;
+            if (use_accel) {
+                // Accel pipeline (per-call path selection):
+                //   - dequant: accel per-row (with pre-decoded
+                //     meta). Faster than the scalar path at
+                //     in_dim >= 1024 (1.30-1.63x on M1 Pro).
+                //     Static rule; no per-call decision.
+                //   - meta decode: ts_decode_per_row_meta picks
+                //     its accel/scalar path per call. On M1 the
+                //     static cost model picks scalar for the
+                //     typical Phase 0 shapes (the vDSP bulk
+                //     calls don't amortise); the regime router
+                //     can override per (family, shape).
+                //   - outlier addback: ts_apply_outlier_addback
+                //     picks its accel/scalar path per call;
+                //     accel wins iff n_total in (0, 1024] (the
+                //     NEON bulk-convert scratch cap; above it
+                //     the scalar convert runs).
+                // The with-meta dequant takes pre-decoded meta
+                // as separate inputs; ts_decode_per_row_meta
+                // produces those arrays. The outlier addback
+                // scatters into the dequant output buffer. The
+                // per-row fp16 cast is unchanged.
                 std::vector<float> weight_f32((size_t) out_dim * in_dim);
                 std::vector<float> page_max_f32((size_t) out_dim * pages_per_row);
                 std::vector<float> lane_scale_f32(
@@ -2160,30 +2489,40 @@ static bool ggml_ane_program_dispatch_op(ggml_backend_ane_program * program,
                 const int64_t n_total_outliers =
                     (int64_t) outlier_row_offsets[out_dim] -
                     (int64_t) outlier_row_offsets[0];
-                const bool use_v2_meta    = ts_v2_dispatch_should_use_v2_meta(
+                // Regime router: derive (family, shape_bucket)
+                // from the tensor name and the in_dim, then ask
+                // the router which path wins for this
+                // (family, shape) on both meta and outlier.
+                // Fallback is the static cost model (the same
+                // ts_t640_*_accel_wins helpers); the router is
+                // a strict no-op when it has no data. The
+                // router exists so the dispatch can learn
+                // per-(family, shape) path preferences from
+                // real kernel output instead of static
+                // thresholds (M1 Pro data was off by ~10% on
+                // M1 base for meta decode at large N; the
+                // router's policy table fixes that kind of
+                // per-target drift without a code change).
+                const int family = ts_regime_infer_family(op->name);
+                const int shape_bucket =
+                    ts_regime_shape_bucket_for_in_dim(in_dim);
+                const bool accel_meta = ts_regime_router_lookup_meta(
+                    family, shape_bucket,
                     (int64_t) out_dim, pages_per_row);
-                const bool use_v2_outlier = ts_v2_dispatch_should_use_v2_outlier(
-                    n_total_outliers);
-                // 1. Meta decode: v2 batched or C ref batched.
-                // The C ref is a scalar loop over the whole
-                // tile's meta (fp16->fp32 for page_scales,
-                // int8->fp32/127 for lane_scales).
-                if (use_v2_meta) {
-                    decode_per_row_meta_v2(page_scales, lane_scales,
-                                           (int64_t) out_dim, pages_per_row,
-                                           page_max_f32.data(),
-                                           lane_scale_f32.data());
-                } else {
-                    ts_decode_per_row_meta_ref(
-                        (const uint16_t *) page_scales, lane_scales,
-                        (int64_t) out_dim, pages_per_row,
-                        page_max_f32.data(),
-                        lane_scale_f32.data());
-                }
-                // 2. Per-row v2 dequant with pre-decoded meta
-                // (the v2 dequant takes the packed words + the
-                // per-row page_max + lane_scale views from the
-                // pre-decoded arrays).
+                const bool accel_outlier = ts_regime_router_lookup_outlier(
+                    family, shape_bucket, n_total_outliers);
+                // 1. Meta decode: one batched call for the whole
+                // tile; the accel/scalar path is selected by the
+                // router decision above.
+                ts_decode_per_row_meta(page_scales, lane_scales,
+                                       (int64_t) out_dim, pages_per_row,
+                                       page_max_f32.data(),
+                                       lane_scale_f32.data(),
+                                       accel_meta);
+                // 2. Per-row dequant with pre-decoded meta
+                // (the with-meta dequant takes the packed words
+                // + the per-row page_max + lane_scale views
+                // from the pre-decoded arrays).
                 for (int32_t r = 0; r < out_dim; ++r) {
                     const uint32_t * row_packed = (const uint32_t *) &packed[
                         r * pages_per_row * words_per_page];
@@ -2191,29 +2530,20 @@ static bool ggml_ane_program_dispatch_op(ggml_backend_ane_program * program,
                     const float * row_lane_scale = &lane_scale_f32[
                         r * pages_per_row * TILE640_LANES_PER_PAGE];
                     float * row_y = &weight_f32[r * in_dim];
-                    dequantize_row_tessera_t640_v2(row_packed,
-                                                   row_page_max,
-                                                   row_lane_scale,
-                                                   in_dim, row_y);
+                    dequantize_row_tessera_t640_with_meta(row_packed,
+                                                          row_page_max,
+                                                          row_lane_scale,
+                                                          in_dim, row_y);
                 }
-                // 3. Outlier addback: v2 batched or C ref
-                // batched. The C ref is a scalar convert +
-                // scatter over the whole buffer; the v2 does
-                // a NEON bulk fp16->fp32 + scalar scatter when
-                // n_total <= 1024.
-                if (use_v2_outlier) {
-                    apply_outlier_addback_v2(weight_f32.data(), in_dim,
-                                             (int64_t) out_dim,
-                                             outlier_row_offsets,
-                                             outlier_cols,
-                                             outlier_vals);
-                } else {
-                    ts_apply_outlier_addback_ref(weight_f32.data(), in_dim,
-                                                 (int64_t) out_dim,
-                                                 outlier_row_offsets,
-                                                 outlier_cols,
-                                                 (const uint16_t *) outlier_vals);
-                }
+                // 3. Outlier addback: one batched call for the
+                // whole buffer; the accel/scalar path is
+                // selected by the router decision above.
+                ts_apply_outlier_addback(weight_f32.data(), in_dim,
+                                         (int64_t) out_dim,
+                                         outlier_row_offsets,
+                                         outlier_cols,
+                                         outlier_vals,
+                                         accel_outlier);
                 // 4. Per-row fp16 cast (the bundle's pinned slot
                 // dtype is fp16; the dequant is fp32).
                 for (int32_t r = 0; r < out_dim; ++r) {
@@ -2223,11 +2553,11 @@ static bool ggml_ane_program_dispatch_op(ggml_backend_ane_program * program,
                     }
                 }
             } else {
-                // C ref path: per-row scalar loop with the flat
-                // [packed | page_scales | lane_scales] row buffer
-                // (the C ref's documented contract). Below the v2
-                // cutoff (k < 1024) the vDSP setup cost is larger
-                // than the per-row work, so the scalar C ref wins.
+                // Scalar path: per-row scalar loop with the flat
+                // [packed | page_scales | lane_scales] row
+                // buffer. Below the accel cutoff (k < 1024) the
+                // vDSP setup cost is larger than the per-row
+                // work, so the scalar path wins.
                 std::vector<uint8_t> row_bytes(
                     (size_t)(pages_per_row * (words_per_page * 4 + 2 + words_per_page)));
                 std::vector<float> row_f32((size_t) in_dim);
@@ -2472,16 +2802,18 @@ static enum ggml_status ggml_backend_ane_graph_compute(ggml_backend_t backend, g
         // No bundle mapping: fall through to the elementwise Accelerate path.
         // This covers the compute-shaped ANE-NATIVE ops (ADD, MUL, SCALE,
         // CLAMP, REPEAT, LEAKY_RELU, and the UNARY variants SILU/SIGMOID/
-        // TANH/RELU/EXP/LOG/ABS/NEG/STEP/SQR/SQRT). Layout ops that we
-        // advertise as supported are handled as no-ops over contiguous data.
-        if (node->op == GGML_OP_RESHAPE ||
+        // TANH/RELU/EXP/LOG/ABS/NEG/STEP/SQR/SQRT). View ops are no-ops:
+        // they set view_src and alias the source buffer, so no data
+        // movement is needed. GGML_OP_NONE marks leaf/data tensors
+        // (weights); no compute. CONT is NOT a view (no view_src, own
+        // buffer) and is not advertised; if it ever reaches here it falls
+        // through to the loud "no compute path" error below instead of
+        // being silently skipped.
+        if (node->op == GGML_OP_NONE ||
+            node->op == GGML_OP_RESHAPE ||
             node->op == GGML_OP_VIEW ||
             node->op == GGML_OP_TRANSPOSE ||
-            node->op == GGML_OP_PERMUTE ||
-            node->op == GGML_OP_CONT) {
-            // ggml tensors carry their own shape/stride metadata; views are
-            // already resolved by the graph builder, so the underlying buffer
-            // is shared and no data movement is needed.
+            node->op == GGML_OP_PERMUTE) {
             continue;
         }
 
@@ -2489,12 +2821,13 @@ static enum ggml_status ggml_backend_ane_graph_compute(ggml_backend_t backend, g
             // Type/shape conversion copy on the host-mapped arena. CAST is not
             // a standalone op in this ggml version; it lowers to CPY.
             std::vector<float> tmp;
-            if (!ggml_ane_gather_input_fp32(node->src[0], tmp)) {
-                GGML_LOG_ERROR("ane: CPY unsupported dtype %s\n",
-                               ggml_type_name(node->src[0]->type));
+            if (!ggml_ane_gather_input_fp32(node->src[0], tmp) ||
+                !ggml_ane_tensor_write_f32(node, tmp.data())) {
+                GGML_LOG_ERROR("ane: CPY unsupported dtype %s -> %s\n",
+                               ggml_type_name(node->src[0]->type),
+                               ggml_type_name(node->type));
                 return GGML_STATUS_FAILED;
             }
-            ggml_ane_tensor_write_f32(node, tmp.data());
             continue;
         }
 
@@ -2505,8 +2838,8 @@ static enum ggml_status ggml_backend_ane_graph_compute(ggml_backend_t backend, g
         // Reached an op we advertised but did not implement. This is a logic
         // error in supports_op; surface it loudly rather than producing
         // silently-wrong data (F-mode failures are far worse than a crash).
-        GGML_LOG_ERROR("ane: advertised op %s has no compute path\n",
-                       ggml_op_name(node->op));
+        GGML_LOG_ERROR("ane: advertised op %s (node '%s') has no compute path\n",
+                       ggml_op_name(node->op), node->name);
         return GGML_STATUS_FAILED;
     }
 
@@ -2565,6 +2898,8 @@ GGML_BACKEND_API bool ggml_backend_ane_set_program(
     // The previously bound program (if any) is not freed here; ownership stays
     // with the caller. Only one program may be bound per backend at a time.
     ctx->program.store(program);
+    // keep the device-level supports_op view in sync
+    g_ane_bound_program.store(program);
     return true;
 }
 
@@ -2628,9 +2963,46 @@ static ggml_backend_t ggml_backend_ane_device_init_backend(ggml_backend_dev_t de
 }
 
 static ggml_backend_buffer_type_t ggml_backend_ane_device_get_buffer_type(ggml_backend_dev_t dev) {
+    // Default placement for the ANE lane: IOSurface-backed buffers. They are
+    // CPU-readable (the IOSurface base stays locked) and wrap zero-copy as
+    // MTLBuffers, so tensors placed here cross the ANE<->Metal boundary
+    // without copies. The portable singleton keeps device == nullptr; the
+    // (dev, buft) pairing in the caller's buft list carries the device
+    // association. Set GGML_ANE_NO_IOSURFACE_DEFAULT=1 to fall back to the
+    // private ANE heap.
+    static const bool use_iosurface = []() {
+        const char * env = getenv("GGML_ANE_NO_IOSURFACE_DEFAULT");
+        return !(env && env[0] != '\0' && env[0] != '0');
+    }();
+
+    if (use_iosurface) {
+        return ggml_backend_ane_iosurface_buffer_type();
+    }
+
     ggml_backend_buffer_type_t buft = ggml_backend_ane_buffer_type();
     buft->device = dev;
     return buft;
+}
+
+// The Accelerate elementwise path (ggml_ane_compute_elementwise) views
+// every operand as a flat contiguous fp32 array. Advertise an elementwise
+// op only when the compute path can actually serve it: contiguous F32/F16
+// operands (the two dtypes ggml_ane_tensor_f32_view converts). Anything
+// else routes to CPU/Metal instead of failing at graph_compute.
+static bool ggml_ane_elementwise_servable(const ggml_tensor * op) {
+    const ggml_tensor * t[3] = { op, op->src[0], op->src[1] };
+    for (size_t i = 0; i < 3; ++i) {
+        if (t[i] == nullptr) {
+            continue;
+        }
+        if (!ggml_is_contiguous(t[i])) {
+            return false;
+        }
+        if (t[i]->type != GGML_TYPE_F32 && t[i]->type != GGML_TYPE_F16) {
+            return false;
+        }
+    }
+    return true;
 }
 
 static bool ggml_ane_supported_tensor_type(enum ggml_type type) {
@@ -2655,19 +3027,20 @@ static bool ggml_ane_supported_tensor_type(enum ggml_type type) {
 
 // supports_op per deep-study Section 4.1.
 //
-// The ops we accept must have either a Core ML bundle dispatch (composite
-// transformer ops; today only MUL_MAT-style via the bound bundle, and that
-// path is still gated behind TODO(ane-bundle)) or an Accelerate elementwise
-// implementation (ggml_ane_compute_elementwise). We advertise only ops that
-// also have the elementwise path so the backend is exercisable without a
-// bundle. ANE-NATIVE-B body ops (RMS_NORM, SOFT_MAX, ROPE, GLU, GET_ROWS)
-// are advertised here and dispatched in ggml_ane_program_dispatch_op to
-// the bound bundle's functionName; the precise shape/dtype match is
-// enforced in dispatch_op, not here. Composite ANE-NATIVE-C ops (SDPA,
-// TILE640_*, DIAG_MASK_INF) are still NOT advertised because their
-// compute lives in a bundle function we do not dispatch yet; returning
-// true for them would make graph_compute fail at the "no compute path"
-// assert.
+// Two classes of ops are advertised:
+//   1. Ops with a compute path that needs no bundle: the layout/no-op
+//      group (NONE, RESHAPE, VIEW, ...), CPY, and the Accelerate
+//      elementwise set (ggml_ane_compute_elementwise). Each is gated on
+//      the exact contract its compute path implements (dtype/layout for
+//      elementwise and CPY) so the scheduler can route them to ANE on
+//      any host without ever handing over an unservable node.
+//   2. Bundle-gated ops (MUL_MAT, RMS_NORM, SOFT_MAX, ROPE, GLU,
+//      GET_ROWS, TILE640_MATMUL): true only while a program is bound
+//      (g_ane_bound_program). dispatch_op does the precise shape/dtype
+//      match against the bundle and rejects mismatches. Advertising
+//      them without a bundle would make graph_compute fail at the
+//      "no compute path" check and would pull weights into the ANE
+//      buffer at load for a backend that cannot serve their consumers.
 //
 // GELU decision (Section 4.2.3): the loaded Core ML bundle already bakes in
 // the tanh approximation, so GELU itself stays ANE-BREAKS here and the
@@ -2686,59 +3059,39 @@ static bool ggml_backend_ane_device_supports_op(ggml_backend_dev_t dev, const gg
     }
 
     switch (op->op) {
-        // ANE-NATIVE matmul (decode, M=1). The dispatch is gated on a
-        // bound bundle whose input/output shapes match the ggml op's
-        // shape; the bundle is the W0 spike's W0 matmul or, for real
-        // models, a per-projection bundle built with the model-specific
-        // weights. Only fp32 activations/weights are supported in the
-        // W1 spike; fp16 and quantized types are a follow-on.
-        case GGML_OP_MUL_MAT:
-            if (dev != nullptr) {
-                // The device-level supports_op does not have direct access
-                // to the per-backend program; the dispatch_op (in
-                // graph_compute) does the precise shape/dtype check and
-                // returns false if the bundle does not match. We
-                // advertise MUL_MAT as supported so the scheduler
-                // routes it to the ANE backend; a non-matching shape
-                // will then fall through (or be rejected) at dispatch time.
-                // The accuracy of the device-level supports_op matters
-                // for the scheduler's load balancing; the dispatch_op
-                // is the precise check.
-                return true;
-            }
-            return false;
+        // Leaf/data tensors (model weights, graph inputs). No compute;
+        // every backend that can hold the buffer owns them. Required so
+        // the scheduler can assign weights placed in the ANE buffer
+        // (ggml_backend_sched_backend_from_buffer checks supports_op for
+        // the tensor's own op, and leaves carry GGML_OP_NONE). Same
+        // convention as Metal/CUDA.
+        case GGML_OP_NONE:
+            return true;
 
-        // ANE-NATIVE-B body ops. Each is dispatched to the bound
-        // bundle's functionName when the bundle's baked shape/dtype
-        // matches the ggml op (the precise check lives in
-        // ggml_ane_program_dispatch_op). The device-level supports_op
-        // does not have direct access to the bound program, so it
-        // advertises the op and the dispatch_op decides. A bundle
-        // without the matching function causes dispatch_op to return
-        // false; the graph then fails at graph_compute's "no compute
-        // path" check rather than silently miscomputing. Real
-        // production graphs are scheduled by a multi-backend
-        // scheduler that routes unmatched ops to ggml-cpu.
+        // Bundle-gated ops. Each dispatches to the bound program's
+        // functionName; dispatch_op does the precise shape/dtype check
+        // and rejects mismatches. Advertised only while a program is
+        // actually bound (g_ane_bound_program, kept in sync by
+        // ggml_backend_ane_set_program): without a bundle ANE has no
+        // compute path for these, and advertising them anyway would
+        // pull weights into the ANE buffer at load and ops into ANE at
+        // schedule time, then fail graph_compute. With a program bound
+        // the router considers ANE alongside every other device, per
+        // the dispatch rule "ANE when ANE is faster, not when ANE is
+        // available".
+        case GGML_OP_MUL_MAT:
         case GGML_OP_RMS_NORM:
         case GGML_OP_SOFT_MAX:
         case GGML_OP_ROPE:
         case GGML_OP_GLU:
         case GGML_OP_GET_ROWS:
-            return dev != nullptr;
-
-        // L1 matmul (Phase 0). The TILE640_MATMUL op carries
-        // the 7 TILE640 sources; the dispatch path dequants on
-        // the host and runs the ANE fp16 matmul. The bundle is
-        // shape-locked at export time; the precise check lives
-        // in ggml_ane_program_dispatch_op (a shape mismatch
-        // returns false so the scheduler routes to a backend
-        // that has the matching bundle, e.g. ggml-cpu/Metal).
-        // The device-level supports_op advertises the op so
-        // the scheduler considers the ANE backend.
         case GGML_OP_TILE640_MATMUL:
-            return dev != nullptr;
+            return g_ane_bound_program.load(std::memory_order_relaxed) != nullptr;
 
         // ANE-NATIVE elementwise ops with an Accelerate implementation.
+        // Gated on exactly what the compute path can serve (contiguous
+        // F32/F16 operands; ggml_ane_elementwise_servable), so a routed
+        // op never reaches graph_compute without a compute path.
         case GGML_OP_ADD:
         case GGML_OP_MUL:
         case GGML_OP_SCALE:
@@ -2750,24 +3103,46 @@ static bool ggml_backend_ane_device_supports_op(ggml_backend_dev_t dev, const gg
         case GGML_OP_LOG:
         case GGML_OP_SIN:
         case GGML_OP_COS:
-            return true;
+            return ggml_ane_elementwise_servable(op);
 
-        // ANE-NATIVE layout / copy ops. Views and reshapes carry their own
-        // metadata and share the source buffer, so no compute is needed.
-        // CAST is not a standalone op in this ggml version; type conversion is
-        // expressed via CPY and handled on the host-mapped arena.
+        // ANE-NATIVE layout ops. Views and reshapes carry their own
+        // metadata and share the source buffer (ggml sets view_src for
+        // them and the allocator aliases the buffer), so no compute is
+        // needed. CONT is deliberately NOT here: it has no view_src, so
+        // the allocator gives it its own buffer, and it needs a real
+        // strided copy to fill it. Advertising it without a copy path
+        // leaves that buffer unwritten and silently corrupts every
+        // consumer (CPU-GLUE in the deep-study op table; CPU runs it).
         case GGML_OP_RESHAPE:
         case GGML_OP_VIEW:
         case GGML_OP_TRANSPOSE:
         case GGML_OP_PERMUTE:
-        case GGML_OP_CONT:
-        case GGML_OP_CPY:
             return true;
+
+        // Type conversion is expressed via CPY on the host-mapped arena
+        // (CAST is not a standalone op in this ggml version). Servable
+        // when the gather/write dtypes line up: the gather reads
+        // F32/F16/I32 and the write covers F32/F16.
+        case GGML_OP_CPY: {
+            const ggml_tensor * src = op->src[0];
+            if (src == nullptr || !ggml_is_contiguous(src) || !ggml_is_contiguous(op)) {
+                return false;
+            }
+            const bool src_ok = src->type == GGML_TYPE_F32 ||
+                                src->type == GGML_TYPE_F16 ||
+                                src->type == GGML_TYPE_I32;
+            const bool dst_ok = op->type == GGML_TYPE_F32 ||
+                                op->type == GGML_TYPE_F16;
+            return src_ok && dst_ok;
+        }
 
         // ANE-NATIVE unary ops (silu, sigmoid, tanh, exp, abs, relu, neg,
         // step, sgn). GELU/GELU_ERF/GELU_QUICK are ANE-BREAKS (handled in the
         // bundle, not here) so only the safe subset of UNARY is taken.
         case GGML_OP_UNARY:
+            if (!ggml_ane_elementwise_servable(op)) {
+                return false;
+            }
             switch (ggml_get_unary_op(op)) {
                 case GGML_UNARY_OP_SILU:
                 case GGML_UNARY_OP_SIGMOID:
@@ -2793,8 +3168,17 @@ static bool ggml_backend_ane_device_supports_op(ggml_backend_dev_t dev, const gg
 }
 
 static bool ggml_backend_ane_device_supports_buft(ggml_backend_dev_t dev, ggml_backend_buffer_type_t buft) {
+    // The IOSurface type is portable (buft->device == nullptr): the ANE
+    // program consumes its bytes through the weight-stream/host paths, so
+    // accepting it here keeps scheduler-visible tensors on the shared
+    // buffer instead of forcing a CPY into the ANE buft.
+    if (buft == ggml_backend_ane_iosurface_buffer_type()) {
+        return true;
+    }
     return buft->device == dev &&
            buft->iface.get_name == ggml_backend_ane_buffer_type_get_name;
+
+    GGML_UNUSED(dev);
 }
 
 static ggml_backend_device_i ggml_backend_ane_device_i = {
@@ -2912,10 +3296,12 @@ GGML_BACKEND_DL_IMPL(ggml_backend_ane_reg)
 // Cross-backend IOSurface buffer (the data plane for lock-free CPU/Metal/ANE
 // dispatch). Distinct from `ggml_backend_ane_buffer_context` (above) which
 // is owned by the ANE backend. This buffer is portable across all three
-// backends: ggml_backend_supports_buft returns true for the CPU, Metal, and
-// ANE backends (the latter is via the same buffer type the ANE backend
-// registers; CPU/Metal support it because the base is locked CVPixelBuffer
-// memory and IOSurface-backed MTLBuffer is a public Apple primitive).
+// backends: CPU and BLAS accept it because is_host reports the locked base
+// truthfully, Metal accepts it and wraps the surface as an MTLBuffer at
+// encode time (ggml_metal_get_buffer_id), and the ANE device accepts it in
+// supports_buft. With every consumer advertising the type,
+// ggml_backend_sched places tensors here without inserting cross-backend
+// CPY/DUP nodes.
 ////////////////////////////////////////////////////////////////////////////////
 
 struct ggml_backend_ane_iosurface_buffer_context {
@@ -3054,14 +3440,17 @@ static size_t ggml_backend_ane_iosurface_buffer_type_get_max_size(ggml_backend_b
 }
 
 static bool ggml_backend_ane_iosurface_buffer_type_is_host(ggml_backend_buffer_type_t buft) {
-    // The IOSurface is process-shared, not strictly host memory. The
-    // scheduler treats it as off-host for placement decisions.
-    return false;
+    // Truthful: the IOSurface base address is locked for the buffer's
+    // lifetime (IOSurfaceLock in alloc_buffer) and directly
+    // readable/writable from the CPU. Reporting host memory is what lets
+    // the CPU and BLAS backends accept the type from supports_buft and
+    // operate on it in place.
+    return true;
 
     GGML_UNUSED(buft);
 }
 
-static ggml_backend_buffer_type_t ggml_backend_ane_iosurface_buffer_type(void) {
+GGML_BACKEND_API ggml_backend_buffer_type_t ggml_backend_ane_iosurface_buffer_type(void) {
     static ggml_backend_buffer_type buft;
     static bool initialized = false;
 

@@ -53,7 +53,7 @@
   color: var(--color-fg-subtle);
   margin-bottom: var(--space-2);
 }
-.chapter-eyebrow::before { content: "§ "; opacity: 0.6; }
+.chapter-eyebrow::before { content: "\00A7 "; opacity: 0.6; }
 
 .chapter-title {
   font-size: var(--font-size-xl);
@@ -135,4 +135,280 @@
   margin-bottom: var(--space-1);
   text-transform: uppercase;
   letter-spacing: var(--letter-spacing-wide);
+}
+
+/* Grid containers for chapter content (cards, columns, next-step rows).
+ * The grid is responsive: 1 column on small viewports, N columns on wider.
+ */
+.chapter-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-4);
+  margin: var(--space-5) 0;
+}
+@media (min-width: 720px) {
+  .chapter-grid-2 { grid-template-columns: repeat(2, 1fr); }
+  .chapter-grid-3 { grid-template-columns: repeat(3, 1fr); }
+  .chapter-grid-4 { grid-template-columns: repeat(2, 1fr); }
+}
+@media (min-width: 1024px) {
+  .chapter-grid-4 { grid-template-columns: repeat(4, 1fr); }
+}
+
+/* Feature card (What you get). A bordered card with a title and body.
+ * The card is content-shaped: it grows with the text, not fixed-height.
+ */
+.feature-card {
+  padding: var(--space-4) var(--space-5);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-md);
+}
+.feature-card-title {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--line-height-tight);
+  color: var(--color-fg);
+  margin: 0 0 var(--space-2) 0;
+}
+.feature-card-body {
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-base);
+  color: var(--color-fg-muted);
+  margin: 0;
+}
+.feature-card-body a { color: var(--color-accent); }
+
+/* Audience card (Who this is for). Includes a label tag (Primary / Adjacent / Peripheral)
+ * that picks up a state color from the token table. The primary card has a warm left rule.
+ */
+.audience-card {
+  padding: var(--space-4) var(--space-5);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-md);
+  position: relative;
+}
+.audience-card-label {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  color: var(--color-fg-subtle);
+  margin-bottom: var(--space-2);
+  padding: 2px var(--space-2);
+  background: var(--color-surface-2);
+  border-radius: var(--radius-sm);
+}
+.audience-card-primary {
+  border-left: 3px solid var(--color-accent);
+}
+.audience-card-primary .audience-card-label {
+  color: var(--color-accent);
+  background: var(--color-state-released-bg);
+}
+.audience-card-peripheral .audience-card-label {
+  color: var(--color-fg-subtle);
+}
+.audience-card-title {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--line-height-tight);
+  color: var(--color-fg);
+  margin: 0 0 var(--space-2) 0;
+}
+.audience-card-body {
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-base);
+  color: var(--color-fg-muted);
+  margin: 0;
+}
+
+/* Next-step card. Used in the "Where to go next" block at the bottom of L0 and L1 pages.
+ * The card is a link (whole card is clickable). The eyebrow is the question, the title is
+ * the answer, the body is a one-sentence preview.
+ */
+.next-step-card {
+  display: block;
+  padding: var(--space-4) var(--space-5);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-md);
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.next-step-card:hover,
+.next-step-card:focus-visible {
+  border-color: var(--color-accent);
+  background: var(--color-surface-2);
+}
+.next-step-card-eyebrow {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  color: var(--color-fg-subtle);
+  margin-bottom: var(--space-2);
+}
+.next-step-card-title {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--line-height-tight);
+  color: var(--color-fg);
+  margin: 0 0 var(--space-2) 0;
+}
+.next-step-card-body {
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-base);
+  color: var(--color-fg-muted);
+  margin: 0;
+}
+
+/* Aside line. A subtle one-liner that sits below a block (the "if you don't care about
+ * local inference" line under the audience cards, etc.). Same color as chapter-body,
+ * smaller font, italic by default.
+ */
+.chapter-aside {
+  font-size: var(--font-size-sm);
+  font-style: italic;
+  color: var(--color-fg-subtle);
+  margin: var(--space-3) 0 0 0;
+  max-width: var(--max-prose);
+  line-height: var(--line-height-base);
+}
+
+/* Standalone entry anchor. Used at the top of L1 / L2 pages so a reader who lands
+ * directly from a search engine knows they are on a Tessera page. The anchor is a
+ * thin-stripe band: subtle enough to not interrupt, visible enough to be useful.
+ */
+.standalone-anchor {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--gutter);
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-muted);
+  background: var(--color-surface-1);
+  border-bottom: 1px solid var(--color-rule);
+}
+.standalone-anchor-mark {
+  font-family: var(--font-mono);
+  color: var(--color-accent);
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+}
+.standalone-anchor-body { margin: 0; }
+.standalone-anchor-body a { color: var(--color-accent); }
+
+/* Inline gloss. A term that links to its concept card. The dotted underline signals
+ * "this term has more on the concepts page" without screaming. Hover picks up the
+ * accent color.
+ */
+a.gloss {
+  color: var(--color-fg);
+  text-decoration: underline dotted var(--color-fg-subtle);
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+a.gloss:hover,
+a.gloss:focus-visible {
+  color: var(--color-accent);
+  text-decoration-color: var(--color-accent);
+}
+
+/* Table wrap. A horizontal-scroll wrapper for tables on narrow viewports.
+ * The table itself fills the wrapper; on narrow viewports the wrapper scrolls.
+ */
+.table-wrap {
+  overflow-x: auto;
+  margin: var(--space-5) 0;
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-1);
+}
+
+/* Tier table. The "Property regime" table. Same styling as the README's status table
+ * (mono headers, subtle row separators), with a left-rule accent on the tier name.
+ */
+.tier-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-base);
+}
+.tier-table th {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--color-fg-subtle);
+  font-weight: var(--font-weight-regular);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-rule);
+  background: var(--color-surface-2);
+}
+.tier-table td {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-rule);
+  color: var(--color-fg-muted);
+  vertical-align: top;
+}
+.tier-table tr:last-child td { border-bottom: none; }
+.tier-table strong { color: var(--color-fg); }
+.tier-table code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  padding: 1px 4px;
+  background: var(--color-surface-2);
+  border-radius: 3px;
+  color: var(--color-fg);
+}
+
+/* Diagram block. A figure with an SVG diagram and a figcaption. The diagram
+ * is sized to its container; the figcaption is small and muted.
+ */
+.diagram-block {
+  margin: var(--space-5) 0;
+  padding: var(--space-4);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-md);
+}
+.diagram-block svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.diagram-block figcaption {
+  margin-top: var(--space-3);
+  font-size: var(--font-size-sm);
+  font-style: italic;
+  color: var(--color-fg-subtle);
+  line-height: var(--line-height-base);
+  text-align: center;
+  max-width: var(--max-prose);
+  margin-left: auto;
+  margin-right: auto;
+}
+pre {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-base);
+  padding: var(--space-4);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-md);
+  color: var(--color-fg);
+  overflow-x: auto;
+  margin: var(--space-3) 0;
+}
+code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  color: var(--color-accent);
 }

@@ -78,11 +78,11 @@ public final class GeocodingLocationResolver: LocationResolver, @unchecked Senda
 
 // MARK: - ContactSnapshotAdapter
 
-/// A ``ContactsAdapter`` snapshot of the ``ContactStore``.
+/// A ``CalendarContactsAdapter`` snapshot of the ``ContactStore``.
 /// The view model loads it once (and refreshes it when the
 /// contact surface changes) so the NLU parser's lookups
 /// stay synchronous.
-public struct ContactSnapshotAdapter: ContactsAdapter {
+public struct ContactSnapshotAdapter: CalendarContactsAdapter {
     public var contacts: [Contact]
 
     public init(contacts: [Contact]) {
