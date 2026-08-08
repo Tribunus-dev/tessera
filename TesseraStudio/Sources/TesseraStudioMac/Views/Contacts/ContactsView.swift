@@ -54,13 +54,14 @@ public struct ContactsView: View {
         .navigationTitle("Contacts")
         .searchable(text: $searchText, prompt: "Search contacts")
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItem(placement: .secondaryAction) {
                 Button {
                     Task { await load() }
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
                 .help("Reload contacts")
+                .accessibilityLabel("Reload contacts")
             }
             ToolbarItem(placement: .primaryAction) {
                 Menu {
@@ -90,6 +91,8 @@ public struct ContactsView: View {
                 } label: {
                     Label("Import", systemImage: "square.and.arrow.down")
                 }
+                .help("Import contacts")
+                .accessibilityLabel("Import contacts")
             }
         }
         .onAppear {
@@ -147,25 +150,24 @@ public struct ContactsView: View {
                     description: Text("Use the Import menu to bring in contacts from Apple, VCard, Google, or CardDAV.")
                 )
             } else if let err = loadError {
-                ContentUnavailableView(
-                    "Couldn't load contacts",
-                    systemImage: "exclamationmark.triangle",
-                    description: Text(err)
-                )
+                ContentUnavailableView {
+                    Label("Couldn't load contacts", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(err)
+                } actions: {
+                    Button("Retry") { Task { await load() } }
+                        .buttonStyle(.borderedProminent)
+                }
             }
         }
     }
 
     private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "person.crop.circle")
-                .font(.largeTitle)
-                .foregroundStyle(.tertiary)
-            Text("Select a contact")
-                .font(.title3)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        ContentUnavailableView(
+            "Select a contact",
+            systemImage: "person.crop.circle",
+            description: Text("Choose a contact from the list.")
+        )
     }
 
     private func load() async {
@@ -239,9 +241,10 @@ private struct ContactDetailView: View {
                 Button {
                     exportVCard()
                 } label: {
-                    Image(systemName: "square.and.arrow.up")
+                    Label("Export as VCard", systemImage: "square.and.arrow.up")
                 }
                 .help("Export as VCard")
+                .accessibilityLabel("Export as VCard")
             }
         }
         .task {

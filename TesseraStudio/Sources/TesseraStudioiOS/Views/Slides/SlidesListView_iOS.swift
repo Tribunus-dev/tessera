@@ -84,15 +84,14 @@ public struct SlidesListView_iOS: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "rectangle.on.rectangle").font(.largeTitle).foregroundStyle(.secondary)
-            Text(emptyStateTitle).font(.headline)
+        ContentUnavailableView {
+            Label(emptyStateTitle, systemImage: "rectangle.on.rectangle")
+        } actions: {
             Button { Task { await createBlankDeck() } } label: {
                 Label("New Deck", systemImage: "rectangle.on.rectangle.badge.plus")
             }
-            .controlSize(.large)
+            .buttonStyle(.borderedProminent)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var emptyStateTitle: String {

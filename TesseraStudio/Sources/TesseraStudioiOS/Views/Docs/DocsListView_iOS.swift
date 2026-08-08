@@ -74,15 +74,14 @@ public struct DocsListView_iOS: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "doc.text").font(.largeTitle).foregroundStyle(.secondary)
-            Text(emptyStateTitle).font(.headline)
+        ContentUnavailableView {
+            Label(emptyStateTitle, systemImage: "doc.text")
+        } actions: {
             Button { Task { await createBlankDoc() } } label: {
                 Label("New Doc", systemImage: "doc.badge.plus")
             }
-            .controlSize(.large)
+            .buttonStyle(.borderedProminent)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var emptyStateTitle: String {

@@ -129,9 +129,11 @@ struct WorkflowCanvasView: View {
             }
             .keyboardShortcut("-", modifiers: .command)
             .help("Zoom out")
+            .accessibilityLabel("Zoom out")
             Text("\(Int(round(zoom * 100)))%")
                 .monospacedDigit()
                 .frame(minWidth: 44)
+                .accessibilityLabel("\(Int(round(zoom * 100))) percent")
             Button {
                 zoom = WorkflowGeometry.clampedZoom(zoom * 1.25)
             } label: {
@@ -139,6 +141,7 @@ struct WorkflowCanvasView: View {
             }
             .keyboardShortcut("=", modifiers: .command)
             .help("Zoom in")
+            .accessibilityLabel("Zoom in")
             Button {
                 zoom = 1
                 pan = .zero
@@ -147,6 +150,7 @@ struct WorkflowCanvasView: View {
             }
             .keyboardShortcut("0", modifiers: .command)
             .help("Reset zoom and pan")
+            .accessibilityLabel("Reset zoom and pan")
         }
         .buttonStyle(.borderless)
         .padding(.horizontal, 8)

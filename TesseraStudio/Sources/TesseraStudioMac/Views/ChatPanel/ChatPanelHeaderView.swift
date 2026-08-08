@@ -73,6 +73,7 @@ public struct ChatPanelHeaderView: View {
             Button(action: { onUndo?() }) {
                 Image(systemName: "arrow.uturn.backward")
                     .font(.caption)
+                    .symbolRenderingMode(.hierarchical)
             }
             .buttonStyle(.borderless)
             .disabled(!canUndo)
@@ -80,6 +81,7 @@ public struct ChatPanelHeaderView: View {
             Button(action: { onRedo?() }) {
                 Image(systemName: "arrow.uturn.forward")
                     .font(.caption)
+                    .symbolRenderingMode(.hierarchical)
             }
             .buttonStyle(.borderless)
             .disabled(!canRedo)
@@ -91,14 +93,18 @@ public struct ChatPanelHeaderView: View {
         HStack(spacing: 3) {
             Image(systemName: "doc.text")
                 .font(.caption2)
+                .symbolRenderingMode(.hierarchical)
+                .accessibilityHidden(true)
             Text("\(receiptCount)")
                 .font(.caption.weight(.medium))
                 .monospacedDigit()
+                .contentTransition(.numericText())
+                .lineLimit(1)
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
         .background(
-            Capsule().fill(Color.secondary.opacity(0.12))
+            Capsule().fill(.quaternary)
         )
         .help("\(receiptCount) receipt\(receiptCount == 1 ? "" : "s") in the chain")
     }
@@ -107,10 +113,13 @@ public struct ChatPanelHeaderView: View {
         HStack(spacing: 6) {
             Image(systemName: "person.2.fill")
                 .font(.caption2)
+                .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.orange)
+                .accessibilityHidden(true)
             Text(backgroundText)
                 .font(.caption)
                 .lineLimit(1)
+                .truncationMode(.tail)
             Spacer(minLength: 4)
             if let first = backgroundDocuments.first {
                 Button("Switch") {

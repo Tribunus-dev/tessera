@@ -59,12 +59,12 @@ public struct DocDetailView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                 case .failure:
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.gray.opacity(0.12))
+                        .fill(.quaternary)
                         .frame(height: 80)
                         .overlay { Label("Cover unavailable", systemImage: "photo.slash").foregroundStyle(.secondary).font(.caption) }
                 case .empty:
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.gray.opacity(0.08))
+                        .fill(.quaternary.opacity(0.6))
                         .frame(height: 80)
                         .overlay { ProgressView() }
                 @unknown default:
@@ -210,6 +210,7 @@ public struct DocDetailView: View {
                 Label("Delete", systemImage: "trash")
             }
             .help("Hard-delete this document")
+            .accessibilityLabel("Delete document")
         }
     }
 
@@ -279,7 +280,7 @@ struct DocLinkedEntityChip: View {
         }
         .font(.caption)
         .padding(.horizontal, 8).padding(.vertical, 3)
-        .background(Capsule().fill(Color.gray.opacity(0.15)))
+        .background(Capsule().fill(.quaternary))
         .foregroundStyle(.secondary)
     }
 }

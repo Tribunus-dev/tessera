@@ -129,13 +129,14 @@ public struct NotesView: View {
         }
         .searchable(text: searchTextBinding, prompt: "Search notes")
         .toolbar {
-            ToolbarItem(placement: .automatic) {
+            ToolbarItem(placement: .primaryAction) {
                 Button {
                     Task { await createBlankNote() }
                 } label: {
                     Label("New Note", systemImage: "square.and.pencil")
                 }
                 .help("Create a new note (Cmd-N)")
+                .accessibilityLabel("New Note")
                 .keyboardShortcut("n", modifiers: .command)
             }
         }
@@ -251,6 +252,15 @@ public struct NotesView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .secondaryAction) {
+            Button {
+                Task { await viewModel.refresh() }
+            } label: {
+                Label("Refresh", systemImage: "arrow.clockwise")
+            }
+            .help("Reload notes")
+            .accessibilityLabel("Reload notes")
+        }
         ToolbarItem(placement: .primaryAction) {
             Button {
                 viewModel.toggleFocusMode()
@@ -261,15 +271,8 @@ public struct NotesView: View {
                 )
             }
             .help("Toggle focus mode (Cmd-\\)")
+            .accessibilityLabel(viewModel.isFocusMode ? "Exit Focus" : "Focus")
             .keyboardShortcut("\\", modifiers: .command)
-        }
-        ToolbarItem(placement: .automatic) {
-            Button {
-                Task { await viewModel.refresh() }
-            } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
-            }
-            .help("Reload notes")
         }
     }
 

@@ -72,21 +72,16 @@ public struct CodeSearchPanelView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 6) {
-            Image(systemName: "text.magnifyingglass")
-                .font(.title2)
-                .foregroundStyle(.secondary)
-            if viewModel.searchQuery.isEmpty {
-                Text("Type a query to search")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            } else {
-                Text("No matches")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+        ContentUnavailableView {
+            Label(
+                viewModel.searchQuery.isEmpty ? "Type a query to search" : "No matches",
+                systemImage: "text.magnifyingglass"
+            )
+        } description: {
+            if !viewModel.searchQuery.isEmpty {
+                Text("Try a different search term.")
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var resultsList: some View {

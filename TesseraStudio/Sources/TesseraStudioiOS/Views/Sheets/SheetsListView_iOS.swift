@@ -73,15 +73,14 @@ public struct SheetsListView_iOS: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "tablecells").font(.largeTitle).foregroundStyle(.secondary)
-            Text(emptyStateTitle).font(.headline)
+        ContentUnavailableView {
+            Label(emptyStateTitle, systemImage: "tablecells")
+        } actions: {
             Button { Task { await createBlankSheet() } } label: {
                 Label("New Sheet", systemImage: "tablecells.badge.ellipsis")
             }
-            .controlSize(.large)
+            .buttonStyle(.borderedProminent)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var emptyStateTitle: String {

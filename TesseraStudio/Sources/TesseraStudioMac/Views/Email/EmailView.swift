@@ -909,7 +909,7 @@ private struct EmailComposerSheet: View {
             TextEditor(text: $bodyText)
                 .font(.body)
                 .frame(minHeight: 240)
-                .border(Color.gray.opacity(0.2))
+                .border(.separator)
             if let err = sendError {
                 Text(err)
                     .font(.caption)

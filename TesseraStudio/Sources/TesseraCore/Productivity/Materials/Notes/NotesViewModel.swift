@@ -240,7 +240,7 @@ public final class NotesViewModel: ObservableObject {
     /// and reading time. Escape exits focus mode — the host
     /// view wires the key event to this method.
     public func toggleFocusMode() {
-        withAnimation(.easeInOut(duration: 0.25)) {
+        withAnimation(AnimationPrimitives.isReduceMotion ? nil : .easeInOut(duration: 0.25)) {
             isFocusMode.toggle()
         }
     }
@@ -248,7 +248,7 @@ public final class NotesViewModel: ObservableObject {
     /// Exit focus mode. Called from the Escape key handler.
     public func exitFocusMode() {
         guard isFocusMode else { return }
-        withAnimation(.easeInOut(duration: 0.25)) {
+        withAnimation(AnimationPrimitives.isReduceMotion ? nil : .easeInOut(duration: 0.25)) {
             isFocusMode = false
         }
     }

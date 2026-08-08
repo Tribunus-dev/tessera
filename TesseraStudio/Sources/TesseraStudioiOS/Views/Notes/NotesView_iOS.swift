@@ -103,20 +103,16 @@ public struct NotesView_iOS: View {
     // MARK: - Empty state
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "note.text")
-                .font(.largeTitle)
-                .foregroundStyle(.secondary)
-            Text(emptyStateTitle)
-                .font(.headline)
+        ContentUnavailableView {
+            Label(emptyStateTitle, systemImage: "note.text")
+        } actions: {
             Button {
                 Task { await createBlankNote() }
             } label: {
                 Label("New Note", systemImage: "square.and.pencil")
             }
-            .controlSize(.large)
+            .buttonStyle(.borderedProminent)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var emptyStateTitle: String {

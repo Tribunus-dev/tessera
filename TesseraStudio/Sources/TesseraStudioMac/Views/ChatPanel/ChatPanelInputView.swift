@@ -69,8 +69,12 @@ public struct ChatPanelInputView: View {
             HStack(spacing: 4) {
                 Image(systemName: holdIcon)
                     .font(.caption)
+                    .symbolRenderingMode(.hierarchical)
+                    .contentTransition(.symbolEffect(.replace))
+                    .accessibilityHidden(true)
                 Text(holdMode.footerButtonLabel)
                     .font(.caption.weight(.medium))
+                    .lineLimit(1)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
@@ -95,8 +99,11 @@ public struct ChatPanelInputView: View {
             HStack(spacing: 4) {
                 Image(systemName: "stop.circle")
                     .font(.caption)
+                    .symbolRenderingMode(.hierarchical)
+                    .accessibilityHidden(true)
                 Text("Stop")
                     .font(.caption.weight(.medium))
+                    .lineLimit(1)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)

@@ -137,6 +137,7 @@ public struct ArchiveBrowserView: View {
                     )
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("\(cell.representative.tensorName), fitness \(String(format: "%.3g", cell.representative.bestFitness))")
             .help(cell.representative.tensorName)
         } else {
             RoundedRectangle(cornerRadius: 4)

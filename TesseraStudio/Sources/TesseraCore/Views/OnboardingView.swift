@@ -171,10 +171,10 @@ public struct OnboardingView: View {
         }
     }
 
-    // HIG 2.7 / 3.6: under Reduce Motion, page turns switch instantly
-    // instead of animating.
-    private var pageTurnAnimation: Animation? {
-        reduceMotion ? nil : .default
+    // HIG 2.7: matched spring per §2.7 — Reduce Motion falls back to
+    // a near-instant linear so withAnimation still fires without motion.
+    private var pageTurnAnimation: Animation {
+        reduceMotion ? .linear(duration: 0.01) : .spring(duration: 0.35, bounce: 0.15)
     }
 
     private var controls: some View {

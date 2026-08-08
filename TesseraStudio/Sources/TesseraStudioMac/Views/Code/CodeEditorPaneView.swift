@@ -83,15 +83,11 @@ public struct CodeEditorPaneView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "chevron.left.forwardslash.chevron.right")
-                .font(.largeTitle)
-                .foregroundStyle(.secondary)
-            Text("Select a file to view or edit")
-                .font(.headline)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        ContentUnavailableView(
+            "Select a file to view or edit",
+            systemImage: "chevron.left.forwardslash.chevron.right",
+            description: Text("Choose a file from the sidebar.")
+        )
     }
 
     private var footer: some View {

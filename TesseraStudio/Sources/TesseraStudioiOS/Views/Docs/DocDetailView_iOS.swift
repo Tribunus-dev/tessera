@@ -75,11 +75,11 @@ public struct DocDetailView_iOS: View {
                         image.resizable().scaledToFill().frame(height: 120).clipped()
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                     case .failure:
-                        RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.12))
+                        RoundedRectangle(cornerRadius: 8).fill(.quaternary)
                             .frame(height: 60)
                             .overlay { Label("Cover unavailable", systemImage: "photo.slash").foregroundStyle(.secondary).font(.caption) }
                     case .empty:
-                        RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.08))
+                        RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.6))
                             .frame(height: 60).overlay { ProgressView() }
                     @unknown default: EmptyView()
                     }

@@ -78,7 +78,9 @@ public struct ChatQueueRowView: View {
     private var iconView: some View {
         Image(systemName: display.style.iconSystemName)
             .font(.callout.weight(.semibold))
+            .symbolRenderingMode(.hierarchical)
             .foregroundStyle(display.style.iconTint)
+            .contentTransition(.symbolEffect(.replace))
             .thinkingPulse(isActive: display.style.pulseAnimation)
     }
 
@@ -87,6 +89,7 @@ public struct ChatQueueRowView: View {
             .font(.callout)
             .italic(display.style.isItalic)
             .lineLimit(3)
+            .truncationMode(.tail)
             .multilineTextAlignment(.leading)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -98,9 +101,12 @@ public struct ChatQueueRowView: View {
             HStack(spacing: 4) {
                 Image(systemName: "doc.text")
                     .font(.caption2)
+                    .symbolRenderingMode(.hierarchical)
+                    .accessibilityHidden(true)
                 Text(chip)
                     .font(.caption)
                     .lineLimit(1)
+                    .truncationMode(.tail)
             }
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
@@ -121,14 +127,18 @@ public struct ChatQueueRowView: View {
         HStack(spacing: 4) {
             Image(systemName: "arrow.uturn.backward")
                 .font(.caption2)
+                .symbolRenderingMode(.hierarchical)
+                .accessibilityHidden(true)
             Text("replaces #\(position)")
                 .font(.caption2.weight(.medium))
+                .monospacedDigit()
+                .lineLimit(1)
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 1)
         .foregroundStyle(.secondary)
         .background(
-            Capsule().fill(Color.secondary.opacity(0.12))
+            Capsule().fill(.quaternary)
         )
     }
 
@@ -140,6 +150,8 @@ public struct ChatQueueRowView: View {
             Text(text)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .truncationMode(.tail)
         }
     }
 
@@ -148,6 +160,7 @@ public struct ChatQueueRowView: View {
             .font(.caption)
             .foregroundStyle(.red)
             .lineLimit(2)
+            .truncationMode(.tail)
     }
 
     @ViewBuilder

@@ -177,7 +177,7 @@ public struct SheetDetailView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 24)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.06)))
+        .background(RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.6)))
     }
 
     // MARK: - Linked entities
@@ -214,6 +214,7 @@ public struct SheetDetailView: View {
                 Label("Delete", systemImage: "trash")
             }
             .help("Hard-delete this sheet")
+            .accessibilityLabel("Delete sheet")
         }
     }
 
@@ -283,7 +284,7 @@ struct SheetLinkedEntityChip: View {
         }
         .font(.caption)
         .padding(.horizontal, 8).padding(.vertical, 3)
-        .background(Capsule().fill(Color.gray.opacity(0.15)))
+        .background(Capsule().fill(.quaternary))
         .foregroundStyle(.secondary)
     }
 }

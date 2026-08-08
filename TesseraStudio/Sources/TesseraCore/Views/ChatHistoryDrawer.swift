@@ -24,6 +24,7 @@ public enum HistoryDateFilter: String, CaseIterable, Sendable {
 /// restore it; swipe to delete; context menu for rename/export.
 public struct ChatHistoryDrawer: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @Query(sort: [SortDescriptor(\Conversation.updatedAt, order: .reverse)])
     private var conversations: [Conversation]
@@ -101,11 +102,14 @@ public struct ChatHistoryDrawer: View {
             Text("History")
                 .font(.headline)
             Spacer()
-            Button(action: { withAnimation { isPresented = false } }) {
+            Button(action: { withAnimation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0.2)) { isPresented = false } }) {
                 Image(systemName: "xmark.circle.fill")
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Close history")
+            .accessibilityHint("Closes the history drawer")
+            .help("Close")
         }
         .padding()
     }

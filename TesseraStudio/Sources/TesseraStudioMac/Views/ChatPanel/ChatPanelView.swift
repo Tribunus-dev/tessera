@@ -209,7 +209,7 @@ public struct ChatPanelView: View {
             }
             .onChange(of: viewModel.items) { _, newItems in
                 if let firstInProgress = newItems.first(where: { $0.item.state == .inProgress }) {
-                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) {
+                    withAnimation(reduceMotion ? nil : .spring(duration: 0.25)) {
                         proxy.scrollTo(firstInProgress.item.id, anchor: .center)
                     }
                 }

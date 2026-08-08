@@ -93,7 +93,7 @@ public struct RemindersView_iOS: View {
                             .background(
                                 viewModel.filter == filter
                                     ? Color.accentColor.opacity(0.2)
-                                    : Color.gray.opacity(0.1),
+                                    : .quaternary,
                                 in: Capsule()
                             )
                             Text("\(filter.apply(to: viewModel.reminders).count)")

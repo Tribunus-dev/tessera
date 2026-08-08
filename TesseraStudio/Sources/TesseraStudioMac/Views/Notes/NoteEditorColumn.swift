@@ -247,7 +247,7 @@ public struct NoteEditorColumn: View {
 
     @ToolbarContentBuilder
     private var editorToolbar: some ToolbarContent {
-        ToolbarItem(placement: .automatic) {
+        ToolbarItem(placement: .secondaryAction) {
             TesseraEditorToolbar(
                 mode: .notes,
                 formattingState: $formattingState,
@@ -258,7 +258,7 @@ public struct NoteEditorColumn: View {
         }
         ToolbarItem(placement: .primaryAction) {
             Button {
-                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
+                withAnimation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0.15)) {
                     isFocusMode.toggle()
                 }
             } label: {
@@ -270,6 +270,7 @@ public struct NoteEditorColumn: View {
                 )
             }
             .help("Toggle focus mode (Cmd-\\)")
+            .accessibilityLabel(isFocusMode ? "Exit Focus" : "Focus")
         }
         ToolbarItem(placement: .destructiveAction) {
             Button(role: .destructive) {
@@ -278,6 +279,7 @@ public struct NoteEditorColumn: View {
                 Label("Delete", systemImage: "trash")
             }
             .help("Delete this note")
+            .accessibilityLabel("Delete note")
         }
     }
 

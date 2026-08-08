@@ -55,22 +55,13 @@ public struct CodeOutlineView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 6) {
-            Image(systemName: "list.bullet.rectangle")
-                .font(.title3)
-                .foregroundStyle(.secondary)
-            Text("No outline available")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+        ContentUnavailableView {
+            Label("No outline available", systemImage: "list.bullet.rectangle")
+        } description: {
             if outline.language == "plain" {
                 Text("This file's language is unknown. The outline is empty for unrecognized languages.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 16)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var outlineList: some View {

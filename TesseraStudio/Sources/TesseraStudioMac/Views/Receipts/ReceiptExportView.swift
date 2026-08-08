@@ -67,7 +67,7 @@ public struct ReceiptExportView: View {
             .padding(8)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(Color.secondary.opacity(0.06))
+                    .fill(.quaternary.opacity(0.6))
             )
 
             if let last = lastArtifact {

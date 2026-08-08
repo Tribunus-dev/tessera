@@ -5,6 +5,7 @@ import SwiftData
 public struct PlaygroundView: View {
     @Bindable var agentLoop: TesseraAgentLoop
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var inputText = ""
     @State private var messages: [ChatMessage] = []
     @State private var streamingText = ""
@@ -48,7 +49,7 @@ public struct PlaygroundView: View {
                 }
                 .onChange(of: messages.count) {
                     if let last = messages.last {
-                        withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+                        withAnimation(reduceMotion ? nil : .spring(duration: 0.25)) { proxy.scrollTo(last.id, anchor: .bottom) }
                     }
                 }
             }
@@ -92,6 +93,8 @@ public struct PlaygroundView: View {
                     .font(.title2)
             }
             .accessibilityLabel("Send")
+            .accessibilityHint("Sends the message to the agent")
+            .help("Send")
             .disabled(inputText.trimmingCharacters(in: .whitespaces).isEmpty || agentLoop.isRunning)
 
             if agentLoop.isRunning {

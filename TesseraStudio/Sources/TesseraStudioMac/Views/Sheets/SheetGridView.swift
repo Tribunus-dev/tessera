@@ -24,7 +24,7 @@ public struct SheetGridView: View {
             gridBody
         }
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.2), lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.separator, lineWidth: 1))
     }
 
     // MARK: - Header
@@ -32,7 +32,7 @@ public struct SheetGridView: View {
     private var gridHeader: some View {
         HStack(spacing: 0) {
             Text("#").frame(width: 40).font(.caption2).foregroundStyle(.secondary)
-                .frame(height: 28).background(Color.gray.opacity(0.08))
+                .frame(height: 28).background(.quaternary)
             ForEach(Array(viewModel.sheet.columns.enumerated()), id: \.offset) { idx, col in
                 let label = col.label.isEmpty ? columnLabel(index: idx) : col.label
                 HStack(spacing: 4) {
@@ -42,13 +42,13 @@ public struct SheetGridView: View {
                     }
                 }
                 .frame(maxWidth: .infinity).frame(height: 28)
-                .background(Color.gray.opacity(0.08))
-                .overlay(Rectangle().frame(width: 1).foregroundStyle(Color.gray.opacity(0.15)), alignment: .trailing)
+                .background(.quaternary)
+                .overlay(Rectangle().frame(width: 1).foregroundStyle(.separator), alignment: .trailing)
             }
             if viewModel.sheet.columns.isEmpty {
                 Text("No columns").font(.caption).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity).frame(height: 28)
-                    .background(Color.gray.opacity(0.08))
+                    .background(.quaternary)
             }
             // Spacer for the add-column affordance.
             Button { Task { await viewModel.insertColumn(at: viewModel.sheet.columnCount) } } label: {
@@ -56,7 +56,7 @@ public struct SheetGridView: View {
             }
             .buttonStyle(.plain).frame(width: 28, height: 28)
         }
-        .overlay(Rectangle().frame(height: 1).foregroundStyle(Color.gray.opacity(0.15)), alignment: .bottom)
+        .overlay(Rectangle().frame(height: 1).foregroundStyle(.separator), alignment: .bottom)
     }
 
     // MARK: - Controls
@@ -77,7 +77,7 @@ public struct SheetGridView: View {
             if viewModel.isSaving { ProgressView().controlSize(.small) }
         }
         .padding(.horizontal, 8).padding(.vertical, 6)
-        .background(Color.gray.opacity(0.04))
+        .background(.quaternary.opacity(0.5))
     }
 
     // MARK: - Body
@@ -103,9 +103,9 @@ public struct SheetGridView: View {
                             .menuStyle(.borderlessButton).controlSize(.mini)
                         }
                         .frame(width: 40).frame(height: 32)
-                        .background(Color.gray.opacity(0.04))
-                        .overlay(Rectangle().frame(width: 1).foregroundStyle(Color.gray.opacity(0.15)), alignment: .trailing)
-                        .overlay(Rectangle().frame(height: 1).foregroundStyle(Color.gray.opacity(0.1)), alignment: .bottom)
+                        .background(.quaternary.opacity(0.5))
+                        .overlay(Rectangle().frame(width: 1).foregroundStyle(.separator), alignment: .trailing)
+                        .overlay(Rectangle().frame(height: 1).foregroundStyle(.separator), alignment: .bottom)
 
                         ForEach(0..<viewModel.sheet.columnCount, id: \.self) { col in
                             let coord = SheetCellCoord(row: row, col: col)
@@ -135,8 +135,8 @@ public struct SheetGridView: View {
                                 RoundedRectangle(cornerRadius: 2)
                                     .stroke(isSelected || isEditing ? Color.accentColor : Color.clear, lineWidth: 1)
                             )
-                            .overlay(Rectangle().frame(width: 1).foregroundStyle(Color.gray.opacity(0.12)), alignment: .trailing)
-                            .overlay(Rectangle().frame(height: 1).foregroundStyle(Color.gray.opacity(0.1)), alignment: .bottom)
+                            .overlay(Rectangle().frame(width: 1).foregroundStyle(.separator), alignment: .trailing)
+                            .overlay(Rectangle().frame(height: 1).foregroundStyle(.separator), alignment: .bottom)
                             .onTapGesture {
                                 if isEditing { return }
                                 if isSelected {

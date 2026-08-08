@@ -55,6 +55,7 @@ public struct ReminderDetailView: View {
                         Label("Acknowledge", systemImage: "checkmark.circle")
                     }
                     .help("Mark as acknowledged and cancel the notification")
+                    .accessibilityLabel("Acknowledge")
 
                     Menu {
                         ForEach([5, 10, 15, 30, 60], id: \.self) { m in
@@ -64,7 +65,10 @@ public struct ReminderDetailView: View {
                         Label("Snooze", systemImage: "moon.zzz")
                     }
                     .help("Snooze the reminder")
+                    .accessibilityLabel("Snooze")
                 }
+            }
+            ToolbarItem(placement: .destructiveAction) {
                 Button(role: .destructive) {
                     Task {
                         await scheduler.cancel(reminder)
@@ -74,6 +78,7 @@ public struct ReminderDetailView: View {
                     Label("Delete", systemImage: "trash")
                 }
                 .help("Delete the reminder")
+                .accessibilityLabel("Delete reminder")
             }
         }
         .task {

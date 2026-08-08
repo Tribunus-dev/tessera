@@ -237,7 +237,7 @@ public struct ReceiptDetailView: View {
                     .font(.caption2)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 1)
-                    .background(Capsule().fill(Color.secondary.opacity(0.12)))
+                    .background(Capsule().fill(.quaternary))
             }
             Spacer()
         }

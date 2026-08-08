@@ -76,26 +76,15 @@ public struct CodeFileTreeView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "folder.badge.questionmark")
-                .font(.title2)
-                .foregroundStyle(.secondary)
-            Text("No files yet")
-                .font(.headline)
+        ContentUnavailableView {
+            Label("No files yet", systemImage: "folder.badge.questionmark")
+        } description: {
             if viewModel.watchedRoot == nil {
                 Text("Pick a root directory to start watching.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
             } else {
                 Text("The watched root has no supported source files.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
             }
         }
-        .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func directoryRow(_ node: CodeFileTreeNode) -> some View {

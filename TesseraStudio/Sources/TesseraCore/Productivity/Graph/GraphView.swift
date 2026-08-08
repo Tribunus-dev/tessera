@@ -255,12 +255,17 @@ private struct GraphToolbar: ToolbarContent {
                 Task { await viewModel.load() }
             } label: {
                 Image(systemName: "arrow.clockwise")
+                    .font(.body)
+                    .symbolRenderingMode(.hierarchical)
             }
             .help("Reload graph")
             Button {
                 graphStates.isRunning.toggle()
             } label: {
                 Image(systemName: graphStates.isRunning ? "pause.fill" : "play.fill")
+                    .font(.body)
+                    .symbolRenderingMode(.hierarchical)
+                    .contentTransition(.symbolEffect(.replace))
             }
             .help(graphStates.isRunning ? "Pause simulation" : "Resume simulation")
         }
@@ -278,23 +283,29 @@ private struct GraphDetailPanel: View {
                 HStack(alignment: .center, spacing: 8) {
                     Image(systemName: node.iconName)
                         .font(.title2)
+                        .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(GraphNode.color(for: node.entityType, subtype: node.subtype))
                     VStack(alignment: .leading) {
                         Text(node.label)
                             .font(.headline)
                             .lineLimit(2)
+                            .truncationMode(.tail)
                         Text(node.entityType)
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
                     Spacer()
                     Button {
                         viewModel.clearSelection()
                     } label: {
                         Image(systemName: "xmark.circle.fill")
+                            .font(.body)
+                            .symbolRenderingMode(.hierarchical)
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
+                    .help("Clear selection")
                 }
                 // "Open in <native surface>" — only shown
                 // when a surface wired an open handler
@@ -354,14 +365,18 @@ private struct GraphDetailPanel: View {
                 let other = viewModel.snapshot.nodes.first { $0.id == otherID }
                 HStack {
                     Image(systemName: other?.iconName ?? "circle")
+                        .font(.caption)
+                        .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(GraphNode.color(for: other?.entityType ?? "", subtype: other?.subtype))
                     VStack(alignment: .leading) {
                         Text(other?.label ?? "Unknown")
                             .font(.caption)
                             .lineLimit(1)
+                            .truncationMode(.tail)
                         Text(edge.linkType)
                             .font(.caption2)
                             .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
                     Spacer()
                 }

@@ -68,6 +68,9 @@ public struct ChatPanelView_iOS: View {
                     } label: {
                         Image(systemName: "doc.text.magnifyingglass")
                     }
+                    .accessibilityLabel("View receipts")
+                    .accessibilityHint("Opens the receipts list")
+                    .help("View receipts")
                 }
             }
             .sheet(isPresented: $showHoldSheet) {
@@ -144,17 +147,11 @@ public struct ChatPanelView_iOS: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "bubble.left")
-                .font(.title2)
-                .foregroundStyle(.tertiary)
-            Text("No commands yet")
-                .font(.headline)
-            Text("Type a command for the agent below.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-        }
+        ContentUnavailableView(
+            "No commands yet",
+            systemImage: "bubble.left",
+            description: Text("Type a command for the agent below.")
+        )
         .frame(maxWidth: .infinity)
         .padding(.vertical, 60)
     }
@@ -210,6 +207,7 @@ public struct ChatQueueRowView_iOS: View {
                     .font(.body.weight(.semibold))
                     .foregroundStyle(display.style.iconTint)
                     .frame(width: 22, height: 22)
+                    .accessibilityHidden(true)
                     .thinkingPulse(isActive: display.style.pulseAnimation)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(display.message)
@@ -242,6 +240,24 @@ public struct ChatQueueRowView_iOS: View {
             .opacity(display.style.opacity)
         }
         .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var accessibilityLabel: String {
+        var parts: [String] = []
+        switch display.style.state {
+        case .pending: parts.append("pending")
+        case .inProgress: parts.append("in progress")
+        case .applied: parts.append("applied")
+        case .failed: parts.append("failed")
+        case .superseded: parts.append("superseded")
+        }
+        parts.append(display.message)
+        if let badge = display.style.replaceBadge {
+            parts.append("replaces #\(badge)")
+        }
+        return parts.joined(separator: ", ")
     }
 
     @ViewBuilder
@@ -250,7 +266,7 @@ public struct ChatQueueRowView_iOS: View {
         case .clear:
             Color.clear
         case .subtleHighlight:
-            RoundedRectangle(cornerRadius: 8).fill(Color.yellow.opacity(0.10))
+            RoundedRectangle(cornerRadius: 8).fill(.quaternary)
         case .redFlash:
             RoundedRectangle(cornerRadius: 8).fill(Color.red.opacity(0.10))
         }

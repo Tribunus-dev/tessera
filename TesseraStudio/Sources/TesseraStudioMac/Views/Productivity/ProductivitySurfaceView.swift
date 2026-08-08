@@ -88,10 +88,11 @@ public struct ProductivitySurfaceView: View {
                 Label("Code", systemImage: "chevron.left.forwardslash.chevron.right")
             }
             Section("Current") {
-                Label(documentTitle, systemImage: "doc")
+                Label(documentTitle, systemImage: "doc.text")
             }
         }
         .listStyle(.sidebar)
+        .symbolRenderingMode(.hierarchical)
     }
 
     private var editorColumn: some View {
@@ -143,7 +144,7 @@ public struct ProductivitySurfaceView: View {
     }
 
     private func toggleReceipts() {
-        withAnimation(reduceMotion ? nil : .default) { model.showReceiptsDrawer.toggle() }
+        withAnimation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0.2)) { model.showReceiptsDrawer.toggle() }
     }
 }
 

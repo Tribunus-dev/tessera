@@ -82,7 +82,7 @@ struct WorkflowsView: View {
             // Scope the animation to the banner state so the
             // canvas itself never animates; nil under Reduce
             // Motion makes the banner appear / disappear instantly.
-            .animation(reduceMotion ? nil : .default, value: connectionError)
+            .animation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0.15), value: connectionError)
             // HIG 14.6: the palette drags a node-type id string;
             // add the node at the drop point, rejecting ids the
             // registry doesn't know.

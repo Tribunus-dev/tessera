@@ -106,10 +106,14 @@ struct WorkflowNodeView: View {
     private var header: some View {
         HStack(spacing: 6) {
             Image(systemName: "square.dashed")
+                .font(.callout)
+                .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
             Text(type.displayName)
                 .font(.system(.subheadline, design: .rounded).weight(.semibold))
                 .lineLimit(1)
+                .truncationMode(.tail)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 10)
@@ -202,6 +206,7 @@ struct WorkflowPortView: View {
                     if dragFeedback == .incompatible {
                         Image(systemName: "circle.slash")
                             .font(.caption2)
+                            .symbolRenderingMode(.hierarchical)
                             .foregroundStyle(.secondary)
                             .accessibilityHidden(true)
                     }

@@ -12,6 +12,7 @@ public struct SlideDeckDetailView_iOS: View {
 
     @ObservedObject public var viewModel: SlideDeckEditorViewModel
     @Binding public var selectedSlideIndex: Int
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var draftTitle: String = ""
     @State private var showDeleteConfirm = false
@@ -193,9 +194,9 @@ public struct SlideDeckDetailView_iOS: View {
                                 .onEnded { value in
                                     if value.translation.width < -40,
                                        selectedSlideIndex < viewModel.deck.slideCount - 1 {
-                                        withAnimation { selectedSlideIndex += 1 }
+                                        withAnimation(reduceMotion ? nil : .default) { selectedSlideIndex += 1 }
                                     } else if value.translation.width > 40, selectedSlideIndex > 0 {
-                                        withAnimation { selectedSlideIndex -= 1 }
+                                        withAnimation(reduceMotion ? nil : .default) { selectedSlideIndex -= 1 }
                                     }
                                 }
                         )
@@ -204,6 +205,8 @@ public struct SlideDeckDetailView_iOS: View {
                             Image(systemName: "chevron.left")
                         }
                         .disabled(selectedSlideIndex == 0)
+                        .accessibilityLabel("Previous slide")
+                        .help("Previous slide")
                         Spacer()
                         Text("Slide \(selectedSlideIndex + 1) of \(viewModel.deck.slideCount)")
                             .font(.caption).foregroundStyle(.secondary)
@@ -216,13 +219,15 @@ public struct SlideDeckDetailView_iOS: View {
                             Image(systemName: "chevron.right")
                         }
                         .disabled(selectedSlideIndex >= viewModel.deck.slideCount - 1)
+                        .accessibilityLabel("Next slide")
+                        .help("Next slide")
                     }
                     .controlSize(.small)
                     Text("Swipe to move between slides.")
                         .font(.caption2).foregroundStyle(.tertiary)
                 }
             } else {
-                RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.08))
+                RoundedRectangle(cornerRadius: 10).fill(.quaternary)
                     .frame(height: 160)
                     .overlay { Text("No slide selected").foregroundStyle(.secondary) }
             }
@@ -241,7 +246,7 @@ public struct SlideDeckDetailView_iOS: View {
                 } else {
                     Text(slide.notes).font(.callout)
                         .padding(8)
-                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(0.08)))
+                        .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary))
                 }
             }
         }
@@ -260,7 +265,7 @@ public struct SlideDeckDetailView_iOS: View {
                         Label(id.uuidString.prefix(8) + "…", systemImage: "link")
                             .font(.caption)
                             .padding(.horizontal, 8).padding(.vertical, 4)
-                            .background(Capsule().fill(Color.secondary.opacity(0.10)))
+                            .background(Capsule().fill(.quaternary))
                     }
                 }
             }
@@ -281,6 +286,8 @@ public struct SlideDeckDetailView_iOS: View {
             } label: {
                 Image(systemName: "ellipsis.circle")
             }
+            .accessibilityLabel("More actions")
+            .help("More actions")
         }
     }
 }
