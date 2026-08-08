@@ -261,13 +261,22 @@ public:
             on_chunk("[on-device tokenize missing] ", false);
             n_tokens = 0;
         }
-        // Decode prompt tokens (prefill)
+        // Decode prompt tokens (prefill) — use correct LlamaBatch ABI
         if (n_tokens > 0 && api->decode) {
-            // In real llama.cpp we need to batch tokens; simplified: decode all at once
-            int rc = api->decode(ctx, n_tokens);
-            if (rc != 0) {
-                on_error("on-device: decode failed");
+            int rc = -1;
+            if (api->batch_get_one) {
+                // Use helper for single batch containing all prompt tokens
+                LlamaBatch batch = api->batch_get_one(tokens.data(), n_tokens);
+                rc = api->decode(ctx, batch);
+            } else {
+                // Fallback: construct batch manually
+                LlamaBatch batch;
+                batch.n_tokens = n_tokens;
+                batch.token = tokens.data();
+                // pos/seq_id/logits left null for single seq
+                rc = api->decode(ctx, batch);
             }
+            if (rc != 0) on_error("on-device: decode failed");
         }
         // Generate loop — greedy for simplicity, up to 256 tokens or until EOS
         int max_new = 256;
@@ -303,8 +312,11 @@ public:
             else delta = " ";
             if (!delta.empty()) on_chunk(delta, false);
             if (api->decode) {
-                // feed token back — single token decode
-                int rc = api->decode(ctx, 1);
+                int32_t tok = next_token;
+                LlamaBatch batch;
+                if (api->batch_get_one) batch = api->batch_get_one(&tok, 1);
+                else { batch.n_tokens = 1; batch.token = &tok; }
+                int rc = api->decode(ctx, batch);
                 if (rc != 0) break;
             } else break;
             std::this_thread::sleep_for(std::chrono::milliseconds(8));

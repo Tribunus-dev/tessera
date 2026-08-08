@@ -197,6 +197,30 @@ std::string DataLayer::exec_via_libpq(const std::string &sql) const {
 }
 #endif
 int DataLayer::count_entities(const std::string &entity_type){
+#ifdef HAVE_LIBPQ
+    if(pg_conn_ || !cfg_.postgres_url.empty()){
+        // Parameterized to close sql_escape injection surface
+        const char *sql = entity_type.empty() ? "SELECT count(*) FROM graph_entities" : "SELECT count(*) FROM graph_entities WHERE entity_type=$1";
+        PGresult *res = nullptr;
+        if(entity_type.empty()){
+            if(pg_conn_ && PQstatus(pg_conn_)==CONNECTION_OK) res = PQexec(pg_conn_, sql);
+            else res = nullptr;
+        } else {
+            if(!pg_conn_ || PQstatus(pg_conn_)!=CONNECTION_OK){
+                if(pg_conn_) PQfinish(pg_conn_);
+                pg_conn_ = PQconnectdb(cfg_.postgres_url.c_str());
+            }
+            const char *vals[1] = {entity_type.c_str()};
+            if(pg_conn_ && PQstatus(pg_conn_)==CONNECTION_OK) res = PQexecParams(pg_conn_, sql, 1, nullptr, vals, nullptr, nullptr, 0);
+        }
+        if(res){
+            std::string r;
+            if(PQresultStatus(res)==PGRES_TUPLES_OK && PQntuples(res)>0) r = PQgetvalue(res,0,0)?PQgetvalue(res,0,0):"";
+            PQclear(res);
+            if(!r.empty()){ try{ return std::stoi(r);}catch(...){} }
+        }
+    }
+#endif
     std::string sql = entity_type.empty() ? "SELECT count(*) FROM graph_entities" : "SELECT count(*) FROM graph_entities WHERE entity_type='" + entity_type + "'";
     std::string r = exec_psql(sql);
     try{ return std::stoi(r); } catch(...){ return -1; }

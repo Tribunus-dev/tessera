@@ -17,6 +17,16 @@ struct LlamaModelOpaque;
 struct LlamaContextOpaque;
 struct LlamaSamplerOpaque;
 
+// Minimal llama_batch for correct ABI — matches llama.h: tokens + n_tokens
+struct LlamaBatch {
+    int32_t n_tokens = 0;
+    int32_t *token = nullptr;
+    float *embd = nullptr;
+    int32_t *pos = nullptr;
+    int32_t *seq_id = nullptr;
+    int8_t *logits = nullptr;
+};
+
 // Function pointer table resolved via dlsym
 struct LlamaApi {
     // model
@@ -28,8 +38,10 @@ struct LlamaApi {
     // tokenize / detokenize
     int (*tokenize)(void *model, const char *text, int text_len, int *tokens, int n_tokens_max, bool add_special, bool parse_special) = nullptr;
     int (*token_to_piece)(void *model, int token, char *buf, int length, int lstrip, bool special) = nullptr;
-    // decode
-    int (*decode)(void *ctx, int n_tokens) = nullptr;
+    // decode — correct ABI: int llama_decode(ctx, batch)
+    int (*decode)(void *ctx, LlamaBatch batch) = nullptr;
+    // batch helper (optional, for single-token batches)
+    LlamaBatch (*batch_get_one)(int32_t *token, int32_t n_tokens) = nullptr;
     float* (*get_logits)(void *ctx) = nullptr;
     float* (*get_logits_ith)(void *ctx, int i) = nullptr;
     // kv cache

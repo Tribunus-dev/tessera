@@ -25,6 +25,7 @@ static void resolve_api() {
     g_api.token_to_piece = reinterpret_cast<decltype(g_api.token_to_piece)>(sym("llama_token_to_piece"));
     // decode
     g_api.decode = reinterpret_cast<decltype(g_api.decode)>(sym("llama_decode"));
+    g_api.batch_get_one = reinterpret_cast<decltype(g_api.batch_get_one)>(sym("llama_batch_get_one"));
     g_api.get_logits = reinterpret_cast<decltype(g_api.get_logits)>(sym("llama_get_logits"));
     g_api.get_logits_ith = reinterpret_cast<decltype(g_api.get_logits_ith)>(sym("llama_get_logits_ith"));
     // kv
