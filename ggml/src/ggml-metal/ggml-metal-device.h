@@ -316,6 +316,38 @@ int     ggml_metal_device_stream_advance_slot(ggml_metal_device_t dev);
 void    ggml_metal_device_stream_set_fence(ggml_metal_device_t dev, void * shared_event);
 void *  ggml_metal_device_stream_get_fence(ggml_metal_device_t dev);
 
+// Slice 4.2a: weight pool attachment. The loader opens a 2-slot IOSurface pool
+// (src/llama-weight-pool.h), aliases FFN tensors into the slots, and attaches
+// the pool + ensure_fn here so the encoder can trigger a per-layer refill.
+// ensure_fn is called from ggml_metal_op_maybe_fence_ffn at each layer
+// transition; it blocks until layer L's bytes are in slot[L%2]. Weak ref:
+// the loader owns the pool and must clear it before freeing.
+// poke_fn (Phase 2) non-blockingly asks the fill thread to prefetch the next
+// layer while the GPU computes the current one.
+typedef int  (*ggml_metal_stream_ensure_fn)(void * pool, int32_t layer);
+typedef void (*ggml_metal_stream_poke_fn) (void * pool, int32_t layer);
+// MoE: sparse-fill expert slices for a 3D weight tensor.
+typedef int  (*ggml_metal_stream_ensure_experts_fn)(void * pool, int32_t layer,
+                                                    const char * tensor_suffix,
+                                                    const int32_t * expert_ids,
+                                                    int32_t n_experts_used);
+// MoE Phase 2: poke the fill thread to prefetch expert slices for the next chunk.
+typedef void (*ggml_metal_stream_poke_experts_fn)(void * pool, int32_t layer,
+                                                  const char * tensor_suffix,
+                                                  const int32_t * expert_ids,
+                                                  int32_t n_experts_used);
+void   ggml_metal_device_stream_set_pool(ggml_metal_device_t dev,
+                                         void * pool,
+                                         ggml_metal_stream_ensure_fn ensure_fn,
+                                         ggml_metal_stream_poke_fn  poke_fn,
+                                         ggml_metal_stream_ensure_experts_fn ensure_experts_fn,
+                                         ggml_metal_stream_poke_experts_fn  poke_experts_fn);
+void * ggml_metal_device_stream_get_pool(const ggml_metal_device_t dev);
+ggml_metal_stream_ensure_fn ggml_metal_device_stream_get_ensure_fn(const ggml_metal_device_t dev);
+ggml_metal_stream_poke_fn  ggml_metal_device_stream_get_poke_fn(const ggml_metal_device_t dev);
+ggml_metal_stream_ensure_experts_fn ggml_metal_device_stream_get_ensure_experts_fn(const ggml_metal_device_t dev);
+ggml_metal_stream_poke_experts_fn  ggml_metal_device_stream_get_poke_experts_fn(const ggml_metal_device_t dev);
+
 const struct ggml_metal_device_props * ggml_metal_device_get_props(ggml_metal_device_t dev);
 
 //

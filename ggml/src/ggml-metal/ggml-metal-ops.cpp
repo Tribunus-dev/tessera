@@ -18,16 +18,9 @@
 // ANE cross-backend IOSurface buffer helpers (defined in ggml-ane.mm,
 // declared in ggml-ane.h). Extern-declared here so ggml-metal keeps no
 // build dependency on ggml-ane; both backends link into the same libggml.
-// Shared-event helpers from ggml-metal-event.mm are resolved at link.
 extern "C" {
 GGML_BACKEND_API bool ggml_backend_ane_iosurface_buffer_check(ggml_backend_buffer_t buffer);
 GGML_BACKEND_API void * ggml_backend_ane_iosurface_buffer_get_mtl_buffer(ggml_backend_buffer_t buffer);
-}
-struct ggml_mtl_shared_event;
-typedef struct ggml_mtl_shared_event * ggml_mtl_shared_event_t;
-extern "C" {
-bool     ggml_mtl_shared_event_try_wait(ggml_mtl_shared_event_t event, uint64_t value);
-void     ggml_mtl_shared_event_encode_wait(ggml_mtl_shared_event_t event, void * cmd_buf, uint64_t value);
 }
 #endif
 
@@ -57,36 +50,23 @@ static ggml_metal_buffer_id ggml_metal_get_buffer_id(const ggml_tensor * t) {
 }
 
 #ifdef GGML_USE_ANE
-// Slice 4.2b: per-layer fence for MTL0 BF16 FFN (control plane).
-// Loader owns 2x450 MiB IOSurface slots and signals MTLSharedEvent
-// value = layer+1 after mmap->slot memcpy. Dispatch encodes wait
-// so compute(L) cannot start until prefetch(L) landed. No bulk
-// Metal buffer for the weight path — the slot is the backing store.
-// Only fences blk.L.ffn_* tensors; attn leg is separate (ggml-ane.mm).
-// Mirrors last_streamed_layer caching (M=1 decode reuses layer).
-static inline void ggml_metal_op_maybe_fence_ffn(ggml_metal_device_t dev,
-                                                  ggml_metal_cmd_buf_t cmd_buf,
-                                                  const ggml_tensor * op) {
-    if (!op || !op->src[0] || !op->src[0]->name[0]) return;
+// Slice 4.2a: identify an FFN MUL_MAT op whose weight is IOSurface-backed
+// (aliased into the 2-slot weight pool). The streamed compute path uses
+// this to find layer boundaries in the cgraph.
+bool ggml_metal_op_is_streamed_ffn(const ggml_tensor * op, int32_t * layer_out) {
+    if (!op || !op->src[0] || !op->src[0]->name[0]) return false;
     const char * name = op->src[0]->name;
     int32_t layer = -1;
-    if (!ggml_metal_device_stream_parse_layer(name, &layer)) return;
-    if (strstr(name, ".ffn_") == nullptr) return;
-    ggml_backend_buffer_t buf = op->src[0]->buffer;
-    if (!ggml_backend_ane_iosurface_buffer_check(buf)) return;
-    const int32_t last = ggml_metal_device_stream_get_last_layer(dev);
-    if (layer == last) return;
-    ggml_metal_device_stream_set_last_layer(dev, layer);
-    (void) ggml_metal_device_stream_advance_slot(dev);
-    void * fence_raw = ggml_metal_device_stream_get_fence(dev);
-    if (!fence_raw) return;
-    auto * fence = (ggml_mtl_shared_event_t) fence_raw;
-    const uint64_t need = (uint64_t) (layer + 1);
-    if (ggml_mtl_shared_event_try_wait(fence, need)) return;
-    if (cmd_buf) {
-        ggml_mtl_shared_event_encode_wait(fence, cmd_buf, need);
-    }
+    if (!ggml_metal_device_stream_parse_layer(name, &layer)) return false;
+    if (strstr(name, ".ffn_") == nullptr) return false;
+    if (!ggml_backend_ane_iosurface_buffer_check(op->src[0]->buffer)) return false;
+    if (layer_out) *layer_out = layer;
+    return true;
 }
+// Retained for compatibility; the streamed compute path does the refill.
+static inline void ggml_metal_op_maybe_fence_ffn(ggml_metal_device_t,
+                                                  ggml_metal_cmd_buf_t,
+                                                  const ggml_tensor *) {}
 #endif
 
 struct ggml_metal_op {

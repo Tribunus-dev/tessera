@@ -48,6 +48,16 @@ bool     llama_weight_stream_block_tensor_info(const llama_weight_stream_t * str
 int64_t  llama_weight_stream_block_tensor(llama_weight_stream_t * stream,
                                           int32_t layer_idx, uint32_t index,
                                           void * dst, size_t dst_size);
+
+// Copy one expert slice of a 3D tensor from the mmap into dst. For a tensor
+// "blk.L.ffn_gate_exps.weight" with shape [in_dim, out_dim, n_expert], copies
+// expert expert_idx's slice (size_bytes / n_expert bytes) into dst. Returns
+// bytes copied or -1 on failure. The caller must size dst to per_expert_bytes.
+int64_t  llama_weight_stream_expert_slice(llama_weight_stream_t * stream,
+                                          int32_t layer, uint32_t tensor_index,
+                                          int32_t expert_idx,
+                                          void * dst, size_t dst_size);
+
 size_t   llama_weight_stream_file_size(const llama_weight_stream_t * stream);
 
 // Async prefetch: memcpy the layer's bytes from the mmap into `dst`

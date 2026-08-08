@@ -541,6 +541,56 @@ int64_t ane_weight_stream_block_tensor(
     return (int64_t) ti.size_bytes;
 }
 
+// Copy one expert slice of a 3D tensor. The tensor must have n_dim >= 3;
+// the expert slice is size_bytes / shape[2] bytes at offset
+// expert_idx * per_expert_bytes within the tensor's on-disk data.
+int64_t ane_weight_stream_expert_slice(
+        ane_weight_stream_t * stream,
+        int32_t layer_idx,
+        uint32_t index,
+        int32_t expert_idx,
+        void * dst,
+        size_t dst_size_bytes) {
+    if (stream == nullptr || dst == nullptr) {
+        GGML_LOG_ERROR("ane: stream_expert_slice: null stream or dst\n");
+        return -1;
+    }
+    std::vector<std::map<std::string, ane_gguf_tensor_info>::const_iterator> indices;
+    const uint32_t n = collect_block_tensor_indices(stream, layer_idx, &indices);
+    if (index >= n) {
+        GGML_LOG_ERROR("ane: stream_expert_slice: index %u out of range\n", index);
+        return -1;
+    }
+    const auto & it = indices[index];
+    const ane_gguf_tensor_info & ti = it->second;
+    if (ti.n_dim < 3 || ti.shape[2] == 0) {
+        GGML_LOG_ERROR("ane: stream_expert_slice: %s is not 3D (n_dim=%u)\n",
+                       it->first.c_str(), ti.n_dim);
+        return -1;
+    }
+    const uint64_t per_expert = ti.size_bytes / ti.shape[2];
+    if (expert_idx < 0 || (uint64_t) expert_idx >= ti.shape[2]) {
+        GGML_LOG_ERROR("ane: stream_expert_slice: expert %d out of range (n_expert=%llu)\n",
+                       expert_idx, (unsigned long long) ti.shape[2]);
+        return -1;
+    }
+    if (per_expert > dst_size_bytes) {
+        GGML_LOG_ERROR("ane: stream_expert_slice: dst %zu < per_expert %llu\n",
+                       dst_size_bytes, (unsigned long long) per_expert);
+        return -1;
+    }
+    const uint64_t file_pos = stream->data_section_offset + ti.offset +
+                              (uint64_t) expert_idx * per_expert;
+    if (file_pos + per_expert > stream->mmap_size) {
+        GGML_LOG_ERROR("ane: stream_expert_slice: %s expert %d past EOF\n",
+                       it->first.c_str(), expert_idx);
+        return -1;
+    }
+    const uint8_t * src = (const uint8_t *) stream->mmap_base + file_pos;
+    std::memcpy(dst, src, (size_t) per_expert);
+    return (int64_t) per_expert;
+}
+
 int64_t ane_weight_stream_layer(ane_weight_stream_t * stream,
                                 int32_t layer_idx,
                                 void * dst_buffer,

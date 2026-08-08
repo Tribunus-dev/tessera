@@ -12,6 +12,7 @@
 // staging API: llama_set_embeddings_layer_inp / llama_get_embeddings_layer_inp
 // (per-layer hidden-state capture used by the offline feature pass)
 #include "../../src/llama-ext.h"
+#include "../../src/llama-weight-pool.h"
 
 // offline DFlash feature-capture file format (shared with the training driver)
 #include "tessera-features.h"
@@ -1731,154 +1732,18 @@ static bool compute_imatrix(llama_context * ctx, const common_params & params, c
 
     std::vector<std::thread> workers(std::thread::hardware_concurrency() - 1);
 
-#if defined(__APPLE__) && defined(GGML_USE_ANE)
-    // Slice 4.2c - double-buffer prefetch(L+1) || compute(L) for the
-    // heterog FFN->MTL0 + BLAS path. The 23.8 GiB bulk residency drops
-    // to 2x ~450 MiB IOSurface slots streamed from the mmap'd GGUF on a
-    // background memcpy fiber. Resident fallback when unavailable.
-    struct imatrix_stream_state {
-        llama_weight_stream_t *          stream     = nullptr;
-        llama_weight_stream_prefetch_t * pending    = nullptr;
-        void *                           slot[2]    = {nullptr, nullptr};
-        ggml_backend_buffer_t            buf[2]     = {nullptr, nullptr};
-        size_t                           slot_bytes = 0;
-        int                              cur_slot   = 0;
-        int                              next_layer = -1;
-        int32_t                          n_layer    = 0;
-        bool                             enabled    = false;
-    } pref;
-    auto pref_cleanup = [&pref]() {
-        if (pref.pending) { llama_weight_stream_prefetch_free(pref.pending); pref.pending = nullptr; }
-        if (pref.stream)  { llama_weight_stream_close(pref.stream);          pref.stream  = nullptr; }
-        // IOSurface slots alias the buffer storage; malloc slots own the memory.
-        if (pref.buf[0] || pref.buf[1]) {
-            if (pref.buf[0]) { ggml_backend_buffer_free(pref.buf[0]); pref.buf[0] = nullptr; }
-            if (pref.buf[1]) { ggml_backend_buffer_free(pref.buf[1]); pref.buf[1] = nullptr; }
-        } else {
-            if (pref.slot[0]) { free(pref.slot[0]); }
-            if (pref.slot[1]) { free(pref.slot[1]); }
-        }
-        pref.slot[0] = pref.slot[1] = nullptr;
-        pref.enabled = false;
-        pref.next_layer = pref.n_layer;
-    };
-    if (!params.model.path.empty()) {
-        char err[512] = {};
-        llama_weight_stream_t * ws = nullptr;
-        if (llama_weight_stream_open(params.model.path.c_str(), &ws, err, sizeof(err)) && ws) {
-            pref.n_layer = llama_model_n_layer(model);
-            size_t max_bytes = 0;
-            for (int32_t l = 0; l < pref.n_layer; ++l) {
-                size_t b = llama_weight_stream_layer_bytes(ws, l);
-                if (b > max_bytes) max_bytes = b;
-            }
-            if (max_bytes > 0) {
-                ggml_backend_buffer_t ba = ggml_backend_ane_iosurface_buffer_alloc(max_bytes);
-                ggml_backend_buffer_t bb = ggml_backend_ane_iosurface_buffer_alloc(max_bytes);
-                if (ba && bb) {
-                    pref.buf[0] = ba; pref.buf[1] = bb;
-                    pref.slot[0] = ggml_backend_buffer_get_base(ba);
-                    pref.slot[1] = ggml_backend_buffer_get_base(bb);
-                    pref.slot_bytes = ggml_backend_buffer_get_size(ba);
-                    pref.stream = ws; pref.enabled = true;
-                    LOG_INF("%s: weight streaming enabled: max_layer_bytes=%zu, 2x IOSurface %.1f MiB (file=%s)\n",
-                            __func__, max_bytes, pref.slot_bytes / (1024.0*1024.0), params.model.path.c_str());
-                } else {
-                    if (ba) ggml_backend_buffer_free(ba);
-                    if (bb) ggml_backend_buffer_free(bb);
-                    // Fallback: malloc double-buffer still overlaps mmap memcpy with
-                    // llama_decode on non-ANE or IOSurface-exhausted builds.
-                    void * ma = malloc(max_bytes);
-                    void * mb = malloc(max_bytes);
-                    if (ma && mb) {
-                        pref.slot[0] = ma; pref.slot[1] = mb;
-                        pref.slot_bytes = max_bytes;
-                        pref.stream = ws; pref.enabled = true;
-                        LOG_INF("%s: weight streaming enabled (malloc fallback): max_layer_bytes=%zu, 2x %.1f MiB (file=%s)\n",
-                                __func__, max_bytes, max_bytes / (1024.0*1024.0), params.model.path.c_str());
-                    } else {
-                        if (ma) free(ma);
-                        if (mb) free(mb);
-                        llama_weight_stream_close(ws);
-                        LOG_WRN("%s: streaming disabled: IOSurface+malloc alloc failed (%zu bytes)\n", __func__, max_bytes);
-                    }
-                }
-            } else {
-                llama_weight_stream_close(ws);
-                LOG_WRN("%s: streaming disabled: max_layer_bytes=0\n", __func__);
-            }
-        } else {
-            LOG_WRN("%s: streaming unavailable for '%s': %s (resident fallback)\n",
-                    __func__, params.model.path.c_str(), err[0] ? err : "open failed");
-        }
+    // Slice 4.2a: the 2-slot IOSurface weight pool is now owned by the model
+    // (opened in llama_model::load_tensors when FFN routes to the IOSurface
+    // buft). The per-layer refill is driven by the Metal encoder's streamed
+    // compute path (ggml_metal_graph_compute_streamed). imatrix no longer
+    // manages stream state; it just reports whether the pool is active.
+    if (llama_model_weight_pool_enabled(model)) {
+        LOG_INF("%s: weight pool active (2-slot IOSurface streaming)\n", __func__);
     }
-    if (pref.enabled) {
-        pref.pending = llama_weight_stream_prefetch_async(pref.stream, 0, pref.slot[0], pref.slot_bytes);
-        if (pref.pending) {
-            int64_t got = llama_weight_stream_prefetch_wait(pref.pending);
-            pref.pending = nullptr;
-            if (got < 0) {
-                LOG_WRN("%s: initial prefetch layer 0 failed; disabling streaming\n", __func__);
-                pref_cleanup();
-            } else {
-                pref.cur_slot = 0;
-                pref.next_layer = 1;
-                LOG_INF("%s: prefetched layer 0 (%lld bytes) into slot 0\n", __func__, (long long) got);
-                if (pref.next_layer < pref.n_layer) {
-                    int other = 1 - pref.cur_slot;
-                    pref.pending = llama_weight_stream_prefetch_async(
-                            pref.stream, pref.next_layer, pref.slot[other], pref.slot_bytes);
-                    if (!pref.pending) {
-                        LOG_WRN("%s: async prefetch layer 1 failed (no overlap for first chunk)\n", __func__);
-                    } else {
-                        pref.next_layer++;
-                    }
-                }
-            }
-        } else {
-            LOG_WRN("%s: prefetch_async layer 0 returned null; disabling streaming\n", __func__);
-            pref_cleanup();
-        }
-    }
-    struct imatrix_prefetch_guard {
-        decltype(pref_cleanup) fn; bool active = true;
-        ~imatrix_prefetch_guard() { if (active) fn(); }
-    } pref_guard{pref_cleanup, true};
 
     const auto t_loop_start = std::chrono::steady_clock::now();
 
     for (int i = 0; i < n_chunk; i += n_seq) {
-        // Double-buffer overlap: wait for the in-flight prefetch of the
-        // next layer before the chunk's decode, then launch the following
-        // layer's async copy on the other slot while compute(L) runs.
-        if (pref.enabled && i != 0) {
-            if (pref.pending) {
-                int64_t got = llama_weight_stream_prefetch_wait(pref.pending);
-                pref.pending = nullptr;
-                if (got < 0) {
-                    LOG_WRN("%s: prefetch wait failed at chunk %d; disabling streaming\n", __func__, i);
-                    pref_cleanup();
-                } else {
-                    pref.cur_slot = 1 - pref.cur_slot;
-                }
-            }
-            if (pref.enabled && pref.next_layer < pref.n_layer) {
-                int other = 1 - pref.cur_slot;
-                llama_weight_stream_prefetch_t * nxt = llama_weight_stream_prefetch_async(
-                        pref.stream, pref.next_layer, pref.slot[other], pref.slot_bytes);
-                if (nxt) {
-                    pref.pending = nxt;
-                    pref.next_layer++;
-                } else {
-                    LOG_WRN("%s: async prefetch layer %d failed\n", __func__, pref.next_layer);
-                }
-            }
-        }
-#else
-    const auto t_loop_start = std::chrono::steady_clock::now();
-
-    for (int i = 0; i < n_chunk; i += n_seq) {
-#endif
         const int start =     i * n_ctx;
         const int end   = start + n_ctx;
 

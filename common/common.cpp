@@ -12,6 +12,10 @@
 
 #include "ggml-backend.h"
 
+#if defined(__APPLE__) && defined(GGML_USE_ANE)
+#include "ggml-ane.h"
+#endif
+
 #include <algorithm>
 #include <cinttypes>
 #include <climits>
@@ -1555,14 +1559,15 @@ struct llama_model_params common_model_params_to_llama(common_params & params) {
         mparams.kv_overrides = params.kv_overrides.data();
     }
 
-    // Batch 2 — default heterog tensor_buft table (ffn -> MTL0) for the 10GB
-    // M1 pipeline. Only when the user left overrides empty (explicit
-    // --override-tensor still wins) and Metal is in the device list and
-    // fitting is off. The table is injected here (after arg parsing's
-    // ntbo padding) so it survives --fit off but does not trip the
-    // fit.cpp "already set" guard. Non-Metal or no-device runs keep the
-    // CPU-only default. See src/llama-weight-stream.h for the 2-slot
-    // per-layer streaming that makes this residency viable (Batch 3).
+    // Batch 2/3 - default heterog tensor_buft table (ffn -> 2-slot IOSurface
+    // pool when Metal + ANE are present, else MTL0). Only when the user left
+    // overrides empty (explicit --override-tensor still wins) and Metal is in
+    // the device list and fitting is off. The table is injected here (after
+    // arg parsing's ntbo padding) so it survives --fit off but does not trip
+    // the fit.cpp "already set" guard. Non-Metal or no-device runs keep the
+    // CPU-only default. See src/llama-weight-pool.h for the 2-slot per-layer
+    // streaming that backs the IOSurface buft; the model loader aliases the
+    // FFN tensors into the pool's two slots instead of bulk-allocating them.
     {
         bool has_real_overrides = false;
         for (auto & ov : params.tensor_buft_overrides) {
@@ -1587,7 +1592,26 @@ struct llama_model_params common_model_params_to_llama(common_params & params) {
                     has_metal = true;
                 }
             }
-            if (has_metal && mtl_buft != nullptr) {
+            // Slice 4.2a: when both Metal and ANE are available, route FFN to
+            // the IOSurface buft so the pool can alias 2 slots across all 48
+            // layers. Falls back to MTL0 when ANE is absent (legacy path).
+            // Note: on Apple Silicon the Metal buft reports is_host=true
+            // (unified memory), so mtl_buft is typically null here. The
+            // IOSurface buft is the primary target, not a fallback.
+            ggml_backend_buffer_type_t ffn_buft = mtl_buft;
+#if defined(__APPLE__) && defined(GGML_USE_ANE)
+            if (has_metal) {
+                auto * iosurface_buft = ggml_backend_ane_iosurface_buffer_type();
+                if (iosurface_buft) {
+                    ffn_buft = iosurface_buft;
+                }
+            }
+#endif
+            if (has_metal && ffn_buft != nullptr) {
+                // When the IOSurface buft is selected (ANE present), use it
+                // directly even though mtl_buft may be null (unified memory).
+                // ffn_buft is already set to IOSurface above; this block just
+                // needs has_metal + a non-null ffn_buft to proceed.
                 // The arg parser already padded tensor_buft_overrides to
                 // ntbo = 4096 with nullptr terminators. Reuse the leading
                 // slots so the existing terminator stays at the back.
@@ -1597,11 +1621,11 @@ struct llama_model_params common_model_params_to_llama(common_params & params) {
                 }
                 static std::list<std::string> s_heterog_patterns;
                 s_heterog_patterns.push_back("blk\\.[0-9]+\\.ffn_gate.*");
-                params.tensor_buft_overrides[0] = {s_heterog_patterns.back().c_str(), mtl_buft};
+                params.tensor_buft_overrides[0] = {s_heterog_patterns.back().c_str(), ffn_buft};
                 s_heterog_patterns.push_back("blk\\.[0-9]+\\.ffn_up.*");
-                params.tensor_buft_overrides[1] = {s_heterog_patterns.back().c_str(), mtl_buft};
+                params.tensor_buft_overrides[1] = {s_heterog_patterns.back().c_str(), ffn_buft};
                 s_heterog_patterns.push_back("blk\\.[0-9]+\\.ffn_down.*");
-                params.tensor_buft_overrides[2] = {s_heterog_patterns.back().c_str(), mtl_buft};
+                params.tensor_buft_overrides[2] = {s_heterog_patterns.back().c_str(), ffn_buft};
                 // terminator already at back from padding; if we grew the
                 // vector above, the new last entry is also a terminator.
                 GGML_ASSERT(params.tensor_buft_overrides.back().pattern == nullptr);

@@ -56,6 +56,12 @@ int64_t llama_weight_stream_block_tensor(llama_weight_stream_t * s, int32_t l,
     if (!s || !s->inner) return -1;
     return ane_weight_stream_block_tensor(s->inner, l, i, d, n);
 }
+int64_t llama_weight_stream_expert_slice(llama_weight_stream_t * s, int32_t l,
+                                         uint32_t ti, int32_t ei,
+                                         void * d, size_t n) {
+    if (!s || !s->inner) return -1;
+    return ane_weight_stream_expert_slice(s->inner, l, ti, ei, d, n);
+}
 size_t llama_weight_stream_file_size(const llama_weight_stream_t * s) {
     if (!s || !s->inner) return 0;
     return ane_weight_stream_file_size(s->inner);
@@ -122,6 +128,7 @@ uint32_t llama_weight_stream_n_block_tensors(const llama_weight_stream_t *, int3
 bool llama_weight_stream_block_tensor_info(const llama_weight_stream_t *, int32_t, uint32_t,
                                            const char **, size_t *, uint32_t *, uint64_t *) { return false; }
 int64_t llama_weight_stream_block_tensor(llama_weight_stream_t *, int32_t, uint32_t, void *, size_t) { return -1; }
+int64_t llama_weight_stream_expert_slice(llama_weight_stream_t *, int32_t, uint32_t, int32_t, void *, size_t) { return -1; }
 size_t llama_weight_stream_file_size(const llama_weight_stream_t *) { return 0; }
 size_t llama_weight_stream_layer_bytes(const llama_weight_stream_t *, int32_t) { return 0; }
 llama_weight_stream_prefetch_t * llama_weight_stream_prefetch_async(llama_weight_stream_t *, int32_t, void *, size_t) { return nullptr; }

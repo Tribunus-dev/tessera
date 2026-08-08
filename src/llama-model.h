@@ -803,6 +803,10 @@ struct llama_model {
 
     bool has_tensor_overrides() const;
 
+    // Slice 4.2a: true if the 2-slot IOSurface weight pool is active (FFN
+    // tensors aliased into streamed slots rather than bulk-resident).
+    bool weight_pool_enabled() const;
+
     const struct ggml_tensor * get_tensor(const char * name) const;
     const llama_tile640_tensor * get_tile640_tensor(const std::string & name) const;
 

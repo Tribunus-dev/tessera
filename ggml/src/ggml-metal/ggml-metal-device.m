@@ -542,6 +542,16 @@ struct ggml_metal_device {
     atomic_int  stream_last_layer; // -1 = none yet
     atomic_int  stream_slot;       // 0/1 double-buffer parity
     void      * stream_fence;      // ggml_mtl_shared_event_t, weak (loader owns)
+
+    // Slice 4.2a: weight pool + per-layer refill callback. Weak refs: the
+    // loader/model owns the pool and clears it before freeing. ensure_fn is
+    // invoked from ggml_metal_op_maybe_fence_ffn at each layer transition.
+    // poke_fn (Phase 2) triggers background prefetch of the next layer.
+    void                          * stream_pool;       // llama_weight_pool_t, weak
+    ggml_metal_stream_ensure_fn     stream_ensure_fn;  // refill callback
+    ggml_metal_stream_poke_fn       stream_poke_fn;    // prefetch poke (Phase 2)
+    ggml_metal_stream_ensure_experts_fn stream_ensure_experts_fn; // MoE sparse fill
+    ggml_metal_stream_poke_experts_fn   stream_poke_experts_fn;   // MoE prefetch poke
 };
 
 //
@@ -702,7 +712,12 @@ ggml_metal_device_t ggml_metal_device_init(int device) {
             dev->addr_virt = 0x000000400ULL;
             atomic_store_explicit(&dev->stream_last_layer, -1, memory_order_relaxed);
             atomic_store_explicit(&dev->stream_slot, 0, memory_order_relaxed);
-            dev->stream_fence = NULL;
+            dev->stream_fence    = NULL;
+            dev->stream_pool      = NULL;
+            dev->stream_ensure_fn = NULL;
+            dev->stream_poke_fn   = NULL;
+            dev->stream_ensure_experts_fn = NULL;
+            dev->stream_poke_experts_fn   = NULL;
 
             dev->props.device = device;
             dev->props.has_simdgroup_reduction  = [dev->mtl_device supportsFamily:MTLGPUFamilyApple7];
@@ -981,6 +996,35 @@ void ggml_metal_device_stream_set_fence(ggml_metal_device_t dev, void * shared_e
 }
 void * ggml_metal_device_stream_get_fence(ggml_metal_device_t dev) {
     return dev->stream_fence;
+}
+
+// Slice 4.2a: weight pool attachment (weak refs, loader-owned).
+void ggml_metal_device_stream_set_pool(ggml_metal_device_t dev,
+                                       void * pool,
+                                       ggml_metal_stream_ensure_fn ensure_fn,
+                                       ggml_metal_stream_poke_fn  poke_fn,
+                                       ggml_metal_stream_ensure_experts_fn ensure_experts_fn,
+                                       ggml_metal_stream_poke_experts_fn  poke_experts_fn) {
+    dev->stream_pool      = pool;
+    dev->stream_ensure_fn = ensure_fn;
+    dev->stream_poke_fn   = poke_fn;
+    dev->stream_ensure_experts_fn = ensure_experts_fn;
+    dev->stream_poke_experts_fn   = poke_experts_fn;
+}
+void * ggml_metal_device_stream_get_pool(const ggml_metal_device_t dev) {
+    return dev ? dev->stream_pool : NULL;
+}
+ggml_metal_stream_ensure_fn ggml_metal_device_stream_get_ensure_fn(const ggml_metal_device_t dev) {
+    return dev ? dev->stream_ensure_fn : NULL;
+}
+ggml_metal_stream_poke_fn ggml_metal_device_stream_get_poke_fn(const ggml_metal_device_t dev) {
+    return dev ? dev->stream_poke_fn : NULL;
+}
+ggml_metal_stream_ensure_experts_fn ggml_metal_device_stream_get_ensure_experts_fn(const ggml_metal_device_t dev) {
+    return dev ? dev->stream_ensure_experts_fn : NULL;
+}
+ggml_metal_stream_poke_experts_fn ggml_metal_device_stream_get_poke_experts_fn(const ggml_metal_device_t dev) {
+    return dev ? dev->stream_poke_experts_fn : NULL;
 }
 
 void * ggml_metal_device_get_obj(ggml_metal_device_t dev) {

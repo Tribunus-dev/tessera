@@ -143,6 +143,16 @@ int64_t ane_weight_stream_block_tensor(
         void * dst,
         size_t dst_size_bytes);
 
+// Copy one expert slice of a 3D tensor (MoE). See ane_weight_stream_block_tensor
+// for the index convention. expert_idx selects which ne[2] slice to copy.
+int64_t ane_weight_stream_expert_slice(
+        ane_weight_stream_t * stream,
+        int32_t layer_idx,
+        uint32_t index,
+        int32_t expert_idx,
+        void * dst,
+        size_t dst_size_bytes);
+
 // Diagnostic: file size in bytes of the mmapped GGUF.
 // Returns 0 if the stream is NULL.
 size_t ane_weight_stream_file_size(const ane_weight_stream_t * stream);
