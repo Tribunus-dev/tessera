@@ -33,6 +33,7 @@ add_library(llama
             llama-mmap.cpp
             llama-model-loader.cpp
             llama-model-saver.cpp
+            llama-weight-stream.cpp
             llama-model.cpp
             llama-quant.cpp
             llama-sampler.cpp
