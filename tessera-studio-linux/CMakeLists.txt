@@ -34,6 +34,9 @@ add_library(tessera-core-linux STATIC
     src/core/encryption/Secrets.cpp
     src/core/encryption/Volume.cpp
     src/core/productivity/Productivity.cpp
+    src/core/productivity/docs/DocStore.cpp
+    src/core/productivity/sheets/SheetStore.cpp
+    src/core/productivity/slides/SlideStore.cpp
     src/core/agent/tools/DesktopTool.cpp
     src/core/agent/tools/BrowserTool.cpp
     src/core/agent/ToolRegistry.cpp
