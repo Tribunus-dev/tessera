@@ -36,10 +36,23 @@ static bool probe_url(const std::string &url, std::string &host, int &port){
     return !host.empty();
 }
 StartOutcome DataLayer::connect(){
-    // Real probe: if url set, try TCP; if empty, try localhost defaults
+    // Embedded Postgres first (user decision): use XDG_DATA_HOME/tessera/pgdata if present or if no external URL
+    std::string embedded_pg = xdg_data_dir() + "/pgdata";
+    bool embedded_exists = std::filesystem::exists(embedded_pg + "/PG_VERSION") || std::filesystem::exists(embedded_pg + "/postgresql.conf");
     std::string pg_url = cfg_.postgres_url;
     std::string vk_url = cfg_.valkey_url;
-    if(pg_url.empty() && can_connect("127.0.0.1",5432)) pg_url = "postgres://tessera:tessera@127.0.0.1:5432/tessera";
+    if(pg_url.empty()){
+        if(embedded_exists){
+            // Embedded: use Unix socket via host param or default embedded URL
+            pg_url = "postgres://tessera:tessera@127.0.0.1:5432/tessera?host=" + embedded_pg;
+            // If embedded not yet running, we will start it via pg_ctl in Flatpak; probe will fail gracefully to DataStoreDegraded
+        } else if(can_connect("127.0.0.1",5432)){
+            pg_url = "postgres://tessera:tessera@127.0.0.1:5432/tessera";
+        } else {
+            // No embedded and no external: keep empty, will report BothDown with hint to init embedded
+            pg_url = "";
+        }
+    }
     if(vk_url.empty() && can_connect("127.0.0.1",6379)) vk_url = "valkey://127.0.0.1:6379";
     // update cfg_ so from_env probing is sticky
     cfg_.postgres_url = pg_url; cfg_.valkey_url = vk_url;

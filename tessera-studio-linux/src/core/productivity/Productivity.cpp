@@ -1,4 +1,5 @@
 #include "Productivity.h"
+#include "OAuth.h"
 #include <cstdlib>
 #ifdef HAVE_EDS
 #include <libedataserver/libedataserver.h>
@@ -303,13 +304,29 @@ bool ProductivityStore::create_reminder(const Reminder &r){
 #endif
 }
 bool ProductivityStore::send_email(const Email &e){
-    (void)e;
 #ifdef HAVE_LIBETPAN
+    // Detect provider for OAuth2 (gmail/icloud/outlook) — first-class per user decision
+    std::string url = getenv("TESSERA_SMTP_URL") ? getenv("TESSERA_SMTP_URL") : "";
+    std::string email_hint = getenv("TESSERA_EMAIL") ? getenv("TESSERA_EMAIL") : e.id;
+    EmailProvider prov = detect_email_provider(email_hint + " " + url);
+    std::string pid;
+    if(prov==EmailProvider::Gmail) pid="gmail";
+    else if(prov==EmailProvider::Outlook) pid="outlook";
+    else if(prov==EmailProvider::ICloud) pid="icloud";
+    if(!pid.empty()){
+        OAuthCreds creds = load_oauth_creds(pid);
+        if(!creds.access_token.empty()){
+            // Use XOAUTH2: libetpan supports mailimap_oauth2_authenticate / mailsmtp_oauth2
+            // For SMTP, we would call mailsmtp_oauth2_authenticate with xoauth2_string
+            std::string xoauth = xoauth2_string(creds.email.empty()?email_hint:creds.email, creds.access_token);
+            (void)xoauth; // used below when libetpan XOAUTH2 is wired
+        }
+    }
     const char *smtp_url = getenv("TESSERA_SMTP_URL");
     if(!smtp_url || !*smtp_url) return false;
     return true;
 #else
-    return false;
+    (void)e; return false;
 #endif
 }
 void ProductivityStore::sync_all(){

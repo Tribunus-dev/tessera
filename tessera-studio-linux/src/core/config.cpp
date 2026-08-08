@@ -45,6 +45,11 @@ std::string cloud_base_url_for(const std::string &id){
 
 AppConfig load_config() {
     AppConfig cfg;
+    // Default to on-device with OpenVINO when available (user decision: in-process FFI default = openvino)
+    // If libllama was built with GGML_OPENVINO, gpu-layers 1 enables the GPU path; otherwise CPU.
+    const char *ov = std::getenv("GGML_OPENVINO_DEVICE");
+    if(ov && std::string(ov)=="GPU") cfg.on_device_gpu_layers = 1;
+    else if(std::getenv("TESSERA_OPENVINO")) cfg.on_device_gpu_layers = 1;
     // GSettings first (when schema installed), env overrides
     GSettings *gs = nullptr;
     GSettingsSchemaSource *src = g_settings_schema_source_get_default();
