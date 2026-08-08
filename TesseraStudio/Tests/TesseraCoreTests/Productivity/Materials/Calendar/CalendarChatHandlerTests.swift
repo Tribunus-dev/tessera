@@ -8,6 +8,7 @@ import XCTest
 final class CalendarChatHandlerTests: XCTestCase {
 
     private let calendar = CalendarFixtures.calendar()
+    private var ref: Date { CalendarFixtures.referenceDate(calendar: calendar) }
 
     private enum TestError: Error {
         case boom
@@ -17,20 +18,20 @@ final class CalendarChatHandlerTests: XCTestCase {
         contacts: [Contact] = []
     ) -> (handler: CalendarChatHandler, store: InMemoryCalendarStore) {
         let store = InMemoryCalendarStore()
-        let parser = CalendarFixtures.parser(contacts: contacts, referenceDate: Date())
-        let handler = CalendarChatHandler(store: store, parser: parser, calendar: calendar)
+        let parser = CalendarFixtures.parser(contacts: contacts)
+        let handler = CalendarChatHandler(store: store, parser: parser, calendar: calendar, now: { self.ref })
         return (handler, store)
     }
 
     private func tomorrow(at hour: Int = 12) -> Date {
-        let day = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date()))!
+        let day = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: ref))!
         var c = calendar.dateComponents([.year, .month, .day], from: day)
         c.hour = hour
         return calendar.date(from: c)!
     }
 
     private func nextWeekday(_ weekday: Int) -> Date {
-        var day = calendar.startOfDay(for: Date())
+        var day = calendar.startOfDay(for: ref)
         for _ in 1...7 {
             day = calendar.date(byAdding: .day, value: 1, to: day)!
             if calendar.component(.weekday, from: day) == weekday { return day }
@@ -243,9 +244,9 @@ final class CalendarChatHandlerTests: XCTestCase {
         guard case .list(let range) = await handler.classify("what's on my calendar tomorrow?") else {
             return XCTFail("expected list intent")
         }
-        let tomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date()))!
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: ref))!
         XCTAssertTrue(range.contains(tomorrow))
-        XCTAssertFalse(range.contains(calendar.startOfDay(for: Date()).addingTimeInterval(3600)))
+        XCTAssertFalse(range.contains(calendar.startOfDay(for: ref).addingTimeInterval(3600)))
     }
 
     func testClassifyCreateIsTheDefault() async {
