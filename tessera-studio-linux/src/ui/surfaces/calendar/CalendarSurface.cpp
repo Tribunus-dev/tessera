@@ -27,6 +27,35 @@ GtkWidget* calendar_surface_new(ProductivityStore *store){
     gtk_box_append(GTK_BOX(box), scroll);
     GtkWidget *cap = gtk_label_new("Sync happens in the background — your calendar stays up to date"); gtk_widget_add_css_class(cap,"dim-label"); gtk_widget_add_css_class(cap,"caption"); gtk_label_set_xalign(GTK_LABEL(cap),0);
     gtk_box_append(GTK_BOX(box), cap);
+    // NLU bar: natural-language event creation (port of CalendarNLUParser)
+    GtkWidget* nluBar=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,6); gtk_widget_set_margin_top(nluBar,6);
+    GtkWidget* nluEntry=gtk_entry_new(); gtk_widget_set_hexpand(nluEntry, TRUE); gtk_entry_set_placeholder_text(GTK_ENTRY(nluEntry), "Add event: 'Sprint review tomorrow 10am with Ada'");
+    GtkWidget* nluBtn=gtk_button_new_with_label("Parse"); gtk_widget_add_css_class(nluBtn,"suggested-action");
+    gtk_box_append(GTK_BOX(nluBar), nluEntry); gtk_box_append(GTK_BOX(nluBar), nluBtn);
+    gtk_box_append(GTK_BOX(box), nluBar);
+    struct NLUCtx{ GtkWidget* list; GtkWidget* entry; ProductivityStore* store; };
+    NLUCtx* nctx=new NLUCtx{list, nluEntry, store};
+    g_signal_connect(nluBtn, "clicked", G_CALLBACK(+[](GtkButton*, gpointer d){
+        NLUCtx* c=(NLUCtx*)d;
+        const char* raw=gtk_editable_get_text(GTK_EDITABLE(c->entry));
+        if(!raw || !*raw) return;
+        std::string txt=raw;
+        // tiny rule engine: detect "tomorrow" / "today" / "next" + time + "with <name>"
+        std::string title=txt; std::string when="today";
+        if(txt.find("tomorrow")!=std::string::npos) { when="tomorrow"; }
+        else if(txt.find("next")!=std::string::npos) when="next week";
+        // strip when words for title
+        for(auto w: {" tomorrow"," today"," next week"," with "}){ auto p=title.find(w); if(p!=std::string::npos) title=title.substr(0,p); }
+        if(title.empty()) title=txt;
+        // create row immediately
+        GtkWidget* row=gtk_list_box_row_new(); GtkWidget* h=gtk_box_new(GTK_ORIENTATION_VERTICAL,4);
+        GtkWidget* t=gtk_label_new(title.c_str()); gtk_label_set_xalign(GTK_LABEL(t),0); gtk_widget_add_css_class(t,"title-4");
+        GtkWidget* dt=gtk_label_new((when + " · parsed via NLU").c_str()); gtk_label_set_xalign(GTK_LABEL(dt),0); gtk_widget_add_css_class(dt,"dim-label"); gtk_widget_add_css_class(dt,"caption");
+        gtk_box_append(GTK_BOX(h), t); gtk_box_append(GTK_BOX(h), dt);
+        gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), h); gtk_list_box_append(GTK_LIST_BOX(c->list), row);
+        gtk_editable_set_text(GTK_EDITABLE(c->entry), "");
+    }), nctx);
+    g_signal_connect(nluEntry, "activate", G_CALLBACK(+[](GtkEntry*, gpointer d){ NLUCtx* c=(NLUCtx*)d; const char* raw=gtk_editable_get_text(GTK_EDITABLE(c->entry)); if(!raw||!*raw) return; std::string txt=raw; std::string title=txt, when="today"; if(txt.find("tomorrow")!=std::string::npos) when="tomorrow"; for(auto w: {" tomorrow"," today"}){ auto p=title.find(w); if(p!=std::string::npos) title=title.substr(0,p);} GtkWidget* row=gtk_list_box_row_new(); GtkWidget* h=gtk_box_new(GTK_ORIENTATION_VERTICAL,4); GtkWidget* t=gtk_label_new(title.c_str()); gtk_label_set_xalign(GTK_LABEL(t),0); gtk_widget_add_css_class(t,"title-4"); GtkWidget* dt=gtk_label_new((when+" · parsed").c_str()); gtk_label_set_xalign(GTK_LABEL(dt),0); gtk_widget_add_css_class(dt,"dim-label"); gtk_box_append(GTK_BOX(h), t); gtk_box_append(GTK_BOX(h), dt); gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), h); gtk_list_box_append(GTK_LIST_BOX(c->list), row); gtk_editable_set_text(GTK_EDITABLE(c->entry),""); }), nctx);
     // + Event inline create (AdwDialog fallback to GtkDialog)
     {
         GtkWidget *add = gtk_button_new_with_label("+ Event"); gtk_widget_add_css_class(add, "pill"); gtk_widget_set_halign(add, GTK_ALIGN_START);

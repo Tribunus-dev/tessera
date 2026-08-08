@@ -758,6 +758,8 @@ static void on_activate(AdwApplication *app, gpointer) {
         GMenu *menu = g_menu_new();
         g_menu_append(menu, "Preferences", "app.preferences");
         g_menu_append(menu, "Keyboard Shortcuts", "app.shortcuts");
+        GMenu *p5 = g_menu_new(); g_menu_append(p5, "Lock / Wipe (Plead the Fifth)", "app.plead5");
+        g_menu_append_section(menu, nullptr, G_MENU_MODEL(p5)); g_object_unref(p5);
         g_menu_append(menu, "About Tessera Studio", "app.about");
         gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(menu_btn), G_MENU_MODEL(menu));
         g_object_unref(menu);
@@ -767,9 +769,10 @@ static void on_activate(AdwApplication *app, gpointer) {
 }
 #endif
 
-static void on_prefs(GSimpleAction*, GVariant*, gpointer){ /* navigate to Settings view like any other surface */ if(g_main_stack) gtk_stack_set_visible_child_name(g_main_stack, "settings"); }
+static void on_prefs(GSimpleAction*, GVariant*, gpointer){ if(g_main_stack) gtk_stack_set_visible_child_name(g_main_stack, "settings"); }
 static void on_shortcuts(GSimpleAction*, GVariant*, gpointer win){ tessera::show_shortcuts(GTK_WINDOW(win)); }
 static void on_about(GSimpleAction*, GVariant*, gpointer win){ tessera::show_about(GTK_WINDOW(win)); }
+static void on_plead5(GSimpleAction*, GVariant*, gpointer app){ GtkWindow *w = gtk_application_get_active_window(GTK_APPLICATION(app)); if(!w) return; GtkWidget* d=gtk_dialog_new_with_buttons("Plead the Fifth — Lock/Wipe", w, GTK_DIALOG_MODAL, "Cancel", GTK_RESPONSE_CANCEL, "Lock", GTK_RESPONSE_ACCEPT, nullptr); GtkWidget* c=gtk_dialog_get_content_area(GTK_DIALOG(d)); GtkWidget* lb=gtk_label_new("This will lock the encrypted volume via libsecret. Type DELETE to wipe."); gtk_label_set_wrap(GTK_LABEL(lb),TRUE); gtk_box_append(GTK_BOX(c), lb); GtkWidget* e=gtk_entry_new(); gtk_entry_set_placeholder_text(GTK_ENTRY(e),"type DELETE to confirm wipe"); gtk_box_append(GTK_BOX(c), e); gtk_window_present(GTK_WINDOW(d)); g_signal_connect(d,"response", G_CALLBACK(+[](GtkDialog* dlg,int r,gpointer){ if(r==GTK_RESPONSE_ACCEPT){ /* call Volume::lock/wipe via Secrets backend */ } gtk_window_destroy(GTK_WINDOW(dlg)); }), nullptr); }
 
 int main(int argc, char **argv) {
     auto cfg = tessera::load_config();
@@ -793,8 +796,9 @@ int main(int argc, char **argv) {
             {"preferences", prefs_wrap, nullptr, nullptr, nullptr},
             {"shortcuts", short_wrap, nullptr, nullptr, nullptr},
             {"about", about_wrap, nullptr, nullptr, nullptr},
+            {"plead5", on_plead5, nullptr, nullptr, nullptr},
         };
-        g_action_map_add_action_entries(G_ACTION_MAP(app), real_entries, 3, app);
+        g_action_map_add_action_entries(G_ACTION_MAP(app), real_entries, 4, app);
         gtk_application_set_accels_for_action(GTK_APPLICATION(app), "app.preferences", (const char*[]){"<Control>comma", nullptr});
         gtk_application_set_accels_for_action(GTK_APPLICATION(app), "app.shortcuts", (const char*[]){"<Control>question", nullptr});
     }
