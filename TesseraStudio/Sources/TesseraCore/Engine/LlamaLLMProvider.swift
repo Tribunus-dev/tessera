@@ -194,6 +194,101 @@ public actor LlamaLLMProvider: LLMProvider {
         )
     }
 
+    /// Token-granular streaming for the dual-agent surface. The C bridge
+    /// invokes its callback once per decoded piece; we forward each piece to
+    /// the AsyncStream continuation so the UI renders incrementally. The
+    /// final assembled text is still parsed for a trailing tool-call fence so
+    /// callers that rely on tool dispatch can consume the stream.
+    public func stream(
+        system: String,
+        messages: [LLMMessage],
+        tools: [ToolDescriptor]
+    ) async throws -> AsyncStream<LLMChunk> {
+        let prompt = Self.buildPrompt(system: system, messages: messages, tools: tools)
+        return AsyncStream { continuation in
+            let task = Task { [self] in
+                let fullText: String
+                do {
+                    fullText = try await self.generateStreamed(prompt: prompt) { piece in
+                        continuation.yield(.text(piece))
+                    }
+                } catch {
+                    continuation.finish()
+                    return
+                }
+                _ = fullText // tool-call parsing happens in complete(); streamed
+                continuation.yield(.done)
+            }
+            continuation.onTermination = { @Sendable _ in task.cancel() }
+        }
+    }
+
+    /// Runs one generation, forwarding each decoded piece to `onPiece`. The
+    /// full assembled text is returned for the caller's bookkeeping. Shared
+    /// by `stream`; kept separate so the actor-isolated generation path stays
+    /// linear and cancellable.
+    private func generateStreamed(
+        prompt: String,
+        onPiece: @Sendable @escaping (String) -> Void
+    ) async throws -> String {
+        try ensureReady()
+
+        // A reference box the C callback writes into; the same pattern as
+        // complete(), but the callback also forwards each piece to the
+        // caller-supplied closure.
+        final class StreamBox: @unchecked Sendable {
+            var text = ""
+            var traceLines: [String] = []
+            let onPiece: (String) -> Void
+            init(onPiece: @escaping (String) -> Void) { self.onPiece = onPiece }
+        }
+        let box = StreamBox(onPiece: onPiece)
+        let boxPtr = Unmanaged.passUnretained(box).toOpaque()
+
+        if let specEngine {
+            let topk = runtimeCapture ? Int32(runtimeCaptureTopk) : 0
+            let generated = cllama_engine_generate_spec(
+                specEngine, prompt, Int32(maxTokens), topk,
+                { piece, _, ctx in
+                    guard let ctx, let piece else { return }
+                    let s = String(cString: piece)
+                    let b = Unmanaged<StreamBox>.fromOpaque(ctx).takeUnretainedValue()
+                    b.text += s
+                    b.onPiece(s)
+                },
+                topk > 0 ? { line, ctx in
+                    guard let ctx, let line else { return }
+                    let b = Unmanaged<StreamBox>.fromOpaque(ctx).takeUnretainedValue()
+                    b.traceLines.append(String(cString: line))
+                } : nil,
+                boxPtr
+            )
+            if generated < 0 {
+                throw LlamaLLMError.generationFailed(lastError())
+            }
+            if !box.traceLines.isEmpty {
+                sessionTraceBuffer.append(contentsOf: box.traceLines)
+            }
+            flushSessionTraces()
+            return box.text
+        }
+
+        guard let engine else {
+            throw LlamaLLMError.modelLoadFailed(lastError())
+        }
+        let generated = cllama_engine_generate(engine, prompt, Int32(maxTokens), { piece, _, ctx in
+            guard let ctx, let piece else { return }
+            let s = String(cString: piece)
+            let box = Unmanaged<StreamBox>.fromOpaque(ctx).takeUnretainedValue()
+            box.text += s
+            box.onPiece(s)
+        }, boxPtr)
+        if generated < 0 {
+            throw LlamaLLMError.generationFailed(lastError())
+        }
+        return box.text
+    }
+
     /// Drain the session buffer into the trace store (section 8). One flush
     /// per completed generation keeps each runtime file to a single sid. On
     /// a store failure the buffer is kept so the next generation retries -

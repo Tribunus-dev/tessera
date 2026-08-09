@@ -135,24 +135,19 @@ public:
     };
     // Serialize a (scope, name) key to the tensor name written to disk. The
     // verifier scope keeps the bare name (unchanged on-disk contract for
-    // verifier-only runs); the drafter scope is tagged so the two ledgers do
-    // not collide. This tag lives only in the collector, never in the graph
-    // build, so it carries no forward-compat risk if new drafter archs appear.
+    // verifier-only runs); each drafter/talker scope is tagged so multiple
+    // components collecting into one imatrix file do not collide. The prefix
+    // scheme is shared with the quantizer via common_imatrix_scope_prefix.
     static std::string stats_key_name(const stats_key & key) {
-        if (key.scope == LLAMA_OBSERVER_SCOPE_VERIFIER) {
-            return key.name;
-        }
-        return std::string("dft.") + key.name;
+        return common_imatrix_scope_prefix((enum llama_observer_scope) key.scope) + key.name;
     }
     // Inverse of stats_key_name: recover the (scope, name) bucket from a
-    // tensor name read off disk. Names carrying the drafter tag land in the
-    // drafter scope; everything else is verifier.
+    // tensor name read off disk. Names carrying a per-scope tag land in the
+    // matching scope; everything else is verifier.
     static stats_key parse_stats_key_name(const std::string & full) {
-        static const std::string k_drafter_tag = "dft.";
-        if (full.compare(0, k_drafter_tag.size(), k_drafter_tag) == 0) {
-            return { LLAMA_OBSERVER_SCOPE_DRAFTER, full.substr(k_drafter_tag.size()) };
-        }
-        return { LLAMA_OBSERVER_SCOPE_VERIFIER, full };
+        std::string stripped;
+        enum llama_observer_scope scope = common_imatrix_scope_from_name(full, stripped);
+        return { (int) scope, std::move(stripped) };
     }
     bool collect_imatrix(struct ggml_tensor * t, bool ask, void * user_data);
     void begin_graph_observers();
@@ -1113,6 +1108,24 @@ bool IMatrixCollector::observer_filter(
         observer_enabled(tensor_name);
 }
 
+// Per-context binding that pairs a collector with the scope it should bucket
+// incoming observers under. The imatrix tool sets this as the user_data on
+// llama_set_imatrix_observer_filter so the filter trampoline below can set
+// the collector's active scope before dispatching. Safe because the verifier
+// and drafter contexts fire their observers serially within a calibration
+// step (drafter step then verifier step on the same host thread), so the
+// single m_observer_scope int on the collector cannot race.
+struct IMatrixScopeBinding {
+    IMatrixCollector * collector;
+    int                scope;
+};
+
+static bool imatrix_scope_observer_filter(const char * tensor_name, void * user_data) {
+    auto * binding = static_cast<IMatrixScopeBinding *>(user_data);
+    binding->collector->set_observer_scope(binding->scope);
+    return binding->collector->observer_enabled(tensor_name);
+}
+
 void IMatrixCollector::save_imatrix_legacy(int32_t ncall) const {
     auto fname = m_params.out_file;
 
@@ -1587,6 +1600,13 @@ bool IMatrixCollector::load_imatrix(const char * file_name) {
 }
 
 static IMatrixCollector g_collector;
+
+// Per-context scope bindings. The verifier binds to VERIFIER; a drafter/talker
+// context binds to its own scope. Both share g_collector, distinguished by
+// the binding's scope field so a single combined imatrix file holds all
+// ledgers without the collector instances colliding.
+static IMatrixScopeBinding g_verifier_binding = { &g_collector, LLAMA_OBSERVER_SCOPE_VERIFIER };
+static IMatrixScopeBinding g_drafter_binding  = { &g_collector, LLAMA_OBSERVER_SCOPE_VERIFIER };
 
 static bool ik_collect_imatrix(struct ggml_tensor * t, bool ask, void * user_data) {
     return g_collector.collect_imatrix(t, ask, user_data);
@@ -2267,6 +2287,32 @@ static bool show_statistics(const common_params & params) {
     _exit(0);
 }
 
+// Map the resolved speculative type to the observer scope matching the
+// drafter architecture, so a spec-decoding calibration pass collects the
+// drafter's activations into the right per-scope ledger.
+static enum llama_observer_scope scope_from_speculative_type(enum common_speculative_type t) {
+    switch (t) {
+        case COMMON_SPECULATIVE_TYPE_DRAFT_MTP:    return LLAMA_OBSERVER_SCOPE_MTP;
+        case COMMON_SPECULATIVE_TYPE_DRAFT_DFLASH: return LLAMA_OBSERVER_SCOPE_DFLASH;
+        case COMMON_SPECULATIVE_TYPE_DRAFT_DSPARK: return LLAMA_OBSERVER_SCOPE_DSPARK;
+        default:                                   return LLAMA_OBSERVER_SCOPE_VERIFIER;
+    }
+}
+
+// Resolve the scope for a standalone (non-spec) model from its architecture
+// metadata. The TTS talker is calibrated as a standalone model (no drafter);
+// its activations land in the TALKER ledger so they don't collide with the
+// trunk verifier's during a joint calibration pipeline.
+static enum llama_observer_scope scope_from_model_arch(const struct llama_model * model) {
+    char arch[128] = {};
+    if (llama_model_meta_val_str(model, "general.architecture", arch, sizeof(arch)) > 0) {
+        if (std::string(arch) == "qwen3-tts-talker") {
+            return LLAMA_OBSERVER_SCOPE_TALKER;
+        }
+    }
+    return LLAMA_OBSERVER_SCOPE_VERIFIER;
+}
+
 int main(int argc, char ** argv) {
     std::setlocale(LC_NUMERIC, "C");
 
@@ -2360,8 +2406,18 @@ int main(int argc, char ** argv) {
     //    lives in the binary so it cannot be skipped by accident. On
     //    unknown platforms (Windows, BSD) physmem_bytes() returns 0 and
     //    the precheck is a no-op (we cannot make a safe decision without
-    //    a probe).
-    if (!params.no_memory_check && params.memory_budget_fraction > 0.0f) {
+    //    a probe). Skipped when the 2-slot IOSurface weight pool will
+    //    engage: with the pool active the resident footprint is ~2 layers,
+    //    not the full model, so the model_size/physmem ratio is overly
+    //    conservative. Probes hardware capability here (model is not yet
+    //    loaded), matching the eligibility logic in common_model_params_to_llama.
+    const bool pool_will_engage = ts_pool_will_engage();
+    if (pool_will_engage) {
+        LOG_INF("%s: weight pool eligible, skipping memory precheck "
+                "(resident footprint is ~2 layers, not full model)\n",
+                __func__);
+    }
+    if (!pool_will_engage && !params.no_memory_check && params.memory_budget_fraction > 0.0f) {
         const int64_t model_size = tessera_imatrix_safeguards::file_size_or_zero(params.model.path);
         const int64_t physmem    = tessera_imatrix_safeguards::physmem_bytes();
         if (model_size > 0 && physmem > 0) {
@@ -2438,15 +2494,17 @@ int main(int argc, char ** argv) {
         LOG_ERR("%s : failed to init\n", __func__);
         return 1;
     }
-    // The verifier context collects into the VERIFIER scope. Both the
-    // context's active scope (drives the graph-build filter dispatch) and the
-    // collector's scope (drives the m_stats bucketing) are set together so
-    // they cannot drift. A drafter context, if any, would bind to the DRAFTER
-    // scope on its own context and a DRAFTER-scoped collector.
-    llama_set_imatrix_observer_scope(ctx, LLAMA_OBSERVER_SCOPE_VERIFIER);
-    g_collector.set_observer_scope(LLAMA_OBSERVER_SCOPE_VERIFIER);
-    llama_set_imatrix_observer_filter(
-        ctx, IMatrixCollector::observer_filter, &g_collector);
+    // The main context collects into the scope matching its role. A trunk
+    // model is VERIFIER; the TTS talker (a standalone calibration target with
+    // no drafter) is TALKER, so its ledger doesn't collide with the trunk's
+    // when the joint pipeline accumulates into one imatrix file. The per-ctx
+    // binding carries (collector, scope) so the scope-aware filter sets the
+    // collector's active scope before each observer fire.
+    const enum llama_observer_scope main_scope = scope_from_model_arch(model);
+    g_verifier_binding.scope = main_scope;
+    llama_set_imatrix_observer_scope(ctx, main_scope);
+    g_collector.set_observer_scope(main_scope);
+    llama_set_imatrix_observer_filter(ctx, imatrix_scope_observer_filter, &g_verifier_binding);
 
     const int n_ctx_train = llama_model_n_ctx_train(model);
     if (params.n_ctx > n_ctx_train) {
@@ -2457,7 +2515,8 @@ int main(int argc, char ** argv) {
     // ─── Spec-decoding calibration path ─────────────────────────────────────
     // If --model-draft is set, load the drafter and run a real spec-decoding
     // loop instead of the plain text loop. The verifier (this ctx) keeps its
-    // graph observers; the drafter is observer-free.
+    // VERIFIER-scoped observers; the drafter context binds to the scope
+    // matching its architecture so its activations land in their own ledger.
     common_speculative_init_result_ptr spec_init;
     common_speculative_ptr spec;
     const bool use_spec     = !params.speculative.draft.mparams.path.empty();
@@ -2491,6 +2550,27 @@ int main(int argc, char ** argv) {
         }
         params.speculative.draft.ctx_tgt = ctx;
         params.speculative.draft.ctx_dft = spec_init->context();
+
+        // Bind the drafter context to the scope matching its architecture.
+        // The two contexts share g_collector; the per-ctx binding's scope is
+        // applied to the collector's active scope on each observer fire, so
+        // verifier and drafter stats bucket into separate ledgers in one
+        // imatrix file. Safe because the spec-decoding calibration loop fires
+        // drafter and verifier observers serially on the same host thread.
+        const enum llama_observer_scope dft_scope =
+            scope_from_speculative_type(params.speculative.types[0]);
+        if (dft_scope == LLAMA_OBSERVER_SCOPE_VERIFIER) {
+            LOG_WRN("%s: drafter arch '%s' has no dedicated scope; drafter stats "
+                    "will collide with the verifier ledger\n",
+                    __func__, common_speculative_type_to_str(params.speculative.types[0]).c_str());
+        }
+        g_drafter_binding.scope = dft_scope;
+        llama_set_imatrix_observer_scope(spec_init->context(), dft_scope);
+        llama_set_imatrix_observer_filter(spec_init->context(),
+                                          imatrix_scope_observer_filter, &g_drafter_binding);
+        llama_bump_imatrix_observer_epoch(spec_init->context());
+        LOG_INF("%s: drafter bound to imatrix scope '%s'\n",
+                __func__, common_imatrix_scope_prefix(dft_scope).c_str());
 
         spec.reset(common_speculative_init(params.speculative, /*n_seq=*/1));
         if (!spec) {

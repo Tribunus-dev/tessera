@@ -437,6 +437,7 @@ extern "C" {
         bool keep_split;                                            // quantize to the same number of shards
         bool dry_run;                                               // calculate and show the final quantization size without performing quantization
         const struct llama_model_imatrix_data * imatrix;            // pointer to importance matrix data
+        int32_t imatrix_scope;                                      // enum llama_observer_scope to look up in the imatrix (verifier/mtp/dflash/dspark/talker); determines the dft.<tag>. name prefix used for the lookup. 0 = verifier.
         const struct llama_model_kv_override * kv_overrides;        // pointer to kv overrides
         const struct llama_model_tensor_override * tt_overrides;    // pointer to tensor overrides
         const int32_t * prune_layers;                               // pointer to layer indices to prune
@@ -1038,15 +1039,19 @@ extern "C" {
     // Set abort callback
     LLAMA_API void llama_set_abort_callback(struct llama_context * ctx, ggml_abort_callback abort_callback, void * abort_callback_data);
 
-    // Identifier for the observer state on a llama_context. The verifier and
-    // drafter each have an independent (filter, filter_data, epoch) so that
-    // running both through the same process can collect importance statistics
-    // in separate buckets without name prefixes on the observer tensors.
-    // DFlash drafter graphs dispatch to DRAFTER; everything else uses the
-    // scope that llama_set_imatrix_observer_scope() last selected.
+    // Identifier for the observer state on a llama_context. Each scope keeps
+    // an independent (filter, filter_data, epoch) so that multiple contexts in
+    // the same process collect importance statistics in separate buckets.
+    // VERIFIER is the trunk/target model; the three drafter scopes match their
+    // architectures so a combined imatrix file can disambiguate them; TALKER
+    // covers the TTS talker head. The active scope is set per-context via
+    // llama_set_imatrix_observer_scope().
     enum llama_observer_scope {
         LLAMA_OBSERVER_SCOPE_VERIFIER = 0,
-        LLAMA_OBSERVER_SCOPE_DRAFTER  = 1,
+        LLAMA_OBSERVER_SCOPE_MTP      = 1,
+        LLAMA_OBSERVER_SCOPE_DFLASH   = 2,
+        LLAMA_OBSERVER_SCOPE_DSPARK   = 3,
+        LLAMA_OBSERVER_SCOPE_TALKER   = 4,
     };
 
     // Select graph-resident importance observers dynamically. Returning false

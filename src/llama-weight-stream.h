@@ -60,18 +60,24 @@ int64_t  llama_weight_stream_expert_slice(llama_weight_stream_t * stream,
 
 size_t   llama_weight_stream_file_size(const llama_weight_stream_t * stream);
 
-// Async prefetch: memcpy the layer's bytes from the mmap into `dst`
-// on a background thread. The caller owns `dst` (typically an IOSurface
-// slot) and must keep it alive until wait. Returns NULL on failure
-// (reason logged; caller should fall back to sync). The returned handle
-// must be consumed exactly once via llama_weight_stream_prefetch_wait
-// (which blocks, returns bytes on success or -1 on failure, and frees
-// the handle). If the caller wants to cancel, call
-// llama_weight_stream_prefetch_free (non-blocking, frees).
+// Async prefetch: memcpy the layer's bytes from the mmap into `dst` on a
+// background thread. The caller owns `dst` (typically an IOSurface slot) and
+// must keep it alive until wait/free. Returns NULL on failure (reason logged;
+// caller should fall back to sync). The returned handle must be consumed
+// exactly once: either via llama_weight_stream_prefetch_wait (which blocks,
+// returns bytes on success or -1 on failure, and frees the handle) when the
+// layer's data is needed, OR via llama_weight_stream_prefetch_free for
+// cancellation (decode->prefill transition, early exit). The pool-aware
+// wrappers in llama-weight-pool.h (prefetch_async/prefetch_wait/prefetch_cancel)
+// are the recommended entry points: they add the GPU-fence guard, the slot
+// accounting publish, and the host-claim coordination with the fill thread.
 llama_weight_stream_prefetch_t * llama_weight_stream_prefetch_async(
         llama_weight_stream_t * stream, int32_t layer_idx,
         void * dst, size_t dst_size);
 int64_t  llama_weight_stream_prefetch_wait(llama_weight_stream_prefetch_t * prefetch);
+// Cancel-safe: blocks until the background memcpy completes so it does not
+// outlive its dst buffer, then frees the handle. The memcpy is not preempted
+// (a layer copy is on the order of a few ms); this is wait-and-discard.
 void     llama_weight_stream_prefetch_free(llama_weight_stream_prefetch_t * prefetch);
 
 // Helper: total bytes for a layer (sum of blk.L.* tensors). Returns 0

@@ -388,7 +388,7 @@ bool ts_unified_writer_roles_reconcile(const std::string & a,
 // Sentinel for "no qtype verdict" that matches GGML_TYPE_COUNT without
 // dragging ggml.h into this header (the writer's .cpp static_asserts
 // the two agree).
-static const int TS_UNIFIED_QTYPE_NONE = 45;
+static const int TS_UNIFIED_QTYPE_NONE = 47;
 
 // --- Phase 16.8: budget-aware cross-role reconciliation --------------
 //

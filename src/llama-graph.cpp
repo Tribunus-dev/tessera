@@ -1408,7 +1408,7 @@ bool llm_graph_context::imatrix_observer_enabled(
     }
     const int scope = imatrix_observer_scope();
     GGML_ASSERT(scope >= LLAMA_OBSERVER_SCOPE_VERIFIER &&
-                scope <= LLAMA_OBSERVER_SCOPE_DRAFTER);
+                scope <= LLAMA_OBSERVER_SCOPE_TALKER);
     const auto filter = cparams.imatrix_observer_filter[scope];
     if (filter == nullptr) {
         return true;

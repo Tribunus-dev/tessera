@@ -7,10 +7,12 @@
 //
 
 #include "tessera-quant.h"
+#include "tessera-ternary.h"
 #include "tessera-vec.h"
 #include "tessera-metal.h"
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -349,25 +351,29 @@ float ts_scale_clip_ternarize_fused(const float * weights,
 // scale fitting from weights + ternary pattern
 // ---------------------------------------------------------------------------
 
-void ts_compute_scales(const float * weights, const int8_t * ternary_flat,
+void ts_compute_scales(const float * core, const int8_t * ternary_flat,
+                       const ts_tile_config * config,
                        uint16_t * page_scales, int8_t * lane_scales,
                        int64_t out_dim, int64_t in_dim) {
-    const int64_t pages = ts_pages_per_row(in_dim);
+    const int page_size      = config->page_size;
+    const int lane_size      = config->lane_size;
+    const int lanes_per_page = config->lanes_per_page;
+    const int64_t pages = (in_dim + page_size - 1) / page_size;
 
     for (int64_t o = 0; o < out_dim; o++) {
         for (int64_t p = 0; p < pages; p++) {
             float lane_target[TS_LANES_PER_PAGE];
-            for (int l = 0; l < TS_LANES_PER_PAGE; l++) {
+            for (int l = 0; l < lanes_per_page; l++) {
                 float sum_abs = 0.0f;
                 int   count   = 0;
-                for (int k = 0; k < TS_LANE_SIZE; k++) {
-                    int64_t col = p * TS_PAGE_SIZE + l * TS_LANE_SIZE + k;
+                for (int k = 0; k < lane_size; k++) {
+                    int64_t col = (int64_t)p * page_size + (int64_t)l * lane_size + k;
                     if (col >= in_dim) {
                         continue; // zero padding
                     }
                     int64_t idx = o * in_dim + col;
                     if (ternary_flat[idx] != 0) {
-                        sum_abs += std::fabs(weights[idx]);
+                        sum_abs += std::fabs(core[idx]);
                         count++;
                     }
                 }
@@ -375,7 +381,7 @@ void ts_compute_scales(const float * weights, const int8_t * ternary_flat,
             }
 
             float page_max = 0.0f;
-            for (int l = 0; l < TS_LANES_PER_PAGE; l++) {
+            for (int l = 0; l < lanes_per_page; l++) {
                 page_max = std::max(page_max, lane_target[l]);
             }
             if (page_max < 1e-30f) {
@@ -384,50 +390,81 @@ void ts_compute_scales(const float * weights, const int8_t * ternary_flat,
 
             int64_t page_idx = o * pages + p;
             page_scales[page_idx] = ts_f32_to_f16(page_max);
-            for (int l = 0; l < TS_LANES_PER_PAGE; l++) {
+            for (int l = 0; l < lanes_per_page; l++) {
                 float raw  = (lane_target[l] / page_max) * 127.0f;
                 int   q    = (int)std::lround(raw);
                 q = std::min(std::max(q, 1), 127);
-                lane_scales[page_idx * TS_LANES_PER_PAGE + l] = (int8_t)q;
+                lane_scales[page_idx * lanes_per_page + l] = (int8_t)q;
             }
         }
     }
+}
+
+void ts_compute_scales(const float * weights, const int8_t * ternary_flat,
+                       uint16_t * page_scales, int8_t * lane_scales,
+                       int64_t out_dim, int64_t in_dim) {
+    struct ts_tile_config cfg = ts_tile_config_t640();
+    ts_compute_scales(weights, ternary_flat, &cfg,
+                      page_scales, lane_scales, out_dim, in_dim);
 }
 
 // ---------------------------------------------------------------------------
 // packing
 // ---------------------------------------------------------------------------
 
+void ts_pack_tile(const int8_t * ternary, const ts_tile_config * config,
+                  uint32_t * packed, uint16_t * page_scales_placeholder,
+                  int8_t * lane_scales_placeholder,
+                  int64_t out_dim, int64_t in_dim) {
+    const int page_size      = config->page_size;
+    const int lane_size      = config->lane_size;
+    const int lanes_per_page = config->lanes_per_page;
+    const int words_per_page = config->words_per_page;
+    const int64_t pages = (in_dim + page_size - 1) / page_size;
+    const uint16_t unit_f16 = ts_f32_to_f16(1.0f);
+
+    if (config->packing == TS_PACK_RADIX243) {
+        // pow3 table sized to this config's lane (5 trits/group x 4 groups = 20
+        // for T640). ts_pow3_table() is fixed at TS_LANE_SIZE entries, which is
+        // the radix-243 lane width; assert the config matches.
+        const uint32_t * pow3 = ts_pow3_table();
+        for (int64_t o = 0; o < out_dim; o++) {
+            for (int64_t p = 0; p < pages; p++) {
+                int64_t page_idx = o * pages + p;
+                page_scales_placeholder[page_idx] = unit_f16;
+                for (int l = 0; l < lanes_per_page; l++) {
+                    uint32_t word = 0;
+                    bool any = false;
+                    for (int k = 0; k < lane_size; k++) {
+                        int64_t col = (int64_t)p * page_size + (int64_t)l * lane_size + k;
+                        int8_t t = (col < in_dim) ? ternary[o * in_dim + col] : 0;
+                        uint32_t trit = (t > 0) ? 1u : ((t < 0) ? 2u : 0u);
+                        word += trit * pow3[k];
+                        if (t != 0) {
+                            any = true;
+                        }
+                    }
+                    packed[page_idx * words_per_page + l] = word;
+                    lane_scales_placeholder[page_idx * lanes_per_page + l] = (int8_t)(any ? 127 : 1);
+                }
+            }
+        }
+    } else {
+        // TS_PACK_2BIT (T512/T1024): 2 bits/trit packing. Not needed for the
+        // current .ttt work; fail loudly until a client geometry requires it.
+        assert(false && "ts_pack_tile: TS_PACK_2BIT path not implemented");
+    }
+}
+
 void ts_pack_tile640(const int8_t * ternary_flat,
                      uint32_t * packed_out,
                      uint16_t * page_scales_out,
                      int8_t * lane_scales_out,
                      int64_t out_dim, int64_t in_dim) {
-    const int64_t pages     = ts_pages_per_row(in_dim);
-    const uint32_t * pow3   = ts_pow3_table();
-    const uint16_t unit_f16 = ts_f32_to_f16(1.0f);
-
-    for (int64_t o = 0; o < out_dim; o++) {
-        for (int64_t p = 0; p < pages; p++) {
-            int64_t page_idx = o * pages + p;
-            page_scales_out[page_idx] = unit_f16;
-            for (int l = 0; l < TS_LANES_PER_PAGE; l++) {
-                uint32_t word = 0;
-                bool any = false;
-                for (int k = 0; k < TS_LANE_SIZE; k++) {
-                    int64_t col = p * TS_PAGE_SIZE + l * TS_LANE_SIZE + k;
-                    int8_t t = (col < in_dim) ? ternary_flat[o * in_dim + col] : 0;
-                    uint32_t trit = (t > 0) ? 1u : ((t < 0) ? 2u : 0u);
-                    word += trit * pow3[k];
-                    if (t != 0) {
-                        any = true;
-                    }
-                }
-                packed_out[page_idx * TS_WORDS_PER_PAGE + l] = word;
-                lane_scales_out[page_idx * TS_LANES_PER_PAGE + l] = (int8_t)(any ? 127 : 1);
-            }
-        }
-    }
+    struct ts_tile_config cfg = ts_tile_config_t640();
+    ts_pack_tile(ternary_flat, &cfg,
+                 packed_out, page_scales_out, lane_scales_out,
+                 out_dim, in_dim);
 }
 
 // ---------------------------------------------------------------------------
@@ -856,17 +893,25 @@ float ts_awq_scale_search_layer_output(
 }
 
 // ---------------------------------------------------------------------------
-// quantize_2d
+// quantize_2d_ternary: tile-agnostic ternary-decision step
 // ---------------------------------------------------------------------------
-
-int ts_quantize_2d(const float * weights,
-                   const float * act_scales,
-                   const float * calib_X,
-                   const float * ref_output,
-                   const float * imatrix,
-                   int64_t out_dim, int64_t in_dim, int64_t n_tokens,
-                   const ts_quant_params_2d * params,
-                   ts_quant_result_2d * result) {
+//
+// Runs the AWQ alpha search, the per-channel scale + clip + ternarize (global
+// threshold), the outlier (repair-residual) selection, the CSR build, and the
+// act-scale store - everything that does NOT depend on a page/lane geometry.
+// The result is a ts_ternary_tensor carrying the trits (outlier positions
+// zeroed), the clipped-AWQ-scaled core (needed by the packer's scale fit), the
+// outlier CSR, and the AWQ/act scales. A `.ttt` artifact is a thin wrapper over
+// one of these per weight matrix.
+//
+// This is steps 1-3 + 6-7 of the original ts_quantize_2d; the tile-specific
+// pack (steps 4-5) and the recon+MSE (step 8) live elsewhere.
+int ts_quantize_2d_ternary(const float * weights, const float * act_scales,
+                           const float * calib_X, const float * ref_output,
+                           const float * imatrix,
+                           int64_t out_dim, int64_t in_dim, int64_t n_tokens,
+                           const ts_quant_params_2d * params,
+                           ts_ternary_tensor * result) {
     (void)imatrix;
 
     if (weights == nullptr || result == nullptr || out_dim <= 0 || in_dim <= 0) {
@@ -878,8 +923,7 @@ int ts_quantize_2d(const float * weights,
         params = &defaults;
     }
 
-    const int64_t n     = out_dim * in_dim;
-    const int64_t pages = ts_pages_per_row(in_dim);
+    const int64_t n = out_dim * in_dim;
 
     // Metal path: when ts_metal_available(), upload the weight tensor once
     // and let the batched AWQ grid kernel resolve alpha in a single dispatch
@@ -979,25 +1023,19 @@ int ts_quantize_2d(const float * weights,
         ternary[(size_t)idx] = 0;
     }
 
-    // --- pack + fit scales ---
-    result->packed.assign((size_t)out_dim * (size_t)pages * TS_WORDS_PER_PAGE, 0);
-    result->page_scales.assign((size_t)out_dim * (size_t)pages, 0);
-    result->lane_scales.assign((size_t)out_dim * (size_t)pages * TS_LANES_PER_PAGE, 0);
-
-    std::vector<uint16_t> pack_ps((size_t)out_dim * (size_t)pages);
-    std::vector<int8_t>   pack_ls((size_t)out_dim * (size_t)pages * TS_LANES_PER_PAGE);
-    ts_pack_tile640(ternary.data(), result->packed.data(),
-                    pack_ps.data(), pack_ls.data(), out_dim, in_dim);
-
-    ts_compute_scales(core.data(), ternary.data(),
-                      result->page_scales.data(), result->lane_scales.data(),
-                      out_dim, in_dim);
-
     // --- outlier CSR (sorted by row, residual order preserved within a row) ---
     std::stable_sort(outlier_flat.begin(), outlier_flat.end(),
                      [in_dim](int32_t a, int32_t b) {
                          return (a / in_dim) < (b / in_dim);
                      });
+
+    result->trits.assign(ternary.begin(), ternary.end());
+    result->core.assign(core.begin(), core.end());
+    result->awq_scale.assign(wscale.begin(), wscale.end());
+    result->awq_input_scale.assign(input_scale.begin(), input_scale.end());
+    result->global_amp = global_amp;
+    result->out_dim    = out_dim;
+    result->in_dim     = in_dim;
 
     result->outlier_row_offsets.assign((size_t)(out_dim + 1), 0);
     result->outlier_cols.resize(outlier_flat.size());
@@ -1025,21 +1063,159 @@ int ts_quantize_2d(const float * weights,
 
     result->best_alpha = resolved_alpha;
 
+    if (mtl_w != nullptr) {
+        ts_metal_release_weights(mtl_w);
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// pack_ternary_to_tile: client-side packer
+// ---------------------------------------------------------------------------
+//
+// Takes a tile-agnostic ternary tensor + a tile config and produces the
+// GGUF-ready result: packed radix-243 words, page/lane scales refit for the
+// requested geometry, the outlier CSR (copied verbatim from the tensor), and
+// the act scale (copied). This is steps 4-5 of the original ts_quantize_2d;
+// the geometry comes from the config, not the #defines.
+int ts_pack_ternary_to_tile(const ts_ternary_tensor & tn,
+                            const ts_tile_config & config,
+                            ts_quant_result_2d * result) {
+    if (result == nullptr) {
+        return 1;
+    }
+    const int64_t out_dim = tn.out_dim;
+    const int64_t in_dim  = tn.in_dim;
+    if (out_dim <= 0 || in_dim <= 0) {
+        return 1;
+    }
+
+    const int page_size      = config.page_size;
+    const int words_per_page = config.words_per_page;
+    const int lanes_per_page = config.lanes_per_page;
+    const int64_t pages = (in_dim + page_size - 1) / page_size;
+
+    result->packed.assign((size_t)out_dim * (size_t)pages * words_per_page, 0);
+    result->page_scales.assign((size_t)out_dim * (size_t)pages, 0);
+    result->lane_scales.assign((size_t)out_dim * (size_t)pages * lanes_per_page, 0);
+
+    // pack_ps/pack_ls receive ts_pack_tile's placeholder scales; the real
+    // fitted scales overwrite result->page_scales/lane_scales below.
+    std::vector<uint16_t> pack_ps((size_t)out_dim * (size_t)pages);
+    std::vector<int8_t>   pack_ls((size_t)out_dim * (size_t)pages * lanes_per_page);
+    ts_pack_tile(tn.trits.data(), &config,
+                 result->packed.data(), pack_ps.data(), pack_ls.data(),
+                 out_dim, in_dim);
+
+    ts_compute_scales(tn.core.data(), tn.trits.data(), &config,
+                      result->page_scales.data(), result->lane_scales.data(),
+                      out_dim, in_dim);
+
+    // outlier CSR travels with the ternary tensor; copy verbatim.
+    result->outlier_row_offsets = tn.outlier_row_offsets;
+    result->outlier_cols        = tn.outlier_cols;
+    result->outlier_vals        = tn.outlier_vals;
+    result->act_scale           = tn.act_scale;
+
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// quantize_2d
+// ---------------------------------------------------------------------------
+
+int ts_quantize_2d(const float * weights,
+                   const float * act_scales,
+                   const float * calib_X,
+                   const float * ref_output,
+                   const float * imatrix,
+                   int64_t out_dim, int64_t in_dim, int64_t n_tokens,
+                   const ts_quant_params_2d * params,
+                   ts_quant_result_2d * result) {
+    (void)imatrix;
+
+    if (weights == nullptr || result == nullptr || out_dim <= 0 || in_dim <= 0) {
+        return 1;
+    }
+
+    ts_quant_params_2d defaults = { 0.0f, 1.0f, 0, 0.0f, false, false, 20, 0 };
+    if (params == nullptr) {
+        params = &defaults;
+    }
+
+    const int64_t n = out_dim * in_dim;
+
+    // --- tile-agnostic ternary-decision step (AWQ search, ternarize, outliers) ---
+    ts_ternary_tensor tn;
+    if (ts_quantize_2d_ternary(weights, act_scales, calib_X, ref_output, imatrix,
+                               out_dim, in_dim, n_tokens, params, &tn) != 0) {
+        return 1;
+    }
+
+    // --- tile-specific pack (pack words + refit page/lane scales, copy CSR) ---
+    if (ts_pack_ternary_to_tile(tn, ts_tile_config_t640(), result) != 0) {
+        return 1;
+    }
+    result->best_alpha = tn.best_alpha;
+
     // --- reconstruction MSE + recon build ---
+    // The ternary step produced ws (scaled weights) and input_scale only
+    // transiently; reconstitute ws from weights + awq_scale (ws[r,c] =
+    // W[r,c] * wscale[c], the same float product the ternary step used, so the
+    // diff = ws - deq reduction is bit-identical). The outlier flat-index list
+    // is rebuilt from the CSR the ternary step wrote. core, ternary, and
+    // input_scale travel on the ternary tensor.
+    std::vector<float> ws((size_t)n);
+    {
+        const float * wscale = tn.awq_scale.data();
+        for (int64_t r = 0; r < out_dim; r++) {
+            const float * wrow = weights + r * in_dim;
+            float * wsrow = ws.data() + r * in_dim;
+            for (int64_t c = 0; c < in_dim; c++) {
+                wsrow[c] = wrow[c] * wscale[c];
+            }
+        }
+    }
+
+    std::vector<int32_t> outlier_flat;
+    outlier_flat.reserve((size_t)tn.n_outliers());
+    for (int64_t r = 0; r < out_dim; r++) {
+        int32_t off0 = tn.outlier_row_offsets[(size_t)r];
+        int32_t off1 = tn.outlier_row_offsets[(size_t)r + 1];
+        for (int32_t o = off0; o < off1; o++) {
+            int32_t col = tn.outlier_cols[(size_t)o];
+            outlier_flat.push_back((int32_t)(r * in_dim + col));
+        }
+    }
+
+    const int8_t       * ternary    = tn.trits.data();
+    const float        * input_scale = tn.awq_input_scale.data();
+
     // Metal path: when available, dispatch the fused dequant+outlier-restore+
     // MSE+recon kernel over the GPU-resident weight buffer. Falls back to the
-    // cache-blocked CPU path below on any failure.
+    // cache-blocked CPU path below on any failure. (The ternary step uploaded
+    // and released its own handle for the alpha search; the MSE pass needs the
+    // GPU weight buffer again, so re-upload here.)
+    ts_metal_weights_t * mtl_w = nullptr;
+    bool use_metal = (ts_metal_available() == 1) && (in_dim <= 8192);
+    if (use_metal) {
+        mtl_w = ts_metal_upload_weights(weights, act_scales, out_dim, in_dim);
+        if (mtl_w == nullptr) {
+            use_metal = false;
+        }
+    }
+
     std::vector<float> & recon = result->recon;
     recon.resize((size_t)n);
     bool mtl_dmr_ok = false;
     if (use_metal) {
         float mse = 0.0f;
         int mrc = ts_metal_dequant_mse_recon(
-            mtl_w, ternary.data(), result->page_scales.data(),
+            mtl_w, ternary, result->page_scales.data(),
             result->lane_scales.data(),
             outlier_flat.empty() ? nullptr : outlier_flat.data(),
             (int64_t)outlier_flat.size(),
-            ws.data(), input_scale.data(), recon.data(), &mse);
+            ws.data(), input_scale, recon.data(), &mse);
         if (mrc == 0) {
             result->mse = mse;
             mtl_dmr_ok = true;
@@ -1062,7 +1238,7 @@ int ts_quantize_2d(const float * weights,
             for (int64_t r_lo = 0; r_lo < out_dim; r_lo += block_rows) {
                 int64_t r_hi = std::min(r_lo + block_rows, out_dim);
                 deq_block.assign((size_t)(r_hi - r_lo) * (size_t)in_dim, 0.0f);
-                ts_dequant_rows(ternary.data(), result->page_scales.data(),
+                ts_dequant_rows(ternary, result->page_scales.data(),
                                 result->lane_scales.data(), deq_block.data(),
                                 r_lo, r_hi, in_dim);
                 for (int64_t r = r_lo; r < r_hi; r++) {
@@ -1077,7 +1253,7 @@ int ts_quantize_2d(const float * weights,
                     const float * ws_row   = ws.data() + r * in_dim;
                     const float * deq_row  = deq_block.data() + (r - r_lo) * in_dim;
                     float * recon_row      = recon.data() + r * in_dim;
-                    const float * iscale   = input_scale.data();
+                    const float * iscale   = input_scale;
                     for (int64_t c = 0; c < in_dim; c++) {
                         float d = ws_row[c] - deq_row[c];
                         mse_accum += d * d;
@@ -1093,7 +1269,7 @@ int ts_quantize_2d(const float * weights,
             for (int64_t r_lo = 0; r_lo < out_dim; r_lo += block_rows) {
                 int64_t r_hi = std::min(r_lo + block_rows, out_dim);
                 deq_block.assign((size_t)(r_hi - r_lo) * (size_t)in_dim, 0.0f);
-                ts_dequant_rows(ternary.data(), result->page_scales.data(),
+                ts_dequant_rows(ternary, result->page_scales.data(),
                                 result->lane_scales.data(), deq_block.data(),
                                 r_lo, r_hi, in_dim);
                 for (int64_t r = r_lo; r < r_hi; r++) {
@@ -1108,7 +1284,7 @@ int ts_quantize_2d(const float * weights,
                     const float * ws_row   = ws.data() + r * in_dim;
                     const float * deq_row  = deq_block.data() + (r - r_lo) * in_dim;
                     float * recon_row      = recon.data() + r * in_dim;
-                    const float * iscale   = input_scale.data();
+                    const float * iscale   = input_scale;
                     for (int64_t c = 0; c < in_dim; c++) {
                         double d = (double)ws_row[c] - (double)deq_row[c];
                         mse_accum += d * d;

@@ -150,6 +150,9 @@ static void usage(const char * executable) {
     printf("                                      disable k-quant mixtures and quantize all tensors to the same type\n");
     printf("  --imatrix file_name\n");
     printf("                                      use data in file_name as importance matrix for quant optimizations\n");
+    printf("  --imatrix-scope {verifier|mtp|dflash|dspark|talker}\n");
+    printf("                                      scope tag to look up in the imatrix (default verifier)\n");
+    printf("                                      use when quantizing a drafter/talker component against a combined imatrix file\n");
     printf("  --include-weights tensor_name\n");
     printf("                                      use importance matrix for this/these tensor(s)\n");
     printf("  --exclude-weights tensor_name\n");
@@ -1093,6 +1096,26 @@ int llama_quantize(int argc, char ** argv) {
         } else if (strcmp(argv[arg_idx], "--imatrix") == 0) {
             if (arg_idx < argc-1) {
                 imatrix_file = argv[++arg_idx];
+            } else {
+                usage(argv[0]);
+            }
+        } else if (strcmp(argv[arg_idx], "--imatrix-scope") == 0) {
+            if (arg_idx < argc-1) {
+                const std::string s = argv[++arg_idx];
+                if (s == "verifier") {
+                    params.imatrix_scope = LLAMA_OBSERVER_SCOPE_VERIFIER;
+                } else if (s == "mtp") {
+                    params.imatrix_scope = LLAMA_OBSERVER_SCOPE_MTP;
+                } else if (s == "dflash") {
+                    params.imatrix_scope = LLAMA_OBSERVER_SCOPE_DFLASH;
+                } else if (s == "dspark") {
+                    params.imatrix_scope = LLAMA_OBSERVER_SCOPE_DSPARK;
+                } else if (s == "talker") {
+                    params.imatrix_scope = LLAMA_OBSERVER_SCOPE_TALKER;
+                } else {
+                    fprintf(stderr, "error: unknown --imatrix-scope '%s' (use verifier|mtp|dflash|dspark|talker)\n", s.c_str());
+                    usage(argv[0]);
+                }
             } else {
                 usage(argv[0]);
             }

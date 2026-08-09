@@ -788,13 +788,17 @@ struct llm_graph_params {
             cparams.embeddings_nextn        == other.cparams.embeddings_nextn        &&
             cparams.embeddings_nextn_masked == other.cparams.embeddings_nextn_masked &&
             cparams.causal_attn             == other.cparams.causal_attn             &&
-            // Both scopes' epochs must match: a graph may carry observers from
-            // either scope depending on arch, so a transition in either bucket
+            // Every scope's epoch must match: a graph may carry observers from
+            // any scope depending on arch, so a transition in any bucket
             // invalidates the cached topology.
-            cparams.imatrix_observer_epoch[LLAMA_OBSERVER_SCOPE_VERIFIER] ==
-                other.cparams.imatrix_observer_epoch[LLAMA_OBSERVER_SCOPE_VERIFIER] &&
-            cparams.imatrix_observer_epoch[LLAMA_OBSERVER_SCOPE_DRAFTER] ==
-                other.cparams.imatrix_observer_epoch[LLAMA_OBSERVER_SCOPE_DRAFTER] &&
+            [&] {
+                for (int s = LLAMA_OBSERVER_SCOPE_VERIFIER; s <= LLAMA_OBSERVER_SCOPE_TALKER; ++s) {
+                    if (cparams.imatrix_observer_epoch[s] != other.cparams.imatrix_observer_epoch[s]) {
+                        return false;
+                    }
+                }
+                return true;
+            }() &&
             arch  == other.arch  &&
             gtype == other.gtype &&
             cvec  == other.cvec  &&
@@ -972,16 +976,13 @@ struct llm_graph_context {
              const char   * weight_name) const;
     bool imatrix_observer_enabled(const char * weight_name) const;
 
-    // Verifier and drafter each have an independent observer filter on the
-    // owning llama_context. The active scope is resolved per-graph so two
-    // contexts in the same process can collect into separate buckets without
-    // name prefixes on the observer tensors: DFlash drafter graphs read the
-    // DRAFTER scope, everything else reads whichever scope the user last set
-    // (default VERIFIER).
+    // Each scope has an independent observer filter on the owning
+    // llama_context. The scope is set per-context by the imatrix tool (which
+    // knows the drafter/talker identity) via llama_set_imatrix_observer_scope;
+    // the graph build simply honors that selection. Only DFlash is special-
+    // cased by arch historically; the rest rely on the caller's scope choice.
     int imatrix_observer_scope() const {
-        return arch == LLM_ARCH_DFLASH
-                 ? (int) LLAMA_OBSERVER_SCOPE_DRAFTER
-                 : (int) cparams.imatrix_observer_scope;
+        return (int) cparams.imatrix_observer_scope;
     }
     std::string imatrix_observer_name(const char * weight_name) const;
 

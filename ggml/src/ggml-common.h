@@ -214,6 +214,52 @@ typedef sycl::half2 ggml_half2;
 static inline int tile_flex_pages_for_dim(int dim, int lanes) { return (dim + lanes*TILE_FLEX_LANE_SIZE -1)/(lanes*TILE_FLEX_LANE_SIZE); }
 static inline int tile_flex_words_per_page(int lanes) { return lanes*2; }
 
+// Runtime tile configuration for the Tessera ternary format. The .ttt transport
+// artifact is tile-agnostic; this struct selects the page/lane geometry used to
+// pack the ternary weights into the GGUF sub-tensors on the client. The three
+// constructors cover the formats implemented today; future per-GPU tiles add
+// constructors without changing the on-wire format.
+enum ts_packing_kind {
+    TS_PACK_RADIX243, // T640: 5 trits/group, 4 groups/lane, 1 word/lane
+    TS_PACK_2BIT,     // T512/T1024: 2 bits/trit, 16 trits/word, 2 words/lane
+};
+
+struct ts_tile_config {
+    int             page_size;
+    int             lane_size;
+    int             lanes_per_page;
+    int             words_per_page;
+    enum ts_packing_kind packing;
+};
+
+static inline struct ts_tile_config ts_tile_config_t640(void) {
+    struct ts_tile_config c;
+    c.page_size = TILE640_PAGE_SIZE;
+    c.lane_size = TILE640_LANE_SIZE;
+    c.lanes_per_page = TILE640_LANES_PER_PAGE;
+    c.words_per_page = TILE640_WORDS_PER_PAGE;
+    c.packing = TS_PACK_RADIX243;
+    return c;
+}
+static inline struct ts_tile_config ts_tile_config_t512(void) {
+    struct ts_tile_config c;
+    c.page_size = TILE512_PAGE_SIZE;
+    c.lane_size = TILE512_LANE_SIZE;
+    c.lanes_per_page = TILE512_LANES_PER_PAGE;
+    c.words_per_page = TILE512_WORDS_PER_PAGE;
+    c.packing = TS_PACK_2BIT;
+    return c;
+}
+static inline struct ts_tile_config ts_tile_config_t1024(void) {
+    struct ts_tile_config c;
+    c.page_size = TILE1024_PAGE_SIZE;
+    c.lane_size = TILE1024_LANE_SIZE;
+    c.lanes_per_page = TILE1024_LANES_PER_PAGE;
+    c.words_per_page = TILE1024_WORDS_PER_PAGE;
+    c.packing = TS_PACK_2BIT;
+    return c;
+}
+
 #define QK1_0 128
 typedef struct {
     ggml_half d;           // delta

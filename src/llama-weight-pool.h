@@ -8,10 +8,15 @@
 // time (Slice 4.2a graph_compute_streamed), refilling the active slot from
 // the mmap'd GGUF before each layer's MUL_MAT.
 //
-// Phase 1 (this file): synchronous fill. ensure_layer blocks on a memcpy
-// from the mmap into slot[L%2]. Correctness only - fixes the OOM, no overlap.
-// Phase 2 (to follow): a background fill thread keeps the next layer warm
-// while the GPU computes the current one.
+// The pool ships with two fill paths, both live:
+//   - Background fill thread (Slice 4.2a): prefetches layer L+1 into the
+//     idle slot while the GPU computes layer L. Driven by poke_prefetch /
+//     poke_expert_prefetch hints from the Metal encoder.
+//   - Synchronous fallback in ensure_layer when the fill thread is not
+//     running (e.g. before llama_weight_pool_start, or after shutdown).
+// Slot reuse across layers L and L+2 is guarded by a GPU sync callback
+// (set_sync_fn) that waits on the MTLSharedEvent signaled at the end of
+// each layer's command buffer.
 //
 // Layout: the streamer writes a layer's tensors in name-sorted order
 // (ggml-ane.mm ane_weight_stream_program_refresh). We mirror that order so a
@@ -35,8 +40,9 @@ struct llama_weight_stream_t;
 typedef struct llama_weight_pool llama_weight_pool_t;
 
 // Open the pool over `gguf_path`. Computes max_layer_bytes across all layers,
-// allocates two IOSurface slots (or malloc fallback), builds the per-tensor
-// layer layout from the stream. Returns false and fills err on failure.
+// allocates two IOSurface slots, builds the per-tensor layer layout from the
+// stream. Returns false and fills err on failure (IOSurface alloc failure is
+// hard - there is no malloc fallback).
 // n_layer bounds the layer index; layers >= n_layer are rejected.
 bool llama_weight_pool_open(const char * gguf_path,
                             int32_t n_layer,
@@ -74,22 +80,45 @@ int llama_weight_pool_alias_tensors(llama_weight_pool_t * pool,
                                     llama_weight_pool_alias_fn alias_fn,
                                     void * user_data);
 
-// Ensure layer L's bytes are in slot[L%2]. Phase 1: blocking memcpy from the
-// mmap. Phase 2: non-blocking if already ready, else waits on the fill
-// thread. Called by the Metal encoder at each layer transition. Returns the
-// slot_index (0/1) holding L's data, or -1 on failure.
+// Ensure layer L's bytes are in slot[L%2]. Fast-paths on a cache hit
+// (slot already holds L); otherwise waits on the fill thread if it is
+// running, or falls back to a blocking inline memcpy. Called by the Metal
+// encoder at each layer transition. Returns the slot_index (0/1) holding
+// L's data, or -1 on failure.
 //
 // Before refilling a slot the GPU may still be reading (slot reuse across
 // layers), ensure_layer calls the sync callback registered via
-// llama_weight_pool_set_sync_fn. Phase 1 uses a coarse full-GPU sync; Phase 2
-// will replace it with a per-layer fence wait.
+// llama_weight_pool_set_sync_fn, which waits on the MTLSharedEvent signaled
+// at the previous occupant's command-buffer completion.
 int llama_weight_pool_ensure_layer(llama_weight_pool_t * pool, int32_t layer);
 
-// Phase 2: poke the fill thread to start prefetching layer L (typically the
-// next layer). Non-blocking: returns immediately after setting fill_needed.
-// The fill thread fills slot[L%2] in the background while the GPU computes
-// the current layer. No-op when the fill thread isn't running (Phase 1).
+// Poke the fill thread to start prefetching layer L (typically the next
+// layer). Non-blocking: raises fill_needed and notifies. The fill thread
+// fills slot[L%2] in the background while the GPU computes the current
+// layer. No-op when the fill thread isn't running.
 void llama_weight_pool_poke_prefetch(llama_weight_pool_t * pool, int32_t layer);
+
+// Host-driven prefetch (first-class, fence-aware). The Metal encoder can
+// issue these explicitly to overlap host work with the next layer's memcpy,
+// instead of poking the fill thread. Claim layer L, guard on the GPU fence
+// for the slot's previous occupant, then issue the async memcpy. The fill
+// thread observes the claim and skips L. Returns NULL if L is out of range
+// or already claimed by another in-flight prefetch.
+struct llama_weight_stream_prefetch;
+llama_weight_stream_prefetch * llama_weight_pool_prefetch_async(
+        llama_weight_pool_t * pool, int32_t layer);
+// Block until the prefetch completes; publish slot_layer[L%2] = L so
+// ensure_layer fast-paths, and clear the host claim. Returns bytes written
+// or -1 on failure.
+int64_t llama_weight_pool_prefetch_wait(llama_weight_pool_t * pool,
+                                        struct llama_weight_stream_prefetch * pre,
+                                        int32_t layer);
+// Cancel an in-flight prefetch (decode->prefill transition, early exit).
+// Waits for the current chunk to finish so the background thread does not
+// outlive its dst buffer, then clears the claim.
+void llama_weight_pool_prefetch_cancel(llama_weight_pool_t * pool,
+                                       struct llama_weight_stream_prefetch * pre,
+                                       int32_t layer);
 
 // MoE: sparse-fill the slot with only the active expert slices for the named
 // 3D tensor. expert_ids is the list of expert IDs the MUL_MAT_ID will read
@@ -123,8 +152,9 @@ void llama_weight_pool_set_sync_fn(llama_weight_pool_t * pool,
                                    void * user_data,
                                    llama_weight_pool_sync_fn sync_fn);
 
-// Phase 2: start the background fill thread. No-op in Phase 1 (the pool
-// fills synchronously in ensure_layer).
+// Start the background fill thread. Idempotent: a second call is a no-op.
+// After this returns, ensure_layer fast-paths on the fill thread's work and
+// poke_prefetch / poke_expert_prefetch drive its prefetch decisions.
 void llama_weight_pool_start(llama_weight_pool_t * pool);
 
 // Release the fill thread, slots, and stream. Safe to call once after the
@@ -139,7 +169,7 @@ bool     llama_weight_pool_uses_iosurface(const llama_weight_pool_t * pool);
 // to report streaming status without owning the pool.
 bool     llama_model_weight_pool_enabled(const struct llama_model * model);
 // The slot's ggml_backend_buffer_t (index 0 or 1). The pool retains ownership;
-// callers must NOT free. Returns NULL on the malloc fallback or invalid index.
+// callers must NOT free. Returns NULL on an invalid index.
 struct ggml_backend_buffer * llama_weight_pool_slot_buffer(
         const llama_weight_pool_t * pool, int slot_index);
 

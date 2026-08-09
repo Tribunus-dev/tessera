@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -74,8 +75,12 @@ def parse_args() -> argparse.Namespace:
         nargs="?",
     )
     parser.add_argument(
-        "--use-temp-file", action="store_true",
-        help="use the tempfile library while processing (helpful when running out of memory, process killed)",
+        "--use-temp-file", action=argparse.BooleanOptionalAction, default=True,
+        help="stream via tempfile to bound RAM (default ON; --no-use-temp-file to disable)",
+    )
+    parser.add_argument(
+        "--temp-dir", type=str, default=None,
+        help="directory for the streaming temp file (use a drive with enough space for large models)",
     )
     parser.add_argument(
         "--no-lazy", action="store_true",
@@ -190,6 +195,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+
+    if args.temp_dir is not None:
+        tempfile.tempdir = args.temp_dir
 
     if args.print_supported_models:
         logger.error("Supported models:")

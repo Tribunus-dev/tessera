@@ -552,6 +552,12 @@ struct ggml_metal_device {
     ggml_metal_stream_poke_fn       stream_poke_fn;    // prefetch poke (Phase 2)
     ggml_metal_stream_ensure_experts_fn stream_ensure_experts_fn; // MoE sparse fill
     ggml_metal_stream_poke_experts_fn   stream_poke_experts_fn;   // MoE prefetch poke
+    // Host-driven prefetch (first-class): when non-NULL, the encoder issues
+    // an explicit prefetch_async for the next layer and prefetch_wait before
+    // the next ensure. Falls back to poke_fn when NULL.
+    ggml_metal_stream_prefetch_async_fn  stream_prefetch_async_fn;
+    ggml_metal_stream_prefetch_wait_fn   stream_prefetch_wait_fn;
+    ggml_metal_stream_prefetch_cancel_fn stream_prefetch_cancel_fn;
 };
 
 //
@@ -718,6 +724,9 @@ ggml_metal_device_t ggml_metal_device_init(int device) {
             dev->stream_poke_fn   = NULL;
             dev->stream_ensure_experts_fn = NULL;
             dev->stream_poke_experts_fn   = NULL;
+            dev->stream_prefetch_async_fn  = NULL;
+            dev->stream_prefetch_wait_fn   = NULL;
+            dev->stream_prefetch_cancel_fn = NULL;
 
             dev->props.device = device;
             dev->props.has_simdgroup_reduction  = [dev->mtl_device supportsFamily:MTLGPUFamilyApple7];
@@ -1025,6 +1034,24 @@ ggml_metal_stream_ensure_experts_fn ggml_metal_device_stream_get_ensure_experts_
 }
 ggml_metal_stream_poke_experts_fn ggml_metal_device_stream_get_poke_experts_fn(const ggml_metal_device_t dev) {
     return dev ? dev->stream_poke_experts_fn : NULL;
+}
+void ggml_metal_device_stream_set_prefetch_fns(ggml_metal_device_t dev,
+                                               ggml_metal_stream_prefetch_async_fn  prefetch_async_fn,
+                                               ggml_metal_stream_prefetch_wait_fn   prefetch_wait_fn,
+                                               ggml_metal_stream_prefetch_cancel_fn prefetch_cancel_fn) {
+    if (!dev) return;
+    dev->stream_prefetch_async_fn  = prefetch_async_fn;
+    dev->stream_prefetch_wait_fn   = prefetch_wait_fn;
+    dev->stream_prefetch_cancel_fn = prefetch_cancel_fn;
+}
+ggml_metal_stream_prefetch_async_fn ggml_metal_device_stream_get_prefetch_async_fn(const ggml_metal_device_t dev) {
+    return dev ? dev->stream_prefetch_async_fn : NULL;
+}
+ggml_metal_stream_prefetch_wait_fn ggml_metal_device_stream_get_prefetch_wait_fn(const ggml_metal_device_t dev) {
+    return dev ? dev->stream_prefetch_wait_fn : NULL;
+}
+ggml_metal_stream_prefetch_cancel_fn ggml_metal_device_stream_get_prefetch_cancel_fn(const ggml_metal_device_t dev) {
+    return dev ? dev->stream_prefetch_cancel_fn : NULL;
 }
 
 void * ggml_metal_device_get_obj(ggml_metal_device_t dev) {

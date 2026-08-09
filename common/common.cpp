@@ -1536,6 +1536,39 @@ void common_set_adapter_lora(struct llama_context * ctx, std::vector<common_adap
     llama_set_adapters_lora(ctx, loras.data(), loras.size(), scales.data());
 }
 
+// Probes whether the 2-slot IOSurface weight pool is eligible to engage.
+// Mirrors the eligibility logic in common_model_params_to_llama: Metal
+// present in the device list and the ANE IOSurface buft available. Probes
+// ggml_backend_dev_count() so it works without params.devices (e.g. from
+// imatrix's pre-flight memory check, which runs before model load).
+// Compiles to a constant false on non-Apple / non-ANE builds.
+bool ts_pool_will_engage() {
+#if defined(__APPLE__) && defined(GGML_USE_ANE)
+    bool has_metal = false;
+    const size_t ndev = ggml_backend_dev_count();
+    for (size_t i = 0; i < ndev; ++i) {
+        ggml_backend_dev_t d = ggml_backend_dev_get(i);
+        if (!d) continue;
+        const char * name = ggml_backend_dev_name(d);
+        if (name && std::strncmp(name, "MTL", 3) == 0) {
+            has_metal = true;
+            break;
+        }
+        if (ggml_backend_dev_type(d) == GGML_BACKEND_DEVICE_TYPE_GPU ||
+            ggml_backend_dev_type(d) == GGML_BACKEND_DEVICE_TYPE_IGPU) {
+            has_metal = true;
+        }
+    }
+    if (!has_metal) {
+        return false;
+    }
+    auto * iosurface_buft = ggml_backend_ane_iosurface_buffer_type();
+    return iosurface_buft != nullptr;
+#else
+    return false;
+#endif
+}
+
 struct llama_model_params common_model_params_to_llama(common_params & params) {
     auto mparams = llama_model_default_params();
 
@@ -1560,20 +1593,26 @@ struct llama_model_params common_model_params_to_llama(common_params & params) {
     }
 
     // Batch 2/3 - default heterog tensor_buft table (ffn -> 2-slot IOSurface
-    // pool when Metal + ANE are present, else MTL0). Only when the user left
-    // overrides empty (explicit --override-tensor still wins) and Metal is in
-    // the device list and fitting is off. The table is injected here (after
-    // arg parsing's ntbo padding) so it survives --fit off but does not trip
-    // the fit.cpp "already set" guard. Non-Metal or no-device runs keep the
-    // CPU-only default. See src/llama-weight-pool.h for the 2-slot per-layer
-    // streaming that backs the IOSurface buft; the model loader aliases the
-    // FFN tensors into the pool's two slots instead of bulk-allocating them.
+    // pool when Metal + ANE are present, else MTL0). Injected only when the
+    // user left overrides empty (explicit --override-tensor still wins) and
+    // the hardware is pool-eligible. The table is injected here (after arg
+    // parsing's ntbo padding) so it does not trip the fit.cpp "already set"
+    // guard. Non-Metal or no-device runs keep the CPU-only default. See
+    // src/llama-weight-pool.h for the 2-slot per-layer streaming that backs
+    // the IOSurface buft; the model loader aliases the FFN tensors into the
+    // pool's two slots instead of bulk-allocating them.
+    //
+    // The weight pool is a residency optimization (2-slot IOSurface FFN
+    // streaming), not a fit parameter. It engages on Apple Silicon whenever
+    // the IOSurface buft is available, independent of fit_params. The pool
+    // composes with fitting: fit_params tunes ngl/batch/ub, the pool handles
+    // "model FFN weights > GPU working set".
     {
         bool has_real_overrides = false;
         for (auto & ov : params.tensor_buft_overrides) {
             if (ov.pattern != nullptr) { has_real_overrides = true; break; }
         }
-        if (!has_real_overrides && !params.fit_params) {
+        if (!has_real_overrides) {
             bool has_metal = false;
             ggml_backend_buffer_type_t mtl_buft = nullptr;
             for (auto * d : params.devices) {
@@ -1607,11 +1646,16 @@ struct llama_model_params common_model_params_to_llama(common_params & params) {
                 }
             }
 #endif
-            if (has_metal && ffn_buft != nullptr) {
+            // pool_eligible: Metal present and a real FFN buft resolved. On
+            // Apple Silicon with ANE this is the IOSurface buft; the IOSurface
+            // buft is null on non-Apple / non-ANE builds, so pool_eligible is
+            // false there and the pool never engages.
+            const bool pool_eligible = has_metal && ffn_buft != nullptr;
+            if (pool_eligible) {
                 // When the IOSurface buft is selected (ANE present), use it
                 // directly even though mtl_buft may be null (unified memory).
                 // ffn_buft is already set to IOSurface above; this block just
-                // needs has_metal + a non-null ffn_buft to proceed.
+                // needs pool_eligible to proceed.
                 // The arg parser already padded tensor_buft_overrides to
                 // ntbo = 4096 with nullptr terminators. Reuse the leading
                 // slots so the existing terminator stays at the back.

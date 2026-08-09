@@ -91,6 +91,14 @@ public enum ConversationExporter {
         case .tool: "Tool"
         }
     }
+
+    /// Cross-platform PDF (CoreText via the receipt renderer). Builds the
+    /// line list from the markdown representation so the two stay in sync.
+    public static func pdf(title: String, messages: [ChatMessage]) -> Data {
+        let md = markdown(title: title, messages: messages)
+        let lines = md.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        return ReceiptPDFRenderer.pdfData(title: title, lines: lines)
+    }
 }
 
 /// Renders a quantization receipt to a single-page PDF (CoreText, cross-platform).

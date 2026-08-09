@@ -132,6 +132,25 @@ public enum TesseraLLMProviderFactory {
         return make(type: type, config: config)
     }
 
+    /// Build the Sky cloud intellect for the dual-agent surface. Sky is always
+    /// a remote OpenAI-compatible endpoint; when the base URL or key is empty
+    /// it degrades to the placeholder so the dual-agent chat stays usable
+    /// (Tessy still runs) even before Sky is configured.
+    public static func makeSky() -> any LLMProvider {
+        let base = TesseraSettings.skyAPIBaseURL
+        let key = TesseraSettings.skyAPIKey
+        let model = TesseraSettings.skyModelName
+        // Empty base URL = "not configured". Keep the placeholder so the
+        // Sky bubble shows a clear echo rather than failing a request to "".
+        if base.isEmpty { return PlaceholderLLMProvider() }
+        return RemoteLLMProvider(
+            baseURL: base,
+            apiKey: key,
+            modelName: model,
+            useStreaming: TesseraSettings.skyUseStreaming
+        )
+    }
+
     /// Resolve the on-device model path: the configured one if it exists on
     /// disk, else the first GGUF/.mlmodelc found in the standard scan
     /// directories, else empty string (caller falls back to placeholder).

@@ -1056,6 +1056,13 @@ struct llama_model_params     common_model_params_to_llama  (      common_params
 struct llama_context_params   common_context_params_to_llama(const common_params & params);
 struct ggml_threadpool_params ggml_threadpool_params_from_cpu_params(const common_cpu_params & params);
 
+// True when the 2-slot IOSurface weight pool is eligible to engage:
+// Apple Silicon with Metal present and the ANE IOSurface buft available.
+// Probes the registered backend devices (independent of params.devices),
+// so it can be called before model load (e.g. for a pre-flight memory
+// check). Always false on non-Apple platforms or builds without ANE.
+bool ts_pool_will_engage();
+
 // clear LoRA adapters from context, then apply new list of adapters
 void common_set_adapter_lora(struct llama_context * ctx, std::vector<common_adapter_lora_info> & lora);
 

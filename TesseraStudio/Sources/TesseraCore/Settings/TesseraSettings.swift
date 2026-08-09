@@ -34,6 +34,13 @@ public enum TesseraSettingsKey {
     public static let onDeviceLibraryPath = "tessera.settings.onDeviceLibraryPath"
     public static let onDeviceContextLength = "tessera.settings.onDeviceContextLength"
     public static let onDeviceGPULayers = "tessera.settings.onDeviceGPULayers"
+    // Sky cloud provider (the dual-agent cloud intellect). Parallel to the
+    // remote-API namespace above but independent, so Tessy can run on-device
+    // while Sky runs on a cloud endpoint.
+    public static let skyAPIBaseURL = "tessera.settings.skyAPIBaseURL"
+    public static let skyAPIKey = "tessera.settings.skyAPIKey"
+    public static let skyModelName = "tessera.settings.skyModelName"
+    public static let skyUseStreaming = "tessera.settings.skyUseStreaming"
     // First-run
     public static let onboardingComplete = "tessera.settings.onboardingComplete"
     // Audience mode (studio-ux blueprint section 3.1). Simple / Standard / Studio.
@@ -105,6 +112,13 @@ public enum TesseraSettingsDefault {
     public static let onDeviceLibraryPath = ""   // empty -> default dlopen search
     public static let onDeviceContextLength = 4096
     public static let onDeviceGPULayers = -1      // -1 == offload all layers
+    // Sky cloud provider defaults. Empty base URL means "not configured" and
+    // the factory falls back to the placeholder so the dual-agent surface is
+    // usable even before a key is entered.
+    public static let skyAPIBaseURL = ""
+    public static let skyAPIKey = ""
+    public static let skyModelName = ""
+    public static let skyUseStreaming = true
     // Learning (self-improving loop). Everything is opt-in and egress is
     // off by default; the teacher pool is empty until the user adds keys.
     public static let learningEnabled = false
@@ -211,6 +225,10 @@ public enum TesseraSettings {
             TesseraSettingsKey.onDeviceLibraryPath: TesseraSettingsDefault.onDeviceLibraryPath,
             TesseraSettingsKey.onDeviceContextLength: TesseraSettingsDefault.onDeviceContextLength,
             TesseraSettingsKey.onDeviceGPULayers: TesseraSettingsDefault.onDeviceGPULayers,
+            TesseraSettingsKey.skyAPIBaseURL: TesseraSettingsDefault.skyAPIBaseURL,
+            TesseraSettingsKey.skyAPIKey: TesseraSettingsDefault.skyAPIKey,
+            TesseraSettingsKey.skyModelName: TesseraSettingsDefault.skyModelName,
+            TesseraSettingsKey.skyUseStreaming: TesseraSettingsDefault.skyUseStreaming,
             TesseraSettingsKey.onboardingComplete: false,
             TesseraSettingsKey.audienceMode: AudienceMode.simple.rawValue,
             TesseraSettingsKey.learningEnabled: TesseraSettingsDefault.learningEnabled,
@@ -365,6 +383,27 @@ public enum TesseraSettings {
             return TesseraSettingsDefault.onDeviceGPULayers
         }
         return UserDefaults.standard.integer(forKey: TesseraSettingsKey.onDeviceGPULayers)
+    }
+
+    // MARK: Sky cloud provider (dual-agent cloud intellect)
+
+    public static var skyAPIBaseURL: String {
+        UserDefaults.standard.string(forKey: TesseraSettingsKey.skyAPIBaseURL) ?? TesseraSettingsDefault.skyAPIBaseURL
+    }
+
+    /// Sky API key. Keychain-backed, same as `remoteAPIKey` but under a
+    /// distinct account so the two cloud configs are independent.
+    public static var skyAPIKey: String {
+        TesseraSecretStore.secret(account: TesseraSecretStore.skyAPIKeyAccount)
+            ?? TesseraSettingsDefault.skyAPIKey
+    }
+
+    public static var skyModelName: String {
+        UserDefaults.standard.string(forKey: TesseraSettingsKey.skyModelName) ?? TesseraSettingsDefault.skyModelName
+    }
+
+    public static var skyUseStreaming: Bool {
+        UserDefaults.standard.bool(forKey: TesseraSettingsKey.skyUseStreaming)
     }
 
     // MARK: Learning (self-improving loop)

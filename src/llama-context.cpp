@@ -1177,7 +1177,7 @@ void llama_context::set_imatrix_observer_filter(
         void * user_data) {
     const int scope = cparams.imatrix_observer_scope;
     GGML_ASSERT(scope >= LLAMA_OBSERVER_SCOPE_VERIFIER &&
-                scope <= LLAMA_OBSERVER_SCOPE_DRAFTER);
+                scope <= LLAMA_OBSERVER_SCOPE_TALKER);
     cparams.imatrix_observer_filter[scope] = filter;
     cparams.imatrix_observer_filter_data[scope] = user_data;
     ++cparams.imatrix_observer_epoch[scope];
@@ -1185,14 +1185,14 @@ void llama_context::set_imatrix_observer_filter(
 
 void llama_context::set_imatrix_observer_scope(enum llama_observer_scope scope) {
     GGML_ASSERT(scope >= LLAMA_OBSERVER_SCOPE_VERIFIER &&
-                scope <= LLAMA_OBSERVER_SCOPE_DRAFTER);
+                scope <= LLAMA_OBSERVER_SCOPE_TALKER);
     cparams.imatrix_observer_scope = scope;
 }
 
 void llama_context::bump_imatrix_observer_epoch() {
     const int scope = cparams.imatrix_observer_scope;
     GGML_ASSERT(scope >= LLAMA_OBSERVER_SCOPE_VERIFIER &&
-                scope <= LLAMA_OBSERVER_SCOPE_DRAFTER);
+                scope <= LLAMA_OBSERVER_SCOPE_TALKER);
     ++cparams.imatrix_observer_epoch[scope];
 }
 

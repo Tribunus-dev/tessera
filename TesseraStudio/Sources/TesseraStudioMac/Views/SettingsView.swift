@@ -31,6 +31,13 @@ struct SettingsView: View {
     @AppStorage(TesseraSettingsKey.onDeviceLibraryPath) private var onDeviceLibraryPath = TesseraSettingsDefault.onDeviceLibraryPath
     @AppStorage(TesseraSettingsKey.onDeviceContextLength) private var onDeviceContextLength = TesseraSettingsDefault.onDeviceContextLength
     @AppStorage(TesseraSettingsKey.onDeviceGPULayers) private var onDeviceGPULayers = TesseraSettingsDefault.onDeviceGPULayers
+    // Sky cloud provider (dual-agent cloud intellect). Parallel to the
+    // remote-API namespace; the key lives in the Keychain, not @AppStorage.
+    @AppStorage(TesseraSettingsKey.skyAPIBaseURL) private var skyAPIBaseURL = TesseraSettingsDefault.skyAPIBaseURL
+    @AppStorage(TesseraSettingsKey.skyModelName) private var skyModelName = TesseraSettingsDefault.skyModelName
+    @AppStorage(TesseraSettingsKey.skyUseStreaming) private var skyUseStreaming = TesseraSettingsDefault.skyUseStreaming
+    @State private var skyKeyDraft = ""
+    @State private var skyKeyState: TesseraSecretState = .missing
     // Learning (drafter training). Read by TesseraLearningServices at launch.
     @AppStorage(TesseraSettingsKey.learningBaseModelPath) private var learningBaseModelPath = TesseraSettingsDefault.learningBaseModelPath
     @AppStorage(TesseraSettingsKey.learningTrainBinary) private var learningTrainBinary = TesseraSettingsDefault.learningTrainBinary
@@ -92,6 +99,7 @@ struct SettingsView: View {
         .frame(width: 520, height: 460)
         .onAppear {
             loadAPIKey()
+            loadSkyKey()
             loadCovertTrigger()
         }
         .onChange(of: coercionMode) { _, newValue in
@@ -169,6 +177,20 @@ struct SettingsView: View {
                             value: $onDeviceGPULayers, in: -1...200)
                 }
             }
+
+            Section("Sky cloud provider (Tessy + Sky)") {
+                TextField("Base URL", text: $skyAPIBaseURL)
+                    .help("OpenAI-compatible /v1 endpoint Sky uses in the Tessy + Sky surface")
+                SecureField("Sky API key", text: $skyKeyDraft)
+                    .onSubmit { commitSkyKey() }
+                    .onDisappear { commitSkyKey() }
+                    .accessibilityHint("Stored in the macOS Keychain, not preferences")
+                skyKeyStateRow
+                TextField("Sky model name", text: $skyModelName)
+                Toggle("Stream responses (SSE)", isOn: $skyUseStreaming)
+            }
+
+            ProvidersSettingsView()
 
             Section("Learning (drafter training)") {
                 PathField("Drafter model (GGUF)", text: $learningBaseModelPath,
@@ -292,6 +314,41 @@ struct SettingsView: View {
         if stored {
             apiKeyState = TesseraSecretStore.state(
                 account: TesseraSecretStore.remoteAPIKeyAccount
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var skyKeyStateRow: some View {
+        switch skyKeyState {
+        case .stored:
+            Label("Sky key stored in the Keychain", systemImage: "lock.shield")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .missing:
+            Label("No Sky key stored; Sky falls back to the placeholder", systemImage: "key.slash")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func loadSkyKey() {
+        skyKeyDraft = TesseraSecretStore.secret(
+            account: TesseraSecretStore.skyAPIKeyAccount
+        ) ?? ""
+        skyKeyState = TesseraSecretStore.state(
+            account: TesseraSecretStore.skyAPIKeyAccount
+        )
+    }
+
+    private func commitSkyKey() {
+        let stored = TesseraSecretStore.setSecret(
+            skyKeyDraft.isEmpty ? nil : skyKeyDraft,
+            account: TesseraSecretStore.skyAPIKeyAccount
+        )
+        if stored {
+            skyKeyState = TesseraSecretStore.state(
+                account: TesseraSecretStore.skyAPIKeyAccount
             )
         }
     }

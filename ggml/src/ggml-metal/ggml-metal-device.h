@@ -336,17 +336,32 @@ typedef void (*ggml_metal_stream_poke_experts_fn)(void * pool, int32_t layer,
                                                   const char * tensor_suffix,
                                                   const int32_t * expert_ids,
                                                   int32_t n_experts_used);
+// Host-driven prefetch (first-class): issue an explicit async memcpy for the
+// next layer and wait for it before the next ensure. Returns an opaque handle
+// (NULL on failure / out of range / already claimed); the wait publishes the
+// slot and consumes the handle. cancel drains an in-flight handle on early
+// exit. When prefetch_async is NULL the encoder falls back to poke_fn.
+typedef void * (*ggml_metal_stream_prefetch_async_fn)(void * pool, int32_t layer);
+typedef int64_t (*ggml_metal_stream_prefetch_wait_fn) (void * pool, void * prefetch_handle, int32_t layer);
+typedef void    (*ggml_metal_stream_prefetch_cancel_fn)(void * pool, void * prefetch_handle, int32_t layer);
 void   ggml_metal_device_stream_set_pool(ggml_metal_device_t dev,
                                          void * pool,
                                          ggml_metal_stream_ensure_fn ensure_fn,
                                          ggml_metal_stream_poke_fn  poke_fn,
                                          ggml_metal_stream_ensure_experts_fn ensure_experts_fn,
                                          ggml_metal_stream_poke_experts_fn  poke_experts_fn);
+void   ggml_metal_device_stream_set_prefetch_fns(ggml_metal_device_t dev,
+                                                 ggml_metal_stream_prefetch_async_fn  prefetch_async_fn,
+                                                 ggml_metal_stream_prefetch_wait_fn   prefetch_wait_fn,
+                                                 ggml_metal_stream_prefetch_cancel_fn prefetch_cancel_fn);
 void * ggml_metal_device_stream_get_pool(const ggml_metal_device_t dev);
 ggml_metal_stream_ensure_fn ggml_metal_device_stream_get_ensure_fn(const ggml_metal_device_t dev);
 ggml_metal_stream_poke_fn  ggml_metal_device_stream_get_poke_fn(const ggml_metal_device_t dev);
 ggml_metal_stream_ensure_experts_fn ggml_metal_device_stream_get_ensure_experts_fn(const ggml_metal_device_t dev);
 ggml_metal_stream_poke_experts_fn  ggml_metal_device_stream_get_poke_experts_fn(const ggml_metal_device_t dev);
+ggml_metal_stream_prefetch_async_fn  ggml_metal_device_stream_get_prefetch_async_fn(const ggml_metal_device_t dev);
+ggml_metal_stream_prefetch_wait_fn   ggml_metal_device_stream_get_prefetch_wait_fn(const ggml_metal_device_t dev);
+ggml_metal_stream_prefetch_cancel_fn ggml_metal_device_stream_get_prefetch_cancel_fn(const ggml_metal_device_t dev);
 
 const struct ggml_metal_device_props * ggml_metal_device_get_props(ggml_metal_device_t dev);
 

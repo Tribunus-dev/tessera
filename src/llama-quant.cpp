@@ -3,6 +3,7 @@
 #include "llama-model-loader.h"
 #include "llama-ext.h"
 #include "llama.h"
+#include "imatrix-loader.h"
 
 #include <algorithm>
 #include <cmath>
@@ -92,6 +93,31 @@ static std::string remap_imatrix(const std::string & orig_name, const std::map<i
     }
 
     return orig_name;
+}
+
+// Derive the imatrix lookup key for a destination tensor, accounting for the
+// observer scope. The verifier scope looks up the bare tensor name (unchanged
+// contract). Drafter/talker scopes look up under the matching per-scope tag
+// ("dft.mtp.", "dft.dflash.", "dft.dspark.", "dft.talker."), after stripping
+// any destination prefix the unified-writer added (e.g. "dflash.blk.0.*" ->
+// "blk.0.*") so the key matches how the calibration pass wrote the entry.
+static std::string imatrix_lookup_name(const std::string & tensor_name,
+                                       enum llama_observer_scope scope) {
+    if (scope == LLAMA_OBSERVER_SCOPE_VERIFIER) {
+        return tensor_name;
+    }
+    std::string stripped = tensor_name;
+    static constexpr const char * k_dst_prefixes[] = {
+        "dflash.", "dspark.", "tts.c2w.", "tts.",
+    };
+    for (const char * p : k_dst_prefixes) {
+        const size_t n = std::strlen(p);
+        if (stripped.compare(0, n, p) == 0) {
+            stripped.erase(0, n);
+            break;
+        }
+    }
+    return common_imatrix_scope_prefix(scope) + stripped;
 }
 
 //
@@ -1045,7 +1071,9 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
         metadata[i].requires_imatrix = tensor_requires_imatrix(tensor->name, metadata[i].target_type, ftype);
 
         if (params->imatrix) {
-            metadata[i].remapped_imatrix_name = remap_imatrix(tensor->name, mapped);
+            metadata[i].remapped_imatrix_name =
+                imatrix_lookup_name(remap_imatrix(tensor->name, mapped),
+                                    (enum llama_observer_scope) params->imatrix_scope);
         } else if (metadata[i].allows_quantization && metadata[i].requires_imatrix) {
             if (params->dry_run) {
                 will_require_imatrix = true;
@@ -1304,6 +1332,7 @@ llama_model_quantize_params llama_model_quantize_default_params() {
         /*.keep_split                  =*/ false,
         /*.dry_run                     =*/ false,
         /*.imatrix                     =*/ nullptr,
+        /*.imatrix_scope               =*/ (int32_t) LLAMA_OBSERVER_SCOPE_VERIFIER,
         /*.kv_overrides                =*/ nullptr,
         /*.tensor_type                 =*/ nullptr,
         /*.prune_layers                =*/ nullptr

@@ -77,6 +77,48 @@ enum tessera_subcommand common_tessera_active_subcommand() {
     return tessera_active_sc;
 }
 
+// Tessera fork: classify a flag registered for LLAMA_EXAMPLE_TESSERA.
+// Returns 0 if `flag` is not a tessera flag, 1 if it is a switch (no value),
+// 2 if it takes a value. Lets the legacy quantize argv loop skip
+// tessera-owned flags that common_tessera_params_parse already consumed.
+//
+// Reconstructs the registered option list for the TESSERA example (with the
+// active subcommand applied so the per-subcommand filter matches what
+// common_tessera_params_parse exposed) and classifies by which handler the
+// option carries: void/bool handlers are switches, the int/string/str_str
+// handlers take 1 (or 2) values.
+int common_tessera_flag_kind(const char * flag) {
+    if (!flag || flag[0] != '-' || tessera_active_sc == TESSERA_SC_NONE) {
+        return 0;
+    }
+    common_params dummy_params{};
+    common_params_context ctx = common_params_parser_init(dummy_params, LLAMA_EXAMPLE_TESSERA, nullptr);
+    for (const auto & opt : ctx.options) {
+        bool match = false;
+        for (const char * a : opt.args) {
+            if (a && flag == std::string(a)) { match = true; break; }
+        }
+        if (!match) {
+            for (const char * a : opt.args_neg) {
+                if (a && flag == std::string(a)) { match = true; break; }
+            }
+        }
+        if (!match) continue;
+        // tessera-scoped flags are the tessera-owned ones; an empty tessera_sc
+        // means the flag is generally visible (not tessera-exclusive), so it
+        // is not "owned" by the tessera parser and the legacy loop should
+        // still handle it.
+        if (opt.tessera_sc.empty()) {
+            return 0;
+        }
+        if (opt.handler_void || opt.handler_bool) {
+            return 1;
+        }
+        return 2; // handler_int / handler_string / handler_str_str all take >= 1 value
+    }
+    return 0;
+}
+
 // Tessera fork: subcommand name <-> enum. Single source of truth for the
 // dispatch table; both the dispatch in common_tessera_params_parse and
 // the top-level --help printer use it.

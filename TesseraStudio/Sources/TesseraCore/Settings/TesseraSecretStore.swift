@@ -22,6 +22,11 @@ public enum TesseraSecretStore {
     /// Account name for the remote LLM provider API key.
     public static let remoteAPIKeyAccount = "remoteAPIKey"
 
+    /// Account name for the Sky cloud provider API key (dual-agent surface).
+    /// Independent of `remoteAPIKeyAccount` so Sky can be configured separately
+    /// from the main Playground remote provider.
+    public static let skyAPIKeyAccount = "skyAPIKey"
+
     /// The stored/missing state for an account, for UI display.
     public static func state(account: String) -> TesseraSecretState {
         secret(account: account) != nil ? .stored : .missing

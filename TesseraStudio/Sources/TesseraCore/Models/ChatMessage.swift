@@ -45,18 +45,25 @@ public final class ChatMessage {
     public var toolCalls: [ToolCallRecord]
     public var timestamp: Date
     public var conversationID: UUID
+    /// Which assistant persona produced this message in the dual-agent
+    /// surface (Tessy vs Sky). nil for user/system/tool messages and for
+    /// assistant messages from the single-agent Playground. Stored as the
+    /// raw value so SwiftData migrations are additive (optional + default nil).
+    public var speaker: String?
 
     public init(
         role: ChatRole,
         content: String,
         toolCalls: [ToolCallRecord] = [],
-        conversationID: UUID = UUID()
+        conversationID: UUID = UUID(),
+        speaker: String? = nil
     ) {
         self.role = role
         self.content = content
         self.toolCalls = toolCalls
         self.timestamp = Date()
         self.conversationID = conversationID
+        self.speaker = speaker
     }
 }
 

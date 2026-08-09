@@ -1,31 +1,12 @@
 import SwiftUI
 import SwiftData
+import AppKit
 import TesseraCore
 
-enum Destination: String, CaseIterable, Identifiable {
-    case library = "Library"
-    case playground = "Playground"
-    case runs = "Runs"
-    case learning = "Learning"
-    case workflows = "Workflows"
-    case email = "Email"
-
-    var id: String { rawValue }
-
-    var icon: String {
-        switch self {
-        case .library: "books.vertical"
-        case .playground: "bubble.left.and.text.bubble.right"
-        case .runs: "clock.arrow.circlepath"
-        case .learning: "chart.bar.doc.horizontal"
-        case .workflows: "rectangle.connected.to.line.below"
-        case .email: "envelope"
-        }
-    }
-}
-
-/// macOS Studio shell: 3-destination split view with a leading chat-history
-/// drawer, a bottom telemetry drawer, first-run onboarding, and export.
+/// macOS Studio shell: a grouped split-view sidebar (Work / Knowledge / Connect
+/// / Agents / System) with a leading chat-history drawer, a bottom telemetry
+/// drawer, first-run onboarding, and export. The productivity surfaces are
+/// lazy-bootstrapped on first navigation so app launch stays cheap.
 struct ContentView: View {
     @AppStorage(TesseraSettingsKey.onboardingComplete) private var onboardingComplete = false
     @Environment(\.modelContext) private var modelContext
@@ -73,6 +54,17 @@ struct ContentView: View {
     // Email destination) so app launch is not
     // gated on Postgres.
     @State private var emailSurface = EmailSurfaceBootstrap()
+    // Productivity surface bootstraps. Each is lazy: the data layer (and its
+    // Postgres connect) only happens on first navigation to that surface.
+    @State private var notesSurface = NotesSurfaceBootstrap()
+    @State private var docsSurface = DocsSurfaceBootstrap()
+    @State private var sheetsSurface = SheetsSurfaceBootstrap()
+    @State private var slidesSurface = SlidesSurfaceBootstrap()
+    @State private var codeSurface = CodeSurfaceBootstrap()
+    @State private var tasksSurface = TasksSurfaceBootstrap()
+    @State private var contactsSurface = ContactsSurfaceBootstrap()
+    @State private var remindersSurface = RemindersSurfaceBootstrap()
+    @State private var calendarSurface = CalendarSurfaceBootstrap()
 
     var body: some View {
         NavigationSplitView {
@@ -144,9 +136,15 @@ struct ContentView: View {
     }
 
     private var sidebar: some View {
-        List(Destination.allCases, selection: selectionBinding) { dest in
-            Label(dest.rawValue, systemImage: dest.icon)
-                .tag(dest)
+        List(selection: selectionBinding) {
+            ForEach(SidebarGroup.allCases) { group in
+                Section(group.rawValue) {
+                    ForEach(group.destinations) { dest in
+                        Label(dest.rawValue, systemImage: dest.icon)
+                            .tag(dest)
+                    }
+                }
+            }
         }
         .navigationTitle("Tessera Studio")
         .frame(minWidth: 180)
@@ -172,17 +170,40 @@ struct ContentView: View {
     @ViewBuilder
     private var detailContent: some View {
         switch selection {
-        case .library:
-            LibraryView()
         case .playground:
             PlaygroundView(agentLoop: agentLoop, restoredMessages: restoredMessages)
                 .id(playgroundSession)
+        case .dualAgent:
+            DualAgentChatView()
+        case .workflows:
+            WorkflowsView(editor: workflowEditor)
+        case .tasks:
+            TasksView(store: tasksSurface.store)
+                .onAppear { tasksSurface.installIfNeeded() }
+        case .calendar:
+            CalendarSurfaceView(model: calendarSurface.viewModel)
+                .onAppear { calendarSurface.installIfNeeded() }
+        case .library:
+            LibraryView()
         case .runs:
             RunsView()
         case .learning:
             LearningDashboardView()
-        case .workflows:
-            WorkflowsView(editor: workflowEditor)
+        case .notes:
+            NotesView(viewModel: notesSurface.viewModel)
+                .onAppear { notesSurface.installIfNeeded() }
+        case .code:
+            CodeSurfaceView(viewModel: codeSurface.viewModel)
+                .onAppear { codeSurface.installIfNeeded() }
+        case .docs:
+            DocsListView(viewModel: docsSurface.viewModel)
+                .onAppear { docsSurface.installIfNeeded() }
+        case .sheets:
+            SheetsListView(viewModel: sheetsSurface.viewModel)
+                .onAppear { sheetsSurface.installIfNeeded() }
+        case .slides:
+            SlidesListView(viewModel: slidesSurface.viewModel)
+                .onAppear { slidesSurface.installIfNeeded() }
         case .email:
             EmailView(
                 store: emailSurface.store,
@@ -191,11 +212,21 @@ struct ContentView: View {
                 identity: emailSurface.identity
             )
             .onAppear { emailSurface.installIfNeeded() }
+        case .contacts:
+            ContactsView(store: contactsSurface.store, importer: contactsSurface.importer)
+                .onAppear { contactsSurface.installIfNeeded() }
+        case .reminders:
+            RemindersView(store: remindersSurface.store, scheduler: remindersSurface.scheduler)
+                .onAppear { remindersSurface.installIfNeeded() }
+        case .collab:
+            CollabTraceView()
+        case .capacity:
+            CapacityView()
         case nil:
             ContentUnavailableView(
                 "Select a destination",
                 systemImage: "sidebar.left",
-                description: Text("Choose Library, Playground, Runs, Learning, or Workflows from the sidebar.")
+                description: Text("Choose a destination from the sidebar to begin.")
             )
         }
     }
@@ -228,8 +259,28 @@ struct ContentView: View {
         case .json:
             let js = ConversationExporter.json(title: convo.title, messages: messages)
             exportItem = ExportItem(title: convo.title, filename: "\(base).json", data: Data(js.utf8))
-        case .pdf, .png:
-            break
+        case .pdf:
+            let pdf = ConversationExporter.pdf(title: convo.title, messages: messages)
+            exportItem = ExportItem(title: convo.title, filename: "\(base).pdf", data: pdf)
+        case .png:
+            // Render the transcript as a SwiftUI stack and snapshot it.
+            let transcript = VStack(alignment: .leading, spacing: 12) {
+                Text(convo.title).font(.headline)
+                ForEach(messages) { message in
+                    ChatBubbleView(message: message)
+                }
+            }
+            .padding()
+            .frame(width: 720)
+            .background(.white)
+            let renderer = ImageRenderer(content: transcript)
+            renderer.scale = 2
+            if let nsImage = renderer.nsImage,
+               let tiff = nsImage.tiffRepresentation,
+               let rep = NSBitmapImageRep(data: tiff),
+               let png = rep.representation(using: .png, properties: [:]) {
+                exportItem = ExportItem(title: convo.title, filename: "\(base).png", data: png)
+            }
         }
     }
 

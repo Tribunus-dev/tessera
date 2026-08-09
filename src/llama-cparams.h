@@ -69,17 +69,16 @@ struct llama_cparams {
     void * cb_eval_user_data;
     bool imatrix_observers;
 
-    // Per-scope observer state. The verifier and drafter each keep their own
-    // filter, user_data, and epoch so that two llama_context instances in the
-    // same process (one verifier, one drafter) can collect independent
-    // importance statistics. imatrix_observer_scope selects which slot
-    // llama_set_imatrix_observer_filter / llama_bump_imatrix_observer_epoch
-    // operate on (default VERIFIER); DFlash drafter graphs read the DRAFTER
-    // slot regardless of the user setting.
+    // Per-scope observer state. Each scope keeps its own filter, user_data,
+    // and epoch so that multiple llama_context instances in the same process
+    // (one verifier plus any of MTP/DFlash/DSpark drafters and the TTS talker)
+    // can collect independent importance statistics. imatrix_observer_scope
+    // selects which slot llama_set_imatrix_observer_filter /
+    // llama_bump_imatrix_observer_epoch operate on (default VERIFIER).
     enum llama_observer_scope imatrix_observer_scope = LLAMA_OBSERVER_SCOPE_VERIFIER;
-    llama_imatrix_observer_filter imatrix_observer_filter[LLAMA_OBSERVER_SCOPE_DRAFTER + 1] = { nullptr, nullptr };
-    void * imatrix_observer_filter_data[LLAMA_OBSERVER_SCOPE_DRAFTER + 1] = { nullptr, nullptr };
-    uint64_t imatrix_observer_epoch[LLAMA_OBSERVER_SCOPE_DRAFTER + 1] = { 0, 0 };
+    llama_imatrix_observer_filter imatrix_observer_filter[LLAMA_OBSERVER_SCOPE_TALKER + 1] = { nullptr, nullptr, nullptr, nullptr, nullptr };
+    void * imatrix_observer_filter_data[LLAMA_OBSERVER_SCOPE_TALKER + 1] = { nullptr, nullptr, nullptr, nullptr, nullptr };
+    uint64_t imatrix_observer_epoch[LLAMA_OBSERVER_SCOPE_TALKER + 1] = { 0, 0, 0, 0, 0 };
 
     llama_context * ctx_other;
 };

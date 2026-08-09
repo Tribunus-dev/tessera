@@ -1,20 +1,21 @@
-// Verifier/drafter observer isolation test.
+// Per-scope observer isolation test.
 //
-// Verifies that the per-scope observer state in llama_cparams keeps the
-// verifier and drafter buckets fully independent. Exercises the same storage
-// contract that llm_graph_context::imatrix_observer_enabled and
+// Verifies that the per-scope observer state in llama_cparams keeps every
+// scope bucket (VERIFIER, MTP, DFLASH, DSPARK, TALKER) fully independent.
+// Exercises the same storage contract that
+// llm_graph_context::imatrix_observer_enabled and
 // llama_context::set_imatrix_observer_filter depend on, so a regression in
 // either surfaces here as a test failure.
 //
 // In particular, the test ensures:
-//   * The two scopes have independent filter, filter_data, and epoch slots,
-//     and assigning to one scope does not perturb the other.
-//   * Switching the active scope preserves both filters and switches the
+//   * Each scope has independent filter, filter_data, and epoch slots, and
+//     assigning to one scope does not perturb any other.
+//   * Switching the active scope preserves all filters and switches the
 //     dispatch to the right slot.
 //   * The filter dispatch through the per-scope slots is symmetric: a filter
-//     that only accepts its own marker rejects the other scope's user_data,
-//     so two contexts (verifier + drafter) in the same process can each see
-//     only the observers it owns.
+//     that only accepts its own marker rejects every other scope's user_data,
+//     so multiple contexts (verifier + drafters + talker) in the same process
+//     each see only the observers they own.
 
 #include "llama.h"
 
@@ -29,18 +30,17 @@
 
 namespace {
 
-// Two distinct user_data values stand in for the two collectors an imatrix
-// session would carry. Each filter recognises only its own marker; cross-
-// feeding is a hard reject.
-int g_verifier_marker = 0xAA;
-int g_drafter_marker  = 0x55;
+// One marker per scope. Each filter recognises only its own marker;
+// cross-feeding is a hard reject.
+int g_markers[LLAMA_OBSERVER_SCOPE_TALKER + 1];
 
-bool accept_verifier_only(const char * /*tensor_name*/, void * user_data) {
-    return user_data == &g_verifier_marker;
-}
-
-bool accept_drafter_only(const char * /*tensor_name*/, void * user_data) {
-    return user_data == &g_drafter_marker;
+bool accept_own_only(const char * /*tensor_name*/, void * user_data) {
+    for (int s = LLAMA_OBSERVER_SCOPE_VERIFIER; s <= LLAMA_OBSERVER_SCOPE_TALKER; ++s) {
+        if (user_data == &g_markers[s]) {
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace
@@ -51,108 +51,71 @@ int main() {
     {
         llama_cparams cparams{};
         assert(cparams.imatrix_observer_scope == LLAMA_OBSERVER_SCOPE_VERIFIER);
-        for (int s = LLAMA_OBSERVER_SCOPE_VERIFIER; s <= LLAMA_OBSERVER_SCOPE_DRAFTER; ++s) {
+        for (int s = LLAMA_OBSERVER_SCOPE_VERIFIER; s <= LLAMA_OBSERVER_SCOPE_TALKER; ++s) {
             assert(cparams.imatrix_observer_filter[s]      == nullptr);
             assert(cparams.imatrix_observer_filter_data[s] == nullptr);
             assert(cparams.imatrix_observer_epoch[s]       == 0);
         }
     }
 
-    // Bind the verifier slot. The drafter slot must remain untouched (a
-    // regression here would mean the two scopes alias the same storage).
+    // Bind every scope to a distinct marker. Writing one scope must not
+    // perturb any other (a regression here would mean scopes alias storage).
     {
         llama_cparams cparams{};
-        cparams.imatrix_observer_scope                                       = LLAMA_OBSERVER_SCOPE_VERIFIER;
-        cparams.imatrix_observer_filter[LLAMA_OBSERVER_SCOPE_VERIFIER]       = accept_verifier_only;
-        cparams.imatrix_observer_filter_data[LLAMA_OBSERVER_SCOPE_VERIFIER] = &g_verifier_marker;
-        cparams.imatrix_observer_epoch[LLAMA_OBSERVER_SCOPE_VERIFIER]       = 1;
-
-        assert(cparams.imatrix_observer_filter[LLAMA_OBSERVER_SCOPE_DRAFTER]      == nullptr);
-        assert(cparams.imatrix_observer_filter_data[LLAMA_OBSERVER_SCOPE_DRAFTER] == nullptr);
-        assert(cparams.imatrix_observer_epoch[LLAMA_OBSERVER_SCOPE_DRAFTER]       == 0);
+        for (int s = LLAMA_OBSERVER_SCOPE_VERIFIER; s <= LLAMA_OBSERVER_SCOPE_TALKER; ++s) {
+            cparams.imatrix_observer_scope             = (enum llama_observer_scope) s;
+            cparams.imatrix_observer_filter[s]         = accept_own_only;
+            cparams.imatrix_observer_filter_data[s]    = &g_markers[s];
+            cparams.imatrix_observer_epoch[s]          = s + 1;
+        }
+        // Every slot reflects its own write and nothing else.
+        for (int s = LLAMA_OBSERVER_SCOPE_VERIFIER; s <= LLAMA_OBSERVER_SCOPE_TALKER; ++s) {
+            assert(cparams.imatrix_observer_filter[s]      == accept_own_only);
+            assert(cparams.imatrix_observer_filter_data[s] == &g_markers[s]);
+            assert(cparams.imatrix_observer_epoch[s]       == (uint64_t)(s + 1));
+        }
     }
 
-    // Now bind the drafter slot. The verifier slot must survive the drafter
-    // assignment (independence in both directions).
+    // The active scope drives dispatch. For every scope, its own filter+data
+    // accepts, and every other scope's data is rejected (cross-feed guard).
+    // This is the contract llm_graph_context::imatrix_observer_enabled()
+    // relies on.
     {
         llama_cparams cparams{};
-        cparams.imatrix_observer_scope                                       = LLAMA_OBSERVER_SCOPE_VERIFIER;
-        cparams.imatrix_observer_filter[LLAMA_OBSERVER_SCOPE_VERIFIER]       = accept_verifier_only;
-        cparams.imatrix_observer_filter_data[LLAMA_OBSERVER_SCOPE_VERIFIER] = &g_verifier_marker;
-        cparams.imatrix_observer_epoch[LLAMA_OBSERVER_SCOPE_VERIFIER]       = 1;
-
-        cparams.imatrix_observer_scope                                       = LLAMA_OBSERVER_SCOPE_DRAFTER;
-        cparams.imatrix_observer_filter[LLAMA_OBSERVER_SCOPE_DRAFTER]       = accept_drafter_only;
-        cparams.imatrix_observer_filter_data[LLAMA_OBSERVER_SCOPE_DRAFTER] = &g_drafter_marker;
-        cparams.imatrix_observer_epoch[LLAMA_OBSERVER_SCOPE_DRAFTER]       = 7;
-
-        // Verifier side untouched by drafter writes.
-        assert(cparams.imatrix_observer_filter[LLAMA_OBSERVER_SCOPE_VERIFIER]      == accept_verifier_only);
-        assert(cparams.imatrix_observer_filter_data[LLAMA_OBSERVER_SCOPE_VERIFIER] == &g_verifier_marker);
-        assert(cparams.imatrix_observer_epoch[LLAMA_OBSERVER_SCOPE_VERIFIER]       == 1);
-
-        // Drafter side reflects its own writes.
-        assert(cparams.imatrix_observer_filter[LLAMA_OBSERVER_SCOPE_DRAFTER]      == accept_drafter_only);
-        assert(cparams.imatrix_observer_filter_data[LLAMA_OBSERVER_SCOPE_DRAFTER] == &g_drafter_marker);
-        assert(cparams.imatrix_observer_epoch[LLAMA_OBSERVER_SCOPE_DRAFTER]       == 7);
+        for (int s = LLAMA_OBSERVER_SCOPE_VERIFIER; s <= LLAMA_OBSERVER_SCOPE_TALKER; ++s) {
+            cparams.imatrix_observer_filter[s]      = accept_own_only;
+            cparams.imatrix_observer_filter_data[s] = &g_markers[s];
+        }
+        for (int s = LLAMA_OBSERVER_SCOPE_VERIFIER; s <= LLAMA_OBSERVER_SCOPE_TALKER; ++s) {
+            cparams.imatrix_observer_scope = (enum llama_observer_scope) s;
+            const auto filter_s = cparams.imatrix_observer_filter[s];
+            const void * data_s = cparams.imatrix_observer_filter_data[s];
+            assert(filter_s != nullptr);
+            assert(filter_s("blk.0.attn_q.weight", data_s));
+            for (int other = LLAMA_OBSERVER_SCOPE_VERIFIER; other <= LLAMA_OBSERVER_SCOPE_TALKER; ++other) {
+                if (other == s) continue;
+                assert(!filter_s("blk.0.attn_q.weight",
+                                 cparams.imatrix_observer_filter_data[other]));
+            }
+        }
     }
 
-    // The active scope drives dispatch. This is the contract
-    // llm_graph_context::imatrix_observer_enabled() relies on.
-    {
-        llama_cparams cparams{};
-        cparams.imatrix_observer_filter[LLAMA_OBSERVER_SCOPE_VERIFIER]       = accept_verifier_only;
-        cparams.imatrix_observer_filter_data[LLAMA_OBSERVER_SCOPE_VERIFIER] = &g_verifier_marker;
-        cparams.imatrix_observer_filter[LLAMA_OBSERVER_SCOPE_DRAFTER]       = accept_drafter_only;
-        cparams.imatrix_observer_filter_data[LLAMA_OBSERVER_SCOPE_DRAFTER] = &g_drafter_marker;
-
-        // Verifier dispatch: verifier filter + verifier data -> true.
-        cparams.imatrix_observer_scope = LLAMA_OBSERVER_SCOPE_VERIFIER;
-        const int scope_v              = cparams.imatrix_observer_scope;
-        const auto filter_v            = cparams.imatrix_observer_filter[scope_v];
-        const void * data_v            = cparams.imatrix_observer_filter_data[scope_v];
-        assert(filter_v != nullptr);
-        assert(filter_v("blk.0.attn_q.weight", data_v));
-        // Cross-feeding: verifier filter must reject the drafter's data.
-        assert(!filter_v("blk.0.attn_q.weight",
-                         cparams.imatrix_observer_filter_data[LLAMA_OBSERVER_SCOPE_DRAFTER]));
-
-        // Drafter dispatch: drafter filter + drafter data -> true.
-        cparams.imatrix_observer_scope = LLAMA_OBSERVER_SCOPE_DRAFTER;
-        const int scope_d              = cparams.imatrix_observer_scope;
-        const auto filter_d            = cparams.imatrix_observer_filter[scope_d];
-        const void * data_d            = cparams.imatrix_observer_filter_data[scope_d];
-        assert(filter_d != nullptr);
-        assert(filter_d("blk.0.attn_q.weight", data_d));
-        // Cross-feeding: drafter filter must reject the verifier's data.
-        assert(!filter_d("blk.0.attn_q.weight",
-                         cparams.imatrix_observer_filter_data[LLAMA_OBSERVER_SCOPE_VERIFIER]));
-    }
-
-    // Epoch tracking is per-scope: bumping one must not touch the other.
+    // Epoch tracking is per-scope: bumping one must not touch any other.
     // This is what llama_bump_imatrix_observer_epoch() depends on.
     {
         llama_cparams cparams{};
-        cparams.imatrix_observer_scope                                 = LLAMA_OBSERVER_SCOPE_VERIFIER;
-        cparams.imatrix_observer_epoch[LLAMA_OBSERVER_SCOPE_VERIFIER] = 0;
-        cparams.imatrix_observer_epoch[LLAMA_OBSERVER_SCOPE_DRAFTER]  = 0;
-
-        // Simulate bumping the verifier scope.
-        ++cparams.imatrix_observer_epoch[cparams.imatrix_observer_scope];
-        assert(cparams.imatrix_observer_epoch[LLAMA_OBSERVER_SCOPE_VERIFIER] == 1);
-        assert(cparams.imatrix_observer_epoch[LLAMA_OBSERVER_SCOPE_DRAFTER]  == 0);
-
-        // Simulate bumping the drafter scope.
-        cparams.imatrix_observer_scope = LLAMA_OBSERVER_SCOPE_DRAFTER;
-        ++cparams.imatrix_observer_epoch[cparams.imatrix_observer_scope];
-        assert(cparams.imatrix_observer_epoch[LLAMA_OBSERVER_SCOPE_VERIFIER] == 1);
-        assert(cparams.imatrix_observer_epoch[LLAMA_OBSERVER_SCOPE_DRAFTER]  == 1);
-
-        // One more verifier bump must not perturb the drafter count.
-        cparams.imatrix_observer_scope = LLAMA_OBSERVER_SCOPE_VERIFIER;
-        ++cparams.imatrix_observer_epoch[cparams.imatrix_observer_scope];
-        assert(cparams.imatrix_observer_epoch[LLAMA_OBSERVER_SCOPE_VERIFIER] == 2);
-        assert(cparams.imatrix_observer_epoch[LLAMA_OBSERVER_SCOPE_DRAFTER]  == 1);
+        for (int s = LLAMA_OBSERVER_SCOPE_VERIFIER; s <= LLAMA_OBSERVER_SCOPE_TALKER; ++s) {
+            cparams.imatrix_observer_epoch[s] = 0;
+        }
+        // Bump each scope exactly once, in order. After bumping scope k, the
+        // first k scopes have epoch 1 and the rest have epoch 0.
+        for (int s = LLAMA_OBSERVER_SCOPE_VERIFIER; s <= LLAMA_OBSERVER_SCOPE_TALKER; ++s) {
+            cparams.imatrix_observer_scope = (enum llama_observer_scope) s;
+            ++cparams.imatrix_observer_epoch[cparams.imatrix_observer_scope];
+            for (int t = LLAMA_OBSERVER_SCOPE_VERIFIER; t <= LLAMA_OBSERVER_SCOPE_TALKER; ++t) {
+                assert(cparams.imatrix_observer_epoch[t] == (uint64_t)(t <= s ? 1 : 0));
+            }
+        }
     }
 
     return 0;

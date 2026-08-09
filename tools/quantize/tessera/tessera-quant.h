@@ -14,8 +14,10 @@
 #include <vector>
 #include <optional>
 
-// forward
+// forward declarations (full definitions in ggml-common.h / tessera-ternary.h)
 struct ts_quant_params;
+struct ts_tile_config;
+struct ts_ternary_tensor;
 
 // Ternarize weights with optional activation-aware scaling.
 // weights: (out_dim x in_dim) row-major.
@@ -64,9 +66,29 @@ void ts_pack_tile640(const int8_t * ternary_flat,
                      int8_t * lane_scales_out,
                      int64_t out_dim, int64_t in_dim);
 
+// Tile-config-parameterized packer: groups trits into radix-243 words (T640)
+// per the page/lane geometry in `config`. page_scales_placeholder and
+// lane_scales_placeholder receive ts_pack_tile's placeholder scales (unit page
+// scale, per-lane 127/1 activity flag); callers that want the fitted scales
+// run ts_compute_scales afterwards (see ts_pack_ternary_to_tile).
+// Only TS_PACK_RADIX243 is implemented; TS_PACK_2BIT asserts (T512/T1024 path).
+void ts_pack_tile(const int8_t * ternary, const ts_tile_config * config,
+                  uint32_t * packed, uint16_t * page_scales_placeholder,
+                  int8_t * lane_scales_placeholder,
+                  int64_t out_dim, int64_t in_dim);
+
 // Compute page and lane scales from weights and ternary encoding.
 // Writes into page_scales and lane_scales (pre-allocated).
 void ts_compute_scales(const float * weights, const int8_t * ternary_flat,
+                       uint16_t * page_scales, int8_t * lane_scales,
+                       int64_t out_dim, int64_t in_dim);
+
+// Tile-config-parameterized scale fit: reads |core[idx]| at every non-zero
+// trit and fits per-page (f16) + per-lane (int8) scales for the geometry in
+// `config`. `core` is the clipped AWQ-scaled weight buffer (the same one the
+// ternary step produced).
+void ts_compute_scales(const float * core, const int8_t * ternary_flat,
+                       const ts_tile_config * config,
                        uint16_t * page_scales, int8_t * lane_scales,
                        int64_t out_dim, int64_t in_dim);
 
@@ -133,6 +155,29 @@ int ts_quantize_2d(const float * weights,
                    int64_t out_dim, int64_t in_dim, int64_t n_tokens,
                    const ts_quant_params_2d * params,
                    ts_quant_result_2d * result);
+
+// Tile-AGNOSTIC ternary-decision step: AWQ alpha search, fused scale/clip/
+// ternarize (global threshold), repair-residual outlier selection, CSR build,
+// and act-scale store. Produces a ts_ternary_tensor carrying the trits
+// (outlier positions zeroed), the clipped AWQ-scaled core, the outlier CSR,
+// and the AWQ/act scales - everything that does not depend on a page/lane
+// geometry. Does NOT pack into tile words or compute page/lane scales; pair
+// with ts_pack_ternary_to_tile (or the bespoke packer for a new tile).
+// Returns 0 on success.
+int ts_quantize_2d_ternary(const float * weights, const float * act_scales,
+                           const float * calib_X, const float * ref_output,
+                           const float * imatrix,
+                           int64_t out_dim, int64_t in_dim, int64_t n_tokens,
+                           const ts_quant_params_2d * params,
+                           ts_ternary_tensor * result);
+
+// Tile-SPECIFIC client-side packer: takes a tile-agnostic ternary tensor and a
+// tile config, packs the radix-243 words, refits the page/lane scales for the
+// requested geometry, and copies the outlier CSR + act scale verbatim from the
+// tensor. Returns 0 on success.
+int ts_pack_ternary_to_tile(const ts_ternary_tensor & tn,
+                            const ts_tile_config & config,
+                            ts_quant_result_2d * result);
 
 // Streaming MSE-only fitness: computes the same MSE as ts_quantize_2d but
 // row-by-row with O(in_dim) scratch instead of O(out_dim*in_dim). Used by

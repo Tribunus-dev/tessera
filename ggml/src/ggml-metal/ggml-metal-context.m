@@ -81,6 +81,13 @@ struct ggml_metal {
     // the last command buffer queued into the Metal queue with operations relevant to the current Metal backend
     id<MTLCommandBuffer> cmd_buf_last;
 
+    // In-flight host-driven prefetch (opaque handle + the layer it targets).
+    // NULL when no prefetch is pending. Issued after a dense segment's command
+    // buffer commits, waited on before the next segment's ensure, drained at
+    // graph end. Owned by the model; the Metal context holds a working copy.
+    void *   prefetch_inflight;
+    int32_t  prefetch_layer;
+
     // abort ggml_metal_graph_compute if callback returns true
     ggml_abort_callback abort_callback;
     void *              abort_callback_data;
@@ -189,6 +196,9 @@ ggml_metal_t ggml_metal_init(ggml_metal_device_t dev) {
     res->cmd_bufs_ext = [[NSMutableArray alloc] init];
 
     res->cmd_buf_last = nil;
+
+    res->prefetch_inflight = NULL;
+    res->prefetch_layer    = -1;
 
     res->pipelines_ext = ggml_metal_pipelines_init();
 
@@ -544,6 +554,21 @@ static enum ggml_status ggml_metal_graph_compute_streamed(ggml_metal_t ctx, stru
                 slot_cb[slot] = nil;
             }
 
+            // Drain any in-flight host-driven prefetch targeting this layer.
+            // prefetch_wait publishes slot_layer[L%2] = L (release) so the
+            // ensure() fast path below hits without a re-memcpy. Falls through
+            // to ensure() which handles both the cache-hit and the synchronous
+            // fill-thread / inline-memcpy fallbacks.
+            if (ctx->prefetch_inflight && ctx->prefetch_layer == seg_lyr) {
+                ggml_metal_stream_prefetch_wait_fn wait_fn =
+                    ggml_metal_device_stream_get_prefetch_wait_fn(ctx->dev);
+                if (wait_fn) {
+                    (void) wait_fn(pool, ctx->prefetch_inflight, ctx->prefetch_layer);
+                }
+                ctx->prefetch_inflight = NULL;
+                ctx->prefetch_layer    = -1;
+            }
+
             // Refill the slot with this layer's bytes. The fill thread (Phase
             // 2) may have already prefetched it; ensure_layer is a cache hit
             // in that case. The fill thread's own slot-reuse guard uses the
@@ -610,29 +635,37 @@ static enum ggml_status ggml_metal_graph_compute_streamed(ggml_metal_t ctx, stru
                     [router_cb release];
                 }
 
-                // Read expert IDs from the first MUL_MAT_ID node's src[2].
-                // src[2] is [n_expert_used, n_tokens] I32. Collect unique IDs.
-                struct ggml_tensor * mmid_node = ggml_graph_node(gf, mul_mat_id_idx);
-                struct ggml_tensor * ids_tensor = mmid_node ? mmid_node->src[2] : NULL;
-                if (!ids_tensor || !ids_tensor->data) {
-                    GGML_LOG_ERROR("%s: MoE layer %d — expert IDs not available\n", __func__, seg_lyr);
-                    ok = false;
-                    break;
-                }
-                const int32_t * ids_data = (const int32_t *) ids_tensor->data;
-                const int n_ids = (int)(ids_tensor->ne[0] * ids_tensor->ne[1]);
-
-                // Collect unique expert IDs (simple O(n^2) — n_ids is small).
-                int32_t unique_ids[256]; // top-k * n_tokens, but top-k is typically 2-16
+                // Collect the UNION of expert IDs across every MUL_MAT_ID node
+                // in [mul_mat_id_idx, seg_hi). Each node's src[2] is
+                // [n_expert_used, n_tokens] I32. Reading only the first node's
+                // IDs would miss experts that other nodes in the same expert
+                // pass route to, leaving their slot slices stale. The dedup
+                // is O(n_ids * n_unique) — n_ids is small (top-k * n_tokens,
+                // top-k typically 2-16) and n_unique <= n_expert.
+                int32_t unique_ids[256];
                 int n_unique = 0;
-                for (int i = 0; i < n_ids && n_unique < 256; ++i) {
-                    int32_t id = ids_data[i];
-                    bool found = false;
-                    for (int j = 0; j < n_unique; ++j) {
-                        if (unique_ids[j] == id) { found = true; break; }
+                for (int i = mul_mat_id_idx; i < seg_hi; ++i) {
+                    struct ggml_tensor * node = ggml_graph_node(gf, i);
+                    if (!node || node->op != GGML_OP_MUL_MAT_ID) continue;
+                    struct ggml_tensor * ids_tensor = node->src[2];
+                    if (!ids_tensor || !ids_tensor->data) {
+                        GGML_LOG_ERROR("%s: MoE layer %d — expert IDs not available for node %d\n",
+                                       __func__, seg_lyr, i);
+                        ok = false;
+                        break;
                     }
-                    if (!found) unique_ids[n_unique++] = id;
+                    const int32_t * ids_data = (const int32_t *) ids_tensor->data;
+                    const int n_ids = (int)(ids_tensor->ne[0] * ids_tensor->ne[1]);
+                    for (int k = 0; k < n_ids && n_unique < 256; ++k) {
+                        int32_t id = ids_data[k];
+                        bool found = false;
+                        for (int j = 0; j < n_unique; ++j) {
+                            if (unique_ids[j] == id) { found = true; break; }
+                        }
+                        if (!found) unique_ids[n_unique++] = id;
+                    }
                 }
+                if (!ok) break;
 
                 // Sparse-fill: for each unique MoE weight tensor in the expert
                 // pass, call ensure_experts with the active expert IDs. We
@@ -672,6 +705,18 @@ static enum ggml_status ggml_metal_graph_compute_streamed(ggml_metal_t ctx, stru
                 // Sub-segment 2: expert pass [mul_mat_id_idx, seg_hi).
                 id<MTLCommandBuffer> cmd_buf = [queue commandBufferWithUnretainedReferences];
                 [cmd_buf retain];
+                // Symmetric GPU-side slot-reuse wait. The dense branch and the
+                // MoE router branch both encode this before reusing a slot;
+                // ensure_experts already CPU-waits via sync_fn, but encoding
+                // the GPU wait here is defense-in-depth so a future change to
+                // ensure_experts (e.g. making it non-blocking) cannot race
+                // this command buffer with layer seg_lyr-2's in-flight read.
+                if (fence) {
+                    const int32_t prev_in_slot = seg_lyr - 2;
+                    if (prev_in_slot >= 0) {
+                        ggml_mtl_shared_event_encode_wait(fence, cmd_buf, (uint64_t)(prev_in_slot + 1));
+                    }
+                }
                 ggml_metal_op_t ctx_op = ggml_metal_op_init(
                     ctx->dev, cmd_buf, gf,
                     mul_mat_id_idx, seg_hi,
@@ -728,13 +773,53 @@ static enum ggml_status ggml_metal_graph_compute_streamed(ggml_metal_t ctx, stru
                 slot_cb[slot] = cmd_buf;
             }
 
-            // Phase 2: poke the fill thread to prefetch the next layer while
-            // the GPU computes this one. Non-blocking; falls back to Phase 1
-            // (synchronous ensure) when poke_fn is NULL.
-            ggml_metal_stream_poke_fn poke = ggml_metal_device_stream_get_poke_fn(ctx->dev);
-            if (poke && si + 1 < n_segments) {
-                poke(pool, seg_layer[si + 1]);
+            // After committing this layer's command buffer, prefetch the next
+            // layer's bytes so they are ready when the loop reaches it. Prefers
+            // the host-driven prefetch API (explicit async memcpy with fence
+            // guard + slot publish) when wired; falls back to the fill-thread
+            // poke when prefetch_async is unavailable or the claim is lost.
+            if (si + 1 < n_segments) {
+                const int32_t next_lyr = seg_layer[si + 1];
+                ggml_metal_stream_prefetch_async_fn prefetch_async =
+                    ggml_metal_device_stream_get_prefetch_async_fn(ctx->dev);
+                if (prefetch_async) {
+                    // Drain any stale in-flight prefetch before issuing a new one.
+                    if (ctx->prefetch_inflight) {
+                        ggml_metal_stream_prefetch_cancel_fn cancel_fn =
+                            ggml_metal_device_stream_get_prefetch_cancel_fn(ctx->dev);
+                        if (cancel_fn) {
+                            cancel_fn(pool, ctx->prefetch_inflight, ctx->prefetch_layer);
+                        }
+                        ctx->prefetch_inflight = NULL;
+                        ctx->prefetch_layer    = -1;
+                    }
+                    void * h = prefetch_async(pool, next_lyr);
+                    if (h) {
+                        ctx->prefetch_inflight = h;
+                        ctx->prefetch_layer    = next_lyr;
+                    } else {
+                        // Layer out of range or already claimed: fall back to poke.
+                        ggml_metal_stream_poke_fn poke = ggml_metal_device_stream_get_poke_fn(ctx->dev);
+                        if (poke) poke(pool, next_lyr);
+                    }
+                } else {
+                    ggml_metal_stream_poke_fn poke = ggml_metal_device_stream_get_poke_fn(ctx->dev);
+                    if (poke) poke(pool, next_lyr);
+                }
             }
+        }
+
+        // Drain any in-flight prefetch at graph end (decode->prefill transition
+        // or early exit). cancel waits for the background memcpy so it does not
+        // outlive its dst slot buffer, then clears the handle.
+        if (ctx->prefetch_inflight) {
+            ggml_metal_stream_prefetch_cancel_fn cancel_fn =
+                ggml_metal_device_stream_get_prefetch_cancel_fn(ctx->dev);
+            if (cancel_fn) {
+                cancel_fn(pool, ctx->prefetch_inflight, ctx->prefetch_layer);
+            }
+            ctx->prefetch_inflight = NULL;
+            ctx->prefetch_layer    = -1;
         }
 
         // Wait for the final command buffers to complete so status is checked.

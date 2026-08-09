@@ -117,8 +117,25 @@ struct ContentView: View {
         case .json:
             let js = ConversationExporter.json(title: convo.title, messages: messages)
             exportItem = ExportItem(title: convo.title, filename: "\(base).json", data: Data(js.utf8))
-        case .pdf, .png:
-            break
+        case .pdf:
+            let pdf = ConversationExporter.pdf(title: convo.title, messages: messages)
+            exportItem = ExportItem(title: convo.title, filename: "\(base).pdf", data: pdf)
+        case .png:
+            let transcript = VStack(alignment: .leading, spacing: 12) {
+                Text(convo.title).font(.headline)
+                ForEach(messages) { message in
+                    ChatBubbleView(message: message)
+                }
+            }
+            .padding()
+            .frame(width: 360)
+            .background(.white)
+            let renderer = ImageRenderer(content: transcript)
+            renderer.scale = 2
+            if let image = renderer.uiImage,
+               let png = image.pngData() {
+                exportItem = ExportItem(title: convo.title, filename: "\(base).png", data: png)
+            }
         }
     }
 

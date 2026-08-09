@@ -28,3 +28,30 @@ public struct NoOpSidecarController: SidecarController {
         // to 5s, then SIGKILL. Wired in the Valkey integration phase.
     }
 }
+
+/// Real ``SidecarController`` backed by the data layer's connection
+/// lifecycle. The app does not run Postgres/Valkey as subprocess sidecars;
+/// it holds pooled connections through ``TesseraDataLayer``. Before the wipe
+/// destroys the key, this controller closes those pools so no in-flight
+/// write is left holding the old credentials. The data layer is an actor, so
+/// the calls are awaited.
+public struct TesseraDataLayerSidecarController: SidecarController {
+    private let dataLayer: TesseraDataLayer?
+
+    public init(dataLayer: TesseraDataLayer?) {
+        self.dataLayer = dataLayer
+    }
+
+    public func stopPostgres() async throws {
+        // shutdown() closes both stores; for a finer-grained future split,
+        // stopPostgres would close only the durable store. Today the data
+        // layer exposes a single shutdown() so we use it and let stopValkey
+        // be a no-op (both are closed together here).
+        try? await dataLayer?.shutdown()
+    }
+
+    public func stopValkey() async throws {
+        // Closed together with Postgres in stopPostgres() above; kept as a
+        // no-op so the wipe sequence's two-step contract still holds.
+    }
+}

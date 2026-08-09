@@ -72,6 +72,14 @@ struct llama_weight_pool {
     std::atomic<bool>      fill_shutdown = {false};
     std::atomic<bool>      fill_running  = {false};
 
+    // Host-driven prefetch claim. When the Metal encoder issues an explicit
+    // prefetch_async for layer L, it sets host_claim_layer = L so the fill
+    // thread skips L in its dense loop (the two paths never write the same
+    // slot concurrently). Cleared to -1 after prefetch_wait publishes
+    // slot_layer[L%2] = L. Atomic CAS claims the layer; no mutex needed
+    // because slot_layer is already atomic with release/acquire ordering.
+    std::atomic<int32_t>   host_claim_layer = {-1};
+
     // Phase MoE-2: per-layer expert ID history from the previous chunk's
     // routing. The fill thread uses this to pre-fill expert slices before
     // the encoder asks for them. Key: layer * 4 + tensor_suffix_hash.
@@ -262,7 +270,7 @@ int llama_weight_pool_alias_tensors(llama_weight_pool_t * pool,
             info.layer       = l;
             info.slot_index  = slot;
             info.slot_base   = pool->slot_base[slot];
-            info.slot_buffer = pool->slot_buf[slot]; // NULL on malloc fallback
+            info.slot_buffer = pool->slot_buf[slot]; // always set: open hard-errors on IOSurface alloc failure
             info.offset      = e.offset;
             info.size        = e.size;
             if (alias_fn(info, user_data)) {
@@ -352,6 +360,101 @@ void llama_weight_pool_poke_prefetch(llama_weight_pool_t * pool, int32_t layer) 
     pool->fill_cv.notify_one();
 #else
     GGML_UNUSED(pool);
+    GGML_UNUSED(layer);
+#endif
+}
+
+// Host-driven prefetch: claim layer L, guard on the GPU fence for the slot's
+// previous occupant, then issue the async memcpy into slot[L%2]. The fill
+// thread observes the claim (host_claim_layer) and skips L so the two paths
+// never write the same slot concurrently. Returns an opaque handle the caller
+// passes to llama_weight_pool_prefetch_wait, or nullptr if the layer is out
+// of range or already claimed.
+llama_weight_stream_prefetch_t * llama_weight_pool_prefetch_async(
+        llama_weight_pool_t * pool, int32_t layer) {
+#if LLAMA_WEIGHT_POOL_SUPPORTED
+    if (!pool || layer < 0 || layer >= pool->n_layer) return nullptr;
+    const int slot = layer % 2;
+    // Claim the layer so the fill thread skips it. CAS avoids racing a second
+    // host prefetch for the same layer.
+    int32_t expected = -1;
+    if (!pool->host_claim_layer.compare_exchange_strong(expected, layer,
+            std::memory_order_acq_rel)) {
+        return nullptr; // another host prefetch is in flight
+    }
+    // Guard: wait for the GPU to finish reading this slot's previous content
+    // before issuing the memcpy. Mirrors the fill-thread guard at the dense
+    // loop and ensure_layer's synchronous path. The sync callback blocks the
+    // host until the MTLSharedEvent for the previous occupant signals.
+    if (pool->slot_layer[slot].load(std::memory_order_acquire) >= 0 && pool->sync_fn) {
+        const int32_t prev = pool->slot_layer[slot].load(std::memory_order_acquire);
+        pool->sync_fn(pool->sync_ud, prev);
+    }
+    return llama_weight_stream_prefetch_async(
+            pool->stream, layer, pool->slot_base[slot], pool->slot_bytes);
+#else
+    GGML_UNUSED(pool);
+    GGML_UNUSED(layer);
+    return nullptr;
+#endif
+}
+
+// Block until the prefetch completes, then publish slot_layer[slot] = layer
+// (atomic release) so ensure_layer's fast path hits. Clears the host claim.
+// Returns the bytes written, or -1 on failure.
+int64_t llama_weight_pool_prefetch_wait(llama_weight_pool_t * pool,
+                                        llama_weight_stream_prefetch_t * pre,
+                                        int32_t layer) {
+#if LLAMA_WEIGHT_POOL_SUPPORTED
+    if (!pool || !pre || layer < 0 || layer >= pool->n_layer) {
+        if (pre) llama_weight_stream_prefetch_free(pre);
+        if (pool) pool->host_claim_layer.store(-1, std::memory_order_release);
+        return -1;
+    }
+    const int64_t r = llama_weight_stream_prefetch_wait(pre);
+    const int slot = layer % 2;
+    if (r >= 0) {
+        // Publish under no mutex: slot_layer is atomic, and the fill thread
+        // observed host_claim_layer == layer so it skipped this slot. Other
+        // readers (ensure_layer) do an acquire load, so the release store
+        // here makes the memcpy bytes visible.
+        pool->slot_layer[slot].store(layer, std::memory_order_release);
+        // Bump fill_ready so the fill thread does not re-fill below this.
+        int32_t cur_ready = pool->fill_ready.load(std::memory_order_relaxed);
+        while (cur_ready < layer &&
+               !pool->fill_ready.compare_exchange_weak(cur_ready, layer, std::memory_order_release)) {
+            // cur_ready refreshed by CAS; retry until we raise it or lose to a higher value.
+        }
+        if (pool->fill_running.load(std::memory_order_acquire)) {
+            std::lock_guard<std::mutex> lk(pool->fill_mtx);
+            pool->ensure_cv.notify_all();
+        }
+    }
+    pool->host_claim_layer.store(-1, std::memory_order_release);
+    return r;
+#else
+    GGML_UNUSED(pool);
+    GGML_UNUSED(pre);
+    GGML_UNUSED(layer);
+    return -1;
+#endif
+}
+
+// Cancel an in-flight prefetch (decode->prefill transition, early exit).
+// Waits for the current chunk to finish so the background thread does not
+// outlive its dst buffer, then clears the claim.
+void llama_weight_pool_prefetch_cancel(llama_weight_pool_t * pool,
+                                       llama_weight_stream_prefetch_t * pre,
+                                       int32_t layer) {
+#if LLAMA_WEIGHT_POOL_SUPPORTED
+    if (pool && layer >= 0 && layer < pool->n_layer) {
+        pool->host_claim_layer.store(-1, std::memory_order_release);
+    }
+    if (pre) llama_weight_stream_prefetch_free(pre); // cancel-safe after D3
+    GGML_UNUSED(pool);
+#else
+    GGML_UNUSED(pool);
+    GGML_UNUSED(pre);
     GGML_UNUSED(layer);
 #endif
 }
@@ -511,6 +614,10 @@ void llama_weight_pool_start(llama_weight_pool_t * pool) {
                      l <= target && l < pool->n_layer; ++l) {
                     const int s = l % 2;
                     if (pool->slot_layer[s].load(std::memory_order_relaxed) == l) continue;
+                    // Skip layers the host-driven prefetch has claimed; the
+                    // host owns the slot for those and will publish slot_layer
+                    // itself via prefetch_wait.
+                    if (pool->host_claim_layer.load(std::memory_order_acquire) == l) continue;
                     if (pool->slot_layer[s].load(std::memory_order_relaxed) >= 0 && pool->sync_fn) {
                         const int32_t prev = pool->slot_layer[s].load(std::memory_order_relaxed);
                         lk.unlock();

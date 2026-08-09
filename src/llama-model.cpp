@@ -8,6 +8,7 @@
 #include "llama-cparams.h"
 #include "llama-model-loader.h"
 #include "llama-weight-pool.h"
+#include "llama-weight-stream.h"
 
 #include "llama-kv-cache.h"
 #include "llama-kv-cache-iswa.h"
@@ -40,6 +41,9 @@ typedef void (*ggml_metal_stream_poke_experts_fn)(void * pool, int32_t layer,
                                                   const char * tensor_suffix,
                                                   const int32_t * expert_ids,
                                                   int32_t n_experts_used);
+typedef void * (*ggml_metal_stream_prefetch_async_fn)(void * pool, int32_t layer);
+typedef int64_t (*ggml_metal_stream_prefetch_wait_fn) (void * pool, void * prefetch_handle, int32_t layer);
+typedef void    (*ggml_metal_stream_prefetch_cancel_fn)(void * pool, void * prefetch_handle, int32_t layer);
 extern "C" {
 void ggml_metal_device_stream_set_pool(ggml_metal_device_t dev,
                                        void * pool,
@@ -47,6 +51,10 @@ void ggml_metal_device_stream_set_pool(ggml_metal_device_t dev,
                                        ggml_metal_stream_poke_fn  poke_fn,
                                        ggml_metal_stream_ensure_experts_fn ensure_experts_fn,
                                        ggml_metal_stream_poke_experts_fn  poke_experts_fn);
+void ggml_metal_device_stream_set_prefetch_fns(ggml_metal_device_t dev,
+                                               ggml_metal_stream_prefetch_async_fn  prefetch_async_fn,
+                                               ggml_metal_stream_prefetch_wait_fn   prefetch_wait_fn,
+                                               ggml_metal_stream_prefetch_cancel_fn prefetch_cancel_fn);
 void ggml_metal_device_stream_set_fence(ggml_metal_device_t dev, void * shared_event);
 }
 // Forward-declare the MTLSharedEvent helpers (ggml-metal-event.mm).
@@ -1072,6 +1080,16 @@ static buft_list_t make_gpu_buft_list(ggml_backend_dev_t dev, llama_split_mode s
 struct llama_model::impl {
     impl() = default;
     ~impl() {
+#if defined(__APPLE__) && defined(GGML_USE_ANE)
+        // Drain an in-flight prefetch before tearing down the pool/slots so
+        // the background memcpy does not outlive its dst buffer.
+        if (weight_prefetch_inflight && weight_pool) {
+            llama_weight_pool_prefetch_cancel(
+                weight_pool, weight_prefetch_inflight, weight_prefetch_layer);
+            weight_prefetch_inflight = nullptr;
+            weight_prefetch_layer    = -1;
+        }
+#endif
         if (weight_pool) {
             llama_weight_pool_close(weight_pool);
             weight_pool = nullptr;
@@ -1126,6 +1144,10 @@ struct llama_model::impl {
     // The MTLSharedEvent for fence-based slot sync (Phase 2). Created once,
     // attached to the Metal device and the pool's sync_fn. Freed in ~impl.
     ggml_mtl_shared_event_t stream_event = nullptr;
+    // In-flight host-driven prefetch handle (opaque). NULL when no prefetch is
+    // pending. Drained in ~impl and at graph end (decode->prefill transition).
+    llama_weight_stream_prefetch_t * weight_prefetch_inflight = nullptr;
+    int32_t                          weight_prefetch_layer    = -1;
 #endif
 };
 
@@ -1816,6 +1838,23 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             llama_weight_pool_poke_expert_prefetch(
                 (llama_weight_pool_t *) pool, layer, suffix, ids, n);
         };
+        // Host-driven prefetch trampolines (first-class). The encoder issues
+        // prefetch_async for the next layer after committing the current
+        // command buffer, and prefetch_wait before the next ensure. Returns
+        // opaque void* handles so the Metal device stays pool-type-agnostic.
+        auto prefetch_async_trampoline = +[](void * pool, int32_t layer) -> void * {
+            return llama_weight_pool_prefetch_async((llama_weight_pool_t *) pool, layer);
+        };
+        auto prefetch_wait_trampoline = +[](void * pool, void * handle, int32_t layer) -> int64_t {
+            return llama_weight_pool_prefetch_wait(
+                (llama_weight_pool_t *) pool,
+                (llama_weight_stream_prefetch_t *) handle, layer);
+        };
+        auto prefetch_cancel_trampoline = +[](void * pool, void * handle, int32_t layer) -> void {
+            llama_weight_pool_prefetch_cancel(
+                (llama_weight_pool_t *) pool,
+                (llama_weight_stream_prefetch_t *) handle, layer);
+        };
         // Create the fence event and register the fill thread's sync callback.
         pimpl->stream_event = ggml_mtl_shared_event_new();
         if (pimpl->stream_event) {
@@ -1843,6 +1882,8 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
                 ggml_metal_device_stream_set_pool(metal_dev, pimpl->weight_pool,
                     ensure_trampoline, poke_trampoline,
                     ensure_experts_trampoline, poke_experts_trampoline);
+                ggml_metal_device_stream_set_prefetch_fns(metal_dev,
+                    prefetch_async_trampoline, prefetch_wait_trampoline, prefetch_cancel_trampoline);
                 if (pimpl->stream_event) {
                     ggml_metal_device_stream_set_fence(metal_dev, pimpl->stream_event);
                 }

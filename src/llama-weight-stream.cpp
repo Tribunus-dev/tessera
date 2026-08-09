@@ -101,11 +101,12 @@ int64_t llama_weight_stream_prefetch_wait(llama_weight_stream_prefetch_t * p) {
 }
 void llama_weight_stream_prefetch_free(llama_weight_stream_prefetch_t * p) {
     if (!p) return;
-    // Not waiting — detach and leak the future's thread. The dst
-    // buffer must no longer be in use by the caller. We just delete.
-    // The background memcpy may still be running; we let it finish
-    // orphaned (small race, but imatrix cancellation already tore
-    // down the context before this).
+    // Cancel-safe: block on the future so the background memcpy completes
+    // before its dst buffer can be reused or freed. This is wait-and-discard
+    // (the memcpy is not preempted, but it does not outlive its dst), which
+    // eliminates the detach-and-leak race the original stub admitted. Used by
+    // llama_weight_pool_prefetch_cancel on decode->prefill transitions.
+    try { (void) p->fut.get(); } catch (...) {}
     delete p;
 }
 

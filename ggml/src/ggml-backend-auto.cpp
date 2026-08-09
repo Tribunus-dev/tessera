@@ -145,7 +145,7 @@ bool ggml_op_is_elementwise(enum ggml_op op) {
 // starts landing on ANE with no further code change.
 bool ggml_op_is_matmul(enum ggml_op op) {
     return op == GGML_OP_MUL_MAT || op == GGML_OP_MUL_MAT_ID
-        || op == GGML_OP_TILE640_MATMUL;
+        || op == GGML_OP_TILE640_MATMUL || op == GGML_OP_TILE640_MATMUL_ID;
 }
 
 // Number of "compute elements" in a tensor (a rough cost

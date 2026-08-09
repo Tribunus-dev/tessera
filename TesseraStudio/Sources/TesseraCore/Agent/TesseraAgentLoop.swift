@@ -24,6 +24,11 @@ public final class TesseraAgentLoop {
     private let skillLoader: TesseraSkillLoader
     private let permissionProfile: TesseraPermissionProfile
     private let sandboxEnforceable: Bool
+    /// Which assistant persona this loop speaks as. Drives the identity
+    /// fragment of the system prompt and is forwarded to the UI so bubbles
+    /// can be tinted and labeled per persona. Defaults to `.tessy` so the
+    /// existing single-agent Playground is unchanged.
+    public let persona: AgentPersona
 
     public private(set) var isRunning = false
     public private(set) var currentTask: Task<Void, Never>?
@@ -39,7 +44,8 @@ public final class TesseraAgentLoop {
         tokenLimit: Int = 8192,
         skillLoader: TesseraSkillLoader? = nil,
         permissionProfile: TesseraPermissionProfile = .standard,
-        sandboxEnforceable: Bool? = nil
+        sandboxEnforceable: Bool? = nil,
+        persona: AgentPersona = .tessy
     ) {
         self.registry = registry
         self.approvalEngine = approvalEngine
@@ -50,6 +56,7 @@ public final class TesseraAgentLoop {
         self.tokenBudget = TokenBudget(used: 0, limit: tokenLimit)
         self.skillLoader = skillLoader ?? TesseraSkillLoader()
         self.permissionProfile = permissionProfile
+        self.persona = persona
         // nil -> platform default: sandboxed on iOS (App Store), not on macOS
         // (Developer ID). Only matters once the safety spine's auto-approve path
         // is wired; the reject path it uses today is sandbox-independent.
@@ -97,6 +104,23 @@ public final class TesseraAgentLoop {
 
     public func cancel() {
         currentTask?.cancel()
+    }
+
+    /// Exposed for the dual-agent controller, which drives the provider's
+    /// `stream(...)` directly for token-granular bubbles while still using the
+    /// loop's system-prompt + tool-descriptor construction so the streamed text
+    /// matches the loop's framing.
+    public func systemPrompt(for userMessage: String) -> String {
+        buildSystemPrompt(userMessage: userMessage)
+    }
+
+    /// The provider the loop was constructed with. The dual-agent controller
+    /// calls `stream(...)` on it for the visible text path.
+    public var llmProviderForStreaming: any LLMProvider { llmProvider }
+
+    /// Tool descriptors the loop registers, for the streaming call.
+    public var toolDescriptors: [ToolDescriptor] {
+        registry.allTools.map { ToolDescriptor(name: $0.name, description: $0.description, parameters: $0.parameters) }
     }
 
     // MARK: - Private
@@ -235,10 +259,16 @@ public final class TesseraAgentLoop {
     }
 
     private func buildSystemPrompt(userMessage: String) -> String {
+        // Lead with the persona identity (privacy boundary + name), then the
+        // studio tool/skill context. For the default `.tessy` persona this
+        // preserves the original single-agent framing; for `.sky` it gives the
+        // cloud intellect its own boundary.
         var prompt = """
-        You are Tessera Studio Agent, an assistant for quantizing, calibrating,
-        and deploying LLMs with the Tessera engine. You help users manage models,
-        run calibration, evolve quantization policies, and evaluate results.
+        \(persona.systemPromptFragment)
+
+        You are an assistant for quantizing, calibrating, and deploying LLMs
+        with the Tessera engine. You help users manage models, run calibration,
+        evolve quantization policies, and evaluate results.
 
         \(registry.systemPromptToolsBlock())
         """
@@ -317,12 +347,59 @@ public struct LLMResponse: Sendable {
     }
 }
 
+/// One incremental piece of a streamed model response. Providers that can
+/// stream token-by-token emit a sequence of `.text` chunks followed by a
+/// single `.done`; providers that can only return a whole response rely on
+/// the protocol extension default, which yields the whole content at once.
+public enum LLMChunk: Sendable {
+    case text(String)
+    case done
+}
+
 public protocol LLMProvider: Sendable {
+    /// Whole-response completion. Still the path the agent loop uses for
+    /// tool-call round-trips, since a tool call must be fully assembled
+    /// before it can be dispatched.
     func complete(
         system: String,
         messages: [LLMMessage],
         tools: [ToolDescriptor]
     ) async throws -> LLMResponse
+
+    /// Token-granular streaming of a single completion. Yields `.text` per
+    /// delta and ends with `.done`. The default implementation wraps
+    /// `complete`, so conformers that have no native streaming still work.
+    func stream(
+        system: String,
+        messages: [LLMMessage],
+        tools: [ToolDescriptor]
+    ) async throws -> AsyncStream<LLMChunk>
+}
+
+extension LLMProvider {
+    /// Default streaming: complete() once, emit the full content as a single
+    /// chunk, then finish. Providers with native SSE/token streaming override.
+    public func stream(
+        system: String,
+        messages: [LLMMessage],
+        tools: [ToolDescriptor]
+    ) async throws -> AsyncStream<LLMChunk> {
+        AsyncStream { continuation in
+            let provider = self
+            let task = Task {
+                do {
+                    let response = try await provider.complete(system: system, messages: messages, tools: tools)
+                    if !response.content.isEmpty {
+                        continuation.yield(.text(response.content))
+                    }
+                    continuation.yield(.done)
+                } catch {
+                    continuation.finish()
+                }
+            }
+            continuation.onTermination = { @Sendable _ in task.cancel() }
+        }
+    }
 }
 
 /// Last-resort LLM that echoes the user message and recognizes a few tool
@@ -375,6 +452,49 @@ public struct PlaceholderLLMProvider: LLMProvider {
             "In production, this connects to a local or remote LLM. " +
             "Try asking me to list models, inspect a sidecar, or quantize a model."
         return LLMResponse(content: reply, toolCalls: [], tokenCount: reply.count / 4)
+    }
+
+    /// Word-by-word streaming so the dual-agent surface looks alive even
+    /// without a configured provider. Mirrors the Linux PlaceholderProvider's
+    /// 16-byte chunk cadence.
+    public func stream(
+        system: String,
+        messages: [LLMMessage],
+        tools: [ToolDescriptor]
+    ) async throws -> AsyncStream<LLMChunk> {
+        AsyncStream { continuation in
+            let task = Task {
+                // Tool-call turns have nothing to stream; route through
+                // complete() so the tool keyword dispatch still fires.
+                if let last = messages.last {
+                    let lower = last.content.lowercased()
+                    let wantsTool = (lower.contains("list") && lower.contains("model"))
+                        || lower.contains("inspect") || lower.contains("sidecar")
+                        || lower.contains("quantize")
+                    if wantsTool {
+                        let response = try? await self.complete(system: system, messages: messages, tools: tools)
+                        if let response, !response.content.isEmpty {
+                            continuation.yield(.text(response.content))
+                        }
+                        continuation.yield(.done)
+                        return
+                    }
+                }
+                let response = (try? await self.complete(system: system, messages: messages, tools: tools))
+                    ?? LLMResponse(content: "", toolCalls: [], tokenCount: 0)
+                // Stream the placeholder reply word by word with a small delay
+                // so two concurrent placeholder bubbles interleave visibly.
+                let words = response.content.split(separator: " ")
+                for (i, word) in words.enumerated() {
+                    if Task.isCancelled { break }
+                    let piece = (i == 0 ? "" : " ") + String(word)
+                    continuation.yield(.text(piece))
+                    try? await Task.sleep(nanoseconds: 25_000_000)
+                }
+                continuation.yield(.done)
+            }
+            continuation.onTermination = { @Sendable _ in task.cancel() }
+        }
     }
 
     private func extractPath(from text: String) -> String? {
