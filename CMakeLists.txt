@@ -136,6 +136,25 @@ set(LLAMA_INSTALL_VERSION 0.0.${LLAMA_BUILD_NUMBER})
 set(GGML_ALL_WARNINGS   ${LLAMA_ALL_WARNINGS})
 set(GGML_FATAL_WARNINGS ${LLAMA_FATAL_WARNINGS})
 
+# tessera: first-class CPU optimization - enable all x86 variants with runtime dispatch
+# via ggml dynamic backends. This builds ggml-cpu-sse42, avx, avx2, avx512, avx512_vnni,
+# amx etc. and selects at runtime via cpu-feats, so a single binary runs on
+# EPYC (Zen4/5 + AMX), Intel SapphireRapids, and older hosts. Requires BACKEND_DL.
+if (NOT DEFINED GGML_BACKEND_DL AND LLAMA_STANDALONE)
+    set(GGML_BACKEND_DL ON)
+endif()
+if (NOT DEFINED BUILD_SHARED_LIBS AND GGML_BACKEND_DL)
+    set(BUILD_SHARED_LIBS ON)
+endif()
+if (NOT DEFINED GGML_CPU_ALL_VARIANTS AND LLAMA_STANDALONE AND GGML_BACKEND_DL)
+    set(GGML_CPU_ALL_VARIANTS ON)
+endif()
+if (GGML_CPU_ALL_VARIANTS AND NOT GGML_BACKEND_DL)
+    message(WARNING "tessera: GGML_CPU_ALL_VARIANTS requires GGML_BACKEND_DL, enabling")
+    set(GGML_BACKEND_DL ON)
+    set(BUILD_SHARED_LIBS ON)
+endif()
+
 # change the default for these ggml options
 if (NOT DEFINED GGML_LLAMAFILE)
     set(GGML_LLAMAFILE_DEFAULT ON)

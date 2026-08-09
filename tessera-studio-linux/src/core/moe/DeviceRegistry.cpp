@@ -18,7 +18,7 @@ void DeviceRegistry::probe() {
         pd.caps = c;
         pd.vector_queue.id = c.id + ":vector";
         pd.vector_queue.kind = QueueKind::Vector;
-        pd.vector_queue.tile = 256; // vector-packed T256 for legacy fallback, shared staging
+        pd.vector_queue.tile = (c.id.rfind("cpu",0)==0) ? c.tile : 256; // vector-packed: T256 x86, T640 ARM
         pd.vector_queue.dtype = "f32";
         if (c.dtype == tessera::hardware::DType::F16) pd.vector_queue.dtype = "f16";
         else if (c.dtype == tessera::hardware::DType::BF16) pd.vector_queue.dtype = "bf16";
@@ -28,12 +28,13 @@ void DeviceRegistry::probe() {
 
         pd.matrix_queue.id = c.id + ":matrix";
         pd.matrix_queue.kind = QueueKind::Matrix;
-        pd.matrix_queue.tile = 512; // WMMA 16x16 path
+        pd.matrix_queue.tile = c.tile == 640 ? 640 : 512; // WMMA 16x16 or Apple T640
         pd.matrix_queue.dtype = pd.vector_queue.dtype;
         pd.matrix_queue.hasWMMA = c.hasWMMA && c.hasCoopMat;
 
-        // Apple CPU fallback keeps only vector
-        if (c.id.rfind("cpu",0)==0) pd.matrix_queue.hasWMMA = false;
+        // CPU fallback: only x86 AMX keeps Matrix (Zen4/SapphireRapids), ARM/legacy keeps Vector only
+        if (c.id.rfind("cpu",0)==0 && !c.hasWMMA) pd.matrix_queue.hasWMMA = false;
+        // AMX tile for CPU uses 16x32 (512 logical), ARM keeps 640
 
         devices_.push_back(pd);
     }
