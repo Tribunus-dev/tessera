@@ -69,8 +69,10 @@ _ROOT = Path(__file__).resolve().parent
 _BUILD_DIR = _ROOT / ".build"
 _ACCEL_SOURCE = _ROOT / "apple_accelerate_matmul.cpp"
 _METAL_SOURCE = _ROOT / "apple_metal_matmul.mm"
+_MKL_SOURCE = _ROOT / "intel_mkl_matmul.cpp"
 _DEFAULT_ACCEL_LIBRARY = _BUILD_DIR / "libtessera_accel_matmul.dylib"
 _DEFAULT_METAL_LIBRARY = _BUILD_DIR / "libtessera_metal_matmul.dylib"
+_DEFAULT_MKL_LIBRARY = _BUILD_DIR / "libtessera_mkl_matmul.so"
 
 
 # Backend name constants.  Stored as strings so the user
@@ -79,6 +81,9 @@ _DEFAULT_METAL_LIBRARY = _BUILD_DIR / "libtessera_metal_matmul.dylib"
 BACKEND_NUMPY = "numpy"
 BACKEND_ACCELERATE = "accelerate"
 BACKEND_METAL = "metal"
+BACKEND_MKL = "mkl"
+BACKEND_SYCL_IGPU = "sycl-igpu"
+BACKEND_SYCL_DGPU = "sycl-dgpu"
 
 
 def _is_macos() -> bool:
@@ -219,6 +224,153 @@ def _load_metal_backend(library: Path) -> Optional[ctypes.CDLL]:
     return lib
 
 
+def _has_mkl_compiler() -> bool:
+    """True if a C++ compiler is available for the MKL bridge."""
+    for cand in ("c++", "g++", "clang++", "icpx", "icx"):
+        try:
+            proc = subprocess.run(
+                [cand, "--version"],
+                check=True, capture_output=True, text=True,
+            )
+            if proc.returncode == 0:
+                return True
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            continue
+    return False
+
+
+def _mkl_link_args() -> list[str]:
+    """Link args for the MKL / BLAS bridge.
+
+    Prefers pkg-config when available, otherwise falls back to
+    -lcblas / -lopenblas / -lmkl_rt probing at compile time.
+    """
+    # Try pkg-config for openblas/mkl
+    for pkg in ("openblas", "openblas64", "mkl-sdl", "mkl-dynamic-lp64-seq", "blas"):
+        try:
+            proc = subprocess.run(
+                ["pkg-config", "--libs", pkg],
+                check=True, capture_output=True, text=True,
+            )
+            libs = proc.stdout.strip().split()
+            if libs:
+                return libs
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            continue
+    # Fallback: try common libs; compiler will error if missing and we fallback to numpy
+    return ["-lcblas"]
+
+
+def _build_mkl_library(output: Path) -> Optional[Path]:
+    """Compile ``intel_mkl_matmul.cpp`` to a shared library.
+
+    Returns the path on success, None on any failure (dispatch falls
+    back to numpy).  Uses c++/g++ and links against the system's
+    BLAS (MKL or OpenBLAS).  No Apple framework dependency.
+    """
+    if not _MKL_SOURCE.is_file():
+        return None
+    if not _has_mkl_compiler():
+        return None
+    output.parent.mkdir(parents=True, exist_ok=True)
+    # pick first available compiler
+    compiler = None
+    for cand in ("c++", "g++", "clang++", "icpx", "icx"):
+        try:
+            subprocess.run([cand, "--version"], check=True, capture_output=True, text=True)
+            compiler = cand
+            break
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            continue
+    if compiler is None:
+        return None
+    libs = _mkl_link_args()
+    try:
+        proc = subprocess.run(
+            [compiler, "-std=c++17", "-O3", "-shared", "-fPIC",
+             str(_MKL_SOURCE), "-o", str(output)] + libs,
+            check=True, capture_output=True, text=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return output
+
+
+def _load_mkl_backend(library: Path) -> Optional[ctypes.CDLL]:
+    """Load the MKL .so and bind the sgemm entry point."""
+    try:
+        lib = ctypes.CDLL(str(library))
+    except OSError:
+        return None
+    pointer = ctypes.POINTER(ctypes.c_float)
+    try:
+        sgemm = lib.tessera_mkl_sgemm_f32
+        sgemm.restype = ctypes.c_int
+        sgemm.argtypes = [
+            pointer, pointer, pointer,
+            ctypes.c_size_t, ctypes.c_size_t, ctypes.c_size_t,
+            ctypes.c_int, ctypes.c_int,
+        ]
+    except AttributeError:
+        return None
+    return lib
+
+
+def _has_sycl_compiler() -> bool:
+    """True if an Intel SYCL compiler (icx/dpcpp) is on PATH."""
+    for cand in ("icx", "icpx", "dpcpp"):
+        try:
+            proc = subprocess.run(
+                [cand, "--version"], check=True, capture_output=True, text=True,
+            )
+            if proc.returncode == 0:
+                return True
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            continue
+    return False
+
+
+def _detect_sycl_devices() -> list[str]:
+    """Return list of SYCL device strings via sycl-ls or level_zero probe.
+
+    Returns e.g. ["sycl-igpu", "sycl-dgpu"] or [] if no SYCL runtime.
+    Probes are best-effort and never raise.
+    """
+    devices: list[str] = []
+    # Try sycl-ls (oneAPI)
+    try:
+        proc = subprocess.run(
+            ["sycl-ls"], capture_output=True, text=True, timeout=3,
+        )
+        out = (proc.stdout + proc.stderr).lower()
+        if "gpu" in out:
+            # Heuristic: if two GPUs listed, assume igpu+dgpu
+            gpu_count = out.count("gpu")
+            if gpu_count >= 2:
+                devices.extend([BACKEND_SYCL_IGPU, BACKEND_SYCL_DGPU])
+            elif gpu_count == 1:
+                # single GPU — treat as igpu (shared) for residency purposes
+                devices.append(BACKEND_SYCL_IGPU)
+        if "opencl:gpu" in out and BACKEND_SYCL_IGPU not in devices:
+            devices.append(BACKEND_SYCL_IGPU)
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
+    # Fallback: check /dev/dri for Intel GPU render nodes
+    try:
+        dri = Path("/dev/dri")
+        if dri.is_dir():
+            render_nodes = list(dri.glob("renderD*"))
+            if render_nodes and not devices:
+                devices.append(BACKEND_SYCL_IGPU)
+            if len(render_nodes) >= 2 and len(devices) == 1:
+                devices.append(BACKEND_SYCL_DGPU)
+    except OSError:
+        pass
+    return devices
+
+
 @dataclass
 class MatmulBackend:
     """The dispatched matmul backend for the per-chunk calibration.
@@ -241,55 +393,115 @@ class MatmulBackend:
     def detect(cls) -> "MatmulBackend":
         """Detect the fastest available matmul backend for this host.
 
-        Priority: Metal (MPS) > Accelerate (cblas_sgemm) > numpy.
+        Priority: Metal (MPS) > Accelerate (cblas_sgemm) > numpy on macOS;
+        SYCL > MKL > numpy on Intel Linux. Both lanes are kept — Apple
+        code path is unchanged, Intel lane added as parallel branch.
         The detection is process-wide: the first call pays
         the build / load cost; subsequent calls hit the
         cache.  Lock-protected so the singleton is built
         exactly once even under contention.
         """
         with _THREAD_LOCK:
-            if not _is_macos() or not _has_clang():
+            if _is_macos():
+                if not _has_clang():
+                    return cls(
+                        name=BACKEND_NUMPY,
+                        library=None, _lib=None, _sgemm=None,
+                        _lock=threading.Lock(),
+                    )
+                # Try Metal first.
+                metal_path = Path(
+                    os.environ.get("TESSERA_METAL_MATMUL_LIBRARY",
+                                   _DEFAULT_METAL_LIBRARY)
+                )
+                if metal_path.is_file() or _METAL_SOURCE.is_file():
+                    if not metal_path.is_file() or (
+                        _METAL_SOURCE.is_file()
+                        and metal_path.stat().st_mtime < _METAL_SOURCE.stat().st_mtime
+                    ):
+                        _build_metal_library(metal_path)
+                    lib = _load_metal_backend(metal_path)
+                    if lib is not None:
+                        sgemm = lib.tessera_metal_sgemm_f32
+                        return cls(
+                            name=BACKEND_METAL,
+                            library=metal_path, _lib=lib, _sgemm=sgemm,
+                            _lock=threading.Lock(),
+                        )
+                # Try Accelerate as a fallback.
+                accel_path = Path(
+                    os.environ.get("TESSERA_ACCEL_MATMUL_LIBRARY",
+                                   _DEFAULT_ACCEL_LIBRARY)
+                )
+                if accel_path.is_file() or _ACCEL_SOURCE.is_file():
+                    if not accel_path.is_file() or (
+                        _ACCEL_SOURCE.is_file()
+                        and accel_path.stat().st_mtime < _ACCEL_SOURCE.stat().st_mtime
+                    ):
+                        _build_accelerate_library(accel_path)
+                    lib = _load_accelerate_backend(accel_path)
+                    if lib is not None:
+                        sgemm = lib.tessera_accelerate_sgemm_f32
+                        return cls(
+                            name=BACKEND_ACCELERATE,
+                            library=accel_path, _lib=lib, _sgemm=sgemm,
+                            _lock=threading.Lock(),
+                        )
                 return cls(
                     name=BACKEND_NUMPY,
                     library=None, _lib=None, _sgemm=None,
                     _lock=threading.Lock(),
                 )
-            # Try Metal first.
-            metal_path = Path(
-                os.environ.get("TESSERA_METAL_MATMUL_LIBRARY",
-                               _DEFAULT_METAL_LIBRARY)
-            )
-            if metal_path.is_file() or _METAL_SOURCE.is_file():
-                if not metal_path.is_file() or (
-                    _METAL_SOURCE.is_file()
-                    and metal_path.stat().st_mtime < _METAL_SOURCE.stat().st_mtime
-                ):
-                    _build_metal_library(metal_path)
-                lib = _load_metal_backend(metal_path)
-                if lib is not None:
-                    sgemm = lib.tessera_metal_sgemm_f32
+
+            # Intel Linux lane: SYCL > MKL > numpy (Apple code above unchanged)
+            # Try SYCL first if devices detected
+            sycl_devices = _detect_sycl_devices()
+            if sycl_devices:
+                # For now SYCL dispatch reuses MKL path for calibration GEMM;
+                # full SYCL kernel dispatch for quant fitness is milestone 2/3.
+                # Keep stub so auto-detect surfaces sycl name when hardware present.
+                if BACKEND_SYCL_IGPU in sycl_devices or BACKEND_SYCL_DGPU in sycl_devices:
+                    name = sycl_devices[0]
+                    # Load MKL as fallback sgemm for sycl path until sycl kernels land
+                    mkl_path = Path(
+                        os.environ.get("TESSERA_MKL_MATMUL_LIBRARY", _DEFAULT_MKL_LIBRARY)
+                    )
+                    if mkl_path.is_file() or _MKL_SOURCE.is_file():
+                        if not mkl_path.is_file() or (
+                            _MKL_SOURCE.is_file()
+                            and mkl_path.stat().st_mtime < _MKL_SOURCE.stat().st_mtime
+                        ):
+                            _build_mkl_library(mkl_path)
+                        lib = _load_mkl_backend(mkl_path)
+                        if lib is not None:
+                            sgemm = lib.tessera_mkl_sgemm_f32
+                            return cls(
+                                name=name,
+                                library=mkl_path, _lib=lib, _sgemm=sgemm,
+                                _lock=threading.Lock(),
+                            )
+                    # If MKL build failed, still report sycl name with numpy fallback
                     return cls(
-                        name=BACKEND_METAL,
-                        library=metal_path, _lib=lib, _sgemm=sgemm,
+                        name=name,
+                        library=None, _lib=None, _sgemm=None,
                         _lock=threading.Lock(),
                     )
-            # Try Accelerate as a fallback.
-            accel_path = Path(
-                os.environ.get("TESSERA_ACCEL_MATMUL_LIBRARY",
-                               _DEFAULT_ACCEL_LIBRARY)
+            # Try MKL / OpenBLAS as Intel CPU fallback
+            mkl_path = Path(
+                os.environ.get("TESSERA_MKL_MATMUL_LIBRARY", _DEFAULT_MKL_LIBRARY)
             )
-            if accel_path.is_file() or _ACCEL_SOURCE.is_file():
-                if not accel_path.is_file() or (
-                    _ACCEL_SOURCE.is_file()
-                    and accel_path.stat().st_mtime < _ACCEL_SOURCE.stat().st_mtime
+            if mkl_path.is_file() or _MKL_SOURCE.is_file():
+                if not mkl_path.is_file() or (
+                    _MKL_SOURCE.is_file()
+                    and mkl_path.stat().st_mtime < _MKL_SOURCE.stat().st_mtime
                 ):
-                    _build_accelerate_library(accel_path)
-                lib = _load_accelerate_backend(accel_path)
+                    _build_mkl_library(mkl_path)
+                lib = _load_mkl_backend(mkl_path)
                 if lib is not None:
-                    sgemm = lib.tessera_accelerate_sgemm_f32
+                    sgemm = lib.tessera_mkl_sgemm_f32
                     return cls(
-                        name=BACKEND_ACCELERATE,
-                        library=accel_path, _lib=lib, _sgemm=sgemm,
+                        name=BACKEND_MKL,
+                        library=mkl_path, _lib=lib, _sgemm=sgemm,
                         _lock=threading.Lock(),
                     )
             return cls(
@@ -357,6 +569,22 @@ class MatmulBackend:
     @property
     def is_numpy(self) -> bool:
         return self.name == BACKEND_NUMPY
+
+    @property
+    def is_mkl(self) -> bool:
+        return self.name == BACKEND_MKL
+
+    @property
+    def is_sycl(self) -> bool:
+        return self.name in (BACKEND_SYCL_IGPU, BACKEND_SYCL_DGPU)
+
+    @property
+    def is_sycl_igpu(self) -> bool:
+        return self.name == BACKEND_SYCL_IGPU
+
+    @property
+    def is_sycl_dgpu(self) -> bool:
+        return self.name == BACKEND_SYCL_DGPU
 
 
 # The dispatch singleton.  Constructed on first access.
@@ -441,6 +669,51 @@ def matmul_metal(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     ).matmul(a, b)
 
 
+def matmul_mkl(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Force the MKL-backend matmul (or numpy if unavailable)."""
+    lib = None
+    sgemm = None
+    try:
+        lib = _load_mkl_backend(_DEFAULT_MKL_LIBRARY)
+        if lib is not None:
+            sgemm = lib.tessera_mkl_sgemm_f32
+    except Exception:
+        pass
+    return MatmulBackend(
+        name=BACKEND_MKL,
+        library=_DEFAULT_MKL_LIBRARY,
+        _lib=lib,
+        _sgemm=sgemm,
+        _lock=threading.Lock(),
+    ).matmul(a, b)
+
+
+def matmul_sycl(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Force the SYCL-backend matmul (or MKL/numpy if SYCL unavailable).
+
+    SYCL GEMM for calibration is milestone 2; until kernels land this
+    reuses the MKL sgemm when SYCL hardware is present, mirroring detect().
+    """
+    # probe devices to pick igpu vs dgpu name
+    devs = _detect_sycl_devices()
+    name = devs[0] if devs else BACKEND_SYCL_IGPU
+    lib = None
+    sgemm = None
+    try:
+        lib = _load_mkl_backend(_DEFAULT_MKL_LIBRARY)
+        if lib is not None:
+            sgemm = lib.tessera_mkl_sgemm_f32
+    except Exception:
+        pass
+    return MatmulBackend(
+        name=name,
+        library=_DEFAULT_MKL_LIBRARY,
+        _lib=lib,
+        _sgemm=sgemm,
+        _lock=threading.Lock(),
+    ).matmul(a, b)
+
+
 # Override hook: tests can monkey-patch this to force a
 # specific backend.  When set to a non-None value, the
 # ``matmul`` free function uses this backend instead of
@@ -482,6 +755,9 @@ __all__ = [
     "BACKEND_NUMPY",
     "BACKEND_ACCELERATE",
     "BACKEND_METAL",
+    "BACKEND_MKL",
+    "BACKEND_SYCL_IGPU",
+    "BACKEND_SYCL_DGPU",
     "MatmulBackend",
     "get_matmul_backend",
     "get_matmul_backend_name",
@@ -489,6 +765,8 @@ __all__ = [
     "matmul_numpy",
     "matmul_accelerate",
     "matmul_metal",
+    "matmul_mkl",
+    "matmul_sycl",
     "chunked_matmul",
     "force_backend",
 ]

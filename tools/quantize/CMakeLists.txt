@@ -245,8 +245,27 @@ if(UNIX AND NOT APPLE)
     find_package(BLAS)
     if(BLAS_FOUND)
         target_link_libraries(${TARGET} PUBLIC ${BLAS_LIBRARIES})
+        if(BLAS_LIBRARIES MATCHES "mkl" OR GGML_BLAS_VENDOR MATCHES "Intel")
+            message(STATUS "Tessera: Intel MKL lane enabled via BLAS (${BLAS_LIBRARIES})")
+        else()
+            message(STATUS "Tessera: Intel lane enabled via BLAS (${BLAS_LIBRARIES}) - OpenBLAS/Generic")
+        endif()
     else()
         message(STATUS "BLAS not found - tessera will use scalar fallback")
+    endif()
+endif()
+
+# Intel SYCL lane (parallel to Apple Metal) — additive, Apple lane untouched.
+# When GGML_SYCL=ON and Intel SYCL compiler (icx/icpx/dpcpp) is available, the
+# tessera-intel dispatch is built; otherwise the stub keeps ts_intel_available()=0.
+if(UNIX AND NOT APPLE)
+    if(GGML_SYCL)
+        # SYCL available — Intel lane will use SYCL queues; the source
+        # tessera-intel.cpp/.sycl files are added in milestone 3 (kept optional
+        # here so milestone 1 builds without SYCL sources).
+        message(STATUS "Tessera: Intel SYCL lane enabled (GGML_SYCL=ON)")
+    else()
+        message(STATUS "Tessera: Intel SYCL lane stub (GGML_SYCL=OFF, MKL/CPU lane active)")
     endif()
 endif()
 
