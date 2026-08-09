@@ -396,6 +396,24 @@ def _load_sycl_backend(library: Path) -> Optional[ctypes.CDLL]:
     return lib
 
 
+def matmul_batched(chunks: list[np.ndarray], b: np.ndarray) -> list[np.ndarray]:
+    """Batched matmul for heterogeneous sharding (milestone 4).
+
+    Splits chunked GEMMs across Intel devices when SYCL is available;
+    falls back to sequential numpy. This is the Python-level entry for
+    the dual-device residency model: weights duplicated to VRAM, only
+    activation tiles cross. Imported by calibration_memory sharding.
+    """
+    try:
+        from .intel_sharding import sharded_chunked_matmul
+    except ImportError:
+        try:
+            from tools.tessera.intel_sharding import sharded_chunked_matmul  # type: ignore
+        except ImportError:
+            return [c @ b for c in chunks]
+    return sharded_chunked_matmul(chunks, b)
+
+
 def _detect_sycl_devices() -> list[str]:
     """Return list of SYCL device strings via sycl-ls or level_zero probe.
 
@@ -859,6 +877,7 @@ __all__ = [
     "matmul_metal",
     "matmul_mkl",
     "matmul_sycl",
+    "matmul_batched",
     "chunked_matmul",
     "force_backend",
 ]
