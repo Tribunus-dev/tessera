@@ -70,9 +70,11 @@ _BUILD_DIR = _ROOT / ".build"
 _ACCEL_SOURCE = _ROOT / "apple_accelerate_matmul.cpp"
 _METAL_SOURCE = _ROOT / "apple_metal_matmul.mm"
 _MKL_SOURCE = _ROOT / "intel_mkl_matmul.cpp"
+_SYCL_SOURCE = _ROOT / "intel_sycl_matmul.cpp"
 _DEFAULT_ACCEL_LIBRARY = _BUILD_DIR / "libtessera_accel_matmul.dylib"
 _DEFAULT_METAL_LIBRARY = _BUILD_DIR / "libtessera_metal_matmul.dylib"
 _DEFAULT_MKL_LIBRARY = _BUILD_DIR / "libtessera_mkl_matmul.so"
+_DEFAULT_SYCL_LIBRARY = _BUILD_DIR / "libtessera_sycl_matmul.so"
 
 
 # Backend name constants.  Stored as strings so the user
@@ -332,6 +334,68 @@ def _has_sycl_compiler() -> bool:
     return False
 
 
+def _build_sycl_library(output: Path) -> Optional[Path]:
+    """Compile ``intel_sycl_matmul.cpp`` to a shared library.
+
+    Uses icx/icpx with -fsycl when available; falls back to c++ for
+    the scalar stub so the build never fails hard.
+    """
+    if not _SYCL_SOURCE.is_file():
+        return None
+    output.parent.mkdir(parents=True, exist_ok=True)
+    # Prefer icx for SYCL, fallback to g++ stub
+    for cand in ("icx", "icpx", "dpcpp"):
+        try:
+            proc = subprocess.run([cand, "--version"], check=True, capture_output=True, text=True)
+            if proc.returncode == 0:
+                try:
+                    res = subprocess.run(
+                        [cand, "-std=c++17", "-O3", "-fsycl", "-shared", "-fPIC",
+                         str(_SYCL_SOURCE), "-o", str(output)],
+                        check=True, capture_output=True, text=True,
+                    )
+                    if res.returncode == 0:
+                        return output
+                except (FileNotFoundError, subprocess.CalledProcessError):
+                    continue
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            continue
+    # Fallback: compile scalar stub with host compiler
+    for cand in ("c++", "g++", "clang++"):
+        try:
+            subprocess.run([cand, "--version"], check=True, capture_output=True, text=True)
+            res = subprocess.run(
+                [cand, "-std=c++17", "-O3", "-shared", "-fPIC",
+                 str(_SYCL_SOURCE), "-o", str(output)],
+                check=True, capture_output=True, text=True,
+            )
+            if res.returncode == 0:
+                return output
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            continue
+    return None
+
+
+def _load_sycl_backend(library: Path) -> Optional[ctypes.CDLL]:
+    """Load the SYCL .so and bind sgemm."""
+    try:
+        lib = ctypes.CDLL(str(library))
+    except OSError:
+        return None
+    pointer = ctypes.POINTER(ctypes.c_float)
+    try:
+        sgemm = lib.tessera_sycl_sgemm_f32
+        sgemm.restype = ctypes.c_int
+        sgemm.argtypes = [
+            pointer, pointer, pointer,
+            ctypes.c_size_t, ctypes.c_size_t, ctypes.c_size_t,
+            ctypes.c_int, ctypes.c_int,
+        ]
+    except AttributeError:
+        return None
+    return lib
+
+
 def _detect_sycl_devices() -> list[str]:
     """Return list of SYCL device strings via sycl-ls or level_zero probe.
 
@@ -339,6 +403,16 @@ def _detect_sycl_devices() -> list[str]:
     Probes are best-effort and never raise.
     """
     devices: list[str] = []
+    # Allow explicit override for testing/CI
+    env = os.environ.get("TESSERA_SYCL_DEVICES", "")
+    if env:
+        for tok in env.split(","):
+            tok = tok.strip()
+            if tok in (BACKEND_SYCL_IGPU, BACKEND_SYCL_DGPU):
+                if tok not in devices:
+                    devices.append(tok)
+        if devices:
+            return devices
     # Try sycl-ls (oneAPI)
     try:
         proc = subprocess.run(
@@ -454,15 +528,29 @@ class MatmulBackend:
                 )
 
             # Intel Linux lane: SYCL > MKL > numpy (Apple code above unchanged)
-            # Try SYCL first if devices detected
+            # Try SYCL first if devices detected — build/load the SYCL GEMM bridge
             sycl_devices = _detect_sycl_devices()
             if sycl_devices:
-                # For now SYCL dispatch reuses MKL path for calibration GEMM;
-                # full SYCL kernel dispatch for quant fitness is milestone 2/3.
-                # Keep stub so auto-detect surfaces sycl name when hardware present.
                 if BACKEND_SYCL_IGPU in sycl_devices or BACKEND_SYCL_DGPU in sycl_devices:
                     name = sycl_devices[0]
-                    # Load MKL as fallback sgemm for sycl path until sycl kernels land
+                    sycl_path = Path(
+                        os.environ.get("TESSERA_SYCL_MATMUL_LIBRARY", _DEFAULT_SYCL_LIBRARY)
+                    )
+                    if sycl_path.is_file() or _SYCL_SOURCE.is_file():
+                        if not sycl_path.is_file() or (
+                            _SYCL_SOURCE.is_file()
+                            and sycl_path.stat().st_mtime < _SYCL_SOURCE.stat().st_mtime
+                        ):
+                            _build_sycl_library(sycl_path)
+                        lib = _load_sycl_backend(sycl_path)
+                        if lib is not None:
+                            sgemm = lib.tessera_sycl_sgemm_f32
+                            return cls(
+                                name=name,
+                                library=sycl_path, _lib=lib, _sgemm=sgemm,
+                                _lock=threading.Lock(),
+                            )
+                    # SYCL build failed — fallback to MKL for this SYCL device
                     mkl_path = Path(
                         os.environ.get("TESSERA_MKL_MATMUL_LIBRARY", _DEFAULT_MKL_LIBRARY)
                     )
@@ -480,7 +568,7 @@ class MatmulBackend:
                                 library=mkl_path, _lib=lib, _sgemm=sgemm,
                                 _lock=threading.Lock(),
                             )
-                    # If MKL build failed, still report sycl name with numpy fallback
+                    # If MKL also failed, still report sycl name with numpy fallback
                     return cls(
                         name=name,
                         library=None, _lib=None, _sgemm=None,
@@ -689,25 +777,29 @@ def matmul_mkl(a: np.ndarray, b: np.ndarray) -> np.ndarray:
 
 
 def matmul_sycl(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """Force the SYCL-backend matmul (or MKL/numpy if SYCL unavailable).
-
-    SYCL GEMM for calibration is milestone 2; until kernels land this
-    reuses the MKL sgemm when SYCL hardware is present, mirroring detect().
-    """
-    # probe devices to pick igpu vs dgpu name
+    """Force the SYCL-backend matmul (or MKL/numpy if SYCL unavailable)."""
     devs = _detect_sycl_devices()
     name = devs[0] if devs else BACKEND_SYCL_IGPU
-    lib = None
+    # Prefer SYCL library, fallback to MKL
+    lib = _load_sycl_backend(_DEFAULT_SYCL_LIBRARY)
     sgemm = None
-    try:
-        lib = _load_mkl_backend(_DEFAULT_MKL_LIBRARY)
-        if lib is not None:
-            sgemm = lib.tessera_mkl_sgemm_f32
-    except Exception:
-        pass
+    library = _DEFAULT_SYCL_LIBRARY
+    if lib is not None:
+        try:
+            sgemm = lib.tessera_sycl_sgemm_f32
+        except AttributeError:
+            sgemm = None
+    if sgemm is None:
+        try:
+            lib = _load_mkl_backend(_DEFAULT_MKL_LIBRARY)
+            if lib is not None:
+                sgemm = lib.tessera_mkl_sgemm_f32
+                library = _DEFAULT_MKL_LIBRARY
+        except Exception:
+            pass
     return MatmulBackend(
         name=name,
-        library=_DEFAULT_MKL_LIBRARY,
+        library=library,
         _lib=lib,
         _sgemm=sgemm,
         _lock=threading.Lock(),
