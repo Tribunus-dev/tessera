@@ -90,6 +90,24 @@
     { "name": "x64-windows-sycl-release-f16", "inherits": [ "sycl-base", "release", "sycl_f16" ] },
 
     { "name": "x64-windows-vulkan-debug", "inherits": [ "base", "vulkan", "debug" ] },
-    { "name": "x64-windows-vulkan-release", "inherits": [ "base", "vulkan", "release" ] }
+    { "name": "x64-windows-vulkan-release", "inherits": [ "base", "vulkan", "release" ] },
+
+    { "name": "x64-linux-intel", "inherits": [ "base", "x64-linux-gcc", "release" ],
+      "cacheVariables": {
+        "GGML_BLAS": "ON",
+        "GGML_BLAS_VENDOR": "Generic",
+        "GGML_SYCL": "ON",
+        "GGML_OPENVINO": "ON"
+      }
+    },
+    { "name": "x64-linux-intel-mkl", "inherits": [ "base", "x64-linux-gcc", "release" ],
+      "cacheVariables": {
+        "GGML_BLAS": "ON",
+        "GGML_BLAS_VENDOR": "Intel10_64lp",
+        "GGML_SYCL": "OFF",
+        "CMAKE_C_COMPILER": "icx",
+        "CMAKE_CXX_COMPILER": "icpx"
+      }
+    }
   ]
 }
