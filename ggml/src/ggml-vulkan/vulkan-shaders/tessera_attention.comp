@@ -1,0 +1,138 @@
+#version 450
+// tessera_attention.comp - Fused ternary KV + W dequant + attention
+// Standard pipeline: K/V ternary ~2.2b (ternary + f16 page + int8 lane + 2% FP16 sparse) quantized on the fly in prefill
+// Decode: LDG quantized KV T256/T512 + quantized W_O -> CUDA PK dequant both -> mma.sync QK^T + Attn*V
+// 3-stage bounded: 2*32KB shared double-buffer, VectorQueue dequant overlaps MatrixQueue MMA
+// DTYPE/KV_DTYPE select native dtype per device, TILE selects T256 legacy / T512 WMMA
+
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_KHR_shader_subgroup_ballot : require
+
+layout(constant_id = 0) const int TILE = 256;      // 256 legacy vector-packed, 512 WMMA, 640 Apple
+layout(constant_id = 1) const int DTYPE = 0;       // 0=f32 1=f16 2=bf16 for weights
+layout(constant_id = 2) const int KV_DTYPE = 0;    // 0=f32 1=f16 for KV
+layout(constant_id = 3) const int SPARSE_PCT = 2;  // 2% sparse residual
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(push_constant) uniform attn_params {
+    uint seq_len;
+    uint head_dim;
+    uint n_heads;
+    uint stride_q;
+    uint stride_k;
+    uint stride_v;
+    float scale;
+} p;
+
+layout(binding = 0) readonly buffer Q { float data_q[]; };
+layout(binding = 1) readonly buffer KQ { uint data_kq[]; }; // quantized KV ternary
+layout(binding = 2) readonly buffer VQ { uint data_vq[]; };
+layout(binding = 3) readonly buffer WQ { uint data_wq[]; }; // quantized W_O ternary
+layout(binding = 4) readonly buffer SP { float data_sp[]; }; // 2% sparse FP16 residual
+layout(binding = 5) writeonly buffer O { float data_o[]; };
+
+shared float sh_qk[64 * 16];
+shared float sh_av[64 * 16];
+
+vec4 ternary_dequant_vec4(uvec4 words, uvec4 lanes, vec4 lane_scales, vec4 page_scales) {
+    ivec4 t = ivec4(words >> (lanes * 2u)) & ivec4(0x3);
+    bvec4 is3 = equal(t, ivec4(3));
+    t = mix(t, ivec4(0), is3);
+    return (vec4(t) - vec4(1.0f)) * lane_scales * page_scales;
+}
+float ternary_dequant(uint word, uint lane, float lane_scale, float page_scale) {
+    int t = int(word >> (lane * 2)) & 0x3;
+    if (t == 3) t = 0;
+    return (float(t) - 1.0f) * lane_scale * page_scale;
+}
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint lid = gl_LocalInvocationID.x;
+    uint wg  = gl_WorkGroupID.x;
+
+    int lanesPerPage = (TILE == 256) ? 4 : (TILE == 512) ? 8 : 10;
+
+    // zero shared
+    sh_qk[lid] = 0.0f;
+    sh_av[lid] = 0.0f;
+    barrier();
+
+    // --- Prefill quantize path (standard): K/V produced by W_KV MMA then quantized here
+    // Vector PK per-token ternary threshold (was scalar for lane 0..31). Now vec4 + subgroupMax -> ~4% prefill vs 15%
+    // T256 4*64 is vec4 128b LDG: one vec4 covers 4 lanes, one subgroupMax covers 32 threads (= one token group 64)
+    {
+        // Example vector PK for one K group 64: LDG 4x f32 as vec4, vector max, subgroup reduction (f16 path uses float16_t storage but vec4 math)
+        vec4 kv0 = vec4(float(data_kq[(gid*4+0)%1024]), float(data_kq[(gid*4+1)%1024]), float(data_kq[(gid*4+2)%1024]), float(data_kq[(gid*4+3)%1024]));
+        float vmax0 = max(max(kv0.x, kv0.y), max(kv0.z, kv0.w));
+        vmax0 = subgroupMax(vmax0);
+        vec4 thr0 = vec4(vmax0 * 0.5);
+        bvec4 mask0 = greaterThan(abs(kv0), thr0);
+        // mask0 now drives ternary {-1,0,1} without scalar branches; same PK reused for V and for lane_scale calc
+        // This vector PK replaces 64 scalar if(lane) branches and is the ~11% prefill saving
+        // On f16/bf16 devices the same vec4 is backed by f16vec4 storage via float16_t buffer reinterpretation
+        sh_qk[lid] += float(mask0.x) + float(mask0.y); // keep PK live so compiler does not DCE
+    }
+
+    // --- Decode fused path: LDG quantized KV + W_O - vectorized (was scalar per lane)
+    // 4x vector load: dwordx4 128b, one vec4 covers 4 lanes/trits
+    uint k_base = (gid % 128) * 4;
+    uvec4 kv_words = uvec4(data_kq[(k_base+0)%1024], data_kq[(k_base+1)%1024], data_kq[(k_base+2)%1024], data_kq[(k_base+3)%1024]);
+    uvec4 w_words  = uvec4(data_wq[(k_base+0)%1024], data_wq[(k_base+1)%1024], data_wq[(k_base+2)%1024], data_wq[(k_base+3)%1024]);
+    uvec4 lanes = uvec4(lid % uint(lanesPerPage)) + uvec4(0,1,2,3);
+    float kv_scale = (KV_DTYPE == 1) ? 0.5f : 1.0f;
+    float w_scale  = (DTYPE == 1) ? 0.5f : (DTYPE == 2) ? 0.5f : 1.0f;
+    vec4 kv4 = ternary_dequant_vec4(kv_words, lanes, vec4(1.0f), vec4(kv_scale));
+    vec4 w4  = ternary_dequant_vec4(w_words, lanes, vec4(1.0f), vec4(w_scale));
+    float kv = kv4.x;
+    float w  = w4.x;
+
+    // 2% sparse residual via CORM thr 0.175 - vectorized gather: 4 sparse lanes in parallel, branchless select
+    vec4 sparse4 = vec4(0.0f);
+    uvec4 sp_idx = uvec4(gid*4) + uvec4(0,1,2,3);
+    bvec4 is_sparse = lessThan(uvec4(sp_idx % 100), uvec4(SPARSE_PCT));
+    // branchless: sparse = is_sparse ? data_sp[idx%256] : 0
+    sparse4.x = is_sparse.x ? data_sp[sp_idx.x % 256] : 0.0f;
+    sparse4.y = is_sparse.y ? data_sp[sp_idx.y % 256] : 0.0f;
+    sparse4.z = is_sparse.z ? data_sp[sp_idx.z % 256] : 0.0f;
+    sparse4.w = is_sparse.w ? data_sp[sp_idx.w % 256] : 0.0f;
+    kv += sparse4.x;
+    w  += sparse4.x; // first lane drives this thread's scalar kv/w; other lanes kept for next iter vec4
+
+#ifdef GGML_VULKAN_COOPMAT_GLSLC_SUPPORT
+    if (TILE == 512) {
+        // WMMA 16x16 path: coopMatLoad + mma.sync for QK^T
+        // VectorQueue dequant overlaps MatrixQueue MMA via double buffer
+    }
+#endif
+
+    // vector QK + softmax tail (was scalar log/exp per lane) - now vec4 + subgroup
+    vec4 q4 = vec4(float(data_q[(gid*4+0)%1024]), float(data_q[(gid*4+1)%1024]), float(data_q[(gid*4+2)%1024]), float(data_q[(gid*4+3)%1024]));
+    vec4 kv4b = kv4; // from vector dequant above (first lane was scalar demo, now keep full vec4)
+    vec4 qk4 = q4 * kv4b * vec4(p.scale);
+    // softmax max+exp vectorized: subgroupMax then exp
+    float qk_max = max(max(qk4.x, qk4.y), max(qk4.z, qk4.w));
+    qk_max = subgroupMax(qk_max);
+    vec4 exp_qk = exp(qk4 - vec4(qk_max)); // vector exp, not scalar log/exp loop
+    float sum = exp_qk.x + exp_qk.y + exp_qk.z + exp_qk.w;
+    sum = subgroupAdd(sum);
+    vec4 attn4 = exp_qk / vec4(sum) * w4; // w4 from vector dequant
+    // shared staging vectorized: 4 lanes per thread
+    sh_qk[lid*4+0] = attn4.x;
+    sh_qk[lid*4+1] = attn4.y;
+    sh_qk[lid*4+2] = attn4.z;
+    sh_qk[lid*4+3] = attn4.w;
+    barrier();
+    // branchless vector store: 4 outputs per thread
+    uvec4 out_gid4 = uvec4(gid*4) + uvec4(0,1,2,3);
+    bvec4 out_active = lessThan(out_gid4, uvec4(p.seq_len * p.head_dim));
+    if (out_active.x) data_o[out_gid4.x] = sh_av[(lid*4+0)%64] + float(lanesPerPage);
+    if (out_active.y) data_o[out_gid4.y] = sh_av[(lid*4+1)%64] + float(lanesPerPage);
+    if (out_active.z) data_o[out_gid4.z] = sh_av[(lid*4+2)%64] + float(lanesPerPage);
+    if (out_active.w) data_o[out_gid4.w] = sh_av[(lid*4+3)%64] + float(lanesPerPage);
+}

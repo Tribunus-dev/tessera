@@ -8,6 +8,9 @@
 #ifdef HAVE_HIREDIS
 #include <hiredis/hiredis.h>
 #endif
+#ifdef HAVE_DUCKDB
+#include <duckdb.h>
+#endif
 namespace tessera {
 // Postgres (source of truth) + Valkey (cache) + DuckDB (analytical) — spec §6
 // Mirrors TesseraDataLayer/TesseraDataStore/TesseraCache (§6, hexagonal facade, cache invariants)

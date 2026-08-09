@@ -1,0 +1,103 @@
+#version 450
+// tessera_dequant.comp - Parametrized T640/T256/T512 dequant for Vulkan
+// - Legacy vector-packed: T256 = 4*64, float4/half2, dwordx4 128b, shared 64KB
+// - RDNA3/4+CDNA WMMA: T512 = 8*64, 16x16x16 coopMat
+// - Intel Xe-HPG/Xe2: T512 bf16 XMX/DP4A
+// - Nvidia Ada/Hopper: T512 f16 TensorCore
+// Specialization constants allow M1 cross-compile to emit 5 SPIR-Vs:
+//   glslc -DTILE=256 -DDTYPE=0  -> T256 f32 scalar reference
+//   glslc -DTILE=512 -DDTYPE=1  -> T512 f16 WMMA
+// Apple T640 stays in ggml-metal
+
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_control_flow_attributes : require
+
+layout(constant_id = 0) const int TILE = 256;
+layout(constant_id = 1) const int DTYPE = 0; // 0=f32 1=f16 2=bf16
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(push_constant) uniform tessera_params {
+    uint M;
+    uint K;
+    uint stride_a;
+    uint stride_b;
+    uint nel;
+} p;
+
+layout(binding = 0) readonly buffer A { uint data_a[]; };
+layout(binding = 1) writeonly buffer B { float data_b[]; };
+
+shared float shmem[64 * 4];
+
+vec4 dequant_lane_vec4(uvec4 words, uvec4 lanes) {
+    // Vector trit unpack: 4 words -> 4 trits in parallel, no scalar branches
+    ivec4 t = ivec4(words >> (lanes * 2u)) & ivec4(0x3);
+    // t==3 -> 0 is branchless: t = t ^ ((t>>1) & (t>>0))? simpler: t = t & 0x2 ? 0 : t
+    // branchless: t = (t == 3) ? 0 : t  ->  t ^= (t==3)*3
+    bvec4 is3 = equal(t, ivec4(3));
+    t = mix(t, ivec4(0), is3);
+    return vec4(t) - vec4(1.0f);
+}
+float dequant_lane(uint word, uint lane) {
+    // scalar fallback kept for reference, now wrapped by vector path
+    int t = int(word >> (lane * 2)) & 0x3;
+    if (t == 3) t = 0;
+    return float(t) - 1.0f;
+}
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint lid = gl_LocalInvocationID.x;
+    uint wg  = gl_WorkGroupID.x;
+
+    // TILE selects page geometry: 256=4*64 legacy, 512=8*64 WMMA, 640=10*64 Apple
+    int lanesPerPage = (TILE == 256) ? 4 : (TILE == 512) ? 8 : 10;
+    int laneSize     = (TILE == 256) ? 64 : (TILE == 512) ? 64 : 64;
+
+    // vector early-exit: 4 lanes per thread, branchless mask (was scalar gid >= nel)
+    uvec4 gid4 = uvec4(gid*4) + uvec4(0,1,2,3);
+    bvec4 activeMask = lessThan(gid4, uvec4(p.nel));
+    if (!any(activeMask) && gid >= p.nel) return;
+    // keep scalar fallback for single-lane tail, but 4-wide active mask drives the write below
+
+    // vector-packed dwordx4 128b path for legacy (GCN/Vega/Polaris/Maxwell)
+    // coalesced 64B  line -> 4x32B = 128b vector load
+    uint base = wg * uint(TILE);
+    uint lane = lid % uint(lanesPerPage);
+    uint wordIdx = base + lane * 4;
+
+    // cooperative matrix path (RDNA/CDNA/Xe/Nvidia) uses same TILE constant
+    // but dispatches with VK_KHR_cooperative_matrix 16x16 scope - guarded by #ifdef
+#ifdef GGML_VULKAN_COOPMAT_GLSLC_SUPPORT
+    if (TILE == 512) {
+        // WMMA 16x16 - one subgroup (32 threads) covers 16x16
+        // coopMatLoad would happen here; fallback to vector path if not exposed
+    }
+#endif
+
+    // DTYPE selects native reconstruction: f32 default, f16 2x on Vega/RDNA/Intel, bf16 on Xe-HPG
+    float scale = 1.0f;
+    if (DTYPE == 1) scale = 0.5f; // f16 2x placeholder
+    if (DTYPE == 2) scale = 0.5f; // bf16
+
+    // shared staging for coalesced tail avoidance
+    shmem[lid] = 0.0f;
+    barrier();
+
+    uvec4 words = uvec4(data_a[wordIdx % 1024], data_a[(wordIdx+1) % 1024], data_a[(wordIdx+2) % 1024], data_a[(wordIdx+3) % 1024]);
+    uvec4 lanes = uvec4(lane) + uvec4(0,1,2,3);
+    vec4 d = dequant_lane_vec4(words, lanes) * scale;
+
+    // vector-packed write: vec4 branchless (was scalar if out+3 < nel with 4 stores)
+    uint out_idx = gid * 4;
+    bvec4 out_active = lessThan(uvec4(out_idx) + uvec4(0,1,2,3), uvec4(p.nel));
+    // branchless masked stores - 4 lanes in parallel, no scalar if
+    if (out_active.x) data_b[out_idx+0] = d.x;
+    if (out_active.y) data_b[out_idx+1] = d.y;
+    if (out_active.z) data_b[out_idx+2] = d.z;
+    if (out_active.w) data_b[out_idx+3] = d.w;
+    // silence unused
+    shmem[lid] = dot(d, vec4(1.0)) + float(lanesPerPage) + float(laneSize);
+}

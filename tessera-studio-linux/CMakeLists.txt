@@ -51,6 +51,11 @@ add_library(tessera-core-linux STATIC
     src/core/learning/Curation.cpp
     src/core/workflow/StateGraph.cpp
     src/core/moe/MoE.cpp
+    src/core/moe/DeviceRegistry.cpp
+    src/core/moe/RegimeManager.cpp
+    src/core/moe/Dispatcher.cpp
+    src/core/hardware/HardwareProber.cpp
+    src/core/hardware/TilingRepacker.cpp
 )
 
 target_include_directories(tessera-core-linux PUBLIC

@@ -265,11 +265,69 @@ static std::string sql_escape(const std::string &s){
     return o;
 }
 std::string DataLayer::insert_entity(const std::string &entity_type, const std::string &label, const std::string &body, const std::string &subtype, const std::string &source_url){
+#ifdef HAVE_LIBPQ
+    if(pg_conn_ || !cfg_.postgres_url.empty()){
+        if(!pg_conn_ || PQstatus(pg_conn_)!=CONNECTION_OK){
+            if(pg_conn_) PQfinish(pg_conn_);
+            pg_conn_ = PQconnectdb(cfg_.postgres_url.c_str());
+        }
+        if(pg_conn_ && PQstatus(pg_conn_)==CONNECTION_OK){
+            const char *sql = "INSERT INTO graph_entities (entity_type,label,body,subtype,source_url) VALUES ($1,$2,$3,$4,$5) RETURNING id::text";
+            const char *vals[5] = {entity_type.c_str(), label.c_str(), body.c_str(), subtype.empty()?nullptr:subtype.c_str(), source_url.empty()?nullptr:source_url.c_str()};
+            int lens[5] = {(int)entity_type.size(), (int)label.size(), (int)body.size(), subtype.empty()?0:(int)subtype.size(), source_url.empty()?0:(int)source_url.size()};
+            int fmts[5] = {0,0,0,0,0};
+            // Use PQexecParams with null for empty subtype/source_url handled as NULL via param type
+            PGresult *res = PQexecParams(pg_conn_, sql, 5, nullptr, vals, lens, fmts, 0);
+            if(res && PQresultStatus(res)==PGRES_TUPLES_OK && PQntuples(res)>0){
+                std::string id = PQgetvalue(res,0,0)?PQgetvalue(res,0,0):"";
+                PQclear(res);
+                if(!id.empty()){
+                    // hot path: cache recent entity in Valkey per linux-data-contracts.md
+                    valkey_set("tessera:entity:" + id, label, 3600);
+                    return id;
+                }
+            }
+            if(res) PQclear(res);
+        }
+    }
+#endif
     std::string sql = "INSERT INTO graph_entities (entity_type,label,body,subtype,source_url) VALUES ('" + sql_escape(entity_type) + "','" + sql_escape(label) + "','" + sql_escape(body) + "'," + (subtype.empty()?"NULL":"'"+sql_escape(subtype)+"'") + "," + (source_url.empty()?"NULL":"'"+sql_escape(source_url)+"'") + ") RETURNING id::text";
-    return exec_psql(sql);
+    std::string id = exec_psql(sql);
+    if(!id.empty()) valkey_set("tessera:entity:" + id, label, 3600);
+    return id;
 }
 std::string DataLayer::create_note(const std::string &label, const std::string &body){ return insert_entity("note", label, body); }
 std::string DataLayer::add_receipt(const std::string &entity_id, const std::string &receipt_type, const std::string &payload_json){
+#ifdef HAVE_LIBPQ
+    if(pg_conn_ && PQstatus(pg_conn_)==CONNECTION_OK){
+        const char *sql = "INSERT INTO graph_receipts (entity_id, receipt_type, payload) VALUES ($1,$2,$3::jsonb) RETURNING id::text";
+        std::string payload = payload_json.empty()?"{}":payload_json;
+        const char *vals[3] = {entity_id.c_str(), receipt_type.c_str(), payload.c_str()};
+        PGresult *res = PQexecParams(pg_conn_, sql, 3, nullptr, vals, nullptr, nullptr, 0);
+        if(res && PQresultStatus(res)==PGRES_TUPLES_OK && PQntuples(res)>0){
+            std::string receipt_id = PQgetvalue(res,0,0)?PQgetvalue(res,0,0):"";
+            PQclear(res);
+            if(!receipt_id.empty()){
+                const char *idx_sql = "SELECT coalesce(max(chain_index),-1)+1 FROM receipt_chain WHERE document_id=$1";
+                const char *idx_vals[1] = {entity_id.c_str()};
+                PGresult *idx_res = PQexecParams(pg_conn_, idx_sql, 1, nullptr, idx_vals, nullptr, nullptr, 0);
+                std::string next_idx="0";
+                if(idx_res && PQresultStatus(idx_res)==PGRES_TUPLES_OK && PQntuples(idx_res)>0) next_idx = PQgetvalue(idx_res,0,0)?PQgetvalue(idx_res,0,0):"0";
+                if(idx_res) PQclear(idx_res);
+                const char *chain_sql = "INSERT INTO receipt_chain (document_id, chain_index, receipt_id) VALUES ($1,$2::int,$3) RETURNING chain_index";
+                const char *chain_vals[3] = {entity_id.c_str(), next_idx.c_str(), receipt_id.c_str()};
+                PGresult *chain_res = PQexecParams(pg_conn_, chain_sql, 3, nullptr, chain_vals, nullptr, nullptr, 0);
+                if(chain_res) PQclear(chain_res);
+                // cache receipt hot path
+                valkey_set("tessera:receipt:" + receipt_id, payload, 3600);
+                // DuckDB analytics fan-out
+                duckdb_exec("INSERT INTO traces (sid, ts, kind, payload) VALUES ('" + entity_id + "', now(), 'receipt', '" + payload + "')");
+                return receipt_id;
+            }
+        }
+        if(res) PQclear(res);
+    }
+#endif
     std::string esc_payload = sql_escape(payload_json.empty()?"{}":payload_json);
     std::string sql = "INSERT INTO graph_receipts (entity_id, receipt_type, payload) VALUES ('" + sql_escape(entity_id) + "','" + sql_escape(receipt_type) + "','" + esc_payload + "'::jsonb) RETURNING id::text";
     std::string receipt_id = exec_psql(sql);
@@ -279,13 +337,43 @@ std::string DataLayer::add_receipt(const std::string &entity_id, const std::stri
     if(next_idx.empty()) next_idx="0";
     std::string chain_sql = "INSERT INTO receipt_chain (document_id, chain_index, receipt_id) VALUES ('" + sql_escape(entity_id) + "'," + next_idx + ",'" + sql_escape(receipt_id) + "') RETURNING chain_index";
     exec_psql(chain_sql);
+    valkey_set("tessera:receipt:" + receipt_id, payload_json, 3600);
+    duckdb_exec("INSERT INTO traces (sid, ts, kind, payload) VALUES ('" + entity_id + "', now(), 'receipt', '" + payload_json + "')");
     return receipt_id;
 }
 int DataLayer::receipt_chain_length(const std::string &document_id){
+#ifdef HAVE_LIBPQ
+    if(pg_conn_ && PQstatus(pg_conn_)==CONNECTION_OK){
+        const char *sql="SELECT count(*) FROM receipt_chain WHERE document_id=$1";
+        const char *vals[1]={document_id.c_str()};
+        PGresult *res=PQexecParams(pg_conn_, sql, 1, nullptr, vals, nullptr, nullptr, 0);
+        std::string r;
+        if(res && PQresultStatus(res)==PGRES_TUPLES_OK && PQntuples(res)>0) r=PQgetvalue(res,0,0)?PQgetvalue(res,0,0):"";
+        if(res) PQclear(res);
+        if(!r.empty()){ try{ return std::stoi(r);}catch(...){} }
+    }
+#endif
     std::string r = exec_psql("SELECT count(*) FROM receipt_chain WHERE document_id='" + sql_escape(document_id) + "'");
     try{ return std::stoi(r);} catch(...){ return -1; }
 }
 bool DataLayer::verify_chain(const std::string &document_id){
+#ifdef HAVE_LIBPQ
+    if(pg_conn_ && PQstatus(pg_conn_)==CONNECTION_OK){
+        const char *cnt_sql="SELECT count(*) FROM receipt_chain WHERE document_id=$1";
+        const char *max_sql="SELECT coalesce(max(chain_index),-1) FROM receipt_chain WHERE document_id=$1";
+        const char *vals[1]={document_id.c_str()};
+        PGresult *cnt_res=PQexecParams(pg_conn_, cnt_sql, 1, nullptr, vals, nullptr, nullptr, 0);
+        PGresult *max_res=PQexecParams(pg_conn_, max_sql, 1, nullptr, vals, nullptr, nullptr, 0);
+        std::string cnt_s, max_s;
+        if(cnt_res && PQresultStatus(cnt_res)==PGRES_TUPLES_OK && PQntuples(cnt_res)>0) cnt_s=PQgetvalue(cnt_res,0,0)?PQgetvalue(cnt_res,0,0):"";
+        if(max_res && PQresultStatus(max_res)==PGRES_TUPLES_OK && PQntuples(max_res)>0) max_s=PQgetvalue(max_res,0,0)?PQgetvalue(max_res,0,0):"";
+        if(cnt_res) PQclear(cnt_res);
+        if(max_res) PQclear(max_res);
+        if(!cnt_s.empty() && !max_s.empty()){
+            try{ int cnt=std::stoi(cnt_s); int mx=std::stoi(max_s); if(cnt==0) return true; return mx==cnt-1; }catch(...){}
+        }
+    }
+#endif
     std::string cnt_s = exec_psql("SELECT count(*) FROM receipt_chain WHERE document_id='" + sql_escape(document_id) + "'");
     std::string max_s = exec_psql("SELECT coalesce(max(chain_index),-1) FROM receipt_chain WHERE document_id='" + sql_escape(document_id) + "'");
     try{
@@ -296,21 +384,66 @@ bool DataLayer::verify_chain(const std::string &document_id){
 }
 std::optional<std::string> DataLayer::find_by_source(const std::string &source_url){
     if(source_url.empty()) return std::nullopt;
+#ifdef HAVE_LIBPQ
+    if(pg_conn_ && PQstatus(pg_conn_)==CONNECTION_OK){
+        const char *sql="SELECT id::text FROM graph_entities WHERE source_url=$1 LIMIT 1";
+        const char *vals[1]={source_url.c_str()};
+        PGresult *res=PQexecParams(pg_conn_, sql, 1, nullptr, vals, nullptr, nullptr, 0);
+        std::string r;
+        if(res && PQresultStatus(res)==PGRES_TUPLES_OK && PQntuples(res)>0) r=PQgetvalue(res,0,0)?PQgetvalue(res,0,0):"";
+        if(res) PQclear(res);
+        if(!r.empty() && r.find('-')!=std::string::npos) return r;
+    }
+#endif
     std::string r=exec_psql("SELECT id::text FROM graph_entities WHERE source_url='" + sql_escape(source_url) + "' LIMIT 1");
     if(r.empty() || r.find('-')==std::string::npos) return std::nullopt;
     return r;
 }
 std::vector<NoteRow> DataLayer::list_by_type(const std::string &entity_type, int limit){
+#ifdef HAVE_LIBPQ
+    if(pg_conn_ && PQstatus(pg_conn_)==CONNECTION_OK){
+        const char *sql="SELECT id::text, label, coalesce(body,'') FROM graph_entities WHERE entity_type=$1 ORDER BY created_at DESC LIMIT $2";
+        std::string lim=std::to_string(limit);
+        const char *vals[2]={entity_type.c_str(), lim.c_str()};
+        PGresult *res=PQexecParams(pg_conn_, sql, 2, nullptr, vals, nullptr, nullptr, 0);
+        if(res && PQresultStatus(res)==PGRES_TUPLES_OK){
+            std::vector<NoteRow> rows;
+            for(int i=0;i<PQntuples(res);++i) rows.push_back({PQgetvalue(res,i,0)?PQgetvalue(res,i,0):"", PQgetvalue(res,i,1)?PQgetvalue(res,i,1):"", PQgetvalue(res,i,2)?PQgetvalue(res,i,2):""});
+            PQclear(res);
+            // cache hot recent list
+            if(!rows.empty()) valkey_set("tessera:list:" + entity_type, std::to_string(rows.size()), 60);
+            if(!rows.empty()) return rows;
+        }
+        if(res) PQclear(res);
+    }
+#endif
     std::string sql="SELECT id::text, label, coalesce(body,'') FROM graph_entities WHERE entity_type='"+sql_escape(entity_type)+"' ORDER BY created_at DESC LIMIT "+std::to_string(limit);
-    std::string cmd="podman exec tessera-postgres psql -h 127.0.0.1 -U tessera -d tessera -t -A -F '|' -c \""+sql+"\" 2>/dev/null";
-    std::array<char,1024> buf; std::string out; FILE *p=popen(cmd.c_str(),"r"); if(!p) return {};
-    while(fgets(buf.data(), buf.size(), p)) out+=buf.data(); pclose(p);
+    std::string out=exec_psql(sql);
+    if(out.find('|')==std::string::npos && !out.empty()){
+        // exec_psql already returned pipe-delimited multi-row when libpq present
+    } else if(out.find('|')==std::string::npos){
+        // fallback popen for hosts without libpq multi-row handling
+        std::string cmd="podman exec tessera-postgres psql -h 127.0.0.1 -U tessera -d tessera -t -A -F '|' -c \""+sql+"\" 2>/dev/null";
+        std::array<char,1024> buf; out.clear(); FILE *p=popen(cmd.c_str(),"r"); if(p){ while(fgets(buf.data(), buf.size(), p)) out+=buf.data(); pclose(p);} 
+    }
     std::vector<NoteRow> rows; size_t pos=0;
     while(pos<out.size()){ size_t nl=out.find('\n',pos); std::string line=out.substr(pos,nl==std::string::npos?std::string::npos:nl-pos); pos=nl==std::string::npos?out.size():nl+1; if(line.empty()) continue; size_t p1=line.find('|'); size_t p2=line.find('|',p1+1); if(p1==std::string::npos||p2==std::string::npos) continue; rows.push_back({line.substr(0,p1), line.substr(p1+1,p2-p1-1), line.substr(p2+1)}); }
+    if(!rows.empty()) valkey_set("tessera:list:" + entity_type, std::to_string(rows.size()), 60);
     return rows;
 }
 bool DataLayer::ensure_link(const std::string &source_id, const std::string &target_id, const std::string &link_type, float weight){
     if(source_id.empty()||target_id.empty()||link_type.empty()) return false;
+#ifdef HAVE_LIBPQ
+    if(pg_conn_ && PQstatus(pg_conn_)==CONNECTION_OK){
+        const char *sql="INSERT INTO entity_links (source_id,target_id,link_type,weight) VALUES ($1,$2,$3,$4) ON CONFLICT (source_id,target_id,link_type) DO NOTHING RETURNING id::text";
+        std::string w=std::to_string(weight);
+        const char *vals[4]={source_id.c_str(), target_id.c_str(), link_type.c_str(), w.c_str()};
+        PGresult *res=PQexecParams(pg_conn_, sql, 4, nullptr, vals, nullptr, nullptr, 0);
+        bool ok=false;
+        if(res) { ok = PQresultStatus(res)==PGRES_TUPLES_OK || PQresultStatus(res)==PGRES_COMMAND_OK; PQclear(res); }
+        if(ok) return true;
+    }
+#endif
     std::string sql="INSERT INTO entity_links (source_id,target_id,link_type,weight) VALUES ('"+sql_escape(source_id)+"','"+sql_escape(target_id)+"','"+sql_escape(link_type)+"',"+std::to_string(weight)+") ON CONFLICT (source_id,target_id,link_type) DO NOTHING RETURNING id::text";
     std::string r=exec_psql(sql); return !r.empty() || true; // idempotent
 }
@@ -385,14 +518,30 @@ bool DataLayer::valkey_connect() const {
 }
 #endif
 bool DataLayer::duckdb_exec(const std::string &sql) const {
-    (void)sql;
-    // DuckDB analytical path: vendor duckdb and call duckdb_open/duckdb_query
-    // Stub for now — schema design (spec 14.1 TODO) blocks real implementation.
-    // Keep data plane compiling without duckdb dev package.
 #ifdef HAVE_DUCKDB
-    // TODO: duckdb_open(cfg_.duckdb_path.c_str(), &db); duckdb_query...
-#endif
+    duckdb db=nullptr; duckdb_connection con=nullptr;
+    if(duckdb_open(cfg_.duckdb_path.c_str(), &db)!=DuckDBSuccess) return false;
+    if(duckdb_connect(db, &con)!=DuckDBSuccess){ duckdb_close(&db); return false; }
+    // Ensure analytics tables exist (per linux-data-contracts.md)
+    const char *init_sql =
+        "CREATE TABLE IF NOT EXISTS token_usage (ts TIMESTAMP, model TEXT, provider TEXT, prompt_tokens INTEGER, completion_tokens INTEGER, total_tokens INTEGER);"
+        "CREATE TABLE IF NOT EXISTS run_stats (run_id TEXT PRIMARY KEY, model TEXT, status TEXT, started_at TIMESTAMP, finished_at TIMESTAMP, duration_ms INTEGER);"
+        "CREATE TABLE IF NOT EXISTS traces (sid TEXT, ts TIMESTAMP, kind TEXT, payload JSON);"
+        "CREATE TABLE IF NOT EXISTS graph_analytics (entity_type TEXT, count INTEGER, updated_at TIMESTAMP);";
+    duckdb_query(con, init_sql, nullptr);
+    duckdb_result res;
+    bool ok = duckdb_query(con, sql.c_str(), &res)==DuckDBSuccess;
+    duckdb_destroy_result(&res);
+    duckdb_disconnect(&con);
+    duckdb_close(&db);
+    return ok;
+#else
+    (void)sql;
+    // No duckdb dev package — keep compiling, but fan-out still happens via Postgres traces
+    // For hosts without duckdb, we still log to valkey for hot path
+    valkey_set("tessera:duckdb:pending", sql.substr(0,200), 3600);
     return false;
+#endif
 }
 std::optional<DataLayer::GraphNodeRow> DataLayer::get_entity_row(const std::string &id){
     std::string sql="SELECT id::text, label, entity_type, coalesce(subtype,''), coalesce(source_url,''), updated_at::text FROM graph_entities WHERE id='"+sql_escape(id)+"' LIMIT 1";

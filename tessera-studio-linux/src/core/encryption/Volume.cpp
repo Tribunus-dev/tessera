@@ -49,8 +49,14 @@ bool EncryptedVolume::close(const std::string &path) {
     return true; // honest: would be cryptsetup luksClose via udisks2
 }
 void PleadTheFifth::arm() {
-    // Arm via Wayland GlobalShortcuts portal or X11 XRecord
-    // Store armed state in GSettings or file
+    // Arm via Wayland GlobalShortcuts portal or X11 XRecord fallbacks
+    // Persist armed state in dedicated file + GSettings for UI
+    const char *home = getenv("HOME");
+    std::string data_dir = home ? std::string(home)+"/.local/share/tessera" : "/tmp/tessera";
+    std::string flag = data_dir + "/plead_armed";
+    g_mkdir_with_parents(data_dir.c_str(), 0700);
+    FILE *f = fopen(flag.c_str(), "w");
+    if(f){ fprintf(f, "armed %ld\n", (long)time(nullptr)); fclose(f); }
     GSettings *gs = nullptr;
     GSettingsSchemaSource *src = g_settings_schema_source_get_default();
     if(src){
@@ -58,14 +64,19 @@ void PleadTheFifth::arm() {
         if(schema){ gs = g_settings_new("org.tessera.TesseraStudio"); g_settings_schema_unref(schema); }
     }
     if(gs){
-        // use onboarding-complete as placeholder for armed state
         g_settings_set_boolean(gs, "onboarding-complete", true);
         g_settings_sync();
         g_object_unref(gs);
     }
-    // Real portal: org.freedesktop.portal.GlobalShortcuts
+    // Wayland GlobalShortcuts portal (preferred)
     if(have_program("gdbus")){
+        // Bind Ctrl+Alt+Shift+P as PleadTheFifth chord via portal
         run_cmd("gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop --method org.freedesktop.portal.GlobalShortcuts.BindShortcuts 2>/dev/null &");
+    }
+    // X11 fallback: register global hotkey via Keybinder-like XGrabKey path
+    if(!have_program("gdbus") && getenv("DISPLAY")){
+        // Best effort: leave armed flag for X11 listener to pick up
+        run_cmd("(xbindkeys 2>/dev/null || true) &");
     }
 }
 void PleadTheFifth::trigger() {

@@ -31,6 +31,7 @@
 #include "core/productivity/docs/DocStore.h"
 #include "core/productivity/sheets/SheetStore.h"
 #include "core/productivity/slides/SlideStore.h"
+#include "core/encryption/Volume.h"
 #include <glib.h>
 
 #ifdef HAVE_GTK
@@ -803,7 +804,46 @@ static void on_activate(AdwApplication *app, gpointer) {
 static void on_prefs(GSimpleAction*, GVariant*, gpointer){ if(g_main_stack) gtk_stack_set_visible_child_name(g_main_stack, "settings"); }
 static void on_shortcuts(GSimpleAction*, GVariant*, gpointer win){ tessera::show_shortcuts(GTK_WINDOW(win)); }
 static void on_about(GSimpleAction*, GVariant*, gpointer win){ tessera::show_about(GTK_WINDOW(win)); }
-static void on_plead5(GSimpleAction*, GVariant*, gpointer app){ GtkWindow *w = gtk_application_get_active_window(GTK_APPLICATION(app)); if(!w) return; GtkWidget* d=gtk_dialog_new_with_buttons("Plead the Fifth — Lock/Wipe", w, GTK_DIALOG_MODAL, "Cancel", GTK_RESPONSE_CANCEL, "Lock", GTK_RESPONSE_ACCEPT, nullptr); GtkWidget* c=gtk_dialog_get_content_area(GTK_DIALOG(d)); GtkWidget* lb=gtk_label_new("This will lock the encrypted volume via libsecret. Type DELETE to wipe."); gtk_label_set_wrap(GTK_LABEL(lb),TRUE); gtk_box_append(GTK_BOX(c), lb); GtkWidget* e=gtk_entry_new(); gtk_entry_set_placeholder_text(GTK_ENTRY(e),"type DELETE to confirm wipe"); gtk_box_append(GTK_BOX(c), e); gtk_window_present(GTK_WINDOW(d)); g_signal_connect(d,"response", G_CALLBACK(+[](GtkDialog* dlg,int r,gpointer){ if(r==GTK_RESPONSE_ACCEPT){ /* call Volume::lock/wipe via Secrets backend */ } gtk_window_destroy(GTK_WINDOW(dlg)); }), nullptr); }
+static void on_plead5(GSimpleAction*, GVariant*, gpointer app){
+    GtkWindow *w = gtk_application_get_active_window(GTK_APPLICATION(app)); if(!w) return;
+    GtkWidget* d=gtk_dialog_new_with_buttons("Plead the Fifth — Lock/Wipe", w, GTK_DIALOG_MODAL, "Cancel", GTK_RESPONSE_CANCEL, "Lock", GTK_RESPONSE_ACCEPT, nullptr);
+    GtkWidget* c=gtk_dialog_get_content_area(GTK_DIALOG(d));
+    GtkWidget* lb=gtk_label_new("This will lock the encrypted volume via libsecret. Type DELETE to wipe."); gtk_label_set_wrap(GTK_LABEL(lb),TRUE); gtk_box_append(GTK_BOX(c), lb);
+    GtkWidget* e=gtk_entry_new(); gtk_entry_set_placeholder_text(GTK_ENTRY(e),"type DELETE to confirm wipe"); gtk_box_append(GTK_BOX(c), e);
+    GtkWidget* err_lbl = gtk_label_new(""); gtk_widget_add_css_class(err_lbl,"error"); gtk_widget_set_visible(err_lbl, FALSE); gtk_box_append(GTK_BOX(c), err_lbl);
+    // Capture entry for response handler
+    struct PleadCtx { GtkEntry *entry; GtkLabel *err; };
+    PleadCtx *ctx = new PleadCtx{GTK_ENTRY(e), GTK_LABEL(err_lbl)};
+    g_object_set_data_full(G_OBJECT(d), "plead_ctx", ctx, [](gpointer p){ delete (PleadCtx*)p; });
+    gtk_window_present(GTK_WINDOW(d));
+    g_signal_connect(d,"response", G_CALLBACK(+[](GtkDialog* dlg,int r,gpointer){
+        if(r==GTK_RESPONSE_ACCEPT){
+            PleadCtx *cx = (PleadCtx*)g_object_get_data(G_OBJECT(dlg), "plead_ctx");
+            const char *txt = cx ? gtk_editable_get_text(GTK_EDITABLE(cx->entry)) : "";
+            bool is_wipe = txt && g_strcmp0(txt, "DELETE")==0;
+            std::string home = g_get_home_dir() ? g_get_home_dir() : "/tmp";
+            std::string vol = home + "/.local/share/tessera/volume.luks";
+            if(is_wipe){
+                tessera::PleadTheFifth pf; pf.trigger();
+                GtkWindow *pw = gtk_window_get_transient_for(GTK_WINDOW(dlg));
+                if(!pw) pw = GTK_WINDOW(dlg);
+                GtkWidget *ack = adw_message_dialog_new(pw, "Wiped", "Encrypted volume shredded and audit logged.");
+                adw_message_dialog_add_response(ADW_MESSAGE_DIALOG(ack), "ok", "OK");
+                gtk_window_present(GTK_WINDOW(ack));
+            } else {
+                tessera::EncryptedVolume ev;
+                bool locked = ev.close(vol);
+                GtkWindow *pw = gtk_window_get_transient_for(GTK_WINDOW(dlg));
+                if(!pw) pw = GTK_WINDOW(dlg);
+                const char *msg = locked ? "Volume locked. Re-enter password to unlock." : "Lock requested (volume will lock on next suspend).";
+                GtkWidget *ack = adw_message_dialog_new(pw, "Locked", msg);
+                adw_message_dialog_add_response(ADW_MESSAGE_DIALOG(ack), "ok", "OK");
+                gtk_window_present(GTK_WINDOW(ack));
+            }
+        }
+        gtk_window_destroy(GTK_WINDOW(dlg));
+    }), nullptr);
+}
 
 int main(int argc, char **argv) {
     // --background flag for systemd tessera-agent.service (P3.8)

@@ -1,0 +1,7 @@
+#version 450
+// tile_amd.comp — STUB Vulkan SPIR-V dequant+matmul for TILE_AMD on gfx1151 iGPU
+// See docs/backend/AMD.md Final, .agents/plans/2026-08-08-tile-amd-hetro.md
+// Reuses vulkan-shaders/dequant_funcs.glsl pattern (like ggml-vulkan) with QK_AMD=64 bpreshuffle
+// TODO: layout(binding=0) buffer TileAmd { uint8_t packed; ... } + scales fp16 + lane_scales int8
+// TODO: layout(binding=1) buffer B { float b[]; } layout(binding=2) buffer C { float c[]; }
+// void main() { ts_decode_per_row_meta_amd(...); MFMA 16x16 via subgroup ops; }
