@@ -256,17 +256,22 @@ if(UNIX AND NOT APPLE)
 endif()
 
 # Intel SYCL lane (parallel to Apple Metal) — additive, Apple lane untouched.
-# When GGML_SYCL=ON and Intel SYCL compiler (icx/icpx/dpcpp) is available, the
-# tessera-intel dispatch is built; otherwise the stub keeps ts_intel_available()=0.
+# When GGML_SYCL=ON and Intel SYCL compiler is available, the tessera-intel
+# dispatch is built; otherwise the stub keeps ts_intel_available()=0.
+# Sources are always compiled — the .cpp probes sycl headers at compile time
+# and falls back to host stub when SYCL not present, so the build never breaks.
 if(UNIX AND NOT APPLE)
     if(GGML_SYCL)
-        # SYCL available — Intel lane will use SYCL queues; the source
-        # tessera-intel.cpp/.sycl files are added in milestone 3 (kept optional
-        # here so milestone 1 builds without SYCL sources).
-        message(STATUS "Tessera: Intel SYCL lane enabled (GGML_SYCL=ON)")
+        target_sources(${TARGET} PRIVATE tessera/tessera-intel.cpp)
+        message(STATUS "Tessera: Intel SYCL lane enabled (GGML_SYCL=ON, tessera-intel.cpp)")
     else()
+        target_sources(${TARGET} PRIVATE tessera/tessera-intel-stub.cpp)
         message(STATUS "Tessera: Intel SYCL lane stub (GGML_SYCL=OFF, MKL/CPU lane active)")
     endif()
+else()
+    # Non-Linux: still provide stub so the symbol exists
+    # (Apple build uses Metal lane; stub is harmless)
+    target_sources(${TARGET} PRIVATE tessera/tessera-intel-stub.cpp)
 endif()
 
 if(LLAMA_TOOLS_INSTALL)
