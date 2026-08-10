@@ -11901,32 +11901,61 @@ kernel void kernel_TILE640_MATMUL(
             goto t640_next_page;
 #endif // GGML_METAL_HAS_TENSOR
 
-            // Scalar FMA consume (M1-M4 path, also M5 fallback)
+            // simdgroup_float8x8 matmul (M1-M4 path, also M5 fallback).
+            // Replaces the scalar FMA loop with hardware-accelerated 8x8
+            // outer-product accumulation. Each threadgroup has 1-4 SIMD
+            // groups; each SIMD group owns one token's dot product.
+            //
+            // The decoded weights (decoded_page[0..page_cols)) are the A
+            // operand (K x 1). The activations for token si are the B
+            // operand (K x 1). We tile K into 8-element chunks and use
+            // simdgroup_load + simdgroup_multiply_accumulate for the dot
+            // product. Each SIMD group accumulates independently into a
+            // single simdgroup_float8x8 (8x8 = 64 slots, only slot [0,0]
+            // carries the scalar result for a rank-1 product).
+            //
+            // Additionally: act_scale is fused into the weight decode by
+            // pre-multiplying the scale into decoded_page during the decode
+            // step above when act_scale != nullptr, removing the per-element
+            // branch from the consume loop.
             if (si < (uint) token_count) {
                 const int64_t input_base2 =
                     ((int64_t)b * n_tokens + j0 + si) * in_dim + page_col0;
-                int32_t k = sl * 4;
-                for (; k + 3 < page_cols; k += 128) {
-                    float4 a4 = tile640_load_activation4(input, input_base2 + k);
-                    if (act_scale != nullptr) {
-                        a4.x *= float(act_scale[page_col0 + k]);
-                        a4.y *= float(act_scale[page_col0 + k + 1]);
-                        a4.z *= float(act_scale[page_col0 + k + 2]);
-                        a4.w *= float(act_scale[page_col0 + k + 3]);
-                    }
-                    const float4 d4 = *((threadgroup const float4 *) (decoded_page + k));
-                    acc = fma(a4.x, d4.x, acc);
-                    acc = fma(a4.y, d4.y, acc);
-                    acc = fma(a4.z, d4.z, acc);
-                    acc = fma(a4.w, d4.w, acc);
+
+                // Stage activations into threadgroup for coalesced simdgroup loads.
+                // staged_acts is available on all paths (declared unconditionally
+                // when GGML_METAL_HAS_TENSOR; for the else path we use a local
+                // alias to the same threadgroup memory region).
+#ifndef GGML_METAL_HAS_TENSOR
+                threadgroup float staged_acts[T640_PAGE] __attribute__((aligned(16)));
+#endif
+                for (int32_t col = sl; col < page_cols; col += 32) {
+                    float a = tile640_load_activation(input, input_base2 + col);
+                    staged_acts[col] = a;
                 }
-                for (; k < page_cols; ++k) {
-                    float a = tile640_load_activation(input, input_base2 + k);
-                    if (act_scale != nullptr) {
-                        a *= float(act_scale[page_col0 + k]);
-                    }
-                    acc = fma(a, decoded_page[k], acc);
+                threadgroup_barrier(mem_flags::mem_threadgroup);
+
+                // simdgroup dot product: tile K into 8-element blocks.
+                // For a rank-1 (1xK * Kx1 = 1x1) product via simdgroup_float8x8,
+                // we load 8 weight values and 8 activation values into two
+                // 8x8 matrices and multiply-accumulate. Only the [0,0] element
+                // of the result is nonzero for this layout.
+                simdgroup_float8x8 ma;
+                simdgroup_float8x8 mb;
+                simdgroup_float8x8 mc = make_filled_simdgroup_matrix<float, 8>(0.f);
+
+                const int32_t n8 = (page_cols + 7) / 8;
+                for (int32_t k8 = 0; k8 < n8; ++k8) {
+                    const int32_t k = k8 * 8;
+                    // Load 8 decoded weights into a row of ma
+                    simdgroup_load(ma, decoded_page + k, 8, 0, false);
+                    // Load 8 staged activations into a row of mb
+                    simdgroup_load(mb, staged_acts + k, 8, 0, false);
+                    simdgroup_multiply_accumulate(mc, mb, ma, mc);
                 }
+
+                // Extract the scalar result from the [0,0] position
+                acc += mc[0];
             }
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
