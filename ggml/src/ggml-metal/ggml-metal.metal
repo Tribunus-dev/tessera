@@ -11802,6 +11802,12 @@ kernel void kernel_TILE640_MATMUL(
     // each 640-weight page across every group so the base-3 reconstruction
     // latency falls with the SIMD-group count instead of idling all but zero.
     threadgroup float decoded_page[T640_PAGE] __attribute__((aligned(16)));
+#ifdef GGML_METAL_HAS_TENSOR
+    // M5 path: separate staging buffer for activations so the weight decode
+    // and activation staging don't alias. Each is T640_PAGE floats = 2.5 KB,
+    // total 5 KB — well under the 32 KB threadgroup limit.
+    threadgroup float staged_acts[T640_PAGE] __attribute__((aligned(16)));
+#endif
 
     const int32_t tid      = (int32_t) (si * 32u + sl);
     const int32_t nthreads = (int32_t) (tpt.x * tpt.y * tpt.z);
@@ -11830,63 +11836,103 @@ kernel void kernel_TILE640_MATMUL(
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
-#ifdef GGML_METAL_HAS_TENSOR
-        // M5 path: feed decoded weights + activations through the MMA engine
-        // via MPP matmul2d. The cooperative_tensor accumulator stays in
-        // registers across the K-loop (no threadgroup round-trip).
         {
             const int32_t page_col0 = p * T640_PAGE;
             const int32_t page_cols = min(T640_PAGE, in_dim - page_col0);
 
-            // Wrap decoded weights in threadgroup as a 2D tensor: (page_cols, 1)
-            auto tA = tensor<threadgroup float, dextents<int32_t, 2>, tensor_inline>(
-                decoded_page, dextents<int32_t, 2>(page_cols, 1));
-
-            // Wrap activations for all tokens in this threadgroup
-            const int64_t input_base =
-                ((int64_t)b * n_tokens + j0) * in_dim + page_col0;
-            device const float * input_ptr = (device const float *)(input + input_base * sizeof(uchar));
-            // Activations are uchar (quantized); the existing scalar path
-            // uses tile640_load_activation to dequantize. For MPP we need
-            // the activations as half. The input is uchar so we must stage
-            // through threadgroup like the existing decode does.
-            // For now, fall through to scalar path for the consume step.
-            // The M5 kernel optimization will be completed when the
-            // activation staging matches the MPP tensor requirements.
-            goto t640_scalar_consume;
-        }
-t640_scalar_consume:;
-#endif
-
-        if (si < (uint) token_count) {
-            const int32_t page_col0 = p * T640_PAGE;
-            const int32_t page_cols = min(T640_PAGE, in_dim - page_col0);
-            const int64_t input_base =
-                ((int64_t)b * n_tokens + j0 + si) * in_dim + page_col0;
-            int32_t k = sl * 4;
-            for (; k + 3 < page_cols; k += 128) {
-                float4 a4 = tile640_load_activation4(input, input_base + k);
-                if (act_scale != nullptr) {
-                    a4.x *= float(act_scale[page_col0 + k]);
-                    a4.y *= float(act_scale[page_col0 + k + 1]);
-                    a4.z *= float(act_scale[page_col0 + k + 2]);
-                    a4.w *= float(act_scale[page_col0 + k + 3]);
+#ifdef GGML_METAL_HAS_TENSOR
+            // M5 path: stage activations into a separate buffer, then run
+            // matmul2d with the decoded weights as one operand and the
+            // staged activations as the other. The cooperative_tensor
+            // accumulator persists across K-tiles in registers.
+            //
+            // For each token in the tile, stage its activation slice for
+            // this page into staged_acts[token_idx * T640_PAGE + col].
+            // Then run matmul2d: weights (K x 1) x activations (K x M) -> (1 x M).
+            for (int32_t t = 0; t < token_count; ++t) {
+                const int64_t base = ((int64_t)b * n_tokens + j0 + t) * in_dim + page_col0;
+                for (int32_t col = tid; col < page_cols; col += nthreads) {
+                    float a = tile640_load_activation(input, base + col);
+                    if (act_scale != nullptr) {
+                        a *= float(act_scale[page_col0 + col]);
+                    }
+                    staged_acts[t * T640_PAGE + col] = a;
                 }
-                const float4 d4 = *((threadgroup const float4 *) (decoded_page + k));
-                acc = fma(a4.x, d4.x, acc);
-                acc = fma(a4.y, d4.y, acc);
-                acc = fma(a4.z, d4.z, acc);
-                acc = fma(a4.w, d4.w, acc);
             }
-            for (; k < page_cols; ++k) {
-                float a = tile640_load_activation(input, input_base + k);
-                if (act_scale != nullptr) {
-                    a *= float(act_scale[page_col0 + k]);
+            // Zero-fill unused elements for clean matmul
+            for (int32_t col = page_cols + tid; col < T640_PAGE; col += nthreads) {
+                for (int32_t t = 0; t < token_count; ++t) {
+                    staged_acts[t * T640_PAGE + col] = 0.0f;
                 }
-                acc = fma(a, decoded_page[k], acc);
+            }
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+
+            if (si < (uint) token_count) {
+                // Per-token dot product via cooperative matmul.
+                // weights: (K x 1) in decoded_page
+                // activation for token si: (K x 1) in staged_acts[si*K..]
+                // This is a vector-vector dot product expressed as a 1x1 matmul.
+                constexpr int T640_M5_K_TILE = 64;
+                constexpr auto desc = mpp::tensor_ops::matmul2d_descriptor(
+                    1, 1, T640_M5_K_TILE, false, false, false,
+                    mpp::tensor_ops::matmul2d_descriptor::mode::multiply_accumulate);
+                mpp::tensor_ops::matmul2d<desc, execution_simdgroups<1>> mm;
+                auto cT = mm.get_destination_cooperative_tensor<
+                    decltype(tensor<threadgroup float, dextents<int32_t, 2>, tensor_inline>(
+                        decoded_page, dextents<int32_t, 2>(1, 1))),
+                    decltype(tensor<threadgroup float, dextents<int32_t, 2>, tensor_inline>(
+                        decoded_page, dextents<int32_t, 2>(1, 1))), float>();
+
+                auto tW = tensor<threadgroup float, dextents<int32_t, 2>, tensor_inline>(
+                    decoded_page, dextents<int32_t, 2>(T640_M5_K_TILE, 1));
+                auto tX = tensor<threadgroup float, dextents<int32_t, 2>, tensor_inline>(
+                    staged_acts + (int32_t)si * T640_PAGE,
+                    dextents<int32_t, 2>(T640_M5_K_TILE, 1));
+
+                for (int32_t k_off = 0; k_off < page_cols; k_off += T640_M5_K_TILE) {
+                    auto mW = tW.slice(0, 0);
+                    auto mX = tX.slice(0, 0);
+                    mm.run(mW, mX, cT);
+                }
+                // Read the cooperative tensor's scalar result
+                cT.for_each([&](int, int, float val) { acc += val; });
+            }
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+            goto t640_next_page;
+#endif // GGML_METAL_HAS_TENSOR
+
+            // Scalar FMA consume (M1-M4 path, also M5 fallback)
+            if (si < (uint) token_count) {
+                const int64_t input_base2 =
+                    ((int64_t)b * n_tokens + j0 + si) * in_dim + page_col0;
+                int32_t k = sl * 4;
+                for (; k + 3 < page_cols; k += 128) {
+                    float4 a4 = tile640_load_activation4(input, input_base2 + k);
+                    if (act_scale != nullptr) {
+                        a4.x *= float(act_scale[page_col0 + k]);
+                        a4.y *= float(act_scale[page_col0 + k + 1]);
+                        a4.z *= float(act_scale[page_col0 + k + 2]);
+                        a4.w *= float(act_scale[page_col0 + k + 3]);
+                    }
+                    const float4 d4 = *((threadgroup const float4 *) (decoded_page + k));
+                    acc = fma(a4.x, d4.x, acc);
+                    acc = fma(a4.y, d4.y, acc);
+                    acc = fma(a4.z, d4.z, acc);
+                    acc = fma(a4.w, d4.w, acc);
+                }
+                for (; k < page_cols; ++k) {
+                    float a = tile640_load_activation(input, input_base2 + k);
+                    if (act_scale != nullptr) {
+                        a *= float(act_scale[page_col0 + k]);
+                    }
+                    acc = fma(a, decoded_page[k], acc);
+                }
             }
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
+#ifdef GGML_METAL_HAS_TENSOR
+        t640_next_page:;
+#endif
     }
 
     // Sparse outlier addback (v2 per-row K format). CSR offsets give the
