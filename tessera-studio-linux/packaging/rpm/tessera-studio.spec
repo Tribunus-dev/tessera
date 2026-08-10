@@ -6,6 +6,10 @@ License: LicenseRef-TESSERA
 BuildRequires: cmake, pkgconfig(gtk4), pkgconfig(libadwaita-1), pkgconfig(gtksourceview-5), pkgconfig(libsecret-1)
 %description
 Full parity Linux desktop port of TesseraStudio (docs/linux-gtk4-port-spec.md) â€” GTK4 + Adwaita, libsecret, LUKS, EDS/CalDAV, libetpan.
+%post
+glib-compile-schemas %{_datadir}/glib-2.0/schemas &>/dev/null || :
+%postun
+glib-compile-schemas %{_datadir}/glib-2.0/schemas &>/dev/null || :
 %install
 %cmake -S . -B build
 %cmake_build
@@ -13,3 +17,8 @@ Full parity Linux desktop port of TesseraStudio (docs/linux-gtk4-port-spec.md) â
 %files
 %{_bindir}/tessera-studio-linux
 %{_datadir}/glib-2.0/schemas/org.tessera.TesseraStudio.gschema.xml
+%{_datadir}/applications/org.tessera.TesseraStudio*.desktop
+%{_datadir}/metainfo/org.tessera.TesseraStudio.metainfo.xml
+%{_datadir}/icons/hicolor/*/apps/org.tessera.TesseraStudio.*
+%doc docs/procurement/*.md
+%license LICENSE

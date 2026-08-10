@@ -208,9 +208,22 @@ if(GTK4_FOUND AND ADWAITA_FOUND AND TESSERA_LINUX_BUILD_UI)
     install(FILES res/org.tessera.TesseraStudio.gschema.xml
         DESTINATION ${CMAKE_INSTALL_DATADIR}/glib-2.0/schemas
     )
-    install(FILES res/org.tessera.TesseraStudio.desktop
-        DESTINATION ${CMAKE_INSTALL_DATADIR}/applications
-    )
+    if(TESSERA_ENTERPRISE)
+        install(FILES res/org.tessera.TesseraStudio.enterprise.desktop
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/applications
+            RENAME org.tessera.TesseraStudio.desktop
+        )
+    else()
+        install(FILES res/org.tessera.TesseraStudio.personal.desktop
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/applications
+            RENAME org.tessera.TesseraStudio.desktop
+        )
+        # also install base for reference
+        install(FILES res/org.tessera.TesseraStudio.desktop
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/applications
+            RENAME org.tessera.TesseraStudio.base.desktop
+        )
+    endif()
     install(FILES res/org.tessera.TesseraStudio.metainfo.xml
         DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo
     )

@@ -618,9 +618,10 @@ std::optional<DataLayer::GraphNodeRow> DataLayer::get_entity_row(const std::stri
 }
 bool DataLayer::ensure_compliance_tables(){
     const char *sql="CREATE TABLE IF NOT EXISTS disclosure_log (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), entity_id uuid REFERENCES graph_entities(id) ON DELETE SET NULL, entity_type text, accessor text NOT NULL, purpose text NOT NULL, min_necessary_filter text, accessed_at timestamptz NOT NULL DEFAULT now()); CREATE TABLE IF NOT EXISTS deletion_attestations (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), source_prefix text NOT NULL, deleted_count int NOT NULL, attested_by text NOT NULL, attested_at timestamptz NOT NULL DEFAULT now(), receipt_id uuid REFERENCES graph_receipts(id));";
+    if(cfg_.postgres_url.empty() && !pg_conn_) return true; // headless/no DB — nothing to ensure
 #ifdef HAVE_LIBPQ
     if(pg_conn_ || !cfg_.postgres_url.empty()){
-        if(!pg_conn_ || PQstatus(pg_conn_)!=CONNECTION_OK){ if(pg_conn_) PQfinish(pg_conn_); pg_conn_=PQconnectdb(cfg_.postgres_url.c_str()); }
+        if(!pg_conn_ || PQstatus(pg_conn_)!=CONNECTION_OK){ if(pg_conn_) PQfinish(pg_conn_); if(cfg_.postgres_url.empty()) return true; pg_conn_=PQconnectdb(cfg_.postgres_url.c_str()); }
         if(pg_conn_ && PQstatus(pg_conn_)==CONNECTION_OK){
             PGresult *r=PQexec(pg_conn_, sql);
             bool ok=r && (PQresultStatus(r)==PGRES_COMMAND_OK || PQresultStatus(r)==PGRES_TUPLES_OK);

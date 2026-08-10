@@ -236,9 +236,9 @@ GtkWidget* graph_view_new(DataLayer *dl){
     gtk_widget_set_margin_bottom(searchBar,6);
     GtkWidget* searchEntry=gtk_search_entry_new(); gtk_widget_set_hexpand(searchEntry, TRUE);
     gtk_search_entry_set_placeholder_text(GTK_SEARCH_ENTRY(searchEntry), "Search graph (hybrid: label + subtype)...");
-    GtkWidget* subtypeCombo=gtk_combo_box_text_new();
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(subtypeCombo),"all","All"); gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(subtypeCombo),"doc","Docs"); gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(subtypeCombo),"sheet","Sheets"); gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(subtypeCombo),"slide","Slides"); gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(subtypeCombo),"contact","Contacts");
-    gtk_combo_box_set_active(GTK_COMBO_BOX(subtypeCombo),0);
+    GtkStringList *subList = gtk_string_list_new((const char*[]){"All","Docs","Sheets","Slides","Contacts", nullptr});
+    GtkWidget* subtypeCombo=gtk_drop_down_new(G_LIST_MODEL(subList), nullptr);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(subtypeCombo), 0);
     gtk_box_append(GTK_BOX(searchBar), searchEntry); gtk_box_append(GTK_BOX(searchBar), subtypeCombo);
     gtk_box_append(GTK_BOX(box), searchBar);
     GtkWidget *hBox=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,12);
@@ -290,12 +290,14 @@ GtkWidget* graph_view_new(DataLayer *dl){
     gtk_box_append(GTK_BOX(hBox), side);
     gtk_box_append(GTK_BOX(box), hBox);
     // filter wiring: search text + subtype -> re-filter visible nodes (client-side hybrid)
-    struct FilterCtx{ GraphState* st; GtkSearchEntry* entry; GtkComboBox* combo; };
-    FilterCtx* fctx = new FilterCtx{st, GTK_SEARCH_ENTRY(searchEntry), GTK_COMBO_BOX(subtypeCombo)};
+    struct FilterCtx{ GraphState* st; GtkSearchEntry* entry; GtkDropDown* drop; };
+    FilterCtx* fctx = new FilterCtx{st, GTK_SEARCH_ENTRY(searchEntry), GTK_DROP_DOWN(subtypeCombo)};
     auto applyFilter = +[](FilterCtx* fc){
         const char* q = gtk_editable_get_text(GTK_EDITABLE(fc->entry));
-        char* sub = gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(fc->combo));
-        std::string qs = q ? q : ""; std::string subs = sub ? sub : "all"; if(sub) g_free(sub);
+        guint idx = gtk_drop_down_get_selected(fc->drop);
+        const char* vals[] = {"all","doc","sheet","slide","contact"};
+        const char* sub = idx < 5 ? vals[idx] : "all";
+        std::string qs = q ? q : ""; std::string subs = sub ? sub : "all";
         // normalize to lowercase for label match
         std::string ql; for(char c: qs) ql+=std::tolower((unsigned char)c);
         std::lock_guard<std::mutex> lk(fc->st->mu);
@@ -306,8 +308,8 @@ GtkWidget* graph_view_new(DataLayer *dl){
         (void)ql; (void)subs;
         gtk_widget_queue_draw(fc->st->area);
     };
-    g_signal_connect(searchEntry, "search-changed", G_CALLBACK(+[](GtkSearchEntry*, gpointer d){ FilterCtx* fc=(FilterCtx*)d; const char* q=gtk_editable_get_text(GTK_EDITABLE(fc->entry)); char* sub=gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(fc->combo)); std::string qs=q?q:""; std::string subs=sub?sub:"all"; if(sub) g_free(sub); std::string ql; for(char c: qs) ql+=std::tolower((unsigned char)c); std::lock_guard<std::mutex> lk(fc->st->mu); gtk_widget_queue_draw(fc->st->area); }), fctx);
-    g_signal_connect(subtypeCombo, "changed", G_CALLBACK(+[](GtkComboBox*, gpointer d){ FilterCtx* fc=(FilterCtx*)d; gtk_widget_queue_draw(fc->st->area); }), fctx);
+    g_signal_connect(searchEntry, "search-changed", G_CALLBACK(+[](GtkSearchEntry*, gpointer d){ FilterCtx* fc=(FilterCtx*)d; const char* q=gtk_editable_get_text(GTK_EDITABLE(fc->entry)); guint idx=gtk_drop_down_get_selected(fc->drop); (void)idx; std::lock_guard<std::mutex> lk(fc->st->mu); gtk_widget_queue_draw(fc->st->area); }), fctx);
+    g_signal_connect(subtypeCombo, "notify::selected", G_CALLBACK(+[](GObject*, GParamSpec*, gpointer d){ FilterCtx* fc=(FilterCtx*)d; gtk_widget_queue_draw(fc->st->area); }), fctx);
     // 60fps sim — main-thread tick (no thread explosion), respects data lock
     st->timer = g_timeout_add(16, [](gpointer d)->gboolean{
         GraphState *ss=(GraphState*)d;

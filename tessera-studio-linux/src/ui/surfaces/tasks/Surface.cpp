@@ -57,22 +57,54 @@ GtkWidget* tasks_surface_new(DataLayer *dl){
     GtkWidget *chain_lbl = gtk_label_new("Receipt chain: —"); gtk_widget_add_css_class(chain_lbl, "dim-label"); gtk_widget_add_css_class(chain_lbl, "caption"); gtk_label_set_xalign(GTK_LABEL(chain_lbl),0);
     gtk_box_append(GTK_BOX(detail), chain_lbl);
     // selecting a task fills editor + chain (live when DataLayer connected)
-    if(dl){
-        struct TSel{ GtkTextBuffer *buf; GtkLabel *chain; DataLayer *dl; };
-        TSel *ts = new TSel{tbuf, GTK_LABEL(chain_lbl), dl};
-        g_signal_connect(tlist, "row-selected", G_CALLBACK(+[](GtkListBox*, GtkListBoxRow *row, gpointer d){
-            if(!row||!d) return; TSel *s=(TSel*)d;
-            GtkWidget *rc = gtk_list_box_row_get_child(row); if(!rc) return;
-            GtkWidget *h = rc; GtkWidget *lbl = gtk_widget_get_last_child(h);
-            if(!lbl) lbl = gtk_widget_get_first_child(h);
-            const char *t = lbl && GTK_IS_LABEL(lbl) ? gtk_label_get_text(GTK_LABEL(lbl)) : "";
-            gtk_text_buffer_set_text(s->buf, t?t:"", -1);
-            if(s->dl && s->dl->is_connected()){
-                int n = s->dl->count_entities("task");
-                gtk_label_set_text(s->chain, (std::string("Receipts: ") + std::to_string(n) + " tasks — chain verified").c_str());
-            } else gtk_label_set_text(s->chain, "Receipt: local — not yet synced");
-        }), ts);
-    }
+    struct TSel{ GtkTextBuffer *buf; GtkLabel *chain; DataLayer *dl; };
+    TSel *ts = new TSel{tbuf, GTK_LABEL(chain_lbl), dl};
+    g_signal_connect(tlist, "row-selected", G_CALLBACK(+[](GtkListBox*, GtkListBoxRow *row, gpointer d){
+        if(!row||!d) return; TSel *s=(TSel*)d;
+        GtkWidget *rc = gtk_list_box_row_get_child(row); if(!rc) return;
+        GtkWidget *h = rc; GtkWidget *lbl = gtk_widget_get_last_child(h);
+        if(!lbl) lbl = gtk_widget_get_first_child(h);
+        const char *t = lbl && GTK_IS_LABEL(lbl) ? gtk_label_get_text(GTK_LABEL(lbl)) : "";
+        gtk_text_buffer_set_text(s->buf, t?t:"", -1);
+        if(s->dl && s->dl->is_connected()){
+            int n = s->dl->count_entities("task");
+            gtk_label_set_text(s->chain, (std::string("Receipts: ") + std::to_string(n) + " tasks — chain verified").c_str());
+        } else gtk_label_set_text(s->chain, "Receipt: local — not yet synced");
+    }), ts);
+    // Debounced persist: 800ms off-thread (mirror NotesSurface, never GTK thread)
+    struct TaskPersist{ DataLayer* dl; GtkTextBuffer* buf; guint timer; std::string cur_label; };
+    TaskPersist *tp = new TaskPersist{dl, tbuf, 0, ""};
+    g_signal_connect_data(tbuf, "changed", G_CALLBACK(+[](GtkTextBuffer *b, gpointer d){
+        TaskPersist *p=(TaskPersist*)d;
+        if(p->timer) g_source_remove(p->timer);
+        p->timer = g_timeout_add(800, +[](gpointer dd)->gboolean{
+            TaskPersist *pp=(TaskPersist*)dd;
+            pp->timer=0;
+            if(!pp->dl || !pp->dl->is_connected()) return G_SOURCE_REMOVE;
+            GtkTextIter s,e; gtk_text_buffer_get_bounds(pp->buf,&s,&e); char *txt=gtk_text_buffer_get_text(pp->buf,&s,&e,FALSE);
+            std::string body = txt ? txt : ""; g_free(txt);
+            if(body.empty()) return G_SOURCE_REMOVE;
+            std::string title = body.substr(0, body.find('\n')); if(title.size()>80) title=title.substr(0,80);
+            if(title.empty()) title="Untitled";
+            DataLayer *dl=pp->dl;
+            std::string bodyCopy=body, titleCopy=title;
+            g_thread_new("task-persist", [](gpointer q)->gpointer{
+                auto *pr=(std::pair<DataLayer*, std::pair<std::string,std::string>>*)q;
+                std::string id = pr->first->upsert_knowledge("task", pr->second.first, pr->second.second, "task://"+pr->second.first, "");
+                if(!id.empty()) pr->first->add_receipt(id, "task_upsert", "{\"title\":\""+pr->second.first+"\"}");
+                delete pr; return nullptr;
+            }, new std::pair<DataLayer*, std::pair<std::string,std::string>>(dl, {titleCopy, bodyCopy}));
+            return G_SOURCE_REMOVE;
+        }, p);
+    }), tp, nullptr, GConnectFlags(0));
+    g_signal_connect(tlist, "row-selected", G_CALLBACK(+[](GtkListBox*, GtkListBoxRow *r, gpointer d){
+        TaskPersist *p=(TaskPersist*)d;
+        if(!r||!p) return;
+        GtkWidget *rc=gtk_list_box_row_get_child(r); if(!rc) return;
+        GtkWidget *h=rc; GtkWidget *lbl=gtk_widget_get_last_child(h); if(!lbl) lbl=gtk_widget_get_first_child(h);
+        const char *t=lbl && GTK_IS_LABEL(lbl) ? gtk_label_get_text(GTK_LABEL(lbl)) : "";
+        p->cur_label = t?t:"";
+    }), tp);
     gtk_paned_set_end_child(GTK_PANED(hpaned), detail);
     return hpaned;
 }

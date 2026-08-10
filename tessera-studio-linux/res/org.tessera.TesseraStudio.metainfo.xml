@@ -3,12 +3,15 @@
   <id>org.tessera.TesseraStudio</id>
   <name>Tessera Studio</name>
   <summary>Fedora GTK4 port — Knowledge Studio</summary>
-  <description><p>Full parity Linux desktop port of TesseraStudio (GTK4 + Adwaita, Postgres+Valkey+DuckDB, libsecret, EDS, libetpan, on-device/Remote LLM).</p></description>
+  <description><p>Full parity Linux desktop port of TesseraStudio (GTK4 + Adwaita, Postgres+Valkey+DuckDB, libsecret, EDS, libetpan, on-device/Remote LLM). Worker threads for data, Adwaita palette only.</p></description>
   <launchable type="desktop-id">org.tessera.TesseraStudio.desktop</launchable>
   <provides><id>org.tessera.TesseraStudio.desktop</id></provides>
-  <screenshots><screenshot type="default"><caption>Main window — 11 destinations, live DataLayer</caption><image>https://example.com/screenshot.png</image></screenshot></screenshots>
+  <screenshots><screenshot type="default"><caption>Main window — 11 destinations, live DataLayer</caption><image type="primary">file://tessera-studio-linux/res/icons/hicolor/512x512/apps/org.tessera.TesseraStudio.png</image></screenshot></screenshots>
   <url type="homepage">https://tessera.local</url>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>LicenseRef-TESSERA</project_license>
+  <developer id="org.tessera"><name>Tessera</name></developer>
+  <content_rating type="oars-1.1" />
   <supports><control>pointing</control><control>keyboard</control></supports>
+  <releases><release version="0.1.0" date="2026-08-08"><description><p>Procurement-ready split: enterprise (no duress) + personal.</p></description></release></releases>
 </component>

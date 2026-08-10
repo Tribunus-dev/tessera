@@ -87,13 +87,13 @@ fi
 echo "-- 7. ctest --"
 if [ -d "$ROOT/build-linux" ]; then
   ctest --test-dir "$ROOT/build-linux" --output-on-failure || fail "personal ctest"
-  pass "personal ctest 7/7"
+  pass "personal ctest 8/8"
 else
   echo " (no build-linux)"
 fi
 if [ -d /tmp/ent ]; then
   ctest --test-dir /tmp/ent --output-on-failure || fail "enterprise ctest"
-  pass "enterprise ctest 7/7"
+  pass "enterprise ctest 8/8"
 else
   echo " (no /tmp/ent)"
 fi

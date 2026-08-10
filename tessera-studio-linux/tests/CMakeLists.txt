@@ -26,3 +26,7 @@ add_test(NAME tracestore COMMAND test_tracestore)
 add_executable(test_data_curation test_data_curation.cpp)
 target_link_libraries(test_data_curation PRIVATE tessera-core-linux)
 add_test(NAME data_curation COMMAND test_data_curation)
+
+add_executable(test_ui_headless test_ui_headless.cpp)
+target_link_libraries(test_ui_headless PRIVATE tessera-core-linux)
+add_test(NAME ui_headless COMMAND test_ui_headless)
