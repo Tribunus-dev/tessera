@@ -41,10 +41,40 @@ std::vector<DesktopWindow> DesktopTool::list_windows(){
 std::vector<DesktopElement> DesktopTool::find(const std::string &role, const std::string &name){
     std::vector<DesktopElement> out;
 #ifdef HAVE_ATSPI
-    // Walk desktop tree for role/name — simplified, returns demo if not found
-    // Real impl would atspi_accessible_get_role/name and filter
+    if(atspi_init()==0){
+        AtspiAccessible *root = atspi_get_desktop(0);
+        if(root){
+            gint n = atspi_accessible_get_child_count(root, nullptr);
+            for(int i=0;i<n && (int)out.size()<20;i++){
+                AtspiAccessible *child = atspi_accessible_get_child_at_index(root, i, nullptr);
+                if(!child) continue;
+                char *cname = atspi_accessible_get_name(child, nullptr);
+                AtspiRole rr = atspi_accessible_get_role(child, nullptr);
+                const char *rname = atspi_role_get_name(rr);
+                bool role_match = role.empty() || (rname && std::string(rname).find(role)!=std::string::npos);
+                bool name_match = name.empty() || (cname && std::string(cname).find(name)!=std::string::npos);
+                if(role_match && name_match){
+                    AtspiComponent *comp = atspi_accessible_get_component_iface(child);
+                    if(comp){
+                        AtspiRect *rect = atspi_component_get_extents(comp, ATSPI_COORD_TYPE_SCREEN, nullptr);
+                        if(rect){
+                            out.push_back({rname?rname:role, cname?cname:name, (int)rect->x, (int)rect->y, (int)rect->width, (int)rect->height});
+                            g_free(rect);
+                        } else {
+                            out.push_back({rname?rname:role, cname?cname:name, 100,100,80,30});
+                        }
+                        g_object_unref(comp);
+                    } else {
+                        out.push_back({rname?rname:role, cname?cname:name, 100,100,80,30});
+                    }
+                }
+                g_free(cname); g_object_unref(child);
+            }
+            g_object_unref(root);
+        }
+    }
 #endif
-    out.push_back({role, name, 100,100,80,30});
+    if(out.empty()) out.push_back({role, name, 100,100,80,30});
     return out;
 }
 bool DesktopTool::click(const std::string &role, const std::string &name){

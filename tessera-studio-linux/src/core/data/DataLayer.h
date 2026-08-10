@@ -55,6 +55,15 @@ public:
     std::vector<GraphNodeRow> list_graph_nodes(int limit=120);
     std::vector<GraphEdgeRow> list_graph_edges(int limit=500);
     std::optional<GraphNodeRow> get_entity_row(const std::string &id);
+    // Compliance: FERPA 99.32 disclosure accounting + HIPAA minimum necessary
+    struct Disclosure { std::string id, entity_id, entity_type, accessor, purpose, filter, accessed_at; };
+    bool log_disclosure(const std::string &entity_id, const std::string &entity_type, const std::string &accessor, const std::string &purpose, const std::string &min_necessary_filter="");
+    int count_disclosures(const std::string &entity_type="");
+    std::vector<Disclosure> list_disclosures(int limit=50);
+    bool ensure_compliance_tables();
+    // Deletion attestation: 30-60 day SLA via TraceStore + receipt_chain tombstone
+    int purge_by_source_prefix(const std::string &prefix, const std::string &attested_by="system");
+    int count_by_source_prefix_attested(const std::string &prefix);
     // P2.2 Valkey cache API (hot state)
     bool valkey_set(const std::string &key, const std::string &value, int ttl_seconds=0) const;
     std::string valkey_get(const std::string &key) const;

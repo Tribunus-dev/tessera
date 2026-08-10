@@ -4,6 +4,9 @@
 
 namespace tessera {
 
+bool is_non_us_cloud_provider(const std::string &id){
+    return id=="alibaba" || id=="zai" || id=="glm" || id=="deepseek" || id=="minimax";
+}
 ProviderType provider_from_string(const std::string &s) {
     if (s == "remote_api") return ProviderType::RemoteApi;
     if (s == "on_device") return ProviderType::OnDevice;

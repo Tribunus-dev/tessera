@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(TESSERA_LINUX_BUILD_UI "Build GTK4/Adwaita UI" ON)
+option(TESSERA_ENTERPRISE "Gov/HIPAA enterprise SKU without duress (procurement first-class, aggressive strictly personal)" OFF)
 
 find_package(PkgConfig QUIET)
 
@@ -104,12 +105,25 @@ if(WEBKIT_FOUND)
     target_compile_definitions(tessera-core-linux PRIVATE HAVE_WEBKIT=1)
 endif()
 
+# Procurement SKU: enterprise is procurement-first, personal is strictly aggressive
+if(TESSERA_ENTERPRISE)
+    add_compile_definitions(TESSERA_ENTERPRISE=1)
+    message(STATUS "Tessera SKU: enterprise (procurement first-class, no duress)")
+else()
+    message(STATUS "Tessera SKU: personal (strictly personal aggressive, not for procurement)")
+endif()
+
 # FFI + engine bridge already in core lib above
 
 # UI executable (only if GTK4+Adwaita found)
 if(GTK4_FOUND AND ADWAITA_FOUND AND TESSERA_LINUX_BUILD_UI)
+    if(TESSERA_ENTERPRISE)
+        set(TESSERA_APP_MAIN src/app/AppMain-enterprise.cpp)
+    else()
+        set(TESSERA_APP_MAIN src/app/AppMain-personal.cpp)
+    endif()
     add_executable(tessera-studio-linux
-        src/app/AppMain.cpp
+        ${TESSERA_APP_MAIN}
         src/ui/surfaces/chat/ChatView.cpp
         src/ui/surfaces/editor/Editor.cpp
         src/ui/surfaces/editor/EditorSurface.cpp

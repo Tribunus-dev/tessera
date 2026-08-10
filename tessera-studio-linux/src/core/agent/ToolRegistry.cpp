@@ -1,11 +1,31 @@
 #include "ToolRegistry.h"
 namespace tessera {
+bool ToolRegistry::checkMinimumNecessary(const std::string &filter){
+    if(filter.empty()) return false;
+    if(filter=="*" || filter=="SELECT *" || filter.find("SELECT *")!=std::string::npos) return false;
+    if(filter.size()>512) return false; // overbroad
+    return true;
+}
 bool ToolRegistry::checkApproval(const std::string &tool, const std::string &args){
     if(!approval) return true;
     auto d = approval->decide({tool, args});
     if(d==SafetyDecision::Deny) return false;
     if(d==SafetyDecision::Ask) return false; // would show HoldYourHorsesDialog
     return true;
+}
+std::string ToolRegistry::call_data(const std::string &entity_type, const std::string &filter, const std::string &accessor, const std::string &purpose){
+    if(!checkMinimumNecessary(filter)) return "denied: minimum necessary (filter overbroad)";
+    if(!checkApproval("data."+entity_type, filter)) return "denied";
+    if(data){
+        // disclosure accounting per FERPA 99.32 / HIPAA 164.312(b)
+        data->log_disclosure("", entity_type, accessor, purpose, filter);
+        auto rows = data->list_by_type(entity_type, 50);
+        std::string out;
+        for(auto &r: rows) out += r.id + "|" + r.label + "\n";
+        data->add_receipt("data."+entity_type, filter, out);
+        return out.empty()?"ok":out;
+    }
+    return "ok";
 }
 std::string ToolRegistry::call_desktop(const std::string &op, const std::string &args){
     if(!checkApproval("desktop."+op, args)) return "denied";

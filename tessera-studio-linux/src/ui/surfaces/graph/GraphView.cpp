@@ -41,7 +41,7 @@ static void load_graph(GraphState *st){
         st->nodes.clear(); st->edges.clear(); st->idx.clear();
         return;
     }
-    // fetch off-lock (blocks on podman exec, don't hold mu)
+    // fetch off-lock (blocks on PQexec, don't hold mu)
     auto rows = st->dl->list_graph_nodes(80);
     auto erows = st->dl->list_graph_edges(300);
     std::lock_guard<std::mutex> lk(st->mu);

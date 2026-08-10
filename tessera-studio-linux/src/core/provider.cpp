@@ -181,7 +181,16 @@ LLMProvider *make_provider_remote(const std::string &base_url, const std::string
 #endif
 }
 
+static bool is_non_us_provider(const std::string &pid){
+    return pid=="alibaba" || pid=="zai" || pid=="glm" || pid=="deepseek" || pid=="minimax";
+}
 LLMProvider *make_provider_for_cloud(const std::string &provider_id, const std::string &model_override){
+#ifdef TESSERA_ENTERPRISE
+    // Buy American: enterprise blocks non-US subprocessors at compile time
+    if(is_non_us_provider(provider_id)){
+        return new PlaceholderProvider();
+    }
+#endif
     std::string pid = provider_id;
     if(pid.empty()) pid = "generic";
     const CloudProvider *cp = find_cloud_provider(pid);
@@ -199,6 +208,12 @@ LLMProvider *make_provider_for_cloud(const std::string &provider_id, const std::
         else if(pid=="openrouter" && getenv("OPENROUTER_API_KEY")) key=getenv("OPENROUTER_API_KEY");
     }
 #ifdef HAVE_LIBSOUP
+    // Enterprise will still use placeholder for non-US even with libsoup present.
+    if(is_non_us_provider(pid)){
+#ifdef TESSERA_ENTERPRISE
+        return new PlaceholderProvider();
+#endif
+    }
     return new RemoteStreamingProvider(base, model, key, pid);
 #else
     (void)base; (void)model; (void)key;

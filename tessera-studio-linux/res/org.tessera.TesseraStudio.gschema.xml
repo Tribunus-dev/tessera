@@ -53,5 +53,10 @@
       <default>true</default>
       <summary>CasMoE cascaded policy</summary>
     </key>
+    <key name="enterprise-audit-log" type="b">
+      <default>true</default>
+      <summary>Enterprise disclosure audit log (FERPA 99.32)</summary>
+      <description>When true, every DataLayer read logs to disclosure_log.</description>
+    </key>
   </schema>
 </schemalist>

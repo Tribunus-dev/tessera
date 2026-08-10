@@ -123,10 +123,13 @@ GtkWidget* notes_surface_new(tessera::DataLayer *dl){
         gtk_label_set_text(s, txt.c_str()); g_free(t);
     };
     g_signal_connect_data(buf, "changed", G_CALLBACK(buf_changed), status, nullptr, GConnectFlags(0));
-    // tag bar live: build from selection via DataLayer links (stub shows #q3 #review)
-    struct NoteSel{ GtkTextBuffer *buf; GtkLabel *status; };
-    NoteSel *nsel = new NoteSel{buf, GTK_LABEL(status)};
-    g_signal_connect(list, "row-selected", G_CALLBACK(+[](GtkListBox*, GtkListBoxRow *row, gpointer d){
+    // Debounced persist: GtkTextBuffer::changed → g_timeout 800ms → DataLayer upsert on worker thread (not GTK)
+    struct PersistCtx{ tessera::DataLayer* dl; GtkTextBuffer* buf; std::string* cur_id; guint timer; };
+    PersistCtx *persist = new PersistCtx{dl, buf, new std::string(""), 0};
+    struct NoteSel{ GtkTextBuffer *buf; GtkLabel *status; PersistCtx *persist; GtkWidget *tag_bar; };
+    NoteSel *nsel = new NoteSel{buf, GTK_LABEL(status), persist, tag_bar};
+    // Capture buf_changed as static for lambdas
+    auto on_note_select = +[](GtkListBox*, GtkListBoxRow *row, gpointer d){
         if(!row||!d) return; NoteSel *n=(NoteSel*)d;
         GtkWidget *rc = gtk_list_box_row_get_child(row); if(!rc) return;
         GtkWidget *v = rc; GtkWidget *tw = gtk_widget_get_first_child(v);
@@ -135,26 +138,64 @@ GtkWidget* notes_surface_new(tessera::DataLayer *dl){
         const char *pv = pw && GTK_IS_LABEL(pw) ? gtk_label_get_text(GTK_LABEL(pw)) : "";
         std::string body = std::string(ti?ti:"") + "\n\n" + std::string(pv?pv:"");
         gtk_text_buffer_set_text(n->buf, body.c_str(), -1);
-    }), nsel);
+        if(n->persist && n->persist->cur_id) *n->persist->cur_id = ti ? ti : "";
+        // Update word count
+        GtkTextIter a,z; gtk_text_buffer_get_bounds(n->buf,&a,&z); char *t=gtk_text_buffer_get_text(n->buf,&a,&z,FALSE);
+        int words=0; bool in=false; for(char *p=t;*p;p++){ bool sp=g_ascii_isspace(*p); if(!sp && !in) words++; in=!sp; }
+        int mins=(words+199)/200; if(mins<1) mins=1;
+        std::string txt=std::to_string(words)+" words · "+std::to_string(mins)+" min";
+        gtk_label_set_text(n->status, txt.c_str()); g_free(t);
+    };
+    g_signal_connect(list, "row-selected", G_CALLBACK(on_note_select), nsel);
     gtk_list_box_select_row(GTK_LIST_BOX(list), gtk_list_box_get_row_at_index(GTK_LIST_BOX(list), 0));
-    // + New Note — live CRUD via DataLayer (hexagonal, off GTK thread intent; actual SQL via podman exec is synchronous but keeps surface decoupled)
+    // Persist on timeout
+    g_signal_connect_data(buf, "changed", G_CALLBACK(+[](GtkTextBuffer *b, gpointer d){
+        PersistCtx *p=(PersistCtx*)d;
+        if(p->timer) g_source_remove(p->timer);
+        p->timer = g_timeout_add(800, +[](gpointer dd)->gboolean{
+            PersistCtx *pp=(PersistCtx*)dd;
+            pp->timer=0;
+            if(!pp->dl || !pp->dl->is_connected()) return G_SOURCE_REMOVE;
+            GtkTextIter s,e; gtk_text_buffer_get_bounds(pp->buf,&s,&e); char *txt=gtk_text_buffer_get_text(pp->buf,&s,&e,FALSE);
+            std::string body = txt ? txt : ""; g_free(txt);
+            std::string title = body.substr(0, body.find('\n')); if(title.size()>80) title=title.substr(0,80);
+            // Off GTK thread: DataLayer is thread-safe for PGconn acquire
+            std::string *idcopy = pp->cur_id ? new std::string(*pp->cur_id) : new std::string("");
+            std::string bodyCopy=body;
+            tessera::DataLayer *dl=pp->dl;
+            g_thread_new("note-persist", [](gpointer q)->gpointer{
+                auto *pr=(std::pair<tessera::DataLayer*, std::pair<std::string,std::string>>*)q;
+                std::string curId=pr->second.first; std::string b=pr->second.second;
+                std::string title2=b.substr(0,b.find('\n')); if(title2.size()>80) title2=title2.substr(0,80);
+                // If curId is title, lookup existing note by source or create
+                std::string id = pr->first->upsert_knowledge("note", title2.empty()?"Untitled":title2, b, "note://"+title2, "");
+                if(!id.empty() && id!=curId) pr->first->add_receipt(id, "note_upsert", "{\"title\":\""+title2+"\"}");
+                delete pr; return nullptr;
+            }, new std::pair<tessera::DataLayer*, std::pair<std::string,std::string>>(dl, {*idcopy, bodyCopy}));
+            delete idcopy;
+            return G_SOURCE_REMOVE;
+        }, p);
+    }), persist, nullptr, GConnectFlags(0));
+    // + New Note — live CRUD via DataLayer (hexagonal, worker thread)
     if(dl){
-        struct Ctx{ tessera::DataLayer* dl; GtkWidget* list; };
-        Ctx *ctx = new Ctx{dl, list};
+        struct Ctx{ tessera::DataLayer* dl; GtkWidget* list; PersistCtx* persist; };
+        Ctx *ctx = new Ctx{dl, list, persist};
         g_signal_connect(new_btn, "clicked", G_CALLBACK(+[](GtkButton*, gpointer d){
             Ctx *c = (Ctx*)d;
             if(!c || !c->dl || !c->dl->is_connected()) return;
             std::string id = c->dl->create_note("Untitled", "");
             if(!id.empty()){
                 c->dl->add_receipt(id, "note.create", "{\"title\":\"Untitled\"}");
+                if(c->persist && c->persist->cur_id) *c->persist->cur_id = id;
                 GtkWidget *row=gtk_list_box_row_new();
                 GtkWidget *v=gtk_box_new(GTK_ORIENTATION_VERTICAL,4);
                 GtkWidget *t=gtk_label_new("Untitled"); gtk_label_set_xalign(GTK_LABEL(t),0); gtk_widget_add_css_class(t,"title-4");
-                GtkWidget *p=gtk_label_new("just now"); gtk_label_set_xalign(GTK_LABEL(p),0); gtk_widget_add_css_class(p,"dim-label");
-                gtk_box_append(GTK_BOX(v),t); gtk_box_append(GTK_BOX(v),p);
+                GtkWidget *p2=gtk_label_new("just now"); gtk_label_set_xalign(GTK_LABEL(p2),0); gtk_widget_add_css_class(p2,"dim-label");
+                gtk_box_append(GTK_BOX(v),t); gtk_box_append(GTK_BOX(v),p2);
                 gtk_widget_set_margin_top(v,8); gtk_widget_set_margin_bottom(v,8);
                 gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), v);
                 gtk_list_box_append(GTK_LIST_BOX(c->list), row);
+                gtk_list_box_select_row(GTK_LIST_BOX(c->list), GTK_LIST_BOX_ROW(row));
             }
         }), ctx);
     }

@@ -11,6 +11,7 @@ enum class ProviderType {
     OnDevice,
 };
 
+bool is_non_us_cloud_provider(const std::string &id);
 struct CloudProvider {
     std::string id;           // gsettings/libsecret key: openai, anthropic, google, meta, minimax, alibaba, openrouter, zai, glm, deepseek, generic
     std::string display_name; // "OpenAI"

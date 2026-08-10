@@ -226,15 +226,30 @@ int DataLayer::count_entities(const std::string &entity_type){
     try{ return std::stoi(r); } catch(...){ return -1; }
 }
 std::vector<NoteRow> DataLayer::list_notes(int limit){
+#ifdef HAVE_LIBPQ
+    if(pg_conn_ || !cfg_.postgres_url.empty()){
+        if(!pg_conn_ || PQstatus(pg_conn_)!=CONNECTION_OK){
+            if(pg_conn_) PQfinish(pg_conn_);
+            pg_conn_ = PQconnectdb(cfg_.postgres_url.c_str());
+        }
+        if(pg_conn_ && PQstatus(pg_conn_)==CONNECTION_OK){
+            const char *sql = "SELECT id::text, label, coalesce(body,'') FROM graph_entities WHERE entity_type=$1 ORDER BY created_at DESC LIMIT $2";
+            std::string typ="note"; std::string lim=std::to_string(limit);
+            const char *vals[2]={typ.c_str(), lim.c_str()};
+            PGresult *res=PQexecParams(pg_conn_, sql, 2, nullptr, vals, nullptr, nullptr, 0);
+            if(res && PQresultStatus(res)==PGRES_TUPLES_OK){
+                std::vector<NoteRow> rows;
+                for(int i=0;i<PQntuples(res);++i) rows.push_back({PQgetvalue(res,i,0)?PQgetvalue(res,i,0):"", PQgetvalue(res,i,1)?PQgetvalue(res,i,1):"", PQgetvalue(res,i,2)?PQgetvalue(res,i,2):""});
+                PQclear(res);
+                if(!rows.empty() || PQntuples(res)>=0) return rows;
+            }
+            if(res) PQclear(res);
+        }
+    }
+#endif
     std::string sql = "SELECT id::text, label, coalesce(body,'') FROM graph_entities WHERE entity_type='note' ORDER BY created_at DESC LIMIT " + std::to_string(limit);
-    std::string raw = exec_psql(sql + " | tr '\\n' '\\r'"); // keep simple, use psql -A with |
-    // Use a more structured query with delimiter
-    std::string cmd = "podman exec tessera-postgres psql -h 127.0.0.1 -U tessera -d tessera -t -A -F '|' -c \"" + sql + "\" 2>/dev/null";
-    std::array<char,1024> buf; std::string out;
-    FILE *p = popen(cmd.c_str(), "r");
-    if(!p) return {};
-    while(fgets(buf.data(), buf.size(), p)) out += buf.data();
-    pclose(p);
+    std::string out = exec_psql(sql);
+    // exec_psql now returns pipe-delimited via libpq; fallback parse pipes
     std::vector<NoteRow> rows;
     size_t pos=0;
     while(pos < out.size()){
@@ -419,13 +434,6 @@ std::vector<NoteRow> DataLayer::list_by_type(const std::string &entity_type, int
 #endif
     std::string sql="SELECT id::text, label, coalesce(body,'') FROM graph_entities WHERE entity_type='"+sql_escape(entity_type)+"' ORDER BY created_at DESC LIMIT "+std::to_string(limit);
     std::string out=exec_psql(sql);
-    if(out.find('|')==std::string::npos && !out.empty()){
-        // exec_psql already returned pipe-delimited multi-row when libpq present
-    } else if(out.find('|')==std::string::npos){
-        // fallback popen for hosts without libpq multi-row handling
-        std::string cmd="podman exec tessera-postgres psql -h 127.0.0.1 -U tessera -d tessera -t -A -F '|' -c \""+sql+"\" 2>/dev/null";
-        std::array<char,1024> buf; out.clear(); FILE *p=popen(cmd.c_str(),"r"); if(p){ while(fgets(buf.data(), buf.size(), p)) out+=buf.data(); pclose(p);} 
-    }
     std::vector<NoteRow> rows; size_t pos=0;
     while(pos<out.size()){ size_t nl=out.find('\n',pos); std::string line=out.substr(pos,nl==std::string::npos?std::string::npos:nl-pos); pos=nl==std::string::npos?out.size():nl+1; if(line.empty()) continue; size_t p1=line.find('|'); size_t p2=line.find('|',p1+1); if(p1==std::string::npos||p2==std::string::npos) continue; rows.push_back({line.substr(0,p1), line.substr(p1+1,p2-p1-1), line.substr(p2+1)}); }
     if(!rows.empty()) valkey_set("tessera:list:" + entity_type, std::to_string(rows.size()), 60);
@@ -459,19 +467,57 @@ int DataLayer::count_by_source_prefix(const std::string &prefix){
     try{ return std::stoi(r);}catch(...){ return -1; }
 }
 std::vector<DataLayer::GraphNodeRow> DataLayer::list_graph_nodes(int limit){
+#ifdef HAVE_LIBPQ
+    if(pg_conn_ || !cfg_.postgres_url.empty()){
+        if(!pg_conn_ || PQstatus(pg_conn_)!=CONNECTION_OK){
+            if(pg_conn_) PQfinish(pg_conn_);
+            pg_conn_ = PQconnectdb(cfg_.postgres_url.c_str());
+        }
+        if(pg_conn_ && PQstatus(pg_conn_)==CONNECTION_OK){
+            std::string lim=std::to_string(limit);
+            const char *sql="SELECT id::text, label, entity_type, coalesce(subtype,''), coalesce(source_url,''), updated_at::text FROM graph_entities ORDER BY updated_at DESC LIMIT $1";
+            const char *vals[1]={lim.c_str()};
+            PGresult *res=PQexecParams(pg_conn_, sql, 1, nullptr, vals, nullptr, nullptr, 0);
+            if(res && PQresultStatus(res)==PGRES_TUPLES_OK){
+                std::vector<GraphNodeRow> rows;
+                for(int i=0;i<PQntuples(res);++i) rows.push_back({PQgetvalue(res,i,0)?PQgetvalue(res,i,0):"", PQgetvalue(res,i,1)?PQgetvalue(res,i,1):"", PQgetvalue(res,i,2)?PQgetvalue(res,i,2):"", PQgetvalue(res,i,3)?PQgetvalue(res,i,3):"", PQgetvalue(res,i,4)?PQgetvalue(res,i,4):"", PQgetvalue(res,i,5)?PQgetvalue(res,i,5):""});
+                PQclear(res);
+                return rows;
+            }
+            if(res) PQclear(res);
+        }
+    }
+#endif
     std::string sql="SELECT id::text, label, entity_type, coalesce(subtype,''), coalesce(source_url,''), updated_at::text FROM graph_entities ORDER BY updated_at DESC LIMIT "+std::to_string(limit);
-    std::string cmd="podman exec tessera-postgres psql -h 127.0.0.1 -U tessera -d tessera -t -A -F '|' -c \""+sql+"\" 2>/dev/null";
-    std::array<char,1024> buf; std::string out; FILE *p=popen(cmd.c_str(),"r"); if(!p) return {};
-    while(fgets(buf.data(), buf.size(), p)) out+=buf.data(); pclose(p);
+    std::string out=exec_psql(sql);
     std::vector<GraphNodeRow> rows; size_t pos=0;
     while(pos<out.size()){ size_t nl=out.find('\n',pos); std::string line=out.substr(pos,nl==std::string::npos?std::string::npos:nl-pos); pos=nl==std::string::npos?out.size():nl+1; if(line.empty()) continue; std::vector<std::string> f; size_t s=0; while(true){ size_t d=line.find('|',s); if(d==std::string::npos){ f.push_back(line.substr(s)); break;} f.push_back(line.substr(s,d-s)); s=d+1; } if(f.size()<6) continue; rows.push_back({f[0],f[1],f[2],f[3],f[4],f[5]}); }
     return rows;
 }
 std::vector<DataLayer::GraphEdgeRow> DataLayer::list_graph_edges(int limit){
+#ifdef HAVE_LIBPQ
+    if(pg_conn_ || !cfg_.postgres_url.empty()){
+        if(!pg_conn_ || PQstatus(pg_conn_)!=CONNECTION_OK){
+            if(pg_conn_) PQfinish(pg_conn_);
+            pg_conn_ = PQconnectdb(cfg_.postgres_url.c_str());
+        }
+        if(pg_conn_ && PQstatus(pg_conn_)==CONNECTION_OK){
+            std::string lim=std::to_string(limit);
+            const char *sql="SELECT id::text, source_id::text, target_id::text, link_type, weight FROM entity_links LIMIT $1";
+            const char *vals[1]={lim.c_str()};
+            PGresult *res=PQexecParams(pg_conn_, sql, 1, nullptr, vals, nullptr, nullptr, 0);
+            if(res && PQresultStatus(res)==PGRES_TUPLES_OK){
+                std::vector<GraphEdgeRow> rows;
+                for(int i=0;i<PQntuples(res);++i) rows.push_back({PQgetvalue(res,i,0)?PQgetvalue(res,i,0):"", PQgetvalue(res,i,1)?PQgetvalue(res,i,1):"", PQgetvalue(res,i,2)?PQgetvalue(res,i,2):"", PQgetvalue(res,i,3)?PQgetvalue(res,i,3):"", (float)atof(PQgetvalue(res,i,4)?PQgetvalue(res,i,4):"0")});
+                PQclear(res);
+                return rows;
+            }
+            if(res) PQclear(res);
+        }
+    }
+#endif
     std::string sql="SELECT id::text, source_id::text, target_id::text, link_type, weight FROM entity_links LIMIT "+std::to_string(limit);
-    std::string cmd="podman exec tessera-postgres psql -h 127.0.0.1 -U tessera -d tessera -t -A -F '|' -c \""+sql+"\" 2>/dev/null";
-    std::array<char,1024> buf; std::string out; FILE *p=popen(cmd.c_str(),"r"); if(!p) return {};
-    while(fgets(buf.data(), buf.size(), p)) out+=buf.data(); pclose(p);
+    std::string out=exec_psql(sql);
     std::vector<GraphEdgeRow> rows; size_t pos=0;
     while(pos<out.size()){ size_t nl=out.find('\n',pos); std::string line=out.substr(pos,nl==std::string::npos?std::string::npos:nl-pos); pos=nl==std::string::npos?out.size():nl+1; if(line.empty()) continue; std::vector<std::string> f; size_t s=0; while(true){ size_t d=line.find('|',s); if(d==std::string::npos){ f.push_back(line.substr(s)); break;} f.push_back(line.substr(s,d-s)); s=d+1; } if(f.size()<5) continue; rows.push_back({f[0],f[1],f[2],f[3], (float)std::atof(f[4].c_str())}); }
     return rows;
@@ -513,7 +559,10 @@ bool DataLayer::valkey_connect() const {
     if(!url.empty()){
         std::string h; int p; if(probe_url(url,h,p)){ host=h; port=p; }
     }
-    valkey_ctx_ = redisConnect(host.c_str(), port);
+    // Probe TCP first to avoid hiredis sds invalid pointer when no server
+    if(!can_connect(host, port)) return false;
+    struct timeval tv{1,0};
+    valkey_ctx_ = redisConnectWithTimeout(host.c_str(), port, tv);
     return valkey_ctx_ && valkey_ctx_->err==0;
 }
 #endif
@@ -522,7 +571,6 @@ bool DataLayer::duckdb_exec(const std::string &sql) const {
     duckdb db=nullptr; duckdb_connection con=nullptr;
     if(duckdb_open(cfg_.duckdb_path.c_str(), &db)!=DuckDBSuccess) return false;
     if(duckdb_connect(db, &con)!=DuckDBSuccess){ duckdb_close(&db); return false; }
-    // Ensure analytics tables exist (per linux-data-contracts.md)
     const char *init_sql =
         "CREATE TABLE IF NOT EXISTS token_usage (ts TIMESTAMP, model TEXT, provider TEXT, prompt_tokens INTEGER, completion_tokens INTEGER, total_tokens INTEGER);"
         "CREATE TABLE IF NOT EXISTS run_stats (run_id TEXT PRIMARY KEY, model TEXT, status TEXT, started_at TIMESTAMP, finished_at TIMESTAMP, duration_ms INTEGER);"
@@ -537,17 +585,151 @@ bool DataLayer::duckdb_exec(const std::string &sql) const {
     return ok;
 #else
     (void)sql;
-    // No duckdb dev package — keep compiling, but fan-out still happens via Postgres traces
-    // For hosts without duckdb, we still log to valkey for hot path
-    valkey_set("tessera:duckdb:pending", sql.substr(0,200), 3600);
     return false;
 #endif
 }
 std::optional<DataLayer::GraphNodeRow> DataLayer::get_entity_row(const std::string &id){
+#ifdef HAVE_LIBPQ
+    if(pg_conn_ || !cfg_.postgres_url.empty()){
+        if(!pg_conn_ || PQstatus(pg_conn_)!=CONNECTION_OK){
+            if(pg_conn_) PQfinish(pg_conn_);
+            pg_conn_ = PQconnectdb(cfg_.postgres_url.c_str());
+        }
+        if(pg_conn_ && PQstatus(pg_conn_)==CONNECTION_OK){
+            const char *sql="SELECT id::text, label, entity_type, coalesce(subtype,''), coalesce(source_url,''), updated_at::text FROM graph_entities WHERE id=$1 LIMIT 1";
+            const char *vals[1]={id.c_str()};
+            PGresult *res=PQexecParams(pg_conn_, sql, 1, nullptr, vals, nullptr, nullptr, 0);
+            std::string line;
+            if(res && PQresultStatus(res)==PGRES_TUPLES_OK && PQntuples(res)>0){
+                std::string out;
+                for(int f=0;f<PQnfields(res);++f){ if(f) out+='|'; out+=PQgetvalue(res,0,f)?PQgetvalue(res,0,f):""; }
+                line=out;
+            }
+            if(res) PQclear(res);
+            if(!line.empty()){
+                std::vector<std::string> f; size_t s=0; while(true){ size_t d=line.find('|',s); if(d==std::string::npos){ f.push_back(line.substr(s)); break;} f.push_back(line.substr(s,d-s)); s=d+1; } if(f.size()>=6) return GraphNodeRow{f[0],f[1],f[2],f[3],f[4],f[5]};
+            }
+        }
+    }
+#endif
     std::string sql="SELECT id::text, label, entity_type, coalesce(subtype,''), coalesce(source_url,''), updated_at::text FROM graph_entities WHERE id='"+sql_escape(id)+"' LIMIT 1";
-    std::string cmd="podman exec tessera-postgres psql -h 127.0.0.1 -U tessera -d tessera -t -A -F '|' -c \""+sql+"\" 2>/dev/null";
-    std::array<char,1024> buf; std::string out; FILE *p=popen(cmd.c_str(),"r"); if(!p) return std::nullopt;
-    while(fgets(buf.data(), buf.size(), p)) out+=buf.data(); pclose(p);
+    std::string out=exec_psql(sql);
     if(out.empty()) return std::nullopt; size_t nl=out.find('\n'); std::string line=out.substr(0,nl==std::string::npos? out.size():nl); if(line.empty()) return std::nullopt; std::vector<std::string> f; size_t s=0; while(true){ size_t d=line.find('|',s); if(d==std::string::npos){ f.push_back(line.substr(s)); break;} f.push_back(line.substr(s,d-s)); s=d+1; } if(f.size()<6) return std::nullopt; return GraphNodeRow{f[0],f[1],f[2],f[3],f[4],f[5]};
+}
+bool DataLayer::ensure_compliance_tables(){
+    const char *sql="CREATE TABLE IF NOT EXISTS disclosure_log (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), entity_id uuid REFERENCES graph_entities(id) ON DELETE SET NULL, entity_type text, accessor text NOT NULL, purpose text NOT NULL, min_necessary_filter text, accessed_at timestamptz NOT NULL DEFAULT now()); CREATE TABLE IF NOT EXISTS deletion_attestations (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), source_prefix text NOT NULL, deleted_count int NOT NULL, attested_by text NOT NULL, attested_at timestamptz NOT NULL DEFAULT now(), receipt_id uuid REFERENCES graph_receipts(id));";
+#ifdef HAVE_LIBPQ
+    if(pg_conn_ || !cfg_.postgres_url.empty()){
+        if(!pg_conn_ || PQstatus(pg_conn_)!=CONNECTION_OK){ if(pg_conn_) PQfinish(pg_conn_); pg_conn_=PQconnectdb(cfg_.postgres_url.c_str()); }
+        if(pg_conn_ && PQstatus(pg_conn_)==CONNECTION_OK){
+            PGresult *r=PQexec(pg_conn_, sql);
+            bool ok=r && (PQresultStatus(r)==PGRES_COMMAND_OK || PQresultStatus(r)==PGRES_TUPLES_OK);
+            if(r) PQclear(r);
+            if(ok) return true;
+        }
+    }
+#endif
+    std::string out=exec_psql(sql);
+    return true;
+}
+bool DataLayer::log_disclosure(const std::string &entity_id, const std::string &entity_type, const std::string &accessor, const std::string &purpose, const std::string &filter){
+    if(accessor.empty() || purpose.empty()) return false;
+    ensure_compliance_tables();
+#ifdef HAVE_LIBPQ
+    if(pg_conn_ || !cfg_.postgres_url.empty()){
+        if(!pg_conn_ || PQstatus(pg_conn_)!=CONNECTION_OK){ if(pg_conn_) PQfinish(pg_conn_); pg_conn_=PQconnectdb(cfg_.postgres_url.c_str()); }
+        if(pg_conn_ && PQstatus(pg_conn_)==CONNECTION_OK){
+            const char *sql="INSERT INTO disclosure_log (entity_id, entity_type, accessor, purpose, min_necessary_filter) VALUES ($1::uuid, $2, $3, $4, $5)";
+            const char *e = entity_id.empty()?nullptr:entity_id.c_str();
+            const char *et = entity_type.empty()?nullptr:entity_type.c_str();
+            const char *vals[5]={e, et, accessor.c_str(), purpose.c_str(), filter.empty()?nullptr:filter.c_str()};
+            PGresult *r=PQexecParams(pg_conn_, sql, 5, nullptr, vals, nullptr, nullptr, 0);
+            bool ok=r && PQresultStatus(r)==PGRES_COMMAND_OK;
+            if(r) PQclear(r);
+            if(ok) return true;
+        }
+    }
+#endif
+    std::string sql="INSERT INTO disclosure_log (entity_id, entity_type, accessor, purpose, min_necessary_filter) VALUES ("+(entity_id.empty()?"NULL":"'"+sql_escape(entity_id)+"'::uuid")+", "+(entity_type.empty()?"NULL":"'"+sql_escape(entity_type)+"'")+", '"+sql_escape(accessor)+"', '"+sql_escape(purpose)+"', "+(filter.empty()?"NULL":"'"+sql_escape(filter)+"'")+")";
+    exec_psql(sql);
+    return true;
+}
+int DataLayer::count_disclosures(const std::string &entity_type){
+#ifdef HAVE_LIBPQ
+    if(pg_conn_ && PQstatus(pg_conn_)==CONNECTION_OK){
+        if(entity_type.empty()){
+            PGresult *r=PQexec(pg_conn_, "SELECT count(*) FROM disclosure_log");
+            std::string s; if(r && PQresultStatus(r)==PGRES_TUPLES_OK && PQntuples(r)>0) s=PQgetvalue(r,0,0)?PQgetvalue(r,0,0):""; if(r) PQclear(r); try{ if(!s.empty()) return std::stoi(s);}catch(...){}
+        } else {
+            const char *sql="SELECT count(*) FROM disclosure_log WHERE entity_type=$1";
+            const char *vals[1]={entity_type.c_str()};
+            PGresult *r=PQexecParams(pg_conn_, sql, 1, nullptr, vals, nullptr, nullptr, 0);
+            std::string s; if(r && PQresultStatus(r)==PGRES_TUPLES_OK && PQntuples(r)>0) s=PQgetvalue(r,0,0)?PQgetvalue(r,0,0):""; if(r) PQclear(r); try{ if(!s.empty()) return std::stoi(s);}catch(...){}
+        }
+    }
+#endif
+    std::string sql=entity_type.empty()? "SELECT count(*) FROM disclosure_log" : "SELECT count(*) FROM disclosure_log WHERE entity_type='"+sql_escape(entity_type)+"'";
+    std::string r=exec_psql(sql);
+    try{ return std::stoi(r);}catch(...){ return -1; }
+}
+std::vector<DataLayer::Disclosure> DataLayer::list_disclosures(int limit){
+#ifdef HAVE_LIBPQ
+    if(pg_conn_ && PQstatus(pg_conn_)==CONNECTION_OK){
+        std::string lim=std::to_string(limit);
+        const char *sql="SELECT id::text, coalesce(entity_id::text,''), coalesce(entity_type,''), accessor, purpose, coalesce(min_necessary_filter,''), accessed_at::text FROM disclosure_log ORDER BY accessed_at DESC LIMIT $1";
+        const char *vals[1]={lim.c_str()};
+        PGresult *r=PQexecParams(pg_conn_, sql, 1, nullptr, vals, nullptr, nullptr, 0);
+        if(r && PQresultStatus(r)==PGRES_TUPLES_OK){
+            std::vector<Disclosure> out;
+            for(int i=0;i<PQntuples(r);++i) out.push_back({PQgetvalue(r,i,0)?PQgetvalue(r,i,0):"", PQgetvalue(r,i,1)?PQgetvalue(r,i,1):"", PQgetvalue(r,i,2)?PQgetvalue(r,i,2):"", PQgetvalue(r,i,3)?PQgetvalue(r,i,3):"", PQgetvalue(r,i,4)?PQgetvalue(r,i,4):"", PQgetvalue(r,i,5)?PQgetvalue(r,i,5):"", PQgetvalue(r,i,6)?PQgetvalue(r,i,6):""});
+            PQclear(r);
+            return out;
+        }
+        if(r) PQclear(r);
+    }
+#endif
+    std::string out=exec_psql("SELECT id::text, coalesce(entity_id::text,''), coalesce(entity_type,''), accessor, purpose, coalesce(min_necessary_filter,''), accessed_at::text FROM disclosure_log ORDER BY accessed_at DESC LIMIT "+std::to_string(limit));
+    std::vector<Disclosure> rows; size_t pos=0;
+    while(pos<out.size()){ size_t nl=out.find('\n',pos); std::string line=out.substr(pos,nl==std::string::npos?std::string::npos:nl-pos); pos=nl==std::string::npos?out.size():nl+1; if(line.empty()) continue; std::vector<std::string> f; size_t s=0; while(true){ size_t d=line.find('|',s); if(d==std::string::npos){ f.push_back(line.substr(s)); break;} f.push_back(line.substr(s,d-s)); s=d+1; } if(f.size()<7) continue; rows.push_back({f[0],f[1],f[2],f[3],f[4],f[5],f[6]}); }
+    return rows;
+}
+int DataLayer::purge_by_source_prefix(const std::string &prefix, const std::string &attested_by){
+    if(prefix.empty()) return -1;
+    ensure_compliance_tables();
+    int before=count_by_source_prefix(prefix);
+    if(before<=0) return 0;
+#ifdef HAVE_LIBPQ
+    if(pg_conn_ || !cfg_.postgres_url.empty()){
+        if(!pg_conn_ || PQstatus(pg_conn_)!=CONNECTION_OK){ if(pg_conn_) PQfinish(pg_conn_); pg_conn_=PQconnectdb(cfg_.postgres_url.c_str()); }
+        if(pg_conn_ && PQstatus(pg_conn_)==CONNECTION_OK){
+            const char *del_sql="DELETE FROM graph_entities WHERE source_url LIKE $1";
+            std::string pat=prefix+"%";
+            const char *vals[1]={pat.c_str()};
+            PGresult *r=PQexecParams(pg_conn_, del_sql, 1, nullptr, vals, nullptr, nullptr, 0);
+            bool ok=r && (PQresultStatus(r)==PGRES_COMMAND_OK || PQresultStatus(r)==PGRES_TUPLES_OK);
+            std::string deleted = ok? PQcmdTuples(r): "0";
+            if(r) PQclear(r);
+            int n=0; try{ n=std::stoi(deleted);}catch(...){ n=before; }
+            // receipt + attestation
+            std::string receipt=add_receipt("deletion:"+prefix, "purge", "{\"prefix\":\""+sql_escape(prefix)+"\",\"count\":"+std::to_string(n)+"}");
+            const char *att_sql="INSERT INTO deletion_attestations (source_prefix, deleted_count, attested_by, receipt_id) VALUES ($1,$2,$3,$4::uuid)";
+            std::string cnt=std::to_string(n);
+            const char *avals[4]={prefix.c_str(), cnt.c_str(), attested_by.c_str(), receipt.empty()?nullptr:receipt.c_str()};
+            PGresult *ar=PQexecParams(pg_conn_, att_sql, 4, nullptr, avals, nullptr, nullptr, 0);
+            if(ar) PQclear(ar);
+            return n;
+        }
+    }
+#endif
+    std::string del="DELETE FROM graph_entities WHERE source_url LIKE '"+sql_escape(prefix)+"%'";
+    std::string r=exec_psql(del);
+    std::string receipt=add_receipt("deletion:"+prefix, "purge", "{\"prefix\":\""+sql_escape(prefix)+"\",\"count\":"+std::to_string(before)+"}");
+    std::string att="INSERT INTO deletion_attestations (source_prefix, deleted_count, attested_by, receipt_id) VALUES ('"+sql_escape(prefix)+"',"+std::to_string(before)+",'"+sql_escape(attested_by)+"',"+(receipt.empty()?"NULL":"'"+sql_escape(receipt)+"'::uuid")+")";
+    exec_psql(att);
+    return before;
+}
+int DataLayer::count_by_source_prefix_attested(const std::string &prefix){
+    std::string r=exec_psql("SELECT count(*) FROM deletion_attestations WHERE source_prefix='"+sql_escape(prefix)+"'");
+    try{ return std::stoi(r);}catch(...){ return -1; }
 }
 } // namespace tessera

@@ -804,6 +804,7 @@ static void on_activate(AdwApplication *app, gpointer) {
 static void on_prefs(GSimpleAction*, GVariant*, gpointer){ if(g_main_stack) gtk_stack_set_visible_child_name(g_main_stack, "settings"); }
 static void on_shortcuts(GSimpleAction*, GVariant*, gpointer win){ tessera::show_shortcuts(GTK_WINDOW(win)); }
 static void on_about(GSimpleAction*, GVariant*, gpointer win){ tessera::show_about(GTK_WINDOW(win)); }
+#ifndef TESSERA_ENTERPRISE
 static void on_plead5(GSimpleAction*, GVariant*, gpointer app){
     GtkWindow *w = gtk_application_get_active_window(GTK_APPLICATION(app)); if(!w) return;
     GtkWidget* d=gtk_dialog_new_with_buttons("Plead the Fifth — Lock/Wipe", w, GTK_DIALOG_MODAL, "Cancel", GTK_RESPONSE_CANCEL, "Lock", GTK_RESPONSE_ACCEPT, nullptr);
@@ -844,6 +845,7 @@ static void on_plead5(GSimpleAction*, GVariant*, gpointer app){
         gtk_window_destroy(GTK_WINDOW(dlg));
     }), nullptr);
 }
+#endif // !TESSERA_ENTERPRISE
 
 int main(int argc, char **argv) {
     // --background flag for systemd tessera-agent.service (P3.8)
@@ -881,9 +883,15 @@ int main(int argc, char **argv) {
             {"preferences", prefs_wrap, nullptr, nullptr, nullptr},
             {"shortcuts", short_wrap, nullptr, nullptr, nullptr},
             {"about", about_wrap, nullptr, nullptr, nullptr},
+#ifndef TESSERA_ENTERPRISE
             {"plead5", on_plead5, nullptr, nullptr, nullptr},
+#endif
         };
+#ifdef TESSERA_ENTERPRISE
+        g_action_map_add_action_entries(G_ACTION_MAP(app), real_entries, 3, app);
+#else
         g_action_map_add_action_entries(G_ACTION_MAP(app), real_entries, 4, app);
+#endif
         gtk_application_set_accels_for_action(GTK_APPLICATION(app), "app.preferences", (const char*[]){"<Control>comma", nullptr});
         gtk_application_set_accels_for_action(GTK_APPLICATION(app), "app.shortcuts", (const char*[]){"<Control>question", nullptr});
     }

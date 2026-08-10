@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=Tessera Studio (Personal)
+GenericName=Knowledge Studio (Personal) - Not For Procurement
+Comment=Personal - strictly personal aggressive features present
+Exec=tessera-studio-linux
+Icon=org.tessera.TesseraStudio
+Terminal=false
+Type=Application
+Categories=Office;ProjectManagement;Development;
+StartupWMClass=TesseraStudio
+MimeType=text/plain;
+X-GNOME-UsesNotifications=true

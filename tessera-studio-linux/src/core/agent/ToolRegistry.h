@@ -12,6 +12,9 @@ public:
     std::string call_desktop(const std::string &op, const std::string &args);
     std::string call_browser(const std::string &op, const std::string &args);
     std::string call_background(const std::string &reason);
+    // Compliance: minimum necessary + disclosure accounting
+    std::string call_data(const std::string &entity_type, const std::string &filter, const std::string &accessor="user", const std::string &purpose="need_to_know");
+    bool checkMinimumNecessary(const std::string &filter);
     DesktopTool desktop;
     BrowserTool browser;
     BackgroundPortal background;

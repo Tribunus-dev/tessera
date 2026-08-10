@@ -48,6 +48,7 @@ bool EncryptedVolume::close(const std::string &path) {
     }
     return true; // honest: would be cryptsetup luksClose via udisks2
 }
+#ifndef TESSERA_ENTERPRISE
 void PleadTheFifth::arm() {
     // Arm via Wayland GlobalShortcuts portal or X11 XRecord fallbacks
     // Persist armed state in dedicated file + GSettings for UI
@@ -95,4 +96,5 @@ void PleadTheFifth::trigger() {
     // Close volume
     run_cmd("cryptsetup luksClose tessera-volume 2>/dev/null; udisksctl lock -b /dev/mapper/tessera-volume 2>/dev/null");
 }
+#endif
 } // namespace tessera
