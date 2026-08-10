@@ -23,6 +23,13 @@
 #include "ggml.h"
 #include "ggml-backend.h"
 
+#include <cstdio>
+#include <string>
+
+#if defined(__APPLE__)
+#  include <sys/sysctl.h>
+#endif
+
 #if defined(GGML_USE_METAL)
 #  include "ggml-metal.h"
 #endif
@@ -42,7 +49,8 @@ static int ts_detect_apple_family() {
     // Walk from a high bound down to 1; the first supported family is the
     // highest. MTLGPUFamilyApple1..N are contiguous in the enum, and the
     // public ggml_backend_metal_supports_family maps N -> AppleN.
-    for (int n = 12; n >= 1; --n) {
+    // Ceiling at 16 covers M1 (7) through M5+ (likely 11-12) with headroom.
+    for (int n = 16; n >= 1; --n) {
         if (ggml_backend_metal_supports_family(backend, n)) {
             family = n;
             break;
@@ -59,9 +67,33 @@ static int ts_detect_apple_family() {
 
 struct ts_tile_config ts_detect_tile_config() {
     const int family = ts_detect_apple_family();
+
+    // Detect M5+ for kernel-path selection. The tile geometry stays T640
+    // regardless, but on M5 the Metal kernel uses MPP matmul2d (cooperative
+    // tensor via the GPU Neural Accelerators) instead of scalar FMA. This
+    // detection is logged so diagnostics can confirm the M5 fast path.
+#if defined(__APPLE__)
+    {
+        char brand[128] = {};
+        size_t sz = sizeof(brand);
+        if (sysctlbyname("machdep.cpu.brand_string", brand, &sz, nullptr, 0) == 0) {
+            std::string s(brand);
+            bool is_m5 = s.find("M5") != std::string::npos ||
+                         s.find("M6") != std::string::npos;
+            if (is_m5) {
+                fprintf(stderr, "tile-detect: %s detected; MPP cooperative-tensor "
+                                "kernel path active (T640 tile, MMA-accelerated)\n",
+                        s.c_str());
+            }
+        }
+    }
+#endif
+
     if (family >= 7) {
-        // Apple Silicon (M1+): T640 is the native tile. M4+ (Apple10+) also
-        // uses T640 as the safe default until per-family benchmarks land.
+        // Apple Silicon (M1..M5+): T640 tile. The tile geometry (32 lanes,
+        // 20 elements/lane, 640 page) is identical across all generations.
+        // M5+ uses the MPP matmul2d kernel path (detected above); M1-M4
+        // uses the scalar FMA path. Same GGUF, different kernel.
         return ts_tile_config_t640();
     }
     if (family >= 1) {

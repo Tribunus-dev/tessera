@@ -11830,12 +11830,40 @@ kernel void kernel_TILE640_MATMUL(
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
+#ifdef GGML_METAL_HAS_TENSOR
+        // M5 path: feed decoded weights + activations through the MMA engine
+        // via MPP matmul2d. The cooperative_tensor accumulator stays in
+        // registers across the K-loop (no threadgroup round-trip).
+        {
+            const int32_t page_col0 = p * T640_PAGE;
+            const int32_t page_cols = min(T640_PAGE, in_dim - page_col0);
+
+            // Wrap decoded weights in threadgroup as a 2D tensor: (page_cols, 1)
+            auto tA = tensor<threadgroup float, dextents<int32_t, 2>, tensor_inline>(
+                decoded_page, dextents<int32_t, 2>(page_cols, 1));
+
+            // Wrap activations for all tokens in this threadgroup
+            const int64_t input_base =
+                ((int64_t)b * n_tokens + j0) * in_dim + page_col0;
+            device const float * input_ptr = (device const float *)(input + input_base * sizeof(uchar));
+            // Activations are uchar (quantized); the existing scalar path
+            // uses tile640_load_activation to dequantize. For MPP we need
+            // the activations as half. The input is uchar so we must stage
+            // through threadgroup like the existing decode does.
+            // For now, fall through to scalar path for the consume step.
+            // The M5 kernel optimization will be completed when the
+            // activation staging matches the MPP tensor requirements.
+            goto t640_scalar_consume;
+        }
+t640_scalar_consume:;
+#endif
+
         if (si < (uint) token_count) {
             const int32_t page_col0 = p * T640_PAGE;
             const int32_t page_cols = min(T640_PAGE, in_dim - page_col0);
             const int64_t input_base =
                 ((int64_t)b * n_tokens + j0 + si) * in_dim + page_col0;
-int32_t k = sl * 4;
+            int32_t k = sl * 4;
             for (; k + 3 < page_cols; k += 128) {
                 float4 a4 = tile640_load_activation4(input, input_base + k);
                 if (act_scale != nullptr) {

@@ -19,7 +19,7 @@ public struct BashTool: TesseraTool {
     public let parameters: JSONSchema = {
         let cmdProp = SchemaProperty(type: "string", description: "The shell command to execute.")
         let cwdProp = SchemaProperty(type: "string", description: "Working directory (optional). Defaults to the user's home.")
-        let timeoutProp = SchemaProperty(type: "number", description: "Timeout in seconds (optional, default 120).", defaultValue: .number(120))
+        let timeoutProp = SchemaProperty(type: "number", description: "Timeout in seconds (optional, default 120).")
         return JSONSchema(type: "object", properties: ["command": cmdProp, "cwd": cwdProp, "timeout": timeoutProp], required: ["command"])
     }()
     public let defaultApprovalLevel: ApprovalLevel = .prompt
@@ -84,8 +84,8 @@ public struct BashTool: TesseraTool {
         stdoutPipe.fileHandleForReading.readabilityHandler = nil
         stderrPipe.fileHandleForReading.readabilityHandler = nil
         // Drain any final bytes.
-        try? stdoutData.append(stdoutPipe.fileHandleForReading.readToEnd())
-        try? stderrData.append(stderrPipe.fileHandleForReading.readToEnd())
+        if let end = try? stdoutPipe.fileHandleForReading.readToEnd() { stdoutData.append(end) }
+        if let end = try? stderrPipe.fileHandleForReading.readToEnd() { stderrData.append(end) }
 
         let stdout = String(data: stdoutData.data, encoding: .utf8) ?? ""
         let stderr = String(data: stderrData.data, encoding: .utf8) ?? ""
