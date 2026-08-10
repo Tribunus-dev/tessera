@@ -1697,7 +1697,61 @@ static bool compute_imatrix(llama_context * ctx, const common_params & params, c
     auto tim1 = std::chrono::high_resolution_clock::now();
     LOG_INF("%s: tokenizing the input ..\n", __func__);
 
-    std::vector<llama_token> tokens = common_tokenize(ctx, params.prompt, true, params.parse_special);
+    std::vector<llama_token> tokens;
+
+    // Token cache: if the calibration text hasn't changed, reuse the cached
+    // token IDs from a previous run instead of retokenizing. The cache file is
+    // <calib_file>.tokens alongside the source. A 59 MB calib file takes 15-30s
+    // to tokenize (the regex pre-tokenizer is single-threaded); the cache makes
+    // subsequent calibration passes (drafter spec-decoding, retuned params) skip
+    // that entirely. The cache is validated by the source file's size + mtime.
+    std::string tokens_cache_path;
+    const bool can_cache = !params.prompt.empty() && params.prompt[0] == '/';
+    if (can_cache) {
+        struct stat calib_st;
+        if (stat(params.prompt.c_str(), &calib_st) == 0 && S_ISREG(calib_st.st_mode)) {
+            tokens_cache_path = params.prompt + ".tokens";
+            struct stat cache_st;
+            if (stat(tokens_cache_path.c_str(), &cache_st) == 0 &&
+                cache_st.st_size >= (off_t)sizeof(int32_t) &&
+                cache_st.st_mtime >= calib_st.st_mtime) {
+                // Cache is fresh — load it.
+                std::ifstream cache_in(tokens_cache_path, std::ios::binary);
+                if (cache_in) {
+                    int32_t n_cached = 0;
+                    cache_in.read(reinterpret_cast<char *>(&n_cached), sizeof(n_cached));
+                    if (n_cached > 0) {
+                        tokens.resize(n_cached);
+                        cache_in.read(reinterpret_cast<char *>(tokens.data()),
+                                      (std::streamsize)(n_cached * sizeof(llama_token)));
+                        if (cache_in.good()) {
+                            LOG_INF("%s: loaded %d tokens from cache (%s)\n",
+                                    __func__, n_cached, tokens_cache_path.c_str());
+                        } else {
+                            tokens.clear();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (tokens.empty()) {
+        tokens = common_tokenize(ctx, params.prompt, true, params.parse_special);
+
+        // Write the cache for next time.
+        if (!tokens_cache_path.empty() && !tokens.empty()) {
+            std::ofstream cache_out(tokens_cache_path, std::ios::binary);
+            if (cache_out) {
+                const int32_t n_tokens = (int32_t) tokens.size();
+                cache_out.write(reinterpret_cast<const char *>(&n_tokens), sizeof(n_tokens));
+                cache_out.write(reinterpret_cast<const char *>(tokens.data()),
+                                (std::streamsize)(n_tokens * sizeof(llama_token)));
+                LOG_INF("%s: cached %d tokens to %s\n",
+                        __func__, n_tokens, tokens_cache_path.c_str());
+            }
+        }
+    }
 
     auto tim2 = std::chrono::high_resolution_clock::now();
     LOG_INF("%s: tokenization took %g ms\n",__func__,1e-3*std::chrono::duration_cast<std::chrono::microseconds>(tim2-tim1).count());
@@ -1750,6 +1804,24 @@ static bool compute_imatrix(llama_context * ctx, const common_params & params, c
 
     LOG_INF("%s: computing over %d chunks, n_ctx=%d, batch_size=%d, n_seq=%d\n", __func__, n_chunk, n_ctx, n_batch, n_seq);
 
+    // Progress heartbeat: print a concise status line every 30s during the
+    // compute loop so the user can see the pipeline is alive (each chunk on a
+    // large model can take minutes; without this the log is silent between
+    // chunk boundaries). The heartbeat fires from a background thread that
+    // reads the shared i/chunk counters.
+    std::atomic<int> hb_chunk{0};
+    std::atomic<int> hb_batch{0};
+    std::atomic<bool> hb_done{false};
+    std::thread hb_thread([&]() {
+        while (!hb_done.load(std::memory_order_relaxed)) {
+            std::this_thread::sleep_for(std::chrono::seconds(30));
+            if (hb_done.load(std::memory_order_relaxed)) break;
+            LOG_INF("%s: heartbeat — chunk %d/%d, batch %d/%d\n",
+                    __func__, hb_chunk.load() + 1, n_chunk,
+                    hb_batch.load() + 1, num_batches);
+        }
+    });
+
     std::vector<std::thread> workers(std::thread::hardware_concurrency() - 1);
 
     // Slice 4.2a: the 2-slot IOSurface weight pool is now owned by the model
@@ -1766,6 +1838,7 @@ static bool compute_imatrix(llama_context * ctx, const common_params & params, c
     for (int i = 0; i < n_chunk; i += n_seq) {
         const int start =     i * n_ctx;
         const int end   = start + n_ctx;
+        hb_chunk.store(i, std::memory_order_relaxed);
 
         const int n_seq_batch = std::min(n_seq, n_chunk - i);
         const int32_t chunks_processed =
@@ -1795,6 +1868,7 @@ static bool compute_imatrix(llama_context * ctx, const common_params & params, c
         for (int j = 0; j < num_batches; ++j) {
             const int batch_start = start + j * n_batch;
             const int batch_size  = std::min(end - batch_start, n_batch);
+            hb_batch.store(j, std::memory_order_relaxed);
 
             // clear the batch
             common_batch_clear(batch);
@@ -1942,6 +2016,12 @@ static bool compute_imatrix(llama_context * ctx, const common_params & params, c
     }
 
     llama_batch_free(batch);
+
+    // Stop the heartbeat thread.
+    hb_done.store(true, std::memory_order_relaxed);
+    if (hb_thread.joinable()) {
+        hb_thread.join();
+    }
 
     if (!g_collector.flush_graph_observers()) {
         return false;
@@ -2306,9 +2386,10 @@ static enum llama_observer_scope scope_from_speculative_type(enum common_specula
 static enum llama_observer_scope scope_from_model_arch(const struct llama_model * model) {
     char arch[128] = {};
     if (llama_model_meta_val_str(model, "general.architecture", arch, sizeof(arch)) > 0) {
-        if (std::string(arch) == "qwen3-tts-talker") {
-            return LLAMA_OBSERVER_SCOPE_TALKER;
-        }
+        const std::string s(arch);
+        if (s == "qwen3-tts-talker") return LLAMA_OBSERVER_SCOPE_TALKER;
+        if (s == "dflash")           return LLAMA_OBSERVER_SCOPE_DFLASH;
+        if (s == "dspark")           return LLAMA_OBSERVER_SCOPE_DSPARK;
     }
     return LLAMA_OBSERVER_SCOPE_VERIFIER;
 }
@@ -2500,7 +2581,10 @@ int main(int argc, char ** argv) {
     // when the joint pipeline accumulates into one imatrix file. The per-ctx
     // binding carries (collector, scope) so the scope-aware filter sets the
     // collector's active scope before each observer fire.
-    const enum llama_observer_scope main_scope = scope_from_model_arch(model);
+    const enum llama_observer_scope main_scope =
+        params.observer_scope_override >= 0
+            ? (enum llama_observer_scope) params.observer_scope_override
+            : scope_from_model_arch(model);
     g_verifier_binding.scope = main_scope;
     llama_set_imatrix_observer_scope(ctx, main_scope);
     g_collector.set_observer_scope(main_scope);
@@ -2513,64 +2597,138 @@ int main(int argc, char ** argv) {
     }
 
     // ─── Spec-decoding calibration path ─────────────────────────────────────
-    // If --model-draft is set, load the drafter and run a real spec-decoding
+    // If --model-draft is set, load the drafter(s) and run a real spec-decoding
     // loop instead of the plain text loop. The verifier (this ctx) keeps its
-    // VERIFIER-scoped observers; the drafter context binds to the scope
+    // VERIFIER-scoped observers; each drafter context binds to the scope
     // matching its architecture so its activations land in their own ledger.
+    // When --spec-type draft-adaptive is used with multiple drafter paths
+    // (--model-draft-dflash, --model-draft-dspark), all drafters run in
+    // parallel via the adaptive muxer and collect activations simultaneously.
     common_speculative_init_result_ptr spec_init;
     common_speculative_ptr spec;
-    const bool use_spec     = !params.speculative.draft.mparams.path.empty();
+    // Additional drafter contexts for adaptive (multi-drafter) mode.
+    std::vector<common_speculative_init_result_ptr> extra_spec_inits;
+    // Per-drafter scope bindings (must outlive the spec loop).
+    std::vector<IMatrixScopeBinding> dft_bindings;
+    const bool use_spec     = !params.speculative.draft.mparams.path.empty() ||
+                              !params.speculative.adaptive.model_dflash.empty() ||
+                              !params.speculative.adaptive.model_dspark.empty();
     const bool use_features = !params.features_out.empty();
     if (use_features && use_spec) {
         LOG_ERR("%s: --features-out is a dedicated trunk-only pass and cannot be combined with --model-draft\n", __func__);
         return 1;
     }
     if (use_spec) {
-        LOG_INF("%s: spec-decoding calibration requested; loading drafter '%s'\n",
-                __func__, params.speculative.draft.mparams.path.c_str());
-
-        common_params params_dft = common_base_params_to_speculative(params);
-        params_dft.speculative.draft.target_model_path = params.model.path;
-        // Make sure the drafter picks the right speculative type. We default
-        // to DRAFT_SIMPLE; the user can override via --spec-type. We have
-        // to set BOTH params_dft.speculative.types (used by
-        // common_speculative_init_from_params) AND params.speculative.types
-        // (used by common_speculative_init below).
-        if (params.speculative.types.empty() ||
-            params.speculative.types[0] == COMMON_SPECULATIVE_TYPE_NONE) {
+        // Strip NONE from spec types.
+        params.speculative.types.erase(
+            std::remove(params.speculative.types.begin(),
+                        params.speculative.types.end(),
+                        COMMON_SPECULATIVE_TYPE_NONE),
+            params.speculative.types.end());
+        if (params.speculative.types.empty()) {
             params.speculative.types = { COMMON_SPECULATIVE_TYPE_DRAFT_SIMPLE };
         }
-        params_dft.speculative.types = params.speculative.types;
 
-        spec_init = common_speculative_init_from_params(params_dft, model, ctx);
-        if (!spec_init || spec_init->model() == nullptr || spec_init->context() == nullptr) {
-            LOG_ERR("%s : failed to load drafter model '%s'\n",
-                    __func__, params_dft.model.path.c_str());
+        const bool is_adaptive = std::find(params.speculative.types.begin(),
+                                           params.speculative.types.end(),
+                                           COMMON_SPECULATIVE_TYPE_DRAFT_ADAPTIVE) != params.speculative.types.end();
+
+        // In adaptive mode the primary drafter (-md) is optional. If set it's
+        // MTP (the bundled trunk with embedded MTP). The additional drafters
+        // (--model-draft-dflash/dspark) are standalone small models loaded
+        // alongside the trunk. If no primary drafter is given, the adaptive
+        // muxer runs with just the standalone drafters (no MTP child).
+        const bool has_primary = !params.speculative.draft.mparams.path.empty();
+
+        if (has_primary) {
+            LOG_INF("%s: loading primary drafter '%s'\n",
+                    __func__, params.speculative.draft.mparams.path.c_str());
+            common_params params_dft = common_base_params_to_speculative(params);
+            params_dft.speculative.draft.target_model_path = params.model.path;
+            if (is_adaptive) {
+                params_dft.speculative.types = { COMMON_SPECULATIVE_TYPE_DRAFT_MTP };
+            } else {
+                params_dft.speculative.types = params.speculative.types;
+            }
+            spec_init = common_speculative_init_from_params(params_dft, model, ctx);
+            if (!spec_init || spec_init->model() == nullptr || spec_init->context() == nullptr) {
+                LOG_ERR("%s : failed to load drafter model '%s'\n",
+                        __func__, params_dft.model.path.c_str());
+                return 1;
+            }
+            params.speculative.draft.ctx_tgt = ctx;
+            params.speculative.draft.ctx_dft = spec_init->context();
+            const enum llama_observer_scope dft_scope = is_adaptive
+                ? LLAMA_OBSERVER_SCOPE_MTP
+                : scope_from_speculative_type(params.speculative.types[0]);
+            g_drafter_binding.scope = dft_scope;
+            llama_set_imatrix_observer_scope(spec_init->context(), dft_scope);
+            llama_set_imatrix_observer_filter(spec_init->context(),
+                                              imatrix_scope_observer_filter, &g_drafter_binding);
+            llama_bump_imatrix_observer_epoch(spec_init->context());
+            LOG_INF("%s: primary drafter bound to scope '%s'\n",
+                    __func__, common_imatrix_scope_prefix(dft_scope).c_str());
+            if (is_adaptive) {
+                params.speculative.adaptive.ctx_dft_mtp = spec_init->context();
+            }
+        }
+
+        // Load the additional standalone drafters (DFlash, DSpark). These are
+        // small models (~2 GB each) loaded alongside the trunk — they share the
+        // trunk's verifier context. Each is bound to its own observer scope so
+        // its activations land in a separate imatrix ledger.
+        auto load_extra_drafter = [&](const std::string & path,
+                                      enum llama_observer_scope scope) -> bool {
+            if (path.empty()) return true;
+            LOG_INF("%s: loading drafter '%s' (scope: %s)\n",
+                    __func__, path.c_str(),
+                    common_imatrix_scope_prefix(scope).c_str());
+            common_params params_extra = common_base_params_to_speculative(params);
+            params_extra.speculative.draft.mparams.path = path;
+            auto extra = common_speculative_init_from_params(params_extra, model, ctx);
+            if (!extra || extra->model() == nullptr || extra->context() == nullptr) {
+                LOG_ERR("%s: failed to load drafter '%s'\n", __func__, path.c_str());
+                return false;
+            }
+            dft_bindings.emplace_back(IMatrixScopeBinding{&g_collector, (int) scope});
+            llama_set_imatrix_observer_scope(extra->context(), scope);
+            llama_set_imatrix_observer_filter(extra->context(),
+                                              imatrix_scope_observer_filter,
+                                              &dft_bindings.back());
+            llama_bump_imatrix_observer_epoch(extra->context());
+            LOG_INF("%s: drafter '%s' bound to scope '%s'\n",
+                    __func__, path.c_str(),
+                    common_imatrix_scope_prefix(scope).c_str());
+            if (scope == LLAMA_OBSERVER_SCOPE_DFLASH) {
+                params.speculative.adaptive.ctx_dft_dflash = extra->context();
+            } else if (scope == LLAMA_OBSERVER_SCOPE_DSPARK) {
+                params.speculative.adaptive.ctx_dft_dspark = extra->context();
+            }
+            extra_spec_inits.push_back(std::move(extra));
+            return true;
+        };
+
+        if (!load_extra_drafter(params.speculative.adaptive.model_dflash,
+                                LLAMA_OBSERVER_SCOPE_DFLASH)) return 1;
+        if (!load_extra_drafter(params.speculative.adaptive.model_dspark,
+                                LLAMA_OBSERVER_SCOPE_DSPARK)) return 1;
+
+        if (is_adaptive && !params.speculative.adaptive.has_any()) {
+            LOG_ERR("%s: adaptive mode selected but no drafter contexts wired\n", __func__);
             return 1;
         }
-        params.speculative.draft.ctx_tgt = ctx;
-        params.speculative.draft.ctx_dft = spec_init->context();
 
-        // Bind the drafter context to the scope matching its architecture.
-        // The two contexts share g_collector; the per-ctx binding's scope is
-        // applied to the collector's active scope on each observer fire, so
-        // verifier and drafter stats bucket into separate ledgers in one
-        // imatrix file. Safe because the spec-decoding calibration loop fires
-        // drafter and verifier observers serially on the same host thread.
-        const enum llama_observer_scope dft_scope =
-            scope_from_speculative_type(params.speculative.types[0]);
-        if (dft_scope == LLAMA_OBSERVER_SCOPE_VERIFIER) {
-            LOG_WRN("%s: drafter arch '%s' has no dedicated scope; drafter stats "
-                    "will collide with the verifier ledger\n",
-                    __func__, common_speculative_type_to_str(params.speculative.types[0]).c_str());
+        // Set the verifier as the target for the spec system.
+        params.speculative.draft.ctx_tgt = ctx;
+        if (!is_adaptive && has_primary) {
+            // Single-drafter mode: ctx_dft already set above.
         }
-        g_drafter_binding.scope = dft_scope;
-        llama_set_imatrix_observer_scope(spec_init->context(), dft_scope);
-        llama_set_imatrix_observer_filter(spec_init->context(),
-                                          imatrix_scope_observer_filter, &g_drafter_binding);
-        llama_bump_imatrix_observer_epoch(spec_init->context());
-        LOG_INF("%s: drafter bound to imatrix scope '%s'\n",
-                __func__, common_imatrix_scope_prefix(dft_scope).c_str());
+
+        LOG_INF("%s: creating spec system (adaptive=%d, drafters: MTP=%d DFlash=%d DSpark=%d)\n",
+                __func__, is_adaptive ? 1 : 0,
+                params.speculative.adaptive.ctx_dft_mtp    ? 1 : 0,
+                params.speculative.adaptive.ctx_dft_dflash ? 1 : 0,
+                params.speculative.adaptive.ctx_dft_dspark ? 1 : 0);
 
         spec.reset(common_speculative_init(params.speculative, /*n_seq=*/1));
         if (!spec) {

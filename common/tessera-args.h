@@ -109,6 +109,21 @@ struct common_tessera_params {
     // source GGUF's own KV IS the hparams source (copied verbatim).
     std::string unified_tts_talker;
     std::string unified_tts_code2wav;
+    // export-ternary subcommand: read a BF16 GGUF, quantize each 2D weight
+    // to tile-agnostic ternary via ts_quantize_2d_ternary, write a .ttt
+    // directory via ts_write_ttt. export_in is the source GGUF, export_out
+    // is the destination directory. imatrix is the optional activation
+    // stats file (GGUF or .npz).
+    std::string export_in;
+    std::string export_out;
+    // pack subcommand: read a .ttt directory, pack each tensor to the
+    // target tile geometry via ts_pack_ternary_to_tile, write a GGUF.
+    // pack_in is the source .ttt dir, pack_out is the destination GGUF.
+    // pack_tile selects the tile geometry ("t640" / "t512" / "t1024" /
+    // "auto"); "auto" probes the Metal device family at runtime.
+    std::string pack_in;
+    std::string pack_out;
+    std::string pack_tile = "t640";
     // Structured progress reporting for the quantize pipeline. When
     // progress_file is non-empty, the dispatch writes one NDJSON event per
     // tick to that path for the Studio UI to tail.

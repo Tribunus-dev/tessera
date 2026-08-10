@@ -20,20 +20,18 @@ struct ContentView: View {
     @SceneStorage("ContentView.destination") private var storedDestinationRaw: String?
     @SceneStorage("ContentView.telemetryExpanded") private var telemetryExpanded = false
 
-    @State private var agentLoop = TesseraAgentLoop(
-        registry: TesseraToolRegistry.default,
-        approvalEngine: TesseraApprovalEngine(),
-        llmProvider: TesseraLLMProviderFactory.makeFromSettings(),
-        maxIterations: TesseraSettings.maxIterations,
-        tokenLimit: TesseraSettings.tokenBudget
-    )
+    // The persistent Tessy+Sky chat dock. Window-lived so it survives
+    // navigation across every productivity surface. Runs the chat as a
+    // StateGraph (UnifiedChatController); the transcript persists across
+    // destination switches.
+    @State private var chatController = UnifiedChatController()
+    @State private var chatFocus = ChatFocusCoordinator()
+    @State private var chatDockVisible = true
     @State private var showHistory = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var telemetryMonitor = TelemetryMonitor(
         bridge: TesseraEngineBridgeFactory.makeInferenceBridge()
     )
-    @State private var restoredMessages: [ChatMessage] = []
-    @State private var playgroundSession = UUID()
     @State private var exportItem: ExportItem?
     // Scene-lived workflow editor state. The detail column is
     // rebuilt on every destination switch, destroying view-local
@@ -42,10 +40,6 @@ struct ContentView: View {
     // running run survive the switch. WorkflowsView is a shell
     // over it and is recreated freely.
     @State private var workflowEditor = WorkflowEditorStore()
-    // Per-window identity for the Learning-surface visibility tally
-    // (training runs are global, so the ping decision looks across
-    // all windows; see LearningSurfaceTracker).
-    @State private var windowID = UUID()
     // Email surface state (Phase 5). The data layer is
     // shared with the rest of the productivity
     // surface; the email store is a thin wrapper
@@ -72,9 +66,9 @@ struct ContentView: View {
         } detail: {
             detail
         }
-        // HIG 4.1: keep the nested split views from collapsing to
-        // nothing; the window can still grow past the default size.
-        .frame(minWidth: 900, minHeight: 560)
+        // Productivity surfaces need real width beside the persistent
+        // chat dock (Code alone is 3-column); keep the window generous.
+        .frame(minWidth: 1280, minHeight: 560)
         .overlay(alignment: .leading) {
             if showHistory {
                 historyDrawer
@@ -90,13 +84,6 @@ struct ContentView: View {
         )) {
             OnboardingView()
         }
-        .onChange(of: agentLoop.isRunning) { _, running in
-            if running {
-                telemetryMonitor.start()
-            } else {
-                telemetryMonitor.stop()
-            }
-        }
         // Publish the telemetry drawer toggle to the focused scene
         // so View > Show/Hide Telemetry can reach it from any
         // destination.
@@ -104,6 +91,18 @@ struct ContentView: View {
             toggle: { withAnimation(reduceMotion ? nil : .default) { telemetryExpanded.toggle() } },
             isExpanded: { telemetryExpanded }
         ))
+        // Bridge the focus coordinator into the chat controller. Surfaces
+        // write to `chatFocus` on selection change; the controller reads its
+        // `documentContext` to augment prompts. This keeps the Mac-only
+        // coordinator out of the TesseraCore controller (layer boundary).
+        .onChange(of: chatFocus.focusedDocumentContext?.documentID, initial: true) { _, _ in
+            chatController.setDocumentContext(chatFocus.focusedDocumentContext)
+        }
+        .onChange(of: chatFocus.focusHint, initial: true) { _, hint in
+            // Non-document focus: clear any document context so the prompt is
+            // augmented with the plain hint instead.
+            if hint != nil { chatController.setDocumentContext(nil) }
+        }
         // Runs are scene-lived, so one can reach a terminal outcome
         // while its own window is showing another destination. Keep
         // the editor store told whether the Workflows surface is on
@@ -111,21 +110,13 @@ struct ContentView: View {
         // is NOT looking at the result (see WorkflowRunNotifier).
         .onChange(of: selection, initial: true) { _, newValue in
             workflowEditor.workflowsSurfaceVisible = (newValue == .workflows)
-            LearningSurfaceTracker.shared.setVisible(newValue == .learning, for: windowID)
-        }
-        .onDisappear {
-            // A closed window must not keep claiming the Learning
-            // surface is visible; drop its tally entry.
-            LearningSurfaceTracker.shared.setVisible(false, for: windowID)
         }
     }
 
-    /// Current sidebar destination. Falls back to the Playground
-    /// on first launch (nothing stored yet) and whenever a stored
-    /// value no longer parses (a destination renamed or removed
-    /// between versions degrades to the default, not a crash).
+    /// Current sidebar destination. Falls back to Workflows on first
+    /// launch and whenever a stored value no longer parses.
     private var selection: Destination? {
-        storedDestinationRaw.flatMap(Destination.init(rawValue:)) ?? .playground
+        storedDestinationRaw.flatMap(Destination.init(rawValue:)) ?? .workflows
     }
 
     private var selectionBinding: Binding<Destination?> {
@@ -156,6 +147,14 @@ struct ContentView: View {
                 .help("Show or hide the chat history drawer")
                 .accessibilityHint("Shows or hides the chat history drawer")
             }
+            ToolbarItem(placement: .primaryAction) {
+                Button("Chat", systemImage: "sidebar.right") {
+                    withAnimation(reduceMotion ? nil : .default) { chatDockVisible.toggle() }
+                }
+                .help("Show or hide the Tessy + Sky chat dock")
+                .accessibilityHint("Shows or hides the persistent chat dock")
+                .keyboardShortcut("\\", modifiers: .command)
+            }
         }
     }
 
@@ -165,63 +164,61 @@ struct ContentView: View {
             detailContent
             TelemetryDrawer(monitor: telemetryMonitor, isExpanded: $telemetryExpanded)
         }
+        // Persistent Tessy+Sky chat dock on the right edge. Sibling of the
+        // surface switch so it survives navigation. WWDC23 Inspectors: attach
+        // inside the detail column. The controller is window-lived so the
+        // transcript persists across destination switches.
+        .inspector(isPresented: $chatDockVisible) {
+            UnifiedChatDock(controller: chatController)
+                .inspectorColumnWidth(min: 320, ideal: 360, max: 480)
+        }
     }
 
     @ViewBuilder
     private var detailContent: some View {
         switch selection {
-        case .playground:
-            PlaygroundView(agentLoop: agentLoop, restoredMessages: restoredMessages)
-                .id(playgroundSession)
-        case .dualAgent:
-            DualAgentChatView()
         case .workflows:
             WorkflowsView(editor: workflowEditor)
         case .tasks:
-            TasksView(store: tasksSurface.store)
+            TasksView(store: tasksSurface.store, chatFocus: chatFocus)
                 .onAppear { tasksSurface.installIfNeeded() }
         case .calendar:
-            CalendarSurfaceView(model: calendarSurface.viewModel)
+            CalendarSurfaceView(model: calendarSurface.viewModel, chatFocus: chatFocus)
                 .onAppear { calendarSurface.installIfNeeded() }
-        case .library:
-            LibraryView()
-        case .runs:
-            RunsView()
-        case .learning:
-            LearningDashboardView()
         case .notes:
-            NotesView(viewModel: notesSurface.viewModel)
+            NotesView(viewModel: notesSurface.viewModel, chatFocus: chatFocus)
                 .onAppear { notesSurface.installIfNeeded() }
         case .code:
-            CodeSurfaceView(viewModel: codeSurface.viewModel)
+            CodeSurfaceView(viewModel: codeSurface.viewModel, chatFocus: chatFocus)
                 .onAppear { codeSurface.installIfNeeded() }
         case .docs:
-            DocsListView(viewModel: docsSurface.viewModel)
+            DocsListView(viewModel: docsSurface.viewModel, chatFocus: chatFocus)
                 .onAppear { docsSurface.installIfNeeded() }
         case .sheets:
-            SheetsListView(viewModel: sheetsSurface.viewModel)
+            SheetsListView(viewModel: sheetsSurface.viewModel, chatFocus: chatFocus)
                 .onAppear { sheetsSurface.installIfNeeded() }
         case .slides:
-            SlidesListView(viewModel: slidesSurface.viewModel)
+            SlidesListView(viewModel: slidesSurface.viewModel, chatFocus: chatFocus)
                 .onAppear { slidesSurface.installIfNeeded() }
         case .email:
             EmailView(
                 store: emailSurface.store,
                 sender: emailSurface.sender,
                 importer: emailSurface.importer,
-                identity: emailSurface.identity
+                identity: emailSurface.identity,
+                chatFocus: chatFocus
             )
             .onAppear { emailSurface.installIfNeeded() }
         case .contacts:
-            ContactsView(store: contactsSurface.store, importer: contactsSurface.importer)
+            ContactsView(store: contactsSurface.store, importer: contactsSurface.importer, chatFocus: chatFocus)
                 .onAppear { contactsSurface.installIfNeeded() }
         case .reminders:
-            RemindersView(store: remindersSurface.store, scheduler: remindersSurface.scheduler)
+            RemindersView(store: remindersSurface.store, scheduler: remindersSurface.scheduler, chatFocus: chatFocus)
                 .onAppear { remindersSurface.installIfNeeded() }
         case .collab:
             CollabTraceView()
-        case .capacity:
-            CapacityView()
+        case .intelligence:
+            IntelligenceView()
         case nil:
             ContentUnavailableView(
                 "Select a destination",
@@ -243,9 +240,9 @@ struct ContentView: View {
     }
 
     private func restore(_ convo: Conversation) {
-        restoredMessages = ConversationStore.messages(for: convo.id, in: modelContext)
-        playgroundSession = UUID()
-        storedDestinationRaw = Destination.playground.rawValue
+        // Part D: hand the conversation off to the UnifiedChatController,
+        // which reconstructs the transcript from checkpoints and continues
+        // the thread. Until then, just close the drawer.
         withAnimation(reduceMotion ? nil : .default) { showHistory = false }
     }
 

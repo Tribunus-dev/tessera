@@ -216,7 +216,13 @@ public actor LlamaLLMProvider: LLMProvider {
                     continuation.finish()
                     return
                 }
-                _ = fullText // tool-call parsing happens in complete(); streamed
+                // Parse the fully-assembled text for tool calls so the
+                // streaming path can dispatch tools (parity with complete()).
+                // Multi-call: parse() now returns every fenced block.
+                let (_, calls) = Self.parse(fullText)
+                if !calls.isEmpty {
+                    continuation.yield(.toolCalls(calls))
+                }
                 continuation.yield(.done)
             }
             continuation.onTermination = { @Sendable _ in task.cancel() }
@@ -412,8 +418,8 @@ public actor LlamaLLMProvider: LLMProvider {
         ```tool
         {"name": "<tool_name>", "arguments": { ... }}
         ```
-        Emit at most one tool call, and nothing else, when a tool is needed.
-        Otherwise answer the user directly in plain text.
+        You may emit multiple tool fences in sequence when actions are
+        independent. Otherwise answer the user directly in plain text.
 
         Available tools:
         \(schemas.joined(separator: "\n"))
@@ -423,24 +429,29 @@ public actor LlamaLLMProvider: LLMProvider {
     // MARK: - Output parsing
 
     static func parse(_ output: String) -> (content: String, toolCalls: [LLMToolCall]) {
-        guard let range = output.range(of: "```tool") else {
-            return (output.trimmingCharacters(in: .whitespacesAndNewlines), [])
+        // Multi-call: scan for ALL ```tool fences. Content is the text before
+        // the first fence; each fence decodes to one tool call. (Previously
+        // this returned only the first call, capping on-device turns at one
+        // tool action.)
+        var content = output
+        var calls: [LLMToolCall] = []
+        var searchRange = output.startIndex..<output.endIndex
+        while let range = output.range(of: "```tool", range: searchRange) {
+            // Content is everything before the first fence.
+            if calls.isEmpty {
+                content = String(output[output.startIndex..<range.lowerBound])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            let afterMarker = output[range.upperBound...]
+            guard let endFence = afterMarker.range(of: "```") else { break }
+            let jsonText = afterMarker[afterMarker.startIndex..<endFence.lowerBound]
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if let call = decodeToolCall(jsonText) {
+                calls.append(call)
+            }
+            searchRange = endFence.upperBound..<output.endIndex
         }
-        let content = output[output.startIndex..<range.lowerBound]
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // Isolate the fenced JSON block after the ```tool marker.
-        let afterMarker = output[range.upperBound...]
-        guard let endFence = afterMarker.range(of: "```") else {
-            return (content, [])
-        }
-        let jsonText = afterMarker[afterMarker.startIndex..<endFence.lowerBound]
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard let call = decodeToolCall(jsonText) else {
-            return (content, [])
-        }
-        return (content, [call])
+        return (content, calls)
     }
 
     private static func decodeToolCall(_ json: String) -> LLMToolCall? {

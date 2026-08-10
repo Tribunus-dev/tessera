@@ -140,6 +140,8 @@ enum tessera_subcommand {
     TESSERA_SC_RUNTIME_PROBE,
     TESSERA_SC_THROUGHPUT,
     TESSERA_SC_UNIFIED_WRITER,   // Phase 16: --write-unified-gguf CLI
+    TESSERA_SC_EXPORT_TERNARY,   // tile-agnostic .ttt export
+    TESSERA_SC_PACK,             // client-side .ttt -> tiled GGUF pack
     TESSERA_SC_W4A4,
 
     TESSERA_SC_COUNT,
@@ -412,6 +414,13 @@ struct common_params_speculative_adaptive {
     llama_context * ctx_dft_dflash = nullptr;
     llama_context * ctx_dft_dspark = nullptr;
     llama_context * ctx_dft_eagle3 = nullptr;
+
+    // Model paths for the imatrix tool to load each drafter. When non-empty,
+    // the imatrix tool loads the model and creates the context, then assigns
+    // it to the ctx_dft_* slot above. MTP is embedded (uses target_model_path
+    // on the main draft struct), so there's no separate path here.
+    std::string model_dflash;
+    std::string model_dspark;
 
     // Per-drafter n_max override.  0 = use params.speculative.draft.n_max.
     int32_t n_max_mtp    = 0;
@@ -817,6 +826,7 @@ struct common_params {
                                            // likely on macOS / iOS when this
                                            // is exceeded). 0 disables.
     bool    no_memory_check = false; // skip the memory precheck
+    int32_t observer_scope_override = -1; // -1 = auto-detect from arch; otherwise enum llama_observer_scope (for plain-text drafter calibration)
     bool    no_pid_file     = false; // do not write <output>.pid
     int32_t max_minutes     = 0;     // wall-time cap in minutes; 0 = no cap.
                                      // When set, the binary installs a SIGALRM

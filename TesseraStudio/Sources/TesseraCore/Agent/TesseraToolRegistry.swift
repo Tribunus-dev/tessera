@@ -33,6 +33,17 @@ public final class TesseraToolRegistry: Sendable {
         return lines.joined(separator: "\n")
     }
 
+    /// Build a registry from the default set plus extra tools (the harness
+    /// file/shell/code tools and the productivity-domain tools). Extras named
+    /// the same as a default tool override it. Used by the unified chat
+    /// controller to register the focused surface's store-backed tools.
+    public static func `default`<Extra: Sequence>(plus extra: Extra) -> TesseraToolRegistry where Extra.Element == any TesseraTool {
+        var map: [String: any TesseraTool] = [:]
+        for tool in TesseraToolRegistry.default.allTools { map[tool.name] = tool }
+        for tool in extra { map[tool.name] = tool }
+        return TesseraToolRegistry(tools: Array(map.values))
+    }
+
     /// The default registry: the 8 v1 tools plus the 9 learning tools
     /// plus the 9 Python-tool wrappers under tools/tessera/.
     public static let `default` = TesseraToolRegistry(tools: [

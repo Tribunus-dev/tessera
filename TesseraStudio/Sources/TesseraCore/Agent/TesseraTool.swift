@@ -68,6 +68,20 @@ public enum JSONValue: Codable, Sendable, Equatable, Hashable {
         case .object(let o): return "{\(o.count) keys}"
         }
     }
+
+    /// Recursive conversion to a Foundation `Any` suitable for
+    /// `JSONSerialization`. Used to forward structured `ToolResult.data`
+    /// back to the model.
+    public func toAny() -> Any {
+        switch self {
+        case .string(let s): return s
+        case .number(let n): return n
+        case .bool(let b): return b
+        case .null: return NSNull()
+        case .array(let a): return a.map { $0.toAny() }
+        case .object(let o): return o.mapValues { $0.toAny() }
+        }
+    }
 }
 
 // MARK: - JSON Schema

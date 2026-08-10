@@ -140,11 +140,13 @@ static const std::vector<tessera_subcommand_def> & tessera_subcommand_table() {
         { "dataset",        TESSERA_SC_DATASET,        "prepare drafter training data from spec JSONL" },
         { "dpace",          TESSERA_SC_DPACE,          "compute D-PACE adaptive position weights from DFlash telemetry" },
         { "evolve",         TESSERA_SC_EVOLVE,         "GA tuning; --only runs GA then exits" },
+        { "export-ternary", TESSERA_SC_EXPORT_TERNARY, "export tile-neutral safetensors (config.json + model.safetensors)" },
         { "ga",             TESSERA_SC_GA,             "GA checkpoint resume" },
         { "kernel-fitness", TESSERA_SC_KERNEL_FITNESS, "L1 sidecar kernel-direct fitness blend" },
         { "l15",            TESSERA_SC_L15,            "L1.5 reference sidecar dtype (f16 | f32)" },
         { "l2",             TESSERA_SC_L2,             "L2 forward-pass differential output" },
         { "l5",             TESSERA_SC_L5,             "L5 adaptive requantize loop tuning" },
+        { "pack",           TESSERA_SC_PACK,           "pack tile-neutral safetensors to a tiled GGUF for the target GPU" },
         { "policy",         TESSERA_SC_POLICY,         "calibration policy I/O and range selection" },
         { "runtime-probe",  TESSERA_SC_RUNTIME_PROBE,  "L2 forward-pass orchestrator marker" },
         { "throughput",     TESSERA_SC_THROUGHPUT,     "north-star batched-throughput workload harness" },
@@ -1000,7 +1002,9 @@ static bool common_params_parse_ex(int argc, char ** argv, common_params_context
             || tessera_active_sc == TESSERA_SC_DATASET
             || tessera_active_sc == TESSERA_SC_DPACE
             || tessera_active_sc == TESSERA_SC_L2
-            || tessera_active_sc == TESSERA_SC_UNIFIED_WRITER;
+            || tessera_active_sc == TESSERA_SC_UNIFIED_WRITER
+            || tessera_active_sc == TESSERA_SC_EXPORT_TERNARY
+            || tessera_active_sc == TESSERA_SC_PACK;
         if (!can_skip_model && params.model.path.empty()) {
             throw std::invalid_argument("error: --model is required\n");
         }
@@ -3469,6 +3473,18 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_examples({LLAMA_EXAMPLE_IMATRIX}));
     add_opt(common_arg(
+        {"--scope"}, "{verifier|mtp|dflash|dspark|talker}",
+        "override the observer scope for plain-text calibration of a drafter/talker model (default: auto-detect from arch)",
+        [](common_params & params, const std::string & value) {
+            if (value == "verifier") params.observer_scope_override = (int32_t) LLAMA_OBSERVER_SCOPE_VERIFIER;
+            else if (value == "mtp") params.observer_scope_override = (int32_t) LLAMA_OBSERVER_SCOPE_MTP;
+            else if (value == "dflash") params.observer_scope_override = (int32_t) LLAMA_OBSERVER_SCOPE_DFLASH;
+            else if (value == "dspark") params.observer_scope_override = (int32_t) LLAMA_OBSERVER_SCOPE_DSPARK;
+            else if (value == "talker") params.observer_scope_override = (int32_t) LLAMA_OBSERVER_SCOPE_TALKER;
+            else throw std::invalid_argument("invalid scope: " + value);
+        }
+    ).set_examples({LLAMA_EXAMPLE_IMATRIX}));
+    add_opt(common_arg(
         {"--no-pid-file"},
         "do not write <output>.pid",
         [](common_params & params) {
@@ -4682,6 +4698,66 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_UNIFIED_WRITER}));
 
+    // ----- `export-ternary` subcommand -----
+    // Reads a BF16 GGUF, quantizes each 2D weight to tile-agnostic ternary
+    // via ts_quantize_2d_ternary, writes a tile-neutral safetensors
+    // directory (config.json + model.safetensors + tokenizer files). The
+    // input and output can also be supplied positionally (llama-tessera
+    // export-ternary <in.gguf> <out_dir/>). --imatrix supplies per-channel
+    // activation scales for the AWQ alpha search.
+    add_opt(common_arg(
+        {"--in"}, "PATH",
+        "Tessera (export-ternary): source BF16 GGUF to quantize.",
+        [](common_params &, const std::string & value) {
+            tessera_params.export_in = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_EXPORT_TERNARY}));
+    add_opt(common_arg(
+        {"--out"}, "PATH",
+        "Tessera (export-ternary): destination safetensors directory.",
+        [](common_params &, const std::string & value) {
+            tessera_params.export_out = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_EXPORT_TERNARY}));
+    add_opt(common_arg(
+        {"--imatrix"}, "PATH",
+        "Tessera (export-ternary): activation stats GGUF or .npz for the\n"
+        "AWQ alpha search. Optional; without it the export uses the\n"
+        "default alpha grid.",
+        [](common_params &, const std::string & value) {
+            tessera_params.imatrix = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_EXPORT_TERNARY}));
+
+    // ----- `pack` subcommand -----
+    // Reads a tile-neutral safetensors directory, packs each tensor to the
+    // target tile geometry via ts_pack_ternary_to_tile, writes a GGUF.
+    // --tile selects the geometry; "auto" probes the Metal device family at
+    // runtime (Apple Silicon -> T640, Intel -> T512, unknown -> T640).
+    add_opt(common_arg(
+        {"--in"}, "PATH",
+        "Tessera (pack): source safetensors directory.",
+        [](common_params &, const std::string & value) {
+            tessera_params.pack_in = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_PACK}));
+    add_opt(common_arg(
+        {"--out"}, "PATH",
+        "Tessera (pack): destination GGUF path.",
+        [](common_params &, const std::string & value) {
+            tessera_params.pack_out = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_PACK}));
+    add_opt(common_arg(
+        {"--tile"}, "{t640|t512|t1024|auto}",
+        "Tessera (pack): target tile geometry (default: t640). \"auto\"\n"
+        "probes the Metal device family and maps Apple Silicon to T640,\n"
+        "Intel to T512, unknown to T640.",
+        [](common_params &, const std::string & value) {
+            tessera_params.pack_tile = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_PACK}));
+
     // ----- `evolve` subcommand -----
     add_opt(common_arg(
         {"--only"},
@@ -5295,6 +5371,20 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_spec().set_examples({LLAMA_EXAMPLE_SPECULATIVE, LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_CLI, LLAMA_EXAMPLE_IMATRIX}).set_env("LLAMA_ARG_SPEC_DRAFT_MODEL"));
     add_opt(common_arg(
+        {"--model-draft-dflash"}, "FNAME",
+        "DFlash drafter model for multi-drafter adaptive calibration (use with --spec-type draft-adaptive)",
+        [](common_params & params, const std::string & value) {
+            params.speculative.adaptive.model_dflash = value;
+        }
+    ).set_spec().set_examples({LLAMA_EXAMPLE_IMATRIX}));
+    add_opt(common_arg(
+        {"--model-draft-dspark"}, "FNAME",
+        "DSpark drafter model for multi-drafter adaptive calibration (use with --spec-type draft-adaptive)",
+        [](common_params & params, const std::string & value) {
+            params.speculative.adaptive.model_dspark = value;
+        }
+    ).set_spec().set_examples({LLAMA_EXAMPLE_IMATRIX}));
+    add_opt(common_arg(
         {"--spec-type"}, common_speculative_all_types_str(),
         string_format("comma-separated list of types of speculative decoding to use (default: %s)\n",
             common_speculative_type_name_str(params.speculative.types).c_str()),
@@ -5303,7 +5393,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             auto types = common_speculative_types_from_names(types_str);
             params.speculative.types.insert(params.speculative.types.end(), types.begin(), types.end());
         }
-    ).set_spec().set_examples({LLAMA_EXAMPLE_SPECULATIVE, LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_CLI}).set_env("LLAMA_ARG_SPEC_TYPE"));
+    ).set_spec().set_examples({LLAMA_EXAMPLE_SPECULATIVE, LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_CLI, LLAMA_EXAMPLE_IMATRIX}).set_env("LLAMA_ARG_SPEC_TYPE"));
     // Workstream B: --spec-adaptive is a convenience wrapper that sets
     // the type to DRAFT_ADAPTIVE.  The 4 per-drafter ctx_dft slots are
     // not set by this flag -- they must be wired by the caller via

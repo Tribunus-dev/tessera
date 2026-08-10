@@ -179,6 +179,10 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
     # build test-tokenizer-1-bpe target once and add many tests
     llama_build(test-tokenizer-1-bpe.cpp)
 
+    # SIMD pre-tokenization A/B oracle (not added to ctest; run manually)
+    llama_build(test-tokenizer-simd-verify.cpp)
+    llama_build(bench-tokenizer-presplit.cpp)
+
     # TODO: disabled due to slowness
     #llama_test(test-tokenizer-1-bpe NAME test-tokenizer-1-aquila    ARGS ${PROJECT_SOURCE_DIR}/models/ggml-vocab-aquila.gguf)
     #llama_test(test-tokenizer-1-bpe NAME test-tokenizer-1-falcon    ARGS ${PROJECT_SOURCE_DIR}/models/ggml-vocab-falcon.gguf)

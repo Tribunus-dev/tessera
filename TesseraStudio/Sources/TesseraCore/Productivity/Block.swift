@@ -252,4 +252,21 @@ extension DocumentAST {
         let digest = hasher.finalize()
         return "sha256:" + digest.map { String(format: "%02x", $0) }.joined()
     }
+
+    /// A plain-text rendering of the document (root children depth-first,
+    /// each block's inline runs joined, blocks separated by newlines). Used
+    /// to build chat-prompt context sections so Tessy + Sky reason over the
+    /// live document body without seeing markup.
+    public func plainText() -> String {
+        guard !rootChildren.isEmpty else { return "" }
+        var lines: [String] = []
+        func render(_ blockID: UUID) {
+            guard let block = blocks[blockID] else { return }
+            let text = block.content.map(\.text).joined()
+            if !text.isEmpty { lines.append(text) }
+            for child in block.children { render(child) }
+        }
+        for child in rootChildren { render(child) }
+        return lines.joined(separator: "\n")
+    }
 }

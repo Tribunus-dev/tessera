@@ -32,18 +32,21 @@ public struct TasksView: View {
         store: ProductivityTaskStore,
         userID: UserID = UUID(),
         contacts: TaskContactsAdapter? = nil,
-        documents: DocumentStoreNLU? = nil
+        documents: DocumentStoreNLU? = nil,
+        chatFocus: ChatFocusCoordinator? = nil
     ) {
         self.store = store
         self.userID = userID
         self.contacts = contacts
         self.documents = documents
+        self.chatFocus = chatFocus
     }
 
     private let store: ProductivityTaskStore
     private let userID: UserID
     private let contacts: TaskContactsAdapter?
     private let documents: DocumentStoreNLU?
+    var chatFocus: ChatFocusCoordinator?
 
     @State private var allTasks: [ProductivityTask] = []
     @State private var selectedList: ProductivityTask.List = .today
@@ -73,6 +76,12 @@ public struct TasksView: View {
             }
         }
         .navigationTitle("Tasks")
+        .onChange(of: selectedTaskID) { _, newID in
+            if let newID, let t = allTasks.first(where: { $0.id == newID }) {
+                chatFocus?.focusEntity(id: t.id, hint: "The user is looking at task: \(t.title)")
+            }
+        }
+        .onDisappear { chatFocus?.clear() }
         .searchable(text: $searchText, prompt: "Search tasks")
         .toolbar {
             ToolbarItem(placement: .secondaryAction) {

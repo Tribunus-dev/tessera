@@ -1666,7 +1666,14 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
         }
     }
 
-    ml.init_mappings(true, use_mlock ? &pimpl->mlock_mmaps : nullptr);
+    // When the weight pool is active (FFN buft overrides present), skip
+    // whole-file mmap prefetch. The pool streams FFN weights (93% of the
+    // model) from the mmap on a per-layer basis; prefetching the entire file
+    // would page in 65 GB from the external drive, evicting everything else
+    // before the first forward pass. The non-FFN tensors (~5 GB) page in
+    // naturally as the forward pass touches them.
+    const bool pool_active = pimpl->has_tensor_overrides;
+    ml.init_mappings(!pool_active, use_mlock ? &pimpl->mlock_mmaps : nullptr);
     pimpl->mappings.reserve(ml.mappings.size());
 
     // create the backend buffers

@@ -52,18 +52,21 @@ public struct EmailView: View {
         store: EmailStore,
         sender: EmailSender,
         importer: EmailImporter,
-        identity: EmailAddress
+        identity: EmailAddress,
+        chatFocus: ChatFocusCoordinator? = nil
     ) {
         self.store = store
         self.sender = sender
         self.importer = importer
         self.identity = identity
+        self.chatFocus = chatFocus
     }
 
     private let store: EmailStore
     private let sender: EmailSender
     private let importer: EmailImporter
     private let identity: EmailAddress
+    var chatFocus: ChatFocusCoordinator?
 
     // State
     @State private var emails: [EmailMessage] = []
@@ -158,6 +161,12 @@ public struct EmailView: View {
             }
         }
         .navigationTitle("Email")
+        .onChange(of: selectedEmailID) { _, newID in
+            if let newID, let m = emails.first(where: { $0.id == newID }) {
+                chatFocus?.focusEntity(id: m.id, hint: "The user is reading an email: \"\(m.subject)\" from \(m.from.email)")
+            }
+        }
+        .onDisappear { chatFocus?.clear() }
         .searchable(text: $searchText, prompt: "Search subject, sender, body")
         .toolbar {
             ToolbarItem(placement: .secondaryAction) {

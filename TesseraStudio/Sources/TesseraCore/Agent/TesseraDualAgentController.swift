@@ -203,6 +203,10 @@ public final class TesseraDualAgentController {
             switch chunk {
             case .text(let delta):
                 appendDelta(persona: persona, bubbleID: bubbleID, delta)
+            case .toolCalls:
+                // The display path doesn't dispatch tools; the agentic loop
+                // (UnifiedChatController via ChatGraphBuilder) does.
+                break
             case .done:
                 finalizeBubble(persona: persona, bubbleID: bubbleID)
             }

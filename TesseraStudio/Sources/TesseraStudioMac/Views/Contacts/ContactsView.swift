@@ -23,13 +23,15 @@ import TesseraCore
 /// settings flow.
 public struct ContactsView: View {
 
-    public init(store: ContactStore, importer: VCardImporter = VCardImporter()) {
+    public init(store: ContactStore, importer: VCardImporter = VCardImporter(), chatFocus: ChatFocusCoordinator? = nil) {
         self.store = store
         self.importer = importer
+        self.chatFocus = chatFocus
     }
 
     private let store: ContactStore
     private let importer: VCardImporter
+    var chatFocus: ChatFocusCoordinator?
 
     @State private var contacts: [Contact] = []
     @State private var searchText: String = ""
@@ -52,6 +54,12 @@ public struct ContactsView: View {
             }
         }
         .navigationTitle("Contacts")
+        .onChange(of: selectedID) { _, newID in
+            if let newID, let c = contacts.first(where: { $0.id == newID }) {
+                chatFocus?.focusEntity(id: c.id, hint: "The user is viewing the contact: \(c.displayName)")
+            }
+        }
+        .onDisappear { chatFocus?.clear() }
         .searchable(text: $searchText, prompt: "Search contacts")
         .toolbar {
             ToolbarItem(placement: .secondaryAction) {

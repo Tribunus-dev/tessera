@@ -136,6 +136,7 @@ public final class TesseraAgentLoop {
         let systemPrompt = buildSystemPrompt(userMessage: userMessage)
         var messages = history.map { LLMMessage(role: $0.role.rawValue, content: $0.content) }
         messages.append(LLMMessage(role: "user", content: userMessage))
+        let tools = registry.allTools.map { ToolDescriptor(name: $0.name, description: $0.description, parameters: $0.parameters) }
 
         var iterations = 0
 
@@ -146,24 +147,39 @@ public final class TesseraAgentLoop {
 
             continuation.yield(.thinking("Calling model..."))
 
-            let response = try await llmProvider.complete(
-                system: systemPrompt,
-                messages: messages,
-                tools: registry.allTools.map { ToolDescriptor(name: $0.name, description: $0.description, parameters: $0.parameters) }
-            )
+            // Stream the model response token-by-token. The stream emits
+            // `.text` deltas as they arrive (forwarded live to the UI),
+            // `.toolCalls` once all calls are assembled, then `.done`. This
+            // unifies the agentic loop with the streaming display path: the
+            // loop now streams while still dispatching tools + approvals.
+            var content = ""
+            var toolCalls: [LLMToolCall] = []
+            let stream = try await llmProvider.stream(system: systemPrompt, messages: messages, tools: tools)
+            for await chunk in stream {
+                switch chunk {
+                case .text(let delta):
+                    content += delta
+                    continuation.yield(.text(delta))
+                case .toolCalls(let calls):
+                    toolCalls = calls
+                case .done:
+                    break
+                }
+            }
+            tokenBudget.used += content.count / 4
 
-            tokenBudget.used += response.tokenCount
-
-            // Emit any text content
-            if !response.content.isEmpty {
-                continuation.yield(.text(response.content))
+            // Echo the assistant turn into messages so multi-turn reasoning
+            // carries forward (previously only role:"tool" entries were
+            // appended, breaking continuity across tool-use turns).
+            if !content.isEmpty {
+                messages.append(LLMMessage(role: "assistant", content: content))
             }
 
             // No tool calls -> done
-            guard !response.toolCalls.isEmpty else { break }
+            guard !toolCalls.isEmpty else { break }
 
             // Execute each tool call
-            for call in response.toolCalls {
+            for call in toolCalls {
                 guard !Task.isCancelled else { throw CancellationError() }
 
                 continuation.yield(.toolCall(name: call.name, arguments: call.arguments))
@@ -253,7 +269,15 @@ public final class TesseraAgentLoop {
                 }
 
                 continuation.yield(.toolResult(name: call.name, result: result))
-                messages.append(LLMMessage(role: "tool", content: result.output))
+                // Forward the tool's output (string) + structured data (when
+                // present) back to the model so rich tool results survive.
+                var toolContent = result.output
+                if let data = result.data, !data.isEmpty,
+                   let jsonData = try? JSONSerialization.data(withJSONObject: data.mapValues { $0.toAny() }, options: [.sortedKeys]),
+                   let jsonString = String(data: jsonData, encoding: .utf8) {
+                    toolContent += "\n" + jsonString
+                }
+                messages.append(LLMMessage(role: "tool", content: toolContent))
             }
         }
     }
@@ -348,18 +372,21 @@ public struct LLMResponse: Sendable {
 }
 
 /// One incremental piece of a streamed model response. Providers that can
-/// stream token-by-token emit a sequence of `.text` chunks followed by a
-/// single `.done`; providers that can only return a whole response rely on
-/// the protocol extension default, which yields the whole content at once.
+/// stream token-by-token emit a sequence of `.text` chunks; tool calls are
+/// assembled across deltas and emitted as a single `.toolCalls` chunk (since
+/// a call must be fully assembled before it can be dispatched). The stream
+/// ends with `.done`. Providers that can only return a whole response rely
+/// on the protocol extension default, which yields the content + tool calls
+/// at once.
 public enum LLMChunk: Sendable {
     case text(String)
+    case toolCalls([LLMToolCall])
     case done
 }
 
 public protocol LLMProvider: Sendable {
-    /// Whole-response completion. Still the path the agent loop uses for
-    /// tool-call round-trips, since a tool call must be fully assembled
-    /// before it can be dispatched.
+    /// Whole-response completion. Used by the default `stream()` and as a
+    /// fallback for providers whose streaming is unreliable.
     func complete(
         system: String,
         messages: [LLMMessage],
@@ -367,8 +394,9 @@ public protocol LLMProvider: Sendable {
     ) async throws -> LLMResponse
 
     /// Token-granular streaming of a single completion. Yields `.text` per
-    /// delta and ends with `.done`. The default implementation wraps
-    /// `complete`, so conformers that have no native streaming still work.
+    /// delta, `.toolCalls` once all calls are assembled, and ends with
+    /// `.done`. The default implementation wraps `complete`, so conformers
+    /// that have no native streaming still work.
     func stream(
         system: String,
         messages: [LLMMessage],
@@ -377,8 +405,9 @@ public protocol LLMProvider: Sendable {
 }
 
 extension LLMProvider {
-    /// Default streaming: complete() once, emit the full content as a single
-    /// chunk, then finish. Providers with native SSE/token streaming override.
+    /// Default streaming: complete() once, emit the full content and the
+    /// assembled tool calls, then finish. Providers with native SSE/token
+    /// streaming override this to emit text deltas as they arrive.
     public func stream(
         system: String,
         messages: [LLMMessage],
@@ -391,6 +420,9 @@ extension LLMProvider {
                     let response = try await provider.complete(system: system, messages: messages, tools: tools)
                     if !response.content.isEmpty {
                         continuation.yield(.text(response.content))
+                    }
+                    if !response.toolCalls.isEmpty {
+                        continuation.yield(.toolCalls(response.toolCalls))
                     }
                     continuation.yield(.done)
                 } catch {

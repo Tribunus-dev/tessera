@@ -49,6 +49,7 @@
 #include "sampling.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -484,6 +485,11 @@ bool common_speculative_calibration_run(
     }
 
     int step = 0;
+
+    // Progress heartbeat: print a concise status line every 30s so the user
+    // can see the spec-decoding calibration is alive (each step involves
+    // drafter + verifier forwards and can take seconds on a large model).
+    auto t_last_hb = std::chrono::steady_clock::now();
     // Get the drafter context once. We bypass common_speculative_draft()
     // and run the drafter forward manually; the spec API's bookkeeping
     // (pos = n_past + i + 1) collides with our verifier's pos tracking in
@@ -501,6 +507,19 @@ bool common_speculative_calibration_run(
         common_sampler_init(model_tgt, params.sampling));
 
     while (n_steps_opt <= 0 || step < n_steps_opt) {
+        // Heartbeat: log every 30s so the user sees the pipeline is alive.
+        if (opts.verbosity > 0) {
+            auto t_now = std::chrono::steady_clock::now();
+            if (std::chrono::duration_cast<std::chrono::seconds>(t_now - t_last_hb).count() >= 30) {
+                t_last_hb = t_now;
+                const int acc_rate = n_drafted > 0 ? (100 * n_accepted / n_drafted) : 0;
+                LOG_INF("%s: heartbeat — step %d/%s, drafted=%d, accepted=%d (%d%%), pos=%d\n",
+                        __func__, step,
+                        n_steps_opt > 0 ? std::to_string(n_steps_opt).c_str() : "limit",
+                        n_drafted, n_accepted, acc_rate, n_past);
+            }
+        }
+
         // 1. Drafter forward: at position n_past, sample one token.
         //    Save the drafter's logits after each forward so the
         //    telemetry has the full per-position distribution (the

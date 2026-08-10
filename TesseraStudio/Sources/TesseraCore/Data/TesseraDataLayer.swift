@@ -304,6 +304,24 @@ public actor TesseraDataLayer {
         try await dataStore.saveChatQueue(documentID: documentID, itemsJSON: itemsJSON)
     }
 
+    // MARK: - Graph checkpoints (StateGraph execution plane)
+
+    public func saveGraphCheckpoint(id: UUID, threadId: String, step: Int, nodeId: String, stateJSON: String) async throws {
+        try await dataStore.saveGraphCheckpoint(id: id, threadId: threadId, step: step, nodeId: nodeId, stateJSON: stateJSON)
+    }
+
+    public func loadGraphCheckpoint(id: UUID) async throws -> (threadId: String, step: Int, nodeId: String, stateJSON: String, createdAt: Date)? {
+        try await dataStore.loadGraphCheckpoint(id: id)
+    }
+
+    public func listGraphCheckpoints(threadId: String) async throws -> [(id: UUID, step: Int, nodeId: String, stateJSON: String, createdAt: Date)] {
+        try await dataStore.listGraphCheckpoints(threadId: threadId)
+    }
+
+    public func purgeGraphCheckpoints(threadId: String) async throws {
+        try await dataStore.purgeGraphCheckpoints(threadId: threadId)
+    }
+
     /// RRF over graph + vector + keyword.
     public func hybridSearch(
         anchor: UUID,

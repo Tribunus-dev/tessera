@@ -29,11 +29,13 @@ import TesseraCore
 /// marshals them to the main actor for SwiftUI.
 public struct CodeSurfaceView: View {
 
-    public init(viewModel: CodeSurfaceViewModel) {
+    public init(viewModel: CodeSurfaceViewModel, chatFocus: ChatFocusCoordinator? = nil) {
         self._viewModel = StateObject(wrappedValue: viewModel)
+        self.chatFocus = chatFocus
     }
 
     @StateObject private var viewModel: CodeSurfaceViewModel
+    var chatFocus: ChatFocusCoordinator?
     @State private var detailTab: DetailTab = .outline
 
     private enum DetailTab: String, CaseIterable, Identifiable {
@@ -95,6 +97,19 @@ public struct CodeSurfaceView: View {
         .onAppear {
             Task { await viewModel.start() }
         }
+        // Code files are `entityType="code"` with a raw-source body, so they
+        // cannot drive the document queue/receipt machinery (the body is not
+        // a DocumentAST). Emit a prompt-augmentation hint instead so Tessy +
+        // Sky know which file the user is reading.
+        .onChange(of: viewModel.currentFile?.id) { _, _ in
+            if let file = viewModel.currentFile {
+                chatFocus?.focusEntity(
+                    id: file.id,
+                    hint: "The user is viewing the source file: \(file.path)"
+                )
+            }
+        }
+        .onDisappear { chatFocus?.clear() }
         .onDisappear {
             viewModel.stop()
         }

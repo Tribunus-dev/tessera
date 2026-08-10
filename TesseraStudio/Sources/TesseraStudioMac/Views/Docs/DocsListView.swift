@@ -13,9 +13,11 @@ import TesseraCore
 public struct DocsListView: View {
 
     @ObservedObject public var viewModel: DocsViewModel
+    var chatFocus: ChatFocusCoordinator?
 
-    public init(viewModel: DocsViewModel) {
+    public init(viewModel: DocsViewModel, chatFocus: ChatFocusCoordinator? = nil) {
         self.viewModel = viewModel
+        self.chatFocus = chatFocus
     }
 
     public var body: some View {
@@ -38,7 +40,11 @@ public struct DocsListView: View {
         }
         .onChange(of: viewModel.filter) { _, _ in viewModel.applyFilter() }
         .onChange(of: viewModel.activeTag) { _, _ in viewModel.applyFilter() }
-        .onChange(of: viewModel.selectedDocID) { _, new in viewModel.select(new) }
+        .onChange(of: viewModel.selectedDocID) { _, new in
+            viewModel.select(new)
+            publishFocus(id: new)
+        }
+        .onDisappear { chatFocus?.clear() }
     }
 
     // MARK: - Sidebar
@@ -216,6 +222,24 @@ public struct DocsListView: View {
             let doc = try await viewModel.createDoc(title: "Untitled")
             viewModel.select(doc.id)
         } catch { }
+    }
+
+    /// Push the focused doc's document context to the chat dock. Docs are
+    /// `entityType="document", subtype="doc"` with a `DocumentAST` body.
+    private func publishFocus(id: UUID?) {
+        guard let chatFocus, let id else { return }
+        let title = viewModel.rows.first(where: { $0.id == id })?.title ?? "Document"
+        let dataLayer = viewModel.dataLayer
+        chatFocus.focusDocument(
+            id: id,
+            title: title,
+            dataLayer: dataLayer,
+            promptSection: { [dataLayer] in
+                let ds = DocumentStore(dataLayer: dataLayer)
+                guard let ast = try? await ds.loadDocument(id: id) else { return "" }
+                return "<document>\n\(ast.plainText())\n</document>"
+            }
+        )
     }
 }
 

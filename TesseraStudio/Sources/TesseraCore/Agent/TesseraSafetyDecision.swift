@@ -59,10 +59,11 @@ public enum TesseraSafetyCheck: String, Codable, CaseIterable, Sendable {
 /// A layered-permission decision (S4). Computed from
 /// approval-policy x permission-profile x sandbox-enforceability x action-risk.
 ///
-/// Fail-safe rule: auto-approve ONLY when the action can actually be
-/// contained (sandboxed) AND its risk is low. Everything else asks the user;
-/// forbidden actions and disabled tools are rejected outright. Pure and fully
-/// unit-testable.
+/// Fail-safe rule: auto-approve low-risk read-only actions by default (a
+/// productivity-app policy decision that closes the macOS gap where the
+/// sandbox isn't enforceable), unless the tool's own policy is `.prompt`.
+/// Mutations and ambiguous actions ask the user; forbidden actions and
+/// disabled tools are rejected outright. Pure and fully unit-testable.
 public struct TesseraSafetyDecision: Sendable, Equatable {
     public let approvalPolicy: ApprovalLevel
     public let permissionProfile: TesseraPermissionProfile
@@ -95,8 +96,11 @@ public struct TesseraSafetyDecision: Sendable, Equatable {
         if permissionProfile == .restricted {
             return .askUser
         }
-        // Fail-safe: only auto-approve when contained AND low risk.
-        if sandboxEnforceable && actionRisk == .low {
+        // Productive-for-reads: low-risk (read-only) actions auto-approve
+        // regardless of sandbox, so macOS (where the sandbox isn't
+        // enforceable) doesn't prompt on every list/read/search. A tool can
+        // still force a prompt via its own `.prompt` policy (handled above).
+        if actionRisk == .low {
             return .autoApprove
         }
         return .askUser

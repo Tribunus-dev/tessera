@@ -27,9 +27,11 @@ import TesseraCore
 public struct NotesView: View {
 
     @ObservedObject public var viewModel: NotesViewModel
+    var chatFocus: ChatFocusCoordinator?
 
-    public init(viewModel: NotesViewModel) {
+    public init(viewModel: NotesViewModel, chatFocus: ChatFocusCoordinator? = nil) {
         self.viewModel = viewModel
+        self.chatFocus = chatFocus
     }
 
     public var body: some View {
@@ -58,7 +60,9 @@ public struct NotesView: View {
         }
         .onChange(of: viewModel.selectedNoteID) { _, new in
             viewModel.select(new)
+            publishFocus(id: new)
         }
+        .onDisappear { chatFocus?.clear() }
         .onExitCommand {
             // Escape: exit focus mode first, then close
             // the editor (Apple's standard escape ladder).
@@ -66,6 +70,27 @@ public struct NotesView: View {
                 viewModel.exitFocusMode()
             }
         }
+    }
+
+    /// Push the focused note's document context to the chat dock so Tessy +
+    /// Sky reason over the live note. Notes are `entityType="note"` with a
+    /// `DocumentAST` body, so they queue/receipt cleanly.
+    private func publishFocus(id: UUID?) {
+        guard let chatFocus, let id else { return }
+        let title = viewModel.rows.first(where: { $0.id == id })?.title ?? "Note"
+        let dataLayer = viewModel.dataLayer
+        chatFocus.focusDocument(
+            id: id,
+            title: title,
+            dataLayer: dataLayer,
+            promptSection: { [dataLayer] in
+                // Render the note's current AST as a context section. Reading
+                // at send-time so the agent sees the latest edits.
+                let ds = DocumentStore(dataLayer: dataLayer)
+                guard let ast = try? await ds.loadDocument(id: id) else { return "" }
+                return "<note>\n\(ast.plainText())\n</note>"
+            }
+        )
     }
 
     // MARK: - Sidebar

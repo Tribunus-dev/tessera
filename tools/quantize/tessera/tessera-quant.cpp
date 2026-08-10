@@ -69,6 +69,34 @@ static uint16_t ts_f32_to_f16(float f) {
     return h;
 }
 
+static float ts_f16_to_f32(uint16_t h) {
+    uint32_t sign = ((uint32_t)(h & 0x8000u)) << 16;
+    uint32_t exp  = (h & 0x7c00u) >> 10;
+    uint32_t mant = (h & 0x03ffu);
+    uint32_t x;
+    if (exp == 0) {
+        if (mant == 0) {
+            x = sign; // signed zero
+        } else {
+            // subnormal: normalize
+            int32_t e = -1;
+            do {
+                e++;
+                mant <<= 1;
+            } while ((mant & 0x0400u) == 0);
+            mant &= 0x03ffu;
+            x = sign | ((uint32_t)(127 - 15 - e) << 23) | (mant << 13);
+        }
+    } else if (exp == 0x1f) {
+        x = sign | 0x7f800000u | (mant ? 0x400000u : 0u); // inf / nan
+    } else {
+        x = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
+    }
+    float f;
+    std::memcpy(&f, &x, sizeof(f));
+    return f;
+}
+
 // ---------------------------------------------------------------------------
 // small helpers
 // ---------------------------------------------------------------------------
@@ -351,10 +379,22 @@ float ts_scale_clip_ternarize_fused(const float * weights,
 // scale fitting from weights + ternary pattern
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// scale fitting from weights + ternary pattern
+// ---------------------------------------------------------------------------
+
+// Compute page/lane scales from a magnitude profile (per-element |core|)
+// OR from trits + global_amp when no magnitude profile is available.
+// When core != nullptr: uses the actual per-element magnitudes (original path).
+// When core == nullptr: reconstructs magnitude as |trit| * global_amp, which
+// loses per-element magnitude variation but preserves the sign pattern. This
+// is the tile-neutral transport path — the transport artifact carries trits +
+// global_amp but not core, so the packer calls this with core=nullptr.
 void ts_compute_scales(const float * core, const int8_t * ternary_flat,
                        const ts_tile_config * config,
                        uint16_t * page_scales, int8_t * lane_scales,
-                       int64_t out_dim, int64_t in_dim) {
+                       int64_t out_dim, int64_t in_dim,
+                       float global_amp) {
     const int page_size      = config->page_size;
     const int lane_size      = config->lane_size;
     const int lanes_per_page = config->lanes_per_page;
@@ -369,11 +409,15 @@ void ts_compute_scales(const float * core, const int8_t * ternary_flat,
                 for (int k = 0; k < lane_size; k++) {
                     int64_t col = (int64_t)p * page_size + (int64_t)l * lane_size + k;
                     if (col >= in_dim) {
-                        continue; // zero padding
+                        continue;
                     }
                     int64_t idx = o * in_dim + col;
                     if (ternary_flat[idx] != 0) {
-                        sum_abs += std::fabs(core[idx]);
+                        if (core) {
+                            sum_abs += std::fabs(core[idx]);
+                        } else {
+                            sum_abs += global_amp;
+                        }
                         count++;
                     }
                 }
@@ -405,7 +449,7 @@ void ts_compute_scales(const float * weights, const int8_t * ternary_flat,
                        int64_t out_dim, int64_t in_dim) {
     struct ts_tile_config cfg = ts_tile_config_t640();
     ts_compute_scales(weights, ternary_flat, &cfg,
-                      page_scales, lane_scales, out_dim, in_dim);
+                      page_scales, lane_scales, out_dim, in_dim, 0.0f);
 }
 
 // ---------------------------------------------------------------------------
@@ -451,7 +495,8 @@ void ts_pack_tile(const int8_t * ternary, const ts_tile_config * config,
         }
     } else {
         // TS_PACK_2BIT (T512/T1024): 2 bits/trit packing. Not needed for the
-        // current .ttt work; fail loudly until a client geometry requires it.
+        // current tile-neutral safetensors work; fail loudly until a client
+        // geometry requires it.
         assert(false && "ts_pack_tile: TS_PACK_2BIT path not implemented");
     }
 }
@@ -901,8 +946,8 @@ float ts_awq_scale_search_layer_output(
 // act-scale store - everything that does NOT depend on a page/lane geometry.
 // The result is a ts_ternary_tensor carrying the trits (outlier positions
 // zeroed), the clipped-AWQ-scaled core (needed by the packer's scale fit), the
-// outlier CSR, and the AWQ/act scales. A `.ttt` artifact is a thin wrapper over
-// one of these per weight matrix.
+// outlier CSR, and the AWQ/act scales. A tile-neutral safetensors artifact is
+// a thin wrapper over one of these per weight matrix.
 //
 // This is steps 1-3 + 6-7 of the original ts_quantize_2d; the tile-specific
 // pack (steps 4-5) and the recon+MSE (step 8) live elsewhere.
@@ -1030,7 +1075,9 @@ int ts_quantize_2d_ternary(const float * weights, const float * act_scales,
                      });
 
     result->trits.assign(ternary.begin(), ternary.end());
-    result->core.assign(core.begin(), core.end());
+    // core is NOT populated for the transport artifact — it's too large to
+    // ship (same size as the model). The packer reconstructs magnitudes from
+    // trits + global_amp instead.
     result->awq_scale.assign(wscale.begin(), wscale.end());
     result->awq_input_scale.assign(input_scale.begin(), input_scale.end());
     result->global_amp = global_amp;
@@ -1107,9 +1154,25 @@ int ts_pack_ternary_to_tile(const ts_ternary_tensor & tn,
                  result->packed.data(), pack_ps.data(), pack_ls.data(),
                  out_dim, in_dim);
 
-    ts_compute_scales(tn.core.data(), tn.trits.data(), &config,
-                      result->page_scales.data(), result->lane_scales.data(),
-                      out_dim, in_dim);
+    // Scale fitting: when tn.core is populated (single-step quantize path),
+    // use the actual per-element magnitudes. When empty (tile-neutral
+    // transport path — core not shipped), reconstruct magnitudes from
+    // trits + global_amp. The reconstruction loses per-element magnitude
+    // variation but preserves the sign/count pattern, which is sufficient
+    // for the coarse int8/f16 page/lane scale fitting.
+    if (!tn.core.empty()) {
+        std::vector<float> core_f32(tn.core.size());
+        for (size_t i = 0; i < tn.core.size(); i++) {
+            core_f32[i] = ts_f16_to_f32(tn.core[i]);
+        }
+        ts_compute_scales(core_f32.data(), tn.trits.data(), &config,
+                          result->page_scales.data(), result->lane_scales.data(),
+                          out_dim, in_dim, tn.global_amp);
+    } else {
+        ts_compute_scales(nullptr, tn.trits.data(), &config,
+                          result->page_scales.data(), result->lane_scales.data(),
+                          out_dim, in_dim, tn.global_amp);
+    }
 
     // outlier CSR travels with the ternary tensor; copy verbatim.
     result->outlier_row_offsets = tn.outlier_row_offsets;

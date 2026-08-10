@@ -3,7 +3,7 @@ name: TesseraStudio
 options:
   bundleIdPrefix: com.tessera.studio
   deploymentTarget:
-    macOS: "14.0"
+    macOS: "26.0"
     iOS: "17.0"
   createIntermediateGroups: true
   generateEmptyDirectories: true
@@ -13,7 +13,7 @@ settings:
     SWIFT_VERSION: "5.9"
     MARKETING_VERSION: "1.0"
     CURRENT_PROJECT_VERSION: "1"
-    ENABLE_HARDENED_RUNTIME: "YES"
+    ENABLE_HARDENED_RUNTIME: "NO"
 
 # The SwiftUI sources do `import TesseraCore` (and TesseraCore does
 # `import CTesseraFFI`), so those modules must stay separate compilation
@@ -27,7 +27,7 @@ targets:
   TesseraStudioMac:
     type: application
     platform: macOS
-    deploymentTarget: "14.0"
+    deploymentTarget: "26.0"
     sources:
       - path: Sources/TesseraStudioMac
       # Both PrivacyInfo.xcprivacy and Shared/Assets.xcassets must land

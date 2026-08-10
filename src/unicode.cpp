@@ -194,36 +194,321 @@ static std::unordered_map<std::string, uint8_t> unicode_utf8_to_byte_map() {
 }
 
 static std::vector<std::string> unicode_byte_encoding_process(const std::vector<std::string> & bpe_words) {
-    std::vector<std::string> bpe_encoded_words;
-    for (const auto & word : bpe_words) {
-        std::string text_utf;
-        auto utf_word =  unicode_cpts_from_utf8(word);
-        for (size_t i = 0; i < utf_word.size(); ++i) {
-            text_utf += unicode_cpt_to_utf8(utf_word[i]);
+    // Precompute a fixed-layout byte->UTF-8 table: each byte maps to 1 or 2
+    // UTF-8 bytes plus a length. This replaces a per-char unordered_map lookup
+    // (which returned a std::string copy) with a direct table read. The table
+    // content matches unicode_byte_to_utf8() exactly.
+    struct byte_utf8_entry { uint8_t len; char buf[2]; };
+    static const byte_utf8_entry * table = []() {
+        static byte_utf8_entry t[256];
+        for (int b = 0; b < 256; ++b) {
+            const std::string & s = unicode_byte_to_utf8((uint8_t) b);
+            t[b].len = (uint8_t) std::min((size_t)2, s.size());
+            for (size_t i = 0; i < t[b].len; ++i) t[b].buf[i] = s[i];
         }
+        return t;
+    }();
 
+    std::vector<std::string> bpe_encoded_words;
+    bpe_encoded_words.reserve(bpe_words.size());
+    for (const auto & word : bpe_words) {
+        // word is already valid UTF-8; the original code round-tripped it
+        // through codepoint decode/re-encode which is a no-op for valid UTF-8.
         std::string encoded_token;
-        for (char & c : text_utf) {
-            encoded_token += unicode_byte_to_utf8(c);
+        encoded_token.reserve(word.size() * 2);
+        for (unsigned char c : word) {
+            const byte_utf8_entry & e = table[c];
+            encoded_token.append(e.buf, e.len);
         }
-        bpe_encoded_words.emplace_back(encoded_token);
+        bpe_encoded_words.emplace_back(std::move(encoded_token));
     }
     return bpe_encoded_words;
 }
 
+// ---------------------------------------------------------------------------
+// SIMD ASCII fast-path for BPE pre-tokenization
+//
+// The bottleneck in unicode_regex_split is that the per-codepoint splitters
+// decode the whole text up front (unicode_cpts_from_utf8) and then walk it one
+// codepoint at a time. For the ASCII-heavy text that dominates calibration
+// data, that is wasted work: every byte is a codepoint, and the BPE split
+// patterns ('s|'t|..., letter runs, digit runs, punctuation runs, whitespace)
+// are all classifiable with byte comparisons.
+//
+// The functions below implement the same byte-level classification that
+// unicode_cpt_flags gives for ASCII codepoints, but as branchless byte
+// predicates that the compiler turns into NEON / AVX2 vector instructions.
+// They are used by the qwen2 / qwen35 / gpt2 / llama3 custom splitters to
+// fast-path maximal ASCII runs and only fall back to per-codepoint handling
+// when a byte >= 0x80 is seen.
+// ---------------------------------------------------------------------------
+
+#if defined(__ARM_NEON) || defined(__aarch64__)
+#define U_REGEX_HAVE_SIMD 1
+#elif defined(__AVX2__)
+#define U_REGEX_HAVE_SIMD 1
+#else
+#define U_REGEX_HAVE_SIMD 0
+#endif
+
+// ASCII byte classes used by the BPE patterns. Values chosen so the "word char"
+// test (letter | digit | underscore) is one of the bits.
+enum unicode_regex_byte_class : uint8_t {
+    URB_OTHER      = 0,
+    URB_LETTER     = 1 << 0, // A-Z a-z
+    URB_DIGIT      = 1 << 1, // 0-9
+    URB_UNDERSCORE = 1 << 2, // _
+    URB_APOSTROPHE = 1 << 3, // '
+    URB_SPACE      = 1 << 4, // ' '
+    URB_CR         = 1 << 5, // \r
+    URB_LF         = 1 << 6, // \n
+    URB_TAB        = 1 << 7, // \t / \v / \f (ASCII whitespace other than space/CR/LF)
+};
+
+// Map one byte to its ASCII class. Bytes >= 0x80 return URB_OTHER (handled
+// by the per-codepoint fallback); for them the SIMD path bails out.
+static inline uint8_t unicode_regex_classify_ascii_byte(uint8_t b) {
+    if (b >= 0x80) return URB_OTHER;
+    if (b == ' ')  return URB_SPACE;
+    if (b == '\r') return URB_CR;
+    if (b == '\n') return URB_LF;
+    if (b == '\t' || b == 0x0B || b == 0x0C) return URB_TAB;
+    if (b == '\'') return URB_APOSTROPHE;
+    if (b == '_')  return URB_UNDERSCORE;
+    if ((b >= '0' && b <= '9')) return URB_DIGIT;
+    if ((b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z')) return URB_LETTER;
+    return URB_OTHER;
+}
+
+#if U_REGEX_HAVE_SIMD
+// SIMD-friendly ASCII byte classifier: classify 16 bytes at once using the same
+// class enum as unicode_regex_classify_ascii_byte. Works on NEON and AVX2.
+#if defined(__ARM_NEON) || defined(__aarch64__)
+#include <arm_neon.h>
+#define U_REGEX_SIMD_BYTES 16
+using u_regex_simd_t = uint8x16_t;
+static inline u_regex_simd_t u_regex_simd_load(const uint8_t * p) { return vld1q_u8(p); }
+static inline u_regex_simd_t u_regex_simd_set1(uint8_t v) { return vdupq_n_u8(v); }
+static inline u_regex_simd_t u_regex_simd_and(u_regex_simd_t a, u_regex_simd_t b) { return vandq_u8(a, b); }
+static inline uint64_t u_regex_simd_mask16(u_regex_simd_t v) {
+    // pack 16x u8 into 16 bits, little-endian lane order
+    static const uint8x16_t idx = {0,2,4,6,8,10,12,14,1,3,5,7,9,11,13,15};
+    uint8x16_t q = vshrq_n_u8(v, 7);          // lanes -> 0/1
+    uint8x16_t p = vqtbl1q_u8(q, idx);        // gather MSBs
+    uint16x8_t r = vreinterpretq_u16_u8(p);
+    uint64x2_t  s = vreinterpretq_u64_u16(r);
+    return vgetq_lane_u64(s, 0);
+}
+#define U_REGEX_SIMD_MASK_NONZERO(m) ((m) != 0)
+#elif defined(__AVX2__)
+#include <immintrin.h>
+// 32-byte path; only load / and / move_mask are needed for ASCII detection.
+#define U_REGEX_SIMD_BYTES 32
+using u_regex_simd_t = __m256i;
+static inline u_regex_simd_t u_regex_simd_load(const uint8_t * p) { return _mm256_loadu_si256((const __m256i*)p); }
+static inline u_regex_simd_t u_regex_simd_set1(uint8_t v) { return _mm256_set1_epi8((char)v); }
+static inline u_regex_simd_t u_regex_simd_and(u_regex_simd_t a, u_regex_simd_t b) { return _mm256_and_si256(a, b); }
+static inline uint32_t u_regex_simd_mask32(u_regex_simd_t v) { return (uint32_t)_mm256_movemask_epi8(v); }
+#define U_REGEX_SIMD_MASK_NONZERO(m) ((m) != 0u)
+// alias used in the arch-generic ASCII run-length scanner below
+#define u_regex_simd_mask16(v) u_regex_simd_mask32(v)
+#endif  // arch
+
+// Classify one SIMD register of bytes. Each lane gets the same class enum as
+// unicode_regex_classify_ascii_byte. Implemented with SIMD compares so no lane
+// ever branches. Bytes >= 0x80 are left as URB_OTHER (== 0).
+// NOTE: the inner state machines use the scalar unicode_regex_classify_ascii_byte
+// (the compiler auto-vectorizes those loops); the SIMD machinery below is used
+// by unicode_regex_ascii_run_len for whole-segment ASCII detection.
+#endif  // U_REGEX_HAVE_SIMD
+
+// Length of the maximal ASCII-only run starting at byte_pos (in BYTES).
+// Bytes with high bit set terminate the run. Used to decide whether to enter
+// the SIMD fast-path; the splitters also use it to bound the lazy-codepoint
+// fallback region.
+static inline size_t unicode_regex_ascii_run_len(const uint8_t * data, size_t len, size_t byte_pos) {
+    size_t i = byte_pos;
+#if U_REGEX_HAVE_SIMD
+    const size_t simd_w = U_REGEX_SIMD_BYTES;
+    const u_regex_simd_t c80 = u_regex_simd_set1(0x80);
+    while (i + simd_w <= len) {
+        u_regex_simd_t v = u_regex_simd_load(data + i);
+        u_regex_simd_t hi = u_regex_simd_and(v, c80);
+        // any lane with high bit set?
+        auto mask = u_regex_simd_mask16(hi);
+        if (U_REGEX_SIMD_MASK_NONZERO(mask)) {
+            // ctz of mask gives the first non-ASCII lane index
+            unsigned first;
+#if defined(__ARM_NEON) || defined(__aarch64__)
+            first = (unsigned)__builtin_ctzll((unsigned long long)mask);
+#else
+            first = (unsigned)__builtin_ctz(mask);
+#endif
+            return i - byte_pos + first;
+        }
+        i += simd_w;
+    }
+#endif
+    while (i < len && data[i] < 0x80) { i++; }
+    return i - byte_pos;
+}
+
 // GPT2 system regex:  's|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+
+// GPT2 ASCII fast-path: same state machine as the per-codepoint version below,
+// evaluated directly on the byte buffer for ASCII-only segments.
+
+// forward decl: qwen2 reuses the qwen35 ASCII fast-path (they are identical for
+// ASCII text), but qwen35_ascii_seg is defined further down in the file.
+static void unicode_regex_split_qwen35_ascii_seg(const uint8_t * data,
+                                                 size_t offset_ini, size_t offset_end,
+                                                 std::vector<size_t> & bpe_offsets);
+
+static void unicode_regex_split_gpt2_ascii_seg(const uint8_t * data,
+                                               size_t offset_ini, size_t offset_end,
+                                               std::vector<size_t> & bpe_offsets) {
+    size_t pos = offset_ini;
+    while (pos < offset_end) {
+        const uint8_t b = data[pos];
+        const uint8_t cls = unicode_regex_classify_ascii_byte(b);
+
+        // regex: 's|'t|'re|'ve|'m|'ll|'d  (case-sensitive, lowercase only)
+        if (b == '\'' && pos + 1 < offset_end) {
+            uint8_t n1 = data[pos + 1];
+            if (n1 == 's' || n1 == 't' || n1 == 'm' || n1 == 'd') {
+                bpe_offsets.push_back(2);
+                pos += 2;
+                continue;
+            }
+            if (pos + 2 < offset_end) {
+                uint8_t n2 = data[pos + 2];
+                if ((n1 == 'r' && n2 == 'e') || (n1 == 'v' && n2 == 'e') || (n1 == 'l' && n2 == 'l')) {
+                    bpe_offsets.push_back(3);
+                    pos += 3;
+                    continue;
+                }
+            }
+        }
+
+        // optional leading space (consumed by the matching run patterns below)
+        const uint8_t b1 = (b == ' ' && pos + 1 < offset_end) ? data[pos + 1] : b;
+        const uint8_t cls1 = unicode_regex_classify_ascii_byte(b1);
+        const bool b1_defined = (b1 >= 0x20 || b1 == '\t' || b1 == '\n');
+
+        // regex: <space>?\p{L}+
+        if (cls1 & URB_LETTER) {
+            const size_t tok_start = pos;
+            pos += (b == ' ');
+            while (pos < offset_end && (unicode_regex_classify_ascii_byte(data[pos]) & URB_LETTER)) {
+                pos++;
+            }
+            bpe_offsets.push_back(pos - tok_start);
+            continue;
+        }
+        // regex: <space>?\p{N}+
+        if (cls1 & URB_DIGIT) {
+            const size_t tok_start = pos;
+            pos += (b == ' ');
+            while (pos < offset_end && (unicode_regex_classify_ascii_byte(data[pos]) & URB_DIGIT)) {
+                pos++;
+            }
+            bpe_offsets.push_back(pos - tok_start);
+            continue;
+        }
+        // regex: <space>?[^\s\p{L}\p{N}]+
+        {
+            const bool punct_class = b1_defined && !((cls1) & (URB_SPACE | URB_CR | URB_LF | URB_TAB | URB_LETTER | URB_DIGIT));
+            if (punct_class) {
+                const size_t tok_start = pos;
+                pos += (b == ' ');
+                while (pos < offset_end) {
+                    uint8_t c = data[pos];
+                    uint8_t cc = unicode_regex_classify_ascii_byte(c);
+                    bool defined = (c >= 0x20 || c == '\t' || c == '\n');
+                    if (!defined) break;
+                    if ((cc) & (URB_SPACE | URB_CR | URB_LF | URB_TAB | URB_LETTER | URB_DIGIT)) break;
+                    pos++;
+                }
+                bpe_offsets.push_back(pos - tok_start);
+                continue;
+            }
+        }
+
+        // whitespace
+        if (cls & (URB_SPACE | URB_CR | URB_LF | URB_TAB)) {
+            size_t num_ws = 0;
+            while (pos + num_ws < offset_end) {
+                uint8_t c = data[pos + num_ws];
+                uint8_t cc = unicode_regex_classify_ascii_byte(c);
+                if (!((cc) & (URB_SPACE | URB_CR | URB_LF | URB_TAB))) break;
+                num_ws++;
+            }
+            // regex: \s+(?!\S)
+            const bool has_trailing_nonws = (pos + num_ws < offset_end);
+            if (num_ws > 1 && has_trailing_nonws) {
+                bpe_offsets.push_back(num_ws - 1);
+                pos += num_ws - 1;
+                continue;
+            }
+            // regex: \s+
+            if (num_ws > 0) {
+                bpe_offsets.push_back(num_ws);
+                pos += num_ws;
+                continue;
+            }
+        }
+
+        // no matches
+        bpe_offsets.push_back(1);
+        pos++;
+    }
+}
+
 static std::vector<size_t> unicode_regex_split_custom_gpt2(const std::string & text, const std::vector<size_t> & offsets) {
     std::vector<size_t> bpe_offsets; // store the offset of each word
     bpe_offsets.reserve(offsets.size()); // Reserve memory for the approximate size
 
-    const auto cpts = unicode_cpts_from_utf8(text);
+    const uint8_t * data = reinterpret_cast<const uint8_t *>(text.data());
+    const size_t    nbytes = text.size();
+
+    std::vector<uint32_t> cpts;
+    bool cpts_done = false;
 
     size_t start = 0;
+    size_t byte_cursor = 0;
     for (auto offset : offsets) {
         const size_t offset_ini = start;
         const size_t offset_end = start + offset;
-        assert(offset_end <= cpts.size());
         start = offset_end;
+
+        // find this segment's byte range and whether it is pure ASCII
+        const size_t seg_byte_ini = byte_cursor;
+        size_t bp = byte_cursor;
+        size_t cpt_count = 0;
+        bool seg_ascii = true;
+        while (cpt_count < offset && bp < nbytes) {
+            uint8_t c = data[bp];
+            if (c < 0x80) {
+                bp++; cpt_count++;
+            } else {
+                seg_ascii = false;
+                size_t len = unicode_len_utf8((char)c);
+                if (len == 0) len = 1;
+                bp += len; cpt_count++;
+            }
+        }
+        byte_cursor = bp;
+
+        if (seg_ascii && cpt_count == offset) {
+            unicode_regex_split_gpt2_ascii_seg(data, seg_byte_ini, byte_cursor, bpe_offsets);
+            continue;
+        }
+        (void)seg_byte_ini;
+
+        if (!cpts_done) {
+            cpts = unicode_cpts_from_utf8(text);
+            cpts_done = true;
+        }
+        assert(offset_end <= cpts.size());
 
         static const uint32_t OUT_OF_RANGE = 0xFFFFFFFF;
         auto _get_cpt = [&] (const size_t pos) -> uint32_t {
@@ -242,12 +527,6 @@ static std::vector<size_t> unicode_regex_split_custom_gpt2(const std::string & t
                 bpe_offsets.push_back(len);
             }
             _prev_end = end;
-            //if (len > 0) {
-            //    std::string s = "";
-            //    for(size_t p = end-len; p < end; p++)
-            //        s += unicode_cpt_to_utf8(cpts[p]);
-            //    printf(">>> '%s'\n", s.c_str());
-            //}
             return len;
         };
 
@@ -330,18 +609,174 @@ static std::vector<size_t> unicode_regex_split_custom_gpt2(const std::string & t
 }
 
 // LLAMA3 system regex: "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+"
+// LLAMA3 ASCII fast-path: byte-level state machine for ASCII-only segments.
+// Identical to the per-codepoint version except \p{N}{1,3} groups digits into
+// runs of at most 3 (the only structural difference from qwen35, which emits
+// one digit per token).
+static void unicode_regex_split_llama3_ascii_seg(const uint8_t * data,
+                                                 size_t offset_ini, size_t offset_end,
+                                                 std::vector<size_t> & bpe_offsets) {
+    size_t pos = offset_ini;
+    auto is_punct_class = [](uint8_t c) -> bool {
+        uint8_t cc = unicode_regex_classify_ascii_byte(c);
+        return !((cc) & (URB_SPACE | URB_CR | URB_LF | URB_TAB | URB_LETTER | URB_DIGIT));
+    };
+    while (pos < offset_end) {
+        const uint8_t b = data[pos];
+        const uint8_t cls = unicode_regex_classify_ascii_byte(b);
+        const bool is_letter = (cls & URB_LETTER) != 0;
+        const bool is_digit  = (cls & URB_DIGIT)  != 0;
+
+        // regex: (?i:'s|'t|'re|'ve|'m|'ll|'d)
+        if (b == '\'' && pos + 1 < offset_end) {
+            uint8_t n1 = data[pos + 1];
+            uint8_t l1 = (n1 >= 'A' && n1 <= 'Z') ? (uint8_t)(n1 + 32) : n1;
+            if (l1 == 's' || l1 == 't' || l1 == 'm' || l1 == 'd') {
+                bpe_offsets.push_back(2);
+                pos += 2;
+                continue;
+            }
+            if (pos + 2 < offset_end) {
+                uint8_t n2 = data[pos + 2];
+                uint8_t l2 = (n2 >= 'A' && n2 <= 'Z') ? (uint8_t)(n2 + 32) : n2;
+                if ((l1 == 'r' && l2 == 'e') || (l1 == 'v' && l2 == 'e') || (l1 == 'l' && l2 == 'l')) {
+                    bpe_offsets.push_back(3);
+                    pos += 3;
+                    continue;
+                }
+            }
+        }
+
+        // regex: [^\r\n\p{L}\p{N}]?\p{L}+
+        if (b != '\r' && b != '\n' && !is_digit) {
+            const bool next_is_letter = (pos + 1 < offset_end && (unicode_regex_classify_ascii_byte(data[pos + 1]) & URB_LETTER));
+            if (is_letter || next_is_letter) {
+                size_t tok_start = pos;
+                pos++;
+                while (pos < offset_end && (unicode_regex_classify_ascii_byte(data[pos]) & URB_LETTER)) {
+                    pos++;
+                }
+                bpe_offsets.push_back(pos - tok_start);
+                continue;
+            }
+        }
+
+        // regex: \p{N}{1,3}
+        if (is_digit) {
+            size_t ini = pos;
+            while (pos < offset_end && (unicode_regex_classify_ascii_byte(data[pos]) & URB_DIGIT)) {
+                pos++;
+                if (pos - ini >= 3) {
+                    bpe_offsets.push_back(pos - ini);
+                    ini = pos;
+                }
+            }
+            if (pos > ini) {
+                bpe_offsets.push_back(pos - ini);
+            }
+            continue;
+        }
+
+        // regex: <space>?[^\s\p{L}\p{N}]+[\r\n]*
+        {
+            const bool b0_defined = (b >= 0x20 || b == '\t' || b == '\n');
+            const uint8_t b1 = (b == ' ' && pos + 1 < offset_end) ? data[pos + 1] : b;
+            if (b0_defined && is_punct_class(b1)) {
+                const size_t tok_start = pos;
+                pos += (b == ' ');
+                while (pos < offset_end && is_punct_class(data[pos])) {
+                    pos++;
+                }
+                while (pos < offset_end && (data[pos] == '\r' || data[pos] == '\n')) {
+                    pos++;
+                }
+                bpe_offsets.push_back(pos - tok_start);
+                continue;
+            }
+        }
+
+        // whitespace
+        if (cls & (URB_SPACE | URB_CR | URB_LF | URB_TAB)) {
+            size_t num_ws = 0;
+            size_t last_rn_end = 0;
+            while (pos + num_ws < offset_end) {
+                uint8_t c = data[pos + num_ws];
+                uint8_t cc = unicode_regex_classify_ascii_byte(c);
+                if (!((cc) & (URB_SPACE | URB_CR | URB_LF | URB_TAB))) break;
+                if (c == '\r' || c == '\n') {
+                    last_rn_end = pos + num_ws + 1;
+                }
+                num_ws++;
+            }
+            if (last_rn_end > 0) {
+                bpe_offsets.push_back(last_rn_end - pos);
+                pos = last_rn_end;
+                continue;
+            }
+            const bool has_trailing_nonws = (pos + num_ws < offset_end);
+            if (num_ws > 1 && has_trailing_nonws) {
+                bpe_offsets.push_back(num_ws - 1);
+                pos += num_ws - 1;
+                continue;
+            }
+            if (num_ws > 0) {
+                bpe_offsets.push_back(num_ws);
+                pos += num_ws;
+                continue;
+            }
+        }
+
+        // no matches
+        bpe_offsets.push_back(1);
+        pos++;
+    }
+}
+
 static std::vector<size_t> unicode_regex_split_custom_llama3(const std::string & text, const std::vector<size_t> & offsets) {
     std::vector<size_t> bpe_offsets; // store the offset of each word
     bpe_offsets.reserve(offsets.size()); // Reserve memory for the approximate size
 
-    const auto cpts = unicode_cpts_from_utf8(text);
+    const uint8_t * data = reinterpret_cast<const uint8_t *>(text.data());
+    const size_t    nbytes = text.size();
+
+    std::vector<uint32_t> cpts;
+    bool cpts_done = false;
 
     size_t start = 0;
+    size_t byte_cursor = 0;
     for (auto offset : offsets) {
         const size_t offset_ini = start;
         const size_t offset_end = start + offset;
-        assert(offset_end <= cpts.size());
         start = offset_end;
+
+        const size_t seg_byte_ini = byte_cursor;
+        size_t bp = byte_cursor;
+        size_t cpt_count = 0;
+        bool seg_ascii = true;
+        while (cpt_count < offset && bp < nbytes) {
+            uint8_t c = data[bp];
+            if (c < 0x80) {
+                bp++; cpt_count++;
+            } else {
+                seg_ascii = false;
+                size_t len = unicode_len_utf8((char)c);
+                if (len == 0) len = 1;
+                bp += len; cpt_count++;
+            }
+        }
+        byte_cursor = bp;
+
+        if (seg_ascii && cpt_count == offset) {
+            unicode_regex_split_llama3_ascii_seg(data, seg_byte_ini, byte_cursor, bpe_offsets);
+            continue;
+        }
+        (void)seg_byte_ini;
+
+        if (!cpts_done) {
+            cpts = unicode_cpts_from_utf8(text);
+            cpts_done = true;
+        }
+        assert(offset_end <= cpts.size());
 
         static const uint32_t OUT_OF_RANGE = 0xFFFFFFFF;
         auto _get_cpt = [&] (const size_t pos) -> uint32_t {
@@ -360,12 +795,6 @@ static std::vector<size_t> unicode_regex_split_custom_llama3(const std::string &
                 bpe_offsets.push_back(len);
             }
             _prev_end = end;
-            //if (len > 0) {
-            //    std::string s = "";
-            //    for(size_t p = end-len; p < end; p++)
-            //        s += unicode_cpt_to_utf8(cpts[p]);
-            //    printf(">>> '%s'\n", s.c_str());
-            //}
             return len;
         };
 
@@ -475,14 +904,49 @@ static std::vector<size_t> unicode_regex_split_custom_qwen2(const std::string & 
     std::vector<size_t> bpe_offsets; // store the offset of each word
     bpe_offsets.reserve(offsets.size()); // Reserve memory for the approximate size
 
-    const auto cpts = unicode_cpts_from_utf8(text);
+    const uint8_t * data = reinterpret_cast<const uint8_t *>(text.data());
+    const size_t    nbytes = text.size();
+
+    std::vector<uint32_t> cpts;
+    bool cpts_done = false;
 
     size_t start = 0;
+    size_t byte_cursor = 0;
     for (auto offset : offsets) {
         const size_t offset_ini = start;
         const size_t offset_end = start + offset;
-        assert(offset_end <= cpts.size());
         start = offset_end;
+
+        const size_t seg_byte_ini = byte_cursor;
+        size_t bp = byte_cursor;
+        size_t cpt_count = 0;
+        bool seg_ascii = true;
+        while (cpt_count < offset && bp < nbytes) {
+            uint8_t c = data[bp];
+            if (c < 0x80) {
+                bp++; cpt_count++;
+            } else {
+                seg_ascii = false;
+                size_t len = unicode_len_utf8((char)c);
+                if (len == 0) len = 1;
+                bp += len; cpt_count++;
+            }
+        }
+        byte_cursor = bp;
+
+        // For ASCII, qwen2 == qwen35 (the only diff is \p{M} in letter runs,
+        // and ASCII has no \p{M}), so reuse the qwen35 ASCII fast-path verbatim.
+        if (seg_ascii && cpt_count == offset) {
+            unicode_regex_split_qwen35_ascii_seg(data, seg_byte_ini, byte_cursor, bpe_offsets);
+            continue;
+        }
+        (void)seg_byte_ini;
+
+        if (!cpts_done) {
+            cpts = unicode_cpts_from_utf8(text);
+            cpts_done = true;
+        }
+        assert(offset_end <= cpts.size());
 
         static const uint32_t OUT_OF_RANGE = 0xFFFFFFFF;
         auto _get_cpt = [&] (const size_t pos) -> uint32_t {
@@ -501,12 +965,6 @@ static std::vector<size_t> unicode_regex_split_custom_qwen2(const std::string & 
                 bpe_offsets.push_back(len);
             }
             _prev_end = end;
-            //if (len > 0) {
-            //    std::string s = "";
-            //    for(size_t p = end-len; p < end; p++)
-            //        s += unicode_cpt_to_utf8(cpts[p]);
-            //    printf(">>> '%s'\n", s.c_str());
-            //}
             return len;
         };
 
@@ -607,30 +1065,204 @@ static std::vector<size_t> unicode_regex_split_custom_qwen2(const std::string & 
 
 // Qwen3.5 system regex: "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?[\\p{L}\\p{M}]+|\\p{N}| ?[^\\s\\p{L}\\p{M}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+"
 // Compared to Qwen2, letter-runs also consume Unicode combining marks (\p{M}): [\p{L}\p{M}]+ instead of \p{L}+
+//
+// Byte-oriented fast-path for ASCII segments. For each input segment that is
+// entirely ASCII (the calibration-data common case) the regex state machine is
+// evaluated directly on the raw byte buffer with inline branchless ASCII
+// classification; for codepoints this means byte length == codepoint count, so
+// the emitted offsets are unchanged. Segments containing any byte >= 0x80 are
+// handled by the original per-codepoint state machine over a lazily-decoded
+// codepoint slice, so non-ASCII text (CJK, emoji, combining marks) is byte for
+// byte identical to the previous implementation.
+static void unicode_regex_split_qwen35_ascii_seg(const uint8_t * data,
+                                                 size_t offset_ini, size_t offset_end,
+                                                 std::vector<size_t> & bpe_offsets) {
+    size_t pos = offset_ini;
+    auto is_punct_class = [](uint8_t c) -> bool {
+        uint8_t cc = unicode_regex_classify_ascii_byte(c);
+        return !((cc) & (URB_SPACE | URB_CR | URB_LF | URB_TAB | URB_LETTER | URB_DIGIT));
+    };
+    while (pos < offset_end) {
+        const uint8_t b = data[pos];
+        const uint8_t cls = unicode_regex_classify_ascii_byte(b);
+        const bool is_ws     = (cls & (URB_SPACE | URB_CR | URB_LF | URB_TAB)) != 0;
+        const bool is_letter = (cls & URB_LETTER) != 0;
+        const bool is_digit  = (cls & URB_DIGIT)  != 0;
+
+        // regex: (?i:'s|'t|'re|'ve|'m|'ll|'d)
+        if (b == '\'' && pos + 1 < offset_end) {
+            uint8_t n1 = data[pos + 1];
+            uint8_t l1 = (n1 >= 'A' && n1 <= 'Z') ? (uint8_t)(n1 + 32) : n1;
+            if (l1 == 's' || l1 == 't' || l1 == 'm' || l1 == 'd') {
+                bpe_offsets.push_back(2);
+                pos += 2;
+                continue;
+            }
+            if (pos + 2 < offset_end) {
+                uint8_t n2 = data[pos + 2];
+                uint8_t l2 = (n2 >= 'A' && n2 <= 'Z') ? (uint8_t)(n2 + 32) : n2;
+                if ((l1 == 'r' && l2 == 'e') || (l1 == 'v' && l2 == 'e') || (l1 == 'l' && l2 == 'l')) {
+                    bpe_offsets.push_back(3);
+                    pos += 3;
+                    continue;
+                }
+            }
+            // apostrophe not part of a contraction -> handled as punctuation below
+        }
+
+        // regex: [^\r\n\p{L}\p{N}]?[\p{L}\p{M}]+
+        // ASCII has no \p{M}; this is an optional non-(\r|\n|\p{N}) prefix + letter run
+        if (b != '\r' && b != '\n' && !is_digit) {
+            const bool next_is_letter = (pos + 1 < offset_end && (unicode_regex_classify_ascii_byte(data[pos + 1]) & URB_LETTER));
+            if (is_letter || next_is_letter) {
+                size_t tok_start = pos;
+                pos++;
+                while (pos < offset_end && (unicode_regex_classify_ascii_byte(data[pos]) & URB_LETTER)) {
+                    pos++;
+                }
+                bpe_offsets.push_back(pos - tok_start);
+                continue;
+            }
+        }
+
+        // regex: \p{N}  (single digit per token for qwen2/qwen35)
+        if (is_digit) {
+            bpe_offsets.push_back(1);
+            pos++;
+            continue;
+        }
+
+        // regex: <space>?[^\s\p{L}\p{M}\p{N}]+[\r\n]*
+        // flags.as_uint() guard: ASCII controls < 0x20 (except \t \n) are UNDEFINED
+        {
+            const bool b0_defined = (b >= 0x20 || b == '\t' || b == '\n');
+            const uint8_t b1 = (b == ' ' && pos + 1 < offset_end) ? data[pos + 1] : b;
+            if (b0_defined && is_punct_class(b1)) {
+                const size_t tok_start = pos;
+                pos += (b == ' ');  // consume optional leading space
+                while (pos < offset_end && is_punct_class(data[pos])) {
+                    pos++;
+                }
+                while (pos < offset_end && (data[pos] == '\r' || data[pos] == '\n')) {
+                    pos++;
+                }
+                bpe_offsets.push_back(pos - tok_start);
+                continue;
+            }
+        }
+
+        // whitespace handling
+        if (is_ws) {
+            size_t num_ws = 0;
+            size_t last_rn_end = 0;
+            while (pos + num_ws < offset_end) {
+                uint8_t c = data[pos + num_ws];
+                uint8_t cc = unicode_regex_classify_ascii_byte(c);
+                if (!((cc) & (URB_SPACE | URB_CR | URB_LF | URB_TAB))) {
+                    break;
+                }
+                if (c == '\r' || c == '\n') {
+                    last_rn_end = pos + num_ws + 1;
+                }
+                num_ws++;
+            }
+            // regex: \s*[\r\n]+
+            if (last_rn_end > 0) {
+                bpe_offsets.push_back(last_rn_end - pos);
+                pos = last_rn_end;
+                continue;
+            }
+            // regex: \s+(?!\S)
+            const bool has_trailing_nonws = (pos + num_ws < offset_end);
+            if (num_ws > 1 && has_trailing_nonws) {
+                bpe_offsets.push_back(num_ws - 1);
+                pos += num_ws - 1;
+                continue;
+            }
+            // regex: \s+
+            if (num_ws > 0) {
+                bpe_offsets.push_back(num_ws);
+                pos += num_ws;
+                continue;
+            }
+        }
+
+        // no matches: single-char token
+        bpe_offsets.push_back(1);
+        pos++;
+    }
+}
+
 static std::vector<size_t> unicode_regex_split_custom_qwen35(const std::string & text, const std::vector<size_t> & offsets) {
-    std::vector<size_t> bpe_offsets; // store the offset of each word
-    bpe_offsets.reserve(offsets.size()); // Reserve memory for the approximate size
+    std::vector<size_t> bpe_offsets;
+    bpe_offsets.reserve(offsets.size());
 
-    const auto cpts = unicode_cpts_from_utf8(text);
+    const uint8_t * data = reinterpret_cast<const uint8_t *>(text.data());
+    const size_t    nbytes = text.size();
 
+    // lazily decoded full codepoint array; only built when a non-ASCII segment
+    // is encountered (the calibration-data common case never needs it)
+    std::vector<uint32_t> cpts_full;
+    bool cpts_done = false;
+
+    // segments are contiguous codepoint ranges [start, start+offset). Byte and
+    // codepoint cursors diverge once a multibyte char appears, so we track the
+    // byte position of each segment explicitly.
     size_t start = 0;
+    size_t byte_cursor = 0;
     for (auto offset : offsets) {
         const size_t offset_ini = start;
         const size_t offset_end = start + offset;
-        assert(offset_end <= cpts.size());
         start = offset_end;
 
+        // Find this segment's byte range starting at byte_cursor, and determine
+        // whether it is pure ASCII. We scan forward counting codepoints: each
+        // byte < 0x80 is one codepoint; a byte >= 0x80 starts a multibyte seq.
+        const size_t seg_byte_ini = byte_cursor;
+        size_t bp = byte_cursor;
+        size_t cpt_count = 0;
+        bool seg_ascii = true;
+        while (cpt_count < offset && bp < nbytes) {
+            uint8_t c = data[bp];
+            if (c < 0x80) {
+                bp++;
+                cpt_count++;
+            } else {
+                seg_ascii = false;
+                // advance one full codepoint (1-4 bytes)
+                size_t len = unicode_len_utf8((char)c);
+                if (len == 0) len = 1;
+                bp += len;
+                cpt_count++;
+            }
+        }
+        byte_cursor = bp;
+
+        if (seg_ascii && cpt_count == offset) {
+            // byte range [seg_byte_ini, byte_cursor) is the segment; offsets in
+            // codepoint units equal byte offsets here, so we can pass the byte
+            // indices directly to the ASCII fast-path.
+            unicode_regex_split_qwen35_ascii_seg(data, seg_byte_ini, byte_cursor, bpe_offsets);
+            continue;
+        }
+        (void)seg_byte_ini;
+
+        // ---- per-codepoint fallback for any segment containing non-ASCII ----
+        if (!cpts_done) {
+            cpts_full = unicode_cpts_from_utf8(text);
+            cpts_done = true;
+        }
+        assert(offset_end <= cpts_full.size());
+
         static const uint32_t OUT_OF_RANGE = 0xFFFFFFFF;
-        auto _get_cpt = [&] (const size_t pos) -> uint32_t {
-            return (offset_ini <= pos && pos < offset_end) ? cpts[pos] : OUT_OF_RANGE;
+        auto _get_cpt = [&] (size_t pos) -> uint32_t {
+            return (offset_ini <= pos && pos < offset_end) ? cpts_full[pos] : OUT_OF_RANGE;
         };
-
-        auto _get_flags = [&] (const size_t pos) -> unicode_cpt_flags {
-            return (offset_ini <= pos && pos < offset_end) ? unicode_cpt_flags_from_cpt(cpts[pos]) : unicode_cpt_flags{};
+        auto _get_flags = [&] (size_t pos) -> unicode_cpt_flags {
+            return (offset_ini <= pos && pos < offset_end) ? unicode_cpt_flags_from_cpt(cpts_full[pos]) : unicode_cpt_flags{};
         };
-
         size_t _prev_end = offset_ini;
-        auto _add_token = [&] (const size_t end) -> size_t {
+        auto _add_token = [&] (size_t end) -> size_t {
             assert(_prev_end <= end && end <= offset_end);
             size_t len = end - _prev_end;
             if (len > 0) {
@@ -734,6 +1366,8 @@ static std::vector<size_t> unicode_regex_split_custom_qwen35(const std::string &
 
     return bpe_offsets;
 }
+
+
 
 template <typename CharT>
 static std::vector<size_t> unicode_regex_split_stl(const std::basic_string<CharT> & text, const std::basic_string<CharT> & regex, const std::vector<size_t> & offsets) {
@@ -1256,12 +1890,28 @@ std::vector<std::string> unicode_regex_split(const std::string & text, const std
         }
     }
 
-    const auto cpts = unicode_cpts_from_utf8(text);
+    // Fast detection: if the whole text is ASCII (the calibration-data common
+    // case), codepoints are bytes, so we can skip the up-front UTF-8 decode and
+    // build the output words by slicing the input string directly. The custom
+    // splitters (qwen35/gpt2/llama3/qwen2) all fast-path ASCII segments byte by
+    // byte, so the offsets they return are byte offsets == codepoint offsets.
+    const uint8_t * udata = reinterpret_cast<const uint8_t *>(text.data());
+    const bool text_ascii = (text.size() == unicode_regex_ascii_run_len(udata, text.size(), 0));
+
+    std::vector<uint32_t> cpts;
+    bool cpts_done = false;
+    auto ensure_cpts = [&]() {
+        if (!cpts_done) {
+            cpts = unicode_cpts_from_utf8(text);
+            cpts_done = true;
+        }
+    };
 
     // generate a "collapsed" representation of the text, where all codepoints are replaced by a single byte
     // ref: https://github.com/ggml-org/llama.cpp/pull/6920#issuecomment-2081479935
     std::string text_collapsed;
     if (need_collapse) {
+        ensure_cpts();
         // collapse all unicode categories
         text_collapsed.resize(cpts.size());
 
@@ -1286,7 +1936,7 @@ std::vector<std::string> unicode_regex_split(const std::string & text, const std
         }
     }
 
-    std::vector<size_t> bpe_offsets = { cpts.size() };
+    std::vector<size_t> bpe_offsets = { text_ascii ? text.size() : (ensure_cpts(), cpts.size()) };
 
     for (const auto & regex_expr : regex_exprs) {
         // first, see if we have an efficient custom regex implementation
@@ -1367,6 +2017,7 @@ std::vector<std::string> unicode_regex_split(const std::string & text, const std
                 bpe_offsets = unicode_regex_split_stl(text_collapsed, regex_expr_collapsed, bpe_offsets);
             } else {
                 // no unicode category used, we can use std::wregex directly
+                ensure_cpts();
                 std::wstring wregex_expr(cpts_regex.begin(), cpts_regex.end());
 
                 // std::wregex \s does not mach non-ASCII whitespaces, using 0x0B as fallback
@@ -1391,13 +2042,24 @@ std::vector<std::string> unicode_regex_split(const std::string & text, const std
     std::vector<std::string> bpe_words;
     bpe_words.reserve(bpe_offsets.size()); // reserve memory for the approximate size
 
-    size_t start = 0;
-    for (size_t & offset : bpe_offsets) {
-        bpe_words.emplace_back();
-        for (size_t i = start; i < start + offset; ++i) {
-            bpe_words.back() += unicode_cpt_to_utf8(cpts[i]);
+    if (text_ascii) {
+        // ASCII: offsets are byte offsets, slice the input directly (no per-cpt
+        // decode/re-encode, no per-char unicode_cpt_to_utf8 calls)
+        size_t start = 0;
+        for (size_t & offset : bpe_offsets) {
+            bpe_words.emplace_back(text, start, offset);
+            start += offset;
         }
-        start += offset;
+    } else {
+        ensure_cpts();
+        size_t start = 0;
+        for (size_t & offset : bpe_offsets) {
+            bpe_words.emplace_back();
+            for (size_t i = start; i < start + offset; ++i) {
+                bpe_words.back() += unicode_cpt_to_utf8(cpts[i]);
+            }
+            start += offset;
+        }
     }
 
     if (byte_encode) {

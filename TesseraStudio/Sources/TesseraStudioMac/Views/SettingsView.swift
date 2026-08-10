@@ -153,6 +153,18 @@ struct SettingsView: View {
             }
             .pickerStyle(.inline)
 
+            if llmProviderType == TesseraLLMProviderType.onDevice.rawValue {
+                Section("On-Device (llama.cpp)") {
+                    PathField("GGUF model path", text: $onDeviceModelPath,
+                              picks: .file(types: [.init(filenameExtension: "gguf")].compactMap { $0 }))
+                    PathField("libllama.dylib path (optional)", text: $onDeviceLibraryPath,
+                              picks: .file(types: [UTType(filenameExtension: "dylib")].compactMap { $0 }))
+                    TextField("Context length", value: $onDeviceContextLength, format: .number)
+                    Stepper("GPU layers: \(onDeviceGPULayers < 0 ? "all" : "\(onDeviceGPULayers)")",
+                            value: $onDeviceGPULayers, in: -1...200)
+                }
+            }
+
             if llmProviderType == TesseraLLMProviderType.remoteAPI.rawValue {
                 Section("Remote API") {
                     TextField("Base URL", text: $remoteAPIBaseURL)
@@ -166,59 +178,7 @@ struct SettingsView: View {
                 }
             }
 
-            if llmProviderType == TesseraLLMProviderType.onDevice.rawValue {
-                Section("On-Device (llama.cpp)") {
-                    PathField("GGUF model path", text: $onDeviceModelPath,
-                              picks: .file(types: [.init(filenameExtension: "gguf")].compactMap { $0 }))
-                    PathField("libllama.dylib path (optional)", text: $onDeviceLibraryPath,
-                              picks: .file(types: [UTType(filenameExtension: "dylib")].compactMap { $0 }))
-                    TextField("Context length", value: $onDeviceContextLength, format: .number)
-                    Stepper("GPU layers: \(onDeviceGPULayers < 0 ? "all" : "\(onDeviceGPULayers)")",
-                            value: $onDeviceGPULayers, in: -1...200)
-                }
-            }
-
-            Section("Sky cloud provider (Tessy + Sky)") {
-                TextField("Base URL", text: $skyAPIBaseURL)
-                    .help("OpenAI-compatible /v1 endpoint Sky uses in the Tessy + Sky surface")
-                SecureField("Sky API key", text: $skyKeyDraft)
-                    .onSubmit { commitSkyKey() }
-                    .onDisappear { commitSkyKey() }
-                    .accessibilityHint("Stored in the macOS Keychain, not preferences")
-                skyKeyStateRow
-                TextField("Sky model name", text: $skyModelName)
-                Toggle("Stream responses (SSE)", isOn: $skyUseStreaming)
-            }
-
-            ProvidersSettingsView()
-
-            Section("Learning (drafter training)") {
-                PathField("Drafter model (GGUF)", text: $learningBaseModelPath,
-                          picks: .file(types: [.init(filenameExtension: "gguf")].compactMap { $0 }))
-                PathField("Training driver (tessera-train-lk)", text: $learningTrainBinary,
-                          picks: .file(types: [.unixExecutable]))
-                Toggle("Train automatically when idle", isOn: $learningAutoTrain)
-                    .help("Runs a training cycle on the idle schedule when enough traces have accumulated")
-                Toggle("Dry run (build the dataset only)", isOn: $learningTrainingDryRun)
-                    .help("Idle cycles validate the dataset without training or saving a drafter; the dashboard's Train Drafter button always trains")
-                trainBinaryStateRow
-                PathField("Runtime drafter (GGUF)", text: $learningRuntimeDraftModel,
-                          picks: .file(types: [.init(filenameExtension: "gguf")].compactMap { $0 }))
-                runtimeDrafterStateRow
-                Toggle("Capture runtime traces", isOn: $learningRuntimeCapture)
-                    .help("Records speculative-decoding telemetry while you use the Playground; sessions are curated locally before any training use")
-                Stepper("Capture top-k: \(learningRuntimeCaptureTopk)",
-                        value: $learningRuntimeCaptureTopk, in: 1...128)
-                    .help("Depth of the per-position verifier/drafter distributions captured per spec step; the replay stage deepens promoted sessions offline")
-                Stepper("Draft depth: \(learningRuntimeDraftMax)",
-                        value: $learningRuntimeDraftMax, in: 1...8)
-                    .help("Maximum tokens the runtime drafter proposes per speculative step")
-                Text("Auto-train applies immediately. Training paths are read when the app launches; the runtime drafter is read when the Playground provider initializes.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Text("Changes apply the next time the Playground is opened.")
+            Text("Cloud providers, the Sky endpoint, drafter training, and calibration live in Intelligence.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

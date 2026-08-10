@@ -15,6 +15,14 @@
 #include "tessera/tessera-dpace.h"
 #include "tessera/tessera-unified-writer.h"
 #include "tessera/tessera-quantize-db.h"
+#include "tessera/tessera-ternary.h"
+#include "tessera/tessera-quant.h"
+#include "tessera/tessera-imatrix.h"
+#include "tessera/tessera-regime.h"
+#include "tessera/ttt-writer.h"
+#include "tessera/ttt-reader.h"
+#include "tessera/tessera-gguf-writer.h"
+#include "tessera/tile-detect.h"
 
 #include "gguf.h"
 
@@ -22,15 +30,27 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <clocale>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <deque>
+#include <map>
 #include <vector>
 #include <string>
 #include <unordered_map>
 #include <fstream>
 #include <filesystem>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#if defined(__APPLE__)
+#  include <sys/sysctl.h>
+#endif
 
 // result of parsing --tensor-type option
 // changes to this struct must also be reflected in src/llama-quant.cpp
@@ -751,6 +771,675 @@ static int ts_cli_dpace(const common_tessera_params & tp) {
         printf("dpace: receipt -> %s\n", tp.dpace_out.c_str());
     }
 
+    return 0;
+}
+
+// ---- export-ternary / pack helpers --------------------------------------
+//
+// The two tile-neutral safetensors subcommands share a small set of GGUF
+// reading/writing helpers that mirror the dispatch's patterns but stay
+// local to keep the handlers self-contained.
+
+// Best-effort physical-memory estimate in bytes. Used only to print a
+// warning when the input GGUF is larger than RAM (the export path streams
+// per-tensor via lazy mmap, so it does not need the whole file resident).
+// Returns 0 when the host's physmem cannot be determined.
+static size_t ts_export_physmem_bytes() {
+#if defined(__APPLE__)
+    int64_t mem = 0;
+    size_t len = sizeof(mem);
+    if (sysctlbyname("hw.memsize", &mem, &len, nullptr, 0) == 0 && mem > 0) {
+        return (size_t) mem;
+    }
+#elif defined(_SC_PHYS_PAGES) && defined(_SC_PAGE_SIZE)
+    long pages = sysconf(_SC_PHYS_PAGES);
+    long psz   = sysconf(_SC_PAGE_SIZE);
+    if (pages > 0 && psz > 0) {
+        return (size_t) pages * (size_t) psz;
+    }
+#endif
+    return 0;
+}
+
+// A 2D/3D weight matrix is exportable when it has a known tensor family
+// (attn/ffn/...) and a registered dequant path. Matches ts_is_quantizable
+// in tessera-dispatch.cpp; duplicated here so the export path does not
+// pull the dispatch's full header surface into quantize.cpp.
+static bool ts_export_is_weight(const char * name, enum ggml_type type, int n_dims) {
+    if (type == GGML_TYPE_TESSERA_T640) {
+        return false;
+    }
+    if (type != GGML_TYPE_F32 && type != GGML_TYPE_F16) {
+        const struct ggml_type_traits * traits = ggml_get_type_traits(type);
+        if (!traits || !traits->to_float) {
+            return false;
+        }
+    }
+    if (n_dims != 2 && n_dims != 3) {
+        return false;
+    }
+    std::string family = ts_regime_infer_family(name);
+    if (family.empty() || family == "other") {
+        return false;
+    }
+    return true;
+}
+
+// Convert a ggml tensor's data to a flat F32 buffer via the registered
+// dequant path. Returns an empty vector on failure.
+static std::vector<float> ts_export_tensor_to_f32(const struct ggml_tensor * t) {
+    const int64_t n = ggml_nelements(t);
+    std::vector<float> out((size_t) n);
+    if (t->data == nullptr) {
+        out.clear();
+        return out;
+    }
+    if (t->type == GGML_TYPE_F32) {
+        std::memcpy(out.data(), t->data, (size_t) n * sizeof(float));
+    } else {
+        const struct ggml_type_traits * traits = ggml_get_type_traits(t->type);
+        if (traits && traits->to_float) {
+            traits->to_float(t->data, out.data(), n);
+        } else {
+            out.clear();
+        }
+    }
+    return out;
+}
+
+// Open a GGUF for reading, mmap it, and patch each tensor's data pointer
+// into the mmap'd region (the no_alloc=true path leaves them null). Mirrors
+// the dispatch's input-GGUF open so the export handler does not load the
+// whole model into RAM. Returns the gguf_context; on failure returns
+// nullptr and sets *err. The caller owns *ggml_ctx and must munmap via
+// ts_export_munmap.
+//
+// The mmap is deliberately lazy: MAP_PRIVATE is page-faulted on access, so
+// opening a 65 GB GGUF on a 17 GB host does not prefetch anything. We also
+// issue POSIX_MADV_RANDOM to tell the kernel we touch pages per-tensor (not
+// sequentially), so the pager does not speculatively read ahead. The
+// per-tensor fault+evict cycle in ts_cli_export_ternary keeps the resident
+// set at roughly one tensor.
+struct ts_export_mmap {
+    void *  mapped = nullptr;
+    size_t  size   = 0;
+    size_t  data_off = 0;   // byte offset of the tensor-data section in the file
+};
+
+static struct gguf_context * ts_export_open_gguf(const std::string & path,
+                                                 struct ggml_context * & ggml_ctx,
+                                                 ts_export_mmap & mm,
+                                                 std::string & err) {
+    ggml_ctx = nullptr;
+    struct gguf_init_params gparams = {
+        /*no_alloc =*/ true,
+        /*ctx      =*/ &ggml_ctx,
+    };
+    struct gguf_context * ctx = gguf_init_from_file(path.c_str(), gparams);
+    if (ctx == nullptr) {
+        err = "failed to open input GGUF: " + path;
+        return nullptr;
+    }
+
+    int fd = open(path.c_str(), O_RDONLY);
+    if (fd < 0) {
+        err = "open failed for mmap: " + path;
+        gguf_free(ctx);
+        ggml_free(ggml_ctx);
+        ggml_ctx = nullptr;
+        return nullptr;
+    }
+    struct stat st;
+    if (fstat(fd, &st) != 0) {
+        err = "fstat failed for mmap";
+        close(fd);
+        gguf_free(ctx);
+        ggml_free(ggml_ctx);
+        ggml_ctx = nullptr;
+        return nullptr;
+    }
+    mm.size   = (size_t) st.st_size;
+    mm.mapped = mmap(nullptr, mm.size, PROT_READ, MAP_PRIVATE, fd, 0);
+    close(fd);
+    if (mm.mapped == MAP_FAILED) {
+        mm.mapped = nullptr;
+        err = "mmap failed for input GGUF";
+        gguf_free(ctx);
+        ggml_free(ggml_ctx);
+        ggml_ctx = nullptr;
+        return nullptr;
+    }
+    // No prefetch: do NOT call posix_madvise(WILLNEED) and do NOT pass
+    // MAP_POPULATE. POSIX_MADV_RANDOM tells the kernel the access pattern is
+    // per-tensor (random), disabling readahead that would page in the whole
+    // file. Ignore EINVAL on filesystems that do not support the hint.
+    (void) posix_madvise(mm.mapped, mm.size, POSIX_MADV_RANDOM);
+
+    mm.data_off = gguf_get_data_offset(ctx);
+    const int64_t n_t = gguf_get_n_tensors(ctx);
+    for (int64_t i = 0; i < n_t; i++) {
+        const char * tname = gguf_get_tensor_name(ctx, i);
+        size_t toff = gguf_get_tensor_offset(ctx, i);
+        struct ggml_tensor * t = ggml_get_tensor(ggml_ctx, tname);
+        if (t) {
+            t->data = (char *) mm.mapped + mm.data_off + toff;
+        }
+    }
+    return ctx;
+}
+
+// Collect the GGUF KV metadata as string-valued hparams (the safetensors
+// config stores them as strings; the pack path re-emits them with the
+// matching gguf_set_val_* type). String KVs keep their value; numerics
+// are stringified via the json dump. Also writes "general.architecture"
+// to *arch when present.
+static void ts_export_collect_hparams(struct gguf_context * ctx,
+                                      std::string & arch,
+                                      std::map<std::string, std::string> & hparams) {
+    const int64_t n_kv = gguf_get_n_kv(ctx);
+    for (int64_t i = 0; i < n_kv; i++) {
+        const char * key = gguf_get_key(ctx, i);
+        if (key == nullptr) continue;
+        const gguf_type t = gguf_get_kv_type(ctx, i);
+        std::string val;
+        switch (t) {
+            case GGUF_TYPE_STRING:
+                val = gguf_get_val_str(ctx, i) ? gguf_get_val_str(ctx, i) : "";
+                break;
+            case GGUF_TYPE_UINT8:   val = std::to_string((uint32_t) gguf_get_val_u8(ctx, i));  break;
+            case GGUF_TYPE_INT8:    val = std::to_string((int32_t)  gguf_get_val_i8(ctx, i));   break;
+            case GGUF_TYPE_UINT16:  val = std::to_string((uint32_t) gguf_get_val_u16(ctx, i)); break;
+            case GGUF_TYPE_INT16:   val = std::to_string((int32_t)  gguf_get_val_i16(ctx, i));  break;
+            case GGUF_TYPE_UINT32:  val = std::to_string(gguf_get_val_u32(ctx, i)); break;
+            case GGUF_TYPE_INT32:   val = std::to_string(gguf_get_val_i32(ctx, i)); break;
+            case GGUF_TYPE_UINT64:  val = std::to_string(gguf_get_val_u64(ctx, i)); break;
+            case GGUF_TYPE_INT64:   val = std::to_string(gguf_get_val_i64(ctx, i)); break;
+            case GGUF_TYPE_FLOAT32: val = std::to_string(gguf_get_val_f32(ctx, i)); break;
+            case GGUF_TYPE_FLOAT64: val = std::to_string(gguf_get_val_f64(ctx, i)); break;
+            case GGUF_TYPE_BOOL:    val = gguf_get_val_bool(ctx, i) ? "true" : "false"; break;
+            default: continue;  // arrays are not hparams
+        }
+        hparams[key] = std::move(val);
+        if (std::string(key) == "general.architecture") {
+            arch = hparams[key];
+        }
+    }
+}
+
+// Write a string-valued hparam back into a gguf_context using the type
+// hint recovered by the value's shape: numeric strings go back as the
+// narrowest matching integer/float type; "true"/"false" as bool; anything
+// else as a string. This preserves the round-trip for the pack path.
+static void ts_pack_set_hparam(struct gguf_context * ctx,
+                               const std::string & key,
+                               const std::string & val) {
+    if (val == "true" || val == "false") {
+        gguf_set_val_bool(ctx, key.c_str(), val == "true");
+        return;
+    }
+    // integer?
+    {
+        char * end = nullptr;
+        errno = 0;
+        long long iv = std::strtoll(val.c_str(), &end, 10);
+        if (end != val.c_str() && *end == '\0' && errno == 0) {
+            if (iv >= INT32_MIN && iv <= INT32_MAX) {
+                gguf_set_val_i32(ctx, key.c_str(), (int32_t) iv);
+            } else {
+                gguf_set_val_i64(ctx, key.c_str(), (int64_t) iv);
+            }
+            return;
+        }
+    }
+    // float?
+    {
+        char * end = nullptr;
+        std::strtod(val.c_str(), &end);
+        if (end != val.c_str() && *end == '\0') {
+            gguf_set_val_f32(ctx, key.c_str(), (float) std::strtod(val.c_str(), nullptr));
+            return;
+        }
+    }
+    gguf_set_val_str(ctx, key.c_str(), val.c_str());
+}
+
+// export-ternary: read a BF16 GGUF, quantize each 2D weight to tile-agnostic
+// ternary via ts_quantize_2d_ternary, write a tile-neutral safetensors
+// directory via ts_write_ttt_stream. The export runs the AWQ alpha search
+// per tensor (using the imatrix when supplied) and emits the trits + CSR
+// outliers + AWQ scales + clipped core that the client-side packer
+// consumes. Tokenizer + chat template travel in the safetensors directory;
+// the GGUF KV metadata travels in config.json::hparams.
+//
+// Memory model: the source GGUF is mmap'd lazily (no prefetch) and processed
+// one tensor at a time. Before dequantizing a tensor we hint
+// POSIX_MADV_WILLNEED on its byte range so the kernel pages it in; after the
+// tensor's last expert is quantized we hint POSIX_MADV_DONTNEED so the
+// kernel can evict those pages, keeping the resident set at roughly one
+// tensor. The ternary writer streams each tensor's arrays to a sibling spool
+// file before the next tensor is read, so RSS is bounded by one tensor's
+// worth of trits + core + the source GGUF's pages for that one tensor.
+static int ts_cli_export_ternary(const common_tessera_params & tp) {
+    if (tp.export_in.empty()) {
+        fprintf(stderr, "error: `export-ternary` subcommand requires --in PATH\n");
+        return 1;
+    }
+    if (tp.export_out.empty()) {
+        fprintf(stderr, "error: `export-ternary` subcommand requires --out PATH\n");
+        return 1;
+    }
+
+    // optional imatrix for the AWQ alpha search
+    ts_imatrix imatrix;
+    bool have_imatrix = false;
+    if (!tp.imatrix.empty()) {
+        std::string ierr;
+        const std::string & p = tp.imatrix;
+        bool ok = false;
+        if (p.size() >= 5 && p.substr(p.size() - 5) == ".gguf") {
+            ok = ts_imatrix_load_gguf(p.c_str(), &imatrix, &ierr) == 0;
+        } else {
+            ok = ts_imatrix_load_npz(p.c_str(), &imatrix, &ierr) == 0;
+        }
+        if (!ok) {
+            fprintf(stderr, "error: export-ternary: --imatrix: %s\n", ierr.c_str());
+            return 1;
+        }
+        have_imatrix = !imatrix.data.empty();
+    }
+
+    // open + mmap the source GGUF. ts_export_open_gguf uses a lazy MAP_PRIVATE
+    // mmap (no prefetch, POSIX_MADV_RANDOM) so opening a 65 GB file on a 17 GB
+    // host does not page anything in until a tensor is touched.
+    struct ggml_context * ggml_ctx = nullptr;
+    ts_export_mmap mm;
+    std::string err;
+    struct gguf_context * in_ctx = ts_export_open_gguf(tp.export_in, ggml_ctx, mm, err);
+    if (in_ctx == nullptr) {
+        fprintf(stderr, "error: export-ternary: %s\n", err.c_str());
+        return 1;
+    }
+
+    // Memory precheck: warn (but continue) when the input file is larger than
+    // physmem. The export path streams per-tensor via the lazy mmap, so this
+    // is recoverable as long as the host is not also tight on disk for the
+    // spool. Refusing to start would block the only path that can actually
+    // process such a model on a memory-constrained host.
+    {
+        const size_t phys = ts_export_physmem_bytes();
+        if (phys > 0 && mm.size > phys) {
+            fprintf(stderr,
+                    "export-ternary: warning: input %.2f GiB > physmem %.2f GiB; "
+                    "streaming per-tensor (lazy mmap + page eviction)\n",
+                    (double) mm.size / (1024.0 * 1024.0 * 1024.0),
+                    (double) phys    / (1024.0 * 1024.0 * 1024.0));
+        }
+    }
+
+    std::string arch;
+    std::map<std::string, std::string> hparams;
+    ts_export_collect_hparams(in_ctx, arch, hparams);
+    if (arch.empty()) {
+        arch = "llama";
+    }
+
+    const int64_t n_tensors = gguf_get_n_tensors(in_ctx);
+    printf("export-ternary: %s (%lld tensors) -> %s\n",
+           tp.export_in.c_str(), (long long) n_tensors, tp.export_out.c_str());
+
+    // tokenizer.json + chat_template.jinja: the source GGUF embeds the
+    // tokenizer as KV pairs (not a standalone file). We carry the chat
+    // template out to chat_template.jinja when present so the pack path
+    // and downstream tooling can read it directly; the full tokenizer KV
+    // travels in config.json::hparams and is re-embedded on pack. The
+    // template is staged to a sibling temp file (outside the output dir)
+    // so the writer copies it into the destination without colliding with
+    // its own output path. Resolved before the streaming pass so the writer
+    // gets the paths up front.
+    std::string tokenizer_path;
+    std::string chat_template_path;
+    {
+        int64_t kchat = gguf_find_key(in_ctx, "tokenizer.chat_template");
+        if (kchat >= 0 && gguf_get_kv_type(in_ctx, kchat) == GGUF_TYPE_STRING) {
+            const char * tmpl = gguf_get_val_str(in_ctx, kchat);
+            if (tmpl && tmpl[0] != '\0') {
+                const std::string tmp_chat =
+                    std::filesystem::temp_directory_path().string() + "/ts_export_chat.tmpl";
+                std::ofstream of(tmp_chat, std::ios::binary | std::ios::trunc);
+                if (of) {
+                    of << tmpl;
+                    of.close();
+                    chat_template_path = tmp_chat;
+                }
+            }
+        }
+    }
+
+    // quantize each 2D weight via ts_quantize_2d_ternary. 3D MoE experts
+    // are exported as one ternary tensor per expert (flattened name suffix
+    // .E<j>), matching the dispatch's per-expert quantize convention.
+    ts_quant_params_2d qp{};
+    qp.alpha          = 0.0f;   // auto-search
+    qp.clip           = 1.0f;
+    qp.max_outliers   = 0;
+    qp.outlier_thresh = tp.outlier_frac;
+    qp.use_imatrix    = false;
+    qp.use_septq      = false;
+    qp.awq_grid       = 20;
+
+    // Streaming source state: the source lambda is called once per exported
+    // (sub)tensor and advances through the GGUF. `cur_*` cache the current
+    // source tensor so a 3D MoE weight yields one call per expert without
+    // re-dequantizing. `full` holds the dequantized F32 buffer for the
+    // current tensor and is cleared (and its mmap pages evicted) once all
+    // experts are emitted.
+    int64_t n_exported = 0;
+    int64_t n_skipped  = 0;
+    int64_t gguf_idx   = 0;
+    int64_t expert_idx = 0;
+    int64_t n_experts  = 0;
+    int64_t in_dim     = 0;
+    int64_t out_dim    = 0;
+    int     n_dims     = 0;
+    const float * act_scales = nullptr;
+    std::string cur_name;
+    std::vector<float> full;
+    struct ggml_tensor * cur_t = nullptr;
+
+    // Drop residence for the current source tensor's mmap range. Called once
+    // the last expert has been quantized so the next tensor's pages can
+    // reuse the memory. madvise DONTNEED is a hint; on macOS it instructs
+    // the pager to drop the (clean, read-only) pages.
+    auto evict_current = [&]() {
+        if (cur_t && cur_t->data && mm.mapped) {
+            const size_t nbytes = ggml_nbytes(cur_t);
+            (void) posix_madvise(cur_t->data, nbytes, POSIX_MADV_DONTNEED);
+        }
+    };
+
+    // Advance to the next exportable GGUF tensor and dequantize it into
+    // `full`. Returns true if a tensor was loaded, false at end-of-stream
+    // (or on a fatal dequant error). Skips non-weight tensors with a
+    // warning count. Issues WILLNEED before the dequant so the kernel pages
+    // the tensor in proactively rather than on the first byte read.
+    auto load_next_tensor = [&]() -> bool {
+        full.clear();
+        full.shrink_to_fit();
+        cur_t = nullptr;
+        cur_name.clear();
+        act_scales = nullptr;
+        n_experts  = 0;
+        expert_idx = 0;
+        while (gguf_idx < n_tensors) {
+            const int64_t i = gguf_idx++;
+            const char * name = gguf_get_tensor_name(in_ctx, i);
+            const enum ggml_type type = gguf_get_tensor_type(in_ctx, i);
+            const int64_t * ne = gguf_get_tensor_ne(in_ctx, i);
+            int nd = GGML_MAX_DIMS;
+            while (nd > 1 && ne[nd - 1] == 1) {
+                nd--;
+            }
+            if (!ts_export_is_weight(name, type, nd)) {
+                n_skipped++;
+                continue;
+            }
+            struct ggml_tensor * t = ggml_get_tensor(ggml_ctx, name);
+            if (t == nullptr) {
+                fprintf(stderr, "export-ternary: warning: '%s' not in ggml ctx, skipping\n", name);
+                n_skipped++;
+                continue;
+            }
+
+            // Hint the pager that we are about to read this tensor's pages.
+            // The mmap was created without WILLNEED/MAP_POPULATE, so without
+            // this hint the first dequant byte read would fault each page in
+            // on demand; WILLNEED lets the kernel start the readahead for
+            // just this tensor's byte range in parallel.
+            if (t->data) {
+                (void) posix_madvise(t->data, ggml_nbytes(t), POSIX_MADV_WILLNEED);
+            }
+
+            std::vector<float> dequant = ts_export_tensor_to_f32(t);
+            if (dequant.empty()) {
+                fprintf(stderr, "export-ternary: warning: unsupported type for '%s', skipping\n", name);
+                n_skipped++;
+                // Evict the pages we just hinted in for this unusable tensor.
+                if (t->data) {
+                    (void) posix_madvise(t->data, ggml_nbytes(t), POSIX_MADV_DONTNEED);
+                }
+                continue;
+            }
+
+            cur_t     = t;
+            cur_name  = name;
+            n_dims    = nd;
+            in_dim    = ne[0];
+            out_dim   = ne[1];
+            n_experts = (n_dims == 3) ? ne[2] : 1;
+            expert_idx = 0;
+            full = std::move(dequant);
+
+            if (have_imatrix) {
+                int64_t act_n = 0;
+                act_scales = ts_imatrix_lookup(&imatrix, name, &act_n);
+                if (act_scales != nullptr && act_n != in_dim) {
+                    act_scales = nullptr;
+                }
+            }
+            return true;
+        }
+        return false;
+    };
+
+    ts_ttt_tensor_source source = [&](ts_ternary_tensor & tensor) -> std::string {
+        for (;;) {
+            if (expert_idx < n_experts) {
+                const int64_t per = out_dim * in_dim;
+                const float * wptr = full.data() + (int64_t)(expert_idx * per);
+                std::vector<float> expert_weights;
+                if (n_dims == 3) {
+                    // per-expert slice needs contiguous storage independent of `full`
+                    expert_weights.assign(wptr, wptr + per);
+                    wptr = expert_weights.data();
+                }
+
+                std::string tname = cur_name;
+                if (n_dims == 3) {
+                    tname += ".E" + std::to_string(expert_idx);
+                }
+
+                expert_idx++;
+
+                ts_ternary_tensor tn;
+                int rc = ts_quantize_2d_ternary(wptr, act_scales,
+                                                nullptr, nullptr, nullptr,
+                                                out_dim, in_dim, 0,
+                                                &qp, &tn);
+                if (rc != 0) {
+                    fprintf(stderr, "export-ternary: warning: quantize failed for '%s', skipping\n",
+                            tname.c_str());
+                    n_skipped++;
+                    continue;
+                }
+                n_exported++;
+                tensor = std::move(tn);
+                return tname;
+            }
+            // Done with the current source tensor's experts: drop its pages
+            // so the next tensor can reuse the memory, then advance.
+            evict_current();
+            if (!load_next_tensor()) {
+                return std::string();
+            }
+        }
+    };
+
+    int rc = ts_write_ttt_stream(source, arch, hparams,
+                                 tp.export_out, tokenizer_path, chat_template_path);
+    // Drain the source so the export/skip tallies are accurate even when the
+    // writer returns early on error (the source may not have been fully
+    // consumed). The writer's spool is already removed by ts_write_ttt_stream
+    // on both success and failure; draining only advances the GGUF iteration
+    // and does not allocate (each yielded tensor is overwritten on the next
+    // call and dropped at scope exit).
+    if (rc != 0) {
+        ts_ternary_tensor drain;
+        while (!source(drain).empty()) { /* discard */ }
+    }
+
+    printf("export-ternary: %lld tensors exported, %lld skipped\n",
+           (long long) n_exported, (long long) n_skipped);
+
+    if (rc != 0) {
+        fprintf(stderr, "error: export-ternary: ts_write_ttt_stream failed (rc=%d)\n", rc);
+    } else {
+        printf("export-ternary: wrote %s\n", tp.export_out.c_str());
+    }
+
+    if (!chat_template_path.empty()) {
+        std::remove(chat_template_path.c_str());
+    }
+    if (mm.mapped) munmap(mm.mapped, mm.size);
+    gguf_free(in_ctx);
+    ggml_free(ggml_ctx);
+    return rc;
+}
+
+// pack: read a tile-neutral safetensors directory, pack each tensor to the
+// target tile geometry via ts_pack_ternary_to_tile, write a GGUF. Streams
+// one tensor at a time (ts_ttt_tensor_stream) so RSS is bounded by one
+// tensor regardless of model size. The GGUF header is rebuilt from the
+// safetensors config.json hparams; the 5 sub-tensors per weight come from
+// ts_gguf_write_tensor_cluster.
+static int ts_cli_pack(const common_tessera_params & tp) {
+    if (tp.pack_in.empty()) {
+        fprintf(stderr, "error: `pack` subcommand requires --in PATH\n");
+        return 1;
+    }
+    if (tp.pack_out.empty()) {
+        fprintf(stderr, "error: `pack` subcommand requires --out PATH\n");
+        return 1;
+    }
+
+    // resolve the target tile geometry
+    std::string tile = tp.pack_tile;
+    if (tile.empty()) {
+        tile = "auto";
+    }
+    struct ts_tile_config config;
+    bool auto_detect = false;
+    if (tile == "t640") {
+        config = ts_tile_config_t640();
+    } else if (tile == "t512") {
+        config = ts_tile_config_t512();
+    } else if (tile == "t1024") {
+        config = ts_tile_config_t1024();
+    } else if (tile == "auto") {
+        config = ts_detect_tile_config();
+        auto_detect = true;
+    } else {
+        fprintf(stderr, "error: pack: --tile must be one of t640|t512|t1024|auto, got '%s'\n",
+                tile.c_str());
+        return 1;
+    }
+    printf("pack: tile geometry = %s (%dx%d, %s)\n",
+           auto_detect ? "auto" : tile.c_str(),
+           config.page_size, config.lane_size,
+           config.packing == TS_PACK_RADIX243 ? "radix-243" : "2-bit");
+
+    // open the safetensors directory for streaming
+    ts_ttt_tensor_stream stream;
+    if (stream.open(tp.pack_in) != 0) {
+        fprintf(stderr, "error: pack: cannot open safetensors directory: %s\n", tp.pack_in.c_str());
+        return 1;
+    }
+
+    // output GGUF: build the header from the safetensors hparams, then
+    // stream each tensor through the packer and append its 5 sub-tensors.
+    struct gguf_context * out_ctx = gguf_init_empty();
+    for (const auto & kv : stream.hparams()) {
+        ts_pack_set_hparam(out_ctx, kv.first, kv.second);
+    }
+
+    // tessera provenance + tile-geometry stamp so the loader knows which
+    // packer produced this GGUF.
+    gguf_set_val_u32(out_ctx, "tessera.version", 1);
+    gguf_set_val_str(out_ctx, "tessera.tile.geometry",
+                     tile == "auto" ? "auto" : tile.c_str());
+    {
+        ts_gguf_writer_params wparams{};
+        wparams.alpha = 0.0f;   // already-searched; the ternary carries best_alpha
+        wparams.clip  = 1.0f;
+        wparams.outlier_frac = tp.outlier_frac;
+        const char * commit = llama_commit();
+        wparams.build_info = std::string("tessera-pack @ ") + (commit ? commit : "unknown");
+        ts_gguf_write_metadata(out_ctx, &wparams);
+    }
+
+    // ggml context for the transient cluster descriptors. Size generously:
+    // each tensor emits up to 7 descriptors; we free them per-tensor below.
+    struct ggml_init_params out_init = {
+        /*mem_size =*/ (size_t) 7 * 512 + 64 * 1024,
+        /*mem_buffer =*/ nullptr,
+        /*no_alloc =*/ true,
+    };
+    struct ggml_context * out_ggml_ctx = ggml_init(out_init);
+    if (out_ggml_ctx == nullptr) {
+        fprintf(stderr, "error: pack: ggml_init failed for output tensor context\n");
+        gguf_free(out_ctx);
+        return 1;
+    }
+
+    // The pack results back the GGUF tensor descriptors by data pointer and
+    // must outlive gguf_write_to_file. Keep them in a function-scope deque
+    // (stable element addresses) until the write completes.
+    std::deque<ts_quant_result_2d> packed_results;
+
+    int64_t n_packed = 0;
+    ts_ternary_tensor tn;
+    std::string name;
+    while (!(name = stream.next(tn)).empty()) {
+        packed_results.emplace_back();
+        ts_quant_result_2d & qr = packed_results.back();
+        int rc = ts_pack_ternary_to_tile(tn, config, &qr);
+        if (rc != 0) {
+            fprintf(stderr, "error: pack: ts_pack_ternary_to_tile failed for '%s' (rc=%d)\n",
+                    name.c_str(), rc);
+            packed_results.pop_back();
+            gguf_free(out_ctx);
+            ggml_free(out_ggml_ctx);
+            return 1;
+        }
+        ts_gguf_write_tensor_cluster(out_ctx, out_ggml_ctx, name.c_str(), &qr,
+                                     tn.out_dim, tn.in_dim);
+        // The cluster descriptors are copied by value into out_ctx; the
+        // ggml context pool is reset for the next tensor. The result
+        // buffer stays alive in the deque for the eventual write.
+        ggml_free(out_ggml_ctx);
+        out_ggml_ctx = ggml_init(out_init);
+        if (out_ggml_ctx == nullptr) {
+            fprintf(stderr, "error: pack: ggml_init re-init failed\n");
+            gguf_free(out_ctx);
+            return 1;
+        }
+        n_packed++;
+    }
+    stream.close();
+
+    printf("pack: %lld tensors packed -> %s\n",
+           (long long) n_packed, tp.pack_out.c_str());
+
+    bool ok = gguf_write_to_file(out_ctx, tp.pack_out.c_str(), false);
+    if (!ok) {
+        fprintf(stderr, "error: pack: gguf_write_to_file failed for %s\n",
+                tp.pack_out.c_str());
+        ggml_free(out_ggml_ctx);
+        gguf_free(out_ctx);
+        return 1;
+    }
+
+    ggml_free(out_ggml_ctx);
+    gguf_free(out_ctx);
     return 0;
 }
 
@@ -1540,6 +2229,33 @@ int llama_tessera_main(int argc, char ** argv) {
             return ts_cli_dpace(tp);
         case TESSERA_SC_UNIFIED_WRITER:
             return ts_cli_unified_writer(tp);
+        case TESSERA_SC_EXPORT_TERNARY: {
+            // Positional fallback: `export-ternary <in.gguf> <out_dir/>`
+            // (argv[1] is the subcommand token; argv[2..] are positionals).
+            common_tessera_params & mtp = const_cast<common_tessera_params &>(tp);
+            for (int i = 2; i < argc; i++) {
+                if (argv[i] == nullptr || argv[i][0] == '-') break;
+                if (mtp.export_in.empty()) {
+                    mtp.export_in = argv[i];
+                } else if (mtp.export_out.empty()) {
+                    mtp.export_out = argv[i];
+                }
+            }
+            return ts_cli_export_ternary(tp);
+        }
+        case TESSERA_SC_PACK: {
+            // Positional fallback: `pack <in_dir/> <out.gguf>`
+            common_tessera_params & mtp = const_cast<common_tessera_params &>(tp);
+            for (int i = 2; i < argc; i++) {
+                if (argv[i] == nullptr || argv[i][0] == '-') break;
+                if (mtp.pack_in.empty()) {
+                    mtp.pack_in = argv[i];
+                } else if (mtp.pack_out.empty()) {
+                    mtp.pack_out = argv[i];
+                }
+            }
+            return ts_cli_pack(tp);
+        }
         default:
             break;
     }

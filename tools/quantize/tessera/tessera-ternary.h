@@ -1,17 +1,19 @@
-// tessera-ternary.h - Tessera Ternary Transport (`.ttt`) artifact definitions.
+// tessera-ternary.h - Tessera tile-neutral safetensors artifact definitions.
 //
-// The `.ttt` format is the tile-AGNOSTIC ternary representation of a model's
-// weight matrices. It carries the ternary decisions (-1/0/+1 per element),
-// the CSR outlier corrections, the AWQ per-channel scales, and the global
-// amplitude threshold. These are the expensive, imatrix-driven outputs that
-// are computed once on the build server.
+// The tile-neutral safetensors format is the tile-AGNOSTIC ternary
+// representation of a model's weight matrices. It carries the ternary
+// decisions (-1/0/+1 per element), the CSR outlier corrections, the AWQ
+// per-channel scales, and the global amplitude threshold. These are the
+// expensive, imatrix-driven outputs that are computed once on the build
+// server.
 //
 // The tile-SPECIFIC packing (grouping trits into pages/lanes, computing
-// per-page/lane scales, packing radix-243 or 2-bit words) is derived from a
-// `.ttt` on the client at download time for the detected GPU's optimal tile
-// geometry (T640 for Apple Silicon, T512/T1024 for Intel, future variants).
-// Packing is cheap O(n) regrouping with no quality loss (the trits don't
-// change; only the page/lane scales are recomputed per the new grouping).
+// per-page/lane scales, packing radix-243 or 2-bit words) is derived from
+// the tile-neutral safetensors directory on the client at download time for
+// the detected GPU's optimal tile geometry (T640 for Apple Silicon,
+// T512/T1024 for Intel, future variants). Packing is cheap O(n) regrouping
+// with no quality loss (the trits don't change; only the page/lane scales
+// are recomputed per the new grouping).
 //
 // See docs/tile-neutral-export-design.md for the full architecture.
 
@@ -46,25 +48,23 @@ struct ts_ternary_tensor {
     int64_t               out_dim = 0;
     int64_t               in_dim  = 0;
 
-    // Clipped AWQ-scaled weights [out_dim * in_dim] needed by the tile packer's
-    // scale-fitting step (ts_compute_scales reads |core[idx]| at every non-zero
-    // trit). This is derived from the original weights + wscale + clip, which
-    // are not otherwise reconstructable from the ternary decisions alone; it is
-    // carried alongside the trits so the client-side packer can refit page/lane
-    // scales for any tile geometry without the raw weights.
-    std::vector<float>    core;
+    // Clipped AWQ-scaled weight magnitudes [out_dim * in_dim] as f16, needed by
+    // the tile packer's scale-fitting step (ts_compute_scales reads |core[idx]|
+    // at every non-zero trit). Stored as f16 (2 bytes/elem) to halve transport
+    // size vs f32; the precision loss is negligible for mean(|core|) per lane.
+    std::vector<uint16_t> core;
 
     int64_t n_elements() const { return out_dim * in_dim; }
     int64_t n_outliers() const { return (int64_t) outlier_cols.size(); }
 };
 
-// Full model in `.ttt` form: a collection of ternary tensors + the metadata
-// needed to reconstruct the GGUF header on the client side.
+// Full model in tile-neutral form: a collection of ternary tensors + the
+// metadata needed to reconstruct the GGUF header on the client side.
 struct ts_ternary_model {
     std::string arch;                 // e.g. "qwen35moe"
     std::map<std::string, std::string> hparams;  // KV metadata (n_layer, n_embd, n_vocab, ...)
     std::map<std::string, ts_ternary_tensor> tensors;  // keyed by GGUF tensor name
 
-    // Tokenizer + chat template travel as separate files in the .ttt directory,
-    // not in this struct. The writer/reader copy them verbatim.
+    // Tokenizer + chat template travel as separate files in the safetensors
+    // directory, not in this struct. The writer/reader copy them verbatim.
 };

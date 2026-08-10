@@ -3,26 +3,19 @@ import SwiftUI
 import SwiftData
 import TesseraCore
 
-/// iOS Studio shell: tab bar (Library / Playground / Runs / Settings) with
-/// first-run onboarding, a chat-history sheet, and a telemetry drawer.
+/// iOS Studio shell: tab bar (Library / Chat / Intelligence / Email /
+/// Settings) with first-run onboarding, a chat-history sheet, and a
+/// telemetry drawer. The single-agent Playground has been replaced by the
+/// unified Tessy + Sky chat (Part D wires the StateGraph-backed surface).
 struct ContentView: View {
     @AppStorage(TesseraSettingsKey.onboardingComplete) private var onboardingComplete = false
     @Environment(\.modelContext) private var modelContext
 
-    @State private var agentLoop = TesseraAgentLoop(
-        registry: TesseraToolRegistry.default,
-        approvalEngine: TesseraApprovalEngine(),
-        llmProvider: TesseraLLMProviderFactory.makeFromSettings(),
-        maxIterations: TesseraSettings.maxIterations,
-        tokenLimit: TesseraSettings.tokenBudget
-    )
     @State private var telemetryMonitor = TelemetryMonitor(
         bridge: TesseraEngineBridgeFactory.makeInferenceBridge()
     )
     @State private var telemetryExpanded = false
     @State private var showHistory = false
-    @State private var restoredMessages: [ChatMessage] = []
-    @State private var playgroundSession = UUID()
     @State private var exportItem: ExportItem?
     // Email surface state (Phase 5). Same
     // lazy-bootstrap pattern as the macOS
@@ -41,8 +34,13 @@ struct ContentView: View {
 
             NavigationStack {
                 VStack(spacing: 0) {
-                    PlaygroundView(agentLoop: agentLoop, restoredMessages: restoredMessages)
-                        .id(playgroundSession)
+                    // Part D: UnifiedChatSurface hosting the StateGraph-backed
+                    // UnifiedChatController (shared with the macOS dock).
+                    ContentUnavailableView(
+                        "Tessy + Sky",
+                        systemImage: "bubble.left.and.bubble.right",
+                        description: Text("The unified chat lands here.")
+                    )
                     TelemetryDrawer(monitor: telemetryMonitor, isExpanded: $telemetryExpanded)
                 }
                 .toolbar {
@@ -51,12 +49,17 @@ struct ContentView: View {
                     }
                 }
             }
-            .tabItem { Label("Playground", systemImage: "bubble.left.and.text.bubble.right") }
+            .tabItem { Label("Chat", systemImage: "bubble.left.and.text.bubble.right") }
 
             NavigationStack {
-                RunsView()
+                // Part F builds the cohesive Intelligence view.
+                ContentUnavailableView(
+                    "Intelligence",
+                    systemImage: "brain.head.profile",
+                    description: Text("AI configuration and machinery lands here.")
+                )
             }
-            .tabItem { Label("Runs", systemImage: "clock.arrow.circlepath") }
+            .tabItem { Label("Intelligence", systemImage: "brain.head.profile") }
 
             NavigationStack {
                 emailSurface.installIfNeeded()
@@ -92,18 +95,10 @@ struct ContentView: View {
         )) {
             OnboardingView()
         }
-        .onChange(of: agentLoop.isRunning) { _, running in
-            if running {
-                telemetryMonitor.start()
-            } else {
-                telemetryMonitor.stop()
-            }
-        }
     }
 
     private func restore(_ convo: Conversation) {
-        restoredMessages = ConversationStore.messages(for: convo.id, in: modelContext)
-        playgroundSession = UUID()
+        // Part D: hand the conversation off to the UnifiedChatController.
         showHistory = false
     }
 

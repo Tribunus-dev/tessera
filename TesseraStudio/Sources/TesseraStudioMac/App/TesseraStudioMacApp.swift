@@ -48,6 +48,11 @@ struct TesseraStudioMacApp: App {
         }
         .modelContainer(container)
         .defaultSize(width: 1200, height: 800)
+        // Tahoe unified title bar: content extends under the toolbar for the
+        // native 26 look while keeping the sidebar/inspector toggles intact.
+        // (.titleBar rather than .hiddenTitleBar to avoid the reported 26.0.1
+        // sidebar-toggle regression that removes the toolbar entirely.)
+        .windowStyle(.titleBar)
         .commands {
             // Add a Workflows-aware File > New Workflow AFTER the
             // system's New Window item. Replacing `.newItem` would

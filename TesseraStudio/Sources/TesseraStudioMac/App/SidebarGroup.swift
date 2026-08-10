@@ -1,20 +1,14 @@
 import SwiftUI
 
-/// Sidebar destinations for the Mac Studio shell. Extended from the original
-/// 6-destination flat list to a grouped layout that surfaces the productivity
-/// Materials + the dual-agent chat. Mirrors the Linux app's grouped nav
-/// (Work/Knowledge/Connect/Agents/System).
+/// Sidebar destinations for the Mac Studio shell. Productivity only — the
+/// chat lives in the persistent right-edge dock (see ContentView), and AI
+/// machinery is consolidated under Intelligence.
 enum Destination: String, CaseIterable, Identifiable {
     // Work
-    case playground = "Playground"
-    case dualAgent = "Tessy + Sky"
     case workflows = "Workflows"
     case tasks = "Tasks"
     case calendar = "Calendar"
     // Knowledge
-    case library = "Library"
-    case runs = "Runs"
-    case learning = "Learning"
     case notes = "Notes"
     case code = "Code"
     case docs = "Docs"
@@ -27,20 +21,15 @@ enum Destination: String, CaseIterable, Identifiable {
     // Agents
     case collab = "Tessy & Sky"
     // System
-    case capacity = "Capacity"
+    case intelligence = "Intelligence"
 
     var id: String { rawValue }
 
     var icon: String {
         switch self {
-        case .playground: "bubble.left.and.text.bubble.right"
-        case .dualAgent: "person.2.wave.2"
         case .workflows: "rectangle.connected.to.line.below"
         case .tasks: "checklist"
         case .calendar: "calendar"
-        case .library: "books.vertical"
-        case .runs: "clock.arrow.circlepath"
-        case .learning: "chart.bar.doc.horizontal"
         case .notes: "note.text"
         case .code: "curlybraces"
         case .docs: "doc.text"
@@ -50,7 +39,7 @@ enum Destination: String, CaseIterable, Identifiable {
         case .contacts: "person.crop.circle.badge.person"
         case .reminders: "bell.badge"
         case .collab: "bubble.left.and.exclamationmark.bubble.right"
-        case .capacity: "gauge.with.dots.needle.67percent"
+        case .intelligence: "brain.head.profile"
         }
     }
 }
@@ -68,11 +57,11 @@ enum SidebarGroup: String, CaseIterable, Identifiable {
 
     var destinations: [Destination] {
         switch self {
-        case .work: [.playground, .dualAgent, .workflows, .tasks, .calendar]
-        case .knowledge: [.library, .runs, .learning, .notes, .code, .docs, .sheets, .slides]
+        case .work: [.workflows, .tasks, .calendar]
+        case .knowledge: [.notes, .code, .docs, .sheets, .slides]
         case .connect: [.email, .contacts, .reminders]
         case .agents: [.collab]
-        case .system: [.capacity]
+        case .system: [.intelligence]
         }
     }
 

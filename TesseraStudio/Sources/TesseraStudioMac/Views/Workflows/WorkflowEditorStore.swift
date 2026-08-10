@@ -161,23 +161,24 @@ final class WorkflowEditorStore {
 
     // MARK: - Run lifecycle
 
-    /// Drive the executor. Builds a per-run context (silent
-    /// logger so the progress sheet is the only event surface),
-    /// runs to completion, and folds every event into
-    /// ``runPhase``. The terminal `.finished` event is parsed
-    /// exactly once into a ``WorkflowRunOutcome`` so the sheet
-    /// footer switches on a structured result rather than the
-    /// raw success flag.
+    /// Drive the run via the StateGraph execution plane. Builds a per-run
+    /// context (silent logger so the progress sheet is the only event
+    /// surface), converts the workflow to a StateGraph, and folds every
+    /// ``WorkflowEvent`` (translated by the bridge from StateGraph events)
+    /// into ``runPhase``. The terminal `.finished` event is parsed exactly
+    /// once into a ``WorkflowRunOutcome`` so the sheet footer switches on a
+    /// structured result rather than the raw success flag.
     func runWorkflow() {
         guard !runPhase.isRunning else { return }
         let context = WorkflowExecutionContext(
             fileSystem: LocalTesseraFileSystem(),
             logger: SilentWorkflowLogger()
         )
-        let executor = WorkflowExecutor(registry: registry)
         let snapshot = workflow
         let task = Task {
-            for await event in await executor.run(snapshot, context: context) {
+            let (_, events) = await WorkflowStateGraphBridge.run(
+                snapshot, registry: registry, context: context)
+            for await event in events {
                 if Task.isCancelled { return }
                 if let outcome = WorkflowRunOutcome(finishedEvent: event) {
                     self.finishRun(

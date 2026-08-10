@@ -718,6 +718,23 @@ class DFlashModel(Qwen3Model):
         if mask_token_id is not None:
             self.gguf_writer.add_mask_token_id(mask_token_id)
 
+    def generate_extra_tensors(self):
+        # DFlash/DSpark drafters share embeddings with the target model.
+        # The drafter checkpoint omits embed_tokens.weight; inject it from
+        # the target model's safetensors so the drafter GGUF is self-contained
+        # (the spec-decoding loader needs token_embd.weight to load standalone).
+        if self.target_model_dir is None:
+            return
+        from safetensors import safe_open
+        import glob
+        for st_path in sorted(glob.glob(str(self.target_model_dir / "*.safetensors"))):
+            with safe_open(st_path, framework="pt") as f:
+                for key in f.keys():
+                    if key.endswith("embed_tokens.weight"):
+                        logger.info(f"DFlash: injecting {key} from target model")
+                        yield "model.embed_tokens.weight", f.get_tensor(key)
+                        return
+
     def set_gguf_parameters(self):
         super().set_gguf_parameters()
 
@@ -761,7 +778,9 @@ class DSparkModel(DFlashModel):
     @classmethod
     def filter_tensors(cls, item: tuple[str, Callable[[], Tensor]]) -> tuple[str, Callable[[], Tensor]] | None:
         name, gen = item
-        if name.endswith(("embed_tokens.weight", "lm_head.weight")):
+        # Keep embed_tokens (needed for standalone loading), drop lm_head
+        # (the drafter doesn't need the output projection).
+        if name.endswith("lm_head.weight"):
             return None
         return super().filter_tensors((name, gen))
 

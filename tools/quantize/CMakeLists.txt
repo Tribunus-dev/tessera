@@ -131,6 +131,18 @@ add_library(${TARGET}
     # GGUFs + a calibration policy JSON, writes a single gemma4-assistant
     # GGUF. See tessera-unified-writer.h.
     tessera/tessera-unified-writer.cpp
+    # Tessera tile-neutral safetensors: tile-agnostic ternary artifact
+    # writer + reader. Serializes a ts_ternary_model to a standard HF
+    # directory (config.json + model.safetensors, optional tokenizer.json +
+    # chat_template.jinja). The reader supports both full-load and a
+    # one-tensor-at-a-time stream for the client-side packer. See
+    # tessera/ttt-writer.h and tessera/ttt-reader.h.
+    tessera/ttt-writer.cpp
+    tessera/ttt-reader.cpp
+    # Runtime GPU tile-geometry detection for the `pack` subcommand. Probes
+    # the Metal device family on macOS and maps it to T640 / T512 / T1024.
+    # See tessera/tile-detect.h.
+    tessera/tile-detect.cpp
     # Per-table write buffer: parallel producers -> single flusher -> DuckDB
     # bulk insert. Used for the unified tessera.duckdb schema (ga_evaluations,
     # tensor_stats, l3/l4/l5/ple summary tables).

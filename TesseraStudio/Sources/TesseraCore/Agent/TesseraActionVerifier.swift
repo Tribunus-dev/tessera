@@ -74,13 +74,16 @@ public struct TesseraActionVerifier: ActionVerifying {
     public static func ruleBasedRisk(for action: PendingAction) throws -> TesseraActionRisk {
         let name = action.toolName.lowercased()
 
-        let destructive = ["delete", "remove", "purge", "drop", "erase", "format"]
+        let destructive = ["delete", "remove", "purge", "drop", "erase", "format", "wipe"]
         if destructive.contains(where: { name.contains($0) }) { return .high }
 
-        let mutating = ["quantize", "calibrate", "evolve", "write", "execute", "run", "shell", "deploy", "export"]
+        let mutating = ["quantize", "calibrate", "evolve", "write", "execute", "run", "shell", "deploy", "export",
+                        "edit", "create", "upsert", "reply", "send", "draft", "complete", "reschedule",
+                        "insert", "set", "apply", "move", "rename", "archive", "snooze", "dismiss", "train"]
         if mutating.contains(where: { name.contains($0) }) { return .medium }
 
-        let readOnly = ["list", "inspect", "get", "read", "show", "describe"]
+        let readOnly = ["list", "inspect", "get", "read", "show", "describe",
+                        "search", "lookup", "query", "outline", "find", "view"]
         if readOnly.contains(where: { name.contains($0) }) { return .low }
 
         return .medium

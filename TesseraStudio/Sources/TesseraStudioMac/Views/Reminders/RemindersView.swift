@@ -25,10 +25,12 @@ public struct RemindersView: View {
 
     public init(
         store: any ReminderStoring,
-        scheduler: ReminderNotificationScheduler
+        scheduler: ReminderNotificationScheduler,
+        chatFocus: ChatFocusCoordinator? = nil
     ) {
         self.store = store
         self.scheduler = scheduler
+        self.chatFocus = chatFocus
         self._viewModel = StateObject(
             wrappedValue: ReminderListViewModel(store: store)
         )
@@ -36,6 +38,7 @@ public struct RemindersView: View {
 
     private let store: any ReminderStoring
     private let scheduler: ReminderNotificationScheduler
+    var chatFocus: ChatFocusCoordinator?
     @StateObject private var viewModel: ReminderListViewModel
 
     @State private var authorizationStatus: UNAuthorizationStatus = .notDetermined
@@ -59,6 +62,12 @@ public struct RemindersView: View {
             }
         }
         .navigationTitle("Reminders")
+        .onChange(of: viewModel.selectedID) { _, newID in
+            if let newID, let r = viewModel.reminders.first(where: { $0.id == newID }) {
+                chatFocus?.focusEntity(id: r.id, hint: "The user is viewing the reminder: \(r.title)")
+            }
+        }
+        .onDisappear { chatFocus?.clear() }
         .toolbar {
             ToolbarItem(placement: .secondaryAction) {
                 Button {

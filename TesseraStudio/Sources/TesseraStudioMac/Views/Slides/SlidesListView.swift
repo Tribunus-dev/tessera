@@ -14,9 +14,11 @@ import TesseraCore
 public struct SlidesListView: View {
 
     @ObservedObject public var viewModel: SlidesViewModel
+    var chatFocus: ChatFocusCoordinator?
 
-    public init(viewModel: SlidesViewModel) {
+    public init(viewModel: SlidesViewModel, chatFocus: ChatFocusCoordinator? = nil) {
         self.viewModel = viewModel
+        self.chatFocus = chatFocus
     }
 
     public var body: some View {
@@ -39,7 +41,11 @@ public struct SlidesListView: View {
         }
         .onChange(of: viewModel.filter) { _, _ in viewModel.applyFilter() }
         .onChange(of: viewModel.activeTag) { _, _ in viewModel.applyFilter() }
-        .onChange(of: viewModel.selectedDeckID) { _, new in viewModel.select(new) }
+        .onChange(of: viewModel.selectedDeckID) { _, new in
+            viewModel.select(new)
+            publishFocus(id: new)
+        }
+        .onDisappear { chatFocus?.clear() }
     }
 
     // MARK: - Sidebar
@@ -223,6 +229,24 @@ public struct SlidesListView: View {
             let deck = try await viewModel.createDeck(title: "Untitled")
             viewModel.select(deck.id)
         } catch {}
+    }
+
+    /// Push the focused deck's document context to the chat dock. Slide decks
+    /// are `entityType="document", subtype="slide"` with a `DocumentAST` body.
+    private func publishFocus(id: UUID?) {
+        guard let chatFocus, let id else { return }
+        let title = viewModel.rows.first(where: { $0.id == id })?.title ?? "Slide deck"
+        let dataLayer = viewModel.dataLayer
+        chatFocus.focusDocument(
+            id: id,
+            title: title,
+            dataLayer: dataLayer,
+            promptSection: { [dataLayer] in
+                let ds = DocumentStore(dataLayer: dataLayer)
+                guard let ast = try? await ds.loadDocument(id: id) else { return "" }
+                return "<slides>\n\(ast.plainText())\n</slides>"
+            }
+        )
     }
 }
 

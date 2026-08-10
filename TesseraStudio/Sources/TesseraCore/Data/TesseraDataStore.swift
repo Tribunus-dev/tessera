@@ -891,7 +891,10 @@ public actor TesseraDataStore {
             let ra = row.makeRandomAccess()
             return try ra[0].decode(String.self)
         }
-        return "[]"
+        // Fresh document: no row yet. Return the empty wrapper shape so
+        // DocumentStore decodes it as ChatQueue.empty on the happy path
+        // (a bare "[]" fails to decode as the {"items":[]} wrapper).
+        return "{\"items\":[]}"
     }
 
     /// Upsert the per-document chat queue. The `itemsJSON` is
@@ -904,6 +907,76 @@ public actor TesseraDataStore {
             ON CONFLICT (document_id) DO UPDATE
                 SET items = EXCLUDED.items,
                     updated_at = now()
+            """
+        _ = try await client.query(query, logger: logger)
+    }
+
+    // MARK: - Graph checkpoints
+
+    /// Insert a graph checkpoint row. The `stateJSON` is the
+    /// JSON-serialized `GraphState` (a `[String: JSONValue]` object).
+    public func saveGraphCheckpoint(id: UUID, threadId: String, step: Int, nodeId: String, stateJSON: String) async throws {
+        guard let client else { throw TesseraDataStoreError.closed }
+        let query: PostgresQuery = """
+            INSERT INTO graph_checkpoints (id, thread_id, step, node_id, state, created_at)
+            VALUES (\(id), \(threadId), \(step), \(nodeId), \(stateJSON)::jsonb, now())
+            ON CONFLICT (id) DO NOTHING
+            """
+        _ = try await client.query(query, logger: logger)
+    }
+
+    /// Load a single checkpoint by id. Returns `(threadId, step, nodeId,
+    /// stateJSON, createdAt)` or nil if the row is missing.
+    public func loadGraphCheckpoint(id: UUID) async throws -> (threadId: String, step: Int, nodeId: String, stateJSON: String, createdAt: Date)? {
+        guard let client else { throw TesseraDataStoreError.closed }
+        let query: PostgresQuery = """
+            SELECT thread_id, step, node_id, state::text, created_at
+              FROM graph_checkpoints
+             WHERE id = \(id)
+            """
+        let rows = try await client.query(query, logger: logger)
+        for try await row in rows {
+            let ra = row.makeRandomAccess()
+            let threadId = try ra[0].decode(String.self)
+            let step = try ra[1].decode(Int.self)
+            let nodeId = try ra[2].decode(String.self)
+            let stateJSON = try ra[3].decode(String.self)
+            let createdAt = try ra[4].decode(Date.self)
+            return (threadId, step, nodeId, stateJSON, createdAt)
+        }
+        return nil
+    }
+
+    /// List checkpoints for a thread in step order. Each row is
+    /// `(id, step, nodeId, stateJSON, createdAt)`.
+    public func listGraphCheckpoints(threadId: String) async throws -> [(id: UUID, step: Int, nodeId: String, stateJSON: String, createdAt: Date)] {
+        guard let client else { throw TesseraDataStoreError.closed }
+        let query: PostgresQuery = """
+            SELECT id, step, node_id, state::text, created_at
+              FROM graph_checkpoints
+             WHERE thread_id = \(threadId)
+             ORDER BY step ASC
+            """
+        var out: [(id: UUID, step: Int, nodeId: String, stateJSON: String, createdAt: Date)] = []
+        let rows = try await client.query(query, logger: logger)
+        for try await row in rows {
+            let ra = row.makeRandomAccess()
+            out.append((
+                id: try ra[0].decode(UUID.self),
+                step: try ra[1].decode(Int.self),
+                nodeId: try ra[2].decode(String.self),
+                stateJSON: try ra[3].decode(String.self),
+                createdAt: try ra[4].decode(Date.self)
+            ))
+        }
+        return out
+    }
+
+    /// Delete every checkpoint for a thread.
+    public func purgeGraphCheckpoints(threadId: String) async throws {
+        guard let client else { throw TesseraDataStoreError.closed }
+        let query: PostgresQuery = """
+            DELETE FROM graph_checkpoints WHERE thread_id = \(threadId)
             """
         _ = try await client.query(query, logger: logger)
     }

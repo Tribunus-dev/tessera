@@ -22,9 +22,11 @@ import TesseraCore
 public struct CalendarSurfaceView: View {
 
     @ObservedObject public var model: CalendarViewModel
+    var chatFocus: ChatFocusCoordinator?
 
-    public init(model: CalendarViewModel) {
+    public init(model: CalendarViewModel, chatFocus: ChatFocusCoordinator? = nil) {
         self.model = model
+        self.chatFocus = chatFocus
     }
 
     public var body: some View {
@@ -39,6 +41,12 @@ public struct CalendarSurfaceView: View {
                 .navigationSplitViewColumnWidth(min: 280, ideal: 320)
         }
         .navigationTitle("Calendar")
+        .onChange(of: model.selectedEventID) { _, newID in
+            if let newID, let e = model.events.first(where: { $0.id == newID }) {
+                chatFocus?.focusEntity(id: e.id, hint: "The user is viewing the calendar event: \(e.title)")
+            }
+        }
+        .onDisappear { chatFocus?.clear() }
         .task { await model.loadEvents() }
     }
 
