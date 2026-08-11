@@ -132,7 +132,7 @@ int32_t cllama_detokenize(const cllama_engine *eng,
                           int32_t out_len);
 
 // ---------------------------------------------------------------------------
-// Continuous-batching surface (Part A)
+// Continuous-batching surface
 //
 // These entry points expose libllama's multi-sequence batch + per-sequence KV
 // cache management so a Swift scheduler (BatchScheduler) can multiplex many
@@ -140,32 +140,22 @@ int32_t cllama_detokenize(const cllama_engine *eng,
 //
 // Availability is runtime-checked: cllama_is_batch_available() reports
 // whether the underlying libllama exports the batch + memory symbols. When
-// false, batch_decode returns -2 and the slot lifecycle calls are no-ops; the
-// single-sequence generate/generate_spec paths are unaffected.
+// false, batch_decode_ext returns -2 and the slot lifecycle calls are no-ops;
+// the single-sequence generate/generate_spec paths are unaffected.
 // ---------------------------------------------------------------------------
 
 // Non-zero when the batch + memory symbol set resolved at load time.
 int cllama_is_batch_available(void);
 
-// Decode one token for each of `n_slots` ready sequences in a single
-// llama_decode call. Each slot i contributes (seq_ids[i], tokens[i],
-// positions[i]). After the call, per-slot logits are written to logits_out:
-// slot i's row starts at (float*)((char*)logits_out + i * logits_stride_bytes).
-// Set logits_stride_bytes = 0 to use n_vocab * sizeof(float) (packed).
-// Returns the number of slots decoded on success, -2 if the batch surface is
+// Decode a mixed prefill+decode batch in a single llama_decode call. Each
+// token i gets (tokens[i], seq_ids[i], positions[i], logits_flags[i]).
+// Intermediate prefill tokens set logits_flags[i]=0 (no output) so the
+// forward pass skips the LM-head matmul for them; only the last prefill
+// token of each slot and every decode token set logits_flags[i]=1.
+// Logits are read back via cllama_get_logits_ith(eng, i) for the batch
+// positions that had logits_flags[i]=1. Returns the llama_decode return
+// code (0=success, 1=no KV slot, 2=aborted), -2 if the batch surface is
 // unavailable, -1 on other errors.
-int32_t cllama_engine_batch_decode(cllama_engine *eng,
-                                   const int32_t *seq_ids,
-                                   const int32_t *tokens,
-                                   const int32_t *positions,
-                                   int32_t n_slots,
-                                   float *logits_out,
-                                   int32_t logits_stride_bytes);
-
-// Decode a batch with per-token logits flags (for mixed prefill+decode).
-// The caller reads logits via cllama_get_logits_ith for positions that had
-// logits_flags[i] != 0. Returns the llama_decode return code (0=success,
-// 1=no KV slot, 2=aborted), -2 unsupported, -1 error.
 int32_t cllama_engine_batch_decode_ext(cllama_engine *eng,
                                        const int32_t *tokens,
                                        const int32_t *seq_ids,
@@ -184,13 +174,16 @@ void cllama_slot_copy(cllama_engine *eng, int32_t src, int32_t dst);
 // decisions). -1 if the sequence is empty.
 int32_t cllama_slot_pos_max(cllama_engine *eng, int32_t seq_id);
 
-// Tokenize a prompt string into token ids for prefill. Returns the count
-// written (or negative required size if the buffer is too small).
-int32_t cllama_engine_tokenize(const cllama_engine *eng,
-                               const char *text,
-                               int32_t add_bos,
-                               int32_t *out_tokens,
-                               int32_t n_out);
+// Tokenize a prompt string into a freshly malloc'd buffer. Returns the token
+// count and writes the buffer pointer to *out_tokens (caller frees with
+// free()). add_bos and parse_special match the single-sequence generate
+// path, so the batched prefill and the single-sequence path tokenize prompts
+// identically. Returns -1 on error.
+int32_t cllama_engine_tokenize_alloc(const cllama_engine *eng,
+                                     const char *text,
+                                     int32_t add_bos,
+                                     int32_t parse_special,
+                                     int32_t **out_tokens);
 
 // Non-zero if token_id is an end-of-generation token.
 int cllama_token_is_eog(const cllama_engine *eng, int32_t token_id);
@@ -198,10 +191,18 @@ int cllama_token_is_eog(const cllama_engine *eng, int32_t token_id);
 // The logical maximum batch size (n_batch) for this engine's context.
 int32_t cllama_engine_n_batch(const cllama_engine *eng);
 
-// Copy the logits row for batch position i (0-indexed within the last
-// batch_decode call) into out_buf (n_vocab floats). Safe accessor for mixed
-// prefill+decode batches where not every token requested logits. Returns 0
-// on success, -1 if unavailable or out of range.
+// The context size in tokens (n_ctx). The scheduler uses this to reject
+// up-front any request whose prompt + maxTokens would not fit; otherwise the
+// prefill succeeds but every subsequent decode returns 1 (no KV slot).
+int32_t cllama_engine_n_ctx(const cllama_engine *eng);
+
+// Copy the logits row for batch position i into out_buf (n_vocab floats).
+// `i` is the BATCH position from the last cllama_engine_batch_decode_ext
+// call (0-indexed within the submitted batch), NOT an index into the flat
+// logits buffer. For batch positions that had logits_flags[i]=0, returns
+// -1. This is the safe accessor for mixed prefill+decode batches; using
+// the flat llama_get_logits buffer with `i * n_vocab` is wrong whenever
+// any token in the batch has logits_flags=0.
 int32_t cllama_get_logits_ith(const cllama_engine *eng,
                               int32_t i,
                               float *out_buf,

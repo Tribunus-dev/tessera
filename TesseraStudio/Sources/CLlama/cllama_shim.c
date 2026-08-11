@@ -82,7 +82,7 @@ static struct {
     typeof(llama_synchronize)                * synchronize;
     typeof(llama_get_logits)                 * get_logits;
     typeof(llama_get_logits_ith)             * get_logits_ith;
-    typeof(llama_n_batch)                    * n_batch_ctx;
+    typeof(llama_n_ctx)                      * n_ctx;
 } g_llama;
 
 static void *g_handle = NULL;
@@ -207,7 +207,7 @@ int cllama_load_library(const char *dylib_path_override) {
     RESOLVE_OPTIONAL(synchronize,        "llama_synchronize");
     RESOLVE_OPTIONAL(get_logits,         "llama_get_logits");
     RESOLVE_OPTIONAL(get_logits_ith,     "llama_get_logits_ith");
-    RESOLVE_OPTIONAL(n_batch_ctx,        "llama_n_batch");
+    RESOLVE_OPTIONAL(n_ctx,              "llama_n_ctx");
 
     if (!g_backend_initialized) {
         g_llama.backend_init();
@@ -435,13 +435,19 @@ cllama_engine *cllama_engine_load(const char *model_path,
     return eng;
 }
 
-// Tokenize `text` into a freshly malloc'd buffer. Returns the token count and
-// sets *out_tokens (caller frees), or returns -1 on error.
-static int32_t tokenize_alloc(const struct llama_vocab *vocab,
-                              const char *text,
-                              llama_token **out_tokens) {
+// Single tokenize implementation. Both cllama_engine_generate (single-sequence
+// path) and the public cllama_engine_tokenize_alloc (batched prefill path)
+// go through this helper, so parse_special / add_bos are the same for both.
+// Returns the token count and sets *out_tokens to a malloc'd buffer (caller
+// frees with free()). Returns -1 on error.
+static int32_t tokenize_into(const struct llama_vocab *vocab,
+                             const char *text,
+                             bool add_bos,
+                             bool parse_special,
+                             llama_token **out_tokens) {
     const int32_t text_len = (int32_t)strlen(text);
-    const int32_t n = -g_llama.tokenize(vocab, text, text_len, NULL, 0, true, true);
+    const int32_t n = -g_llama.tokenize(vocab, text, text_len, NULL, 0,
+                                        add_bos, parse_special);
     if (n <= 0) {
         set_error("cllama: failed to size prompt tokens");
         return -1;
@@ -451,7 +457,8 @@ static int32_t tokenize_alloc(const struct llama_vocab *vocab,
         set_error("cllama: out of memory tokenizing");
         return -1;
     }
-    if (g_llama.tokenize(vocab, text, text_len, tokens, n, true, true) < 0) {
+    if (g_llama.tokenize(vocab, text, text_len, tokens, n,
+                         add_bos, parse_special) < 0) {
         set_error("cllama: failed to tokenize prompt");
         free(tokens);
         return -1;
@@ -471,7 +478,10 @@ int32_t cllama_engine_generate(cllama_engine *eng,
     }
 
     llama_token *prompt_tokens = NULL;
-    const int32_t n_prompt = tokenize_alloc(eng->vocab, prompt, &prompt_tokens);
+    const int32_t n_prompt = tokenize_into(eng->vocab, prompt,
+                                          /*add_bos=*/true,
+                                          /*parse_special=*/true,
+                                          &prompt_tokens);
     if (n_prompt < 0) {
         return -1;
     }
@@ -567,94 +577,6 @@ int cllama_is_batch_available(void) {
         && g_llama.decode != NULL;
 }
 
-// Decode one token for each of `n_slots` ready sequences in a single
-// llama_decode call. Each slot contributes (seq_id, token, position). After
-// the call, per-slot logits are written to `logits_out` at
-// `logits_out + slot * logits_stride`. Returns the number of slots decoded
-// (== n_slots) on success, -2 if the batch surface is unavailable, -1 on
-// other errors. The caller samples each slot's logits row to pick the next
-// token.
-int32_t cllama_engine_batch_decode(cllama_engine *eng,
-                                   const int32_t *seq_ids,
-                                   const int32_t *tokens,
-                                   const int32_t *positions,
-                                   int32_t n_slots,
-                                   float *logits_out,
-                                   int32_t logits_stride) {
-    if (!cllama_is_available()) {
-        set_error("cllama: library not loaded");
-        return -1;
-    }
-    if (eng == NULL || eng->ctx == NULL) {
-        set_error("cllama: null engine");
-        return -1;
-    }
-    if (!cllama_is_batch_available()) {
-        set_error("cllama: batch surface not available in this libllama build");
-        return -2;
-    }
-    if (n_slots <= 0 || seq_ids == NULL || tokens == NULL || positions == NULL) {
-        set_error("cllama: batch_decode invalid slot arrays");
-        return -1;
-    }
-
-    // Cap on slots per batch: n_batch is the logical max tokens per decode.
-    const int32_t batch_limit = (int32_t) g_llama.n_batch(eng->ctx);
-    const int32_t n = n_slots > batch_limit ? batch_limit : n_slots;
-
-    // Build the batch by filling the struct fields directly (this llama.h has
-    // no llama_batch_add helper). llama_batch_init(n_tokens, embd, n_seq_max)
-    // allocates the per-token arrays; we populate them per slot.
-    struct llama_batch batch = g_llama.batch_init(n, 0, 1);
-    for (int32_t i = 0; i < n; ++i) {
-        batch.token[i]    = tokens[i];
-        batch.pos[i]      = positions[i];
-        batch.n_seq_id[i] = 1;
-        batch.seq_id[i][0] = seq_ids[i];
-        batch.logits[i]   = 1;   // request logits for every slot
-    }
-    batch.n_tokens = n;
-
-    const int32_t rc = g_llama.decode(eng->ctx, batch);
-    g_llama.batch_free(batch);
-    if (rc != 0) {
-        set_error("cllama: batch decode failed");
-        return -1;
-    }
-
-    // Wait for any async compute to land before we read logits.
-    if (g_llama.synchronize != NULL) {
-        g_llama.synchronize(eng->ctx);
-    }
-
-    // llama_decode populates logits for every token where logits[i] != 0.
-    // We set logits=true above, so all n rows are available. The logit row
-    // for slot i starts at logits + i * n_vocab. n_vocab = vocab size.
-    const int32_t n_vocab = g_llama.vocab_n_tokens(eng->vocab);
-    if (n_vocab <= 0) {
-        set_error("cllama: invalid vocab size");
-        return -1;
-    }
-    const float *logits = g_llama.get_logits(eng->ctx);
-    if (logits == NULL) {
-        set_error("cllama: no logits after decode");
-        return -1;
-    }
-    // logits_stride_bytes is the byte stride between slot rows in the caller's
-    // buffer. 0 means packed (n_vocab * sizeof(float)).
-    const size_t stride = logits_stride > 0
-        ? (size_t)logits_stride
-        : (size_t)n_vocab * sizeof(float);
-    for (int32_t i = 0; i < n; ++i) {
-        memcpy((uint8_t *)logits_out + (size_t)i * stride,
-               logits + (size_t)i * n_vocab,
-               (size_t)n_vocab * sizeof(float));
-    }
-
-    g_error[0] = '\0';
-    return n;
-}
-
 // Clear (evict) a sequence's KV cells. After this the slot is empty and can
 // be reused for prefill.
 void cllama_slot_clear(cllama_engine *eng, int32_t seq_id) {
@@ -714,8 +636,8 @@ int32_t cllama_engine_batch_decode_ext(cllama_engine *eng,
         return -1;
     }
 
-    const int32_t batch_limit = (g_llama.n_batch_ctx != NULL)
-        ? (int32_t) g_llama.n_batch_ctx(eng->ctx) : 512;
+    const int32_t batch_limit = (g_llama.n_batch != NULL)
+        ? (int32_t) g_llama.n_batch(eng->ctx) : 512;
     const int32_t nn = n > batch_limit ? batch_limit : n;
 
     struct llama_batch batch = g_llama.batch_init(nn, 0, 1);
@@ -739,27 +661,25 @@ int32_t cllama_engine_batch_decode_ext(cllama_engine *eng,
     return rc;
 }
 
-// Tokenize a prompt string into token ids. Writes up to n_out tokens into
-// out_tokens; returns the number written, or the negative required count if
-// the buffer is too small, or -1 on error. add_bos controls whether a
-// beginning-of-sequence token is prepended.
-int32_t cllama_engine_tokenize(const cllama_engine *eng,
-                               const char *text,
-                               int32_t add_bos,
-                               int32_t *out_tokens,
-                               int32_t n_out) {
-    if (!cllama_is_available() || eng == NULL || eng->vocab == NULL || text == NULL || out_tokens == NULL) {
+// Tokenize a prompt string into a freshly malloc'd buffer. Returns the token
+// count and writes the buffer pointer to *out_tokens (caller frees with
+// free()). Same parse_special / add_bos semantics as the single-sequence
+// generate path so the batched prefill and the single-sequence path tokenize
+// prompts identically. Returns -1 on error.
+int32_t cllama_engine_tokenize_alloc(const cllama_engine *eng,
+                                     const char *text,
+                                     int32_t add_bos,
+                                     int32_t parse_special,
+                                     int32_t **out_tokens) {
+    if (!cllama_is_available() || eng == NULL || eng->vocab == NULL
+        || text == NULL || out_tokens == NULL) {
         set_error("cllama: tokenize invalid args");
         return -1;
     }
-    int32_t n = g_llama.tokenize(eng->vocab, text, (int32_t)strlen(text),
-                                 out_tokens, n_out, add_bos, false);
-    if (n < 0) {
-        // Negative return = required size (llama_tokenize convention).
-        g_error[0] = '\0';
-        return n;
-    }
-    g_error[0] = '\0';
+    const int32_t n = tokenize_into(eng->vocab, text,
+                                    add_bos != 0,
+                                    parse_special != 0,
+                                    (llama_token **)out_tokens);
     return n;
 }
 
@@ -774,8 +694,18 @@ int cllama_token_is_eog(const cllama_engine *eng, int32_t token_id) {
 // all slots) fit in a single llama_decode call.
 int32_t cllama_engine_n_batch(const cllama_engine *eng) {
     if (!cllama_is_available() || eng == NULL || eng->ctx == NULL) return 512;
-    if (g_llama.n_batch_ctx == NULL) return 512;
-    return (int32_t) g_llama.n_batch_ctx(eng->ctx);
+    if (g_llama.n_batch == NULL) return 512;
+    return (int32_t) g_llama.n_batch(eng->ctx);
+}
+
+// The context size in tokens (n_ctx). The scheduler uses this to reject
+// up-front any request whose prompt + maxTokens would not fit; otherwise the
+// prefill succeeds but every subsequent decode returns 1 (no KV slot) and the
+// slot is wedged.
+int32_t cllama_engine_n_ctx(const cllama_engine *eng) {
+    if (!cllama_is_available() || eng == NULL || eng->ctx == NULL) return 0;
+    if (g_llama.n_ctx == NULL) return 0;
+    return (int32_t) g_llama.n_ctx(eng->ctx);
 }
 
 // Copy the logits row for batch position `i` (0-indexed within the last
@@ -940,19 +870,6 @@ int32_t cllama_detokenize(const cllama_engine *eng,
 // Continuous-batching stubs (Part A) — no-ops when built without headers.
 int cllama_is_batch_available(void) { return 0; }
 
-int32_t cllama_engine_batch_decode(cllama_engine *eng,
-                                   const int32_t *seq_ids,
-                                   const int32_t *tokens,
-                                   const int32_t *positions,
-                                   int32_t n_slots,
-                                   float *logits_out,
-                                   int32_t logits_stride_bytes) {
-    (void)eng; (void)seq_ids; (void)tokens; (void)positions;
-    (void)n_slots; (void)logits_out; (void)logits_stride_bytes;
-    set_error("cllama: built without llama.cpp headers (CLLAMA_NO_HEADERS)");
-    return -2;
-}
-
 int32_t cllama_engine_batch_decode_ext(cllama_engine *eng,
                                        const int32_t *tokens,
                                        const int32_t *seq_ids,
@@ -968,13 +885,15 @@ void cllama_slot_clear(cllama_engine *eng, int32_t seq_id) { (void)eng; (void)se
 void cllama_slot_copy(cllama_engine *eng, int32_t src, int32_t dst) { (void)eng; (void)src; (void)dst; }
 int32_t cllama_slot_pos_max(cllama_engine *eng, int32_t seq_id) { (void)eng; (void)seq_id; return -1; }
 
-int32_t cllama_engine_tokenize(const cllama_engine *eng, const char *text,
-                               int32_t add_bos, int32_t *out_tokens, int32_t n_out) {
-    (void)eng; (void)text; (void)add_bos; (void)out_tokens; (void)n_out;
+int32_t cllama_engine_tokenize_alloc(const cllama_engine *eng, const char *text,
+                                     int32_t add_bos, int32_t parse_special,
+                                     int32_t **out_tokens) {
+    (void)eng; (void)text; (void)add_bos; (void)parse_special; (void)out_tokens;
     return -1;
 }
 int cllama_token_is_eog(const cllama_engine *eng, int32_t token_id) { (void)eng; (void)token_id; return 0; }
 int32_t cllama_engine_n_batch(const cllama_engine *eng) { (void)eng; return 512; }
+int32_t cllama_engine_n_ctx(const cllama_engine *eng) { (void)eng; return 0; }
 int32_t cllama_get_logits_ith(const cllama_engine *eng, int32_t i, float *out_buf, int32_t n_vocab) {
     (void)eng; (void)i; (void)out_buf; (void)n_vocab; return -1;
 }
