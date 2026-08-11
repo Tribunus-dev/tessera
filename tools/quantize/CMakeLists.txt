@@ -112,6 +112,14 @@ add_library(${TARGET}
     tessera/tessera-dflash-train-data.cpp
     # drafter training pipeline: offline trunk-feature capture file format
     tessera/tessera-features.cpp
+    # NOTE: the agentic training data flywheel (see
+    # docs/agentic-training-data-flywheel-design.md) is built as a
+    # standalone sub-library at the bottom of this file. The traj
+    # modules are intentionally NOT linked into llama-quantize-impl
+    # to keep the impl target's build graph small (no DuckDB
+    # amalgamation, no ggml-ane.h dependency). The traj tools are
+    # small C++17 binaries with nlohmann/json + the existing
+    # tessera-anonymizer / tessera-scrub headers.
     # multimodal
     tessera/tessera-mm-imatrix.cpp
     tessera/tessera-mm-awq.cpp
@@ -598,4 +606,127 @@ if(LLAMA_BUILD_TESTS)
     endif()
     target_compile_features(${TARGET} PRIVATE cxx_std_17)
     add_test(NAME ${TARGET} COMMAND ${TARGET})
+
+    # -----------------------------------------------------------------
+    # Agentic training data flywheel (W1+W2+W3, partial).
+    # See docs/agentic-training-data-flywheel-design.md.
+    #
+    # Built as a STANDALONE sub-library + tools so it does not pull
+    # in the duckdb amalgamation, llama, or ggml-ane.h. The traj
+    # modules are pure C++17 with nlohmann/json + the existing
+    # tessera-anonymizer / tessera-scrub headers. The train-agent
+    # skeleton links llama-quantize-impl only for ggml-opt and is
+    # gated by the existing tools check.
+    # -----------------------------------------------------------------
+
+    # Locate the nlohmann/json header (we need it for the schema
+    # model + record IO). The llama.cpp vendored copy under
+    # common/ is the same one the rest of the project uses; the
+    # tools/quantize/tessera/* sources include it via the
+    # target_include_directories on the impl target, so we just
+    # need to make sure our traj targets get the include path.
+    find_path(NLOHMANN_JSON_INCLUDE_DIR nlohmann/json.hpp
+              PATHS
+                  ${PROJECT_SOURCE_DIR}/common
+                  ${PROJECT_SOURCE_DIR}/vendor
+                  /opt/homebrew/include
+                  /usr/local/include)
+
+    set(TESSERA_TRAJ_SOURCES
+        tessera/traj/tessera-trajectory.cpp
+        tessera/traj/tessera-traj-dedup.cpp)
+
+    add_library(tessera-traj-impl STATIC ${TESSERA_TRAJ_SOURCES})
+    target_include_directories(tessera-traj-impl PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/tessera
+        ${CMAKE_CURRENT_SOURCE_DIR}/tessera/traj)
+    if(NLOHMANN_JSON_INCLUDE_DIR)
+        target_include_directories(tessera-traj-impl PUBLIC
+            ${NLOHMANN_JSON_INCLUDE_DIR})
+    endif()
+    target_compile_features(tessera-traj-impl PUBLIC cxx_std_17)
+
+    # tessera-traj-validate: schema gate CLI.
+    set(TARGET tessera-traj-validate)
+    add_executable(${TARGET} tessera/traj/tessera-traj-validate.cpp)
+    target_link_libraries(${TARGET} PRIVATE tessera-traj-impl)
+    target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
+    # tessera-traj-cli: capture CLI.
+    set(TARGET tessera-traj-cli)
+    add_executable(${TARGET} tessera/traj/tessera-traj-cli.cpp)
+    target_link_libraries(${TARGET} PRIVATE tessera-traj-impl)
+    target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
+    # tessera-traj-dedup: three-tier dedup CLI.
+    set(TARGET tessera-traj-dedup)
+    add_executable(${TARGET} tessera/traj/tessera-traj-dedup-cli.cpp)
+    target_link_libraries(${TARGET} PRIVATE tessera-traj-impl)
+    target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
+    # tessera-traj-filter: apply OT-Agent filters.
+    set(TARGET tessera-traj-filter)
+    add_executable(${TARGET} tessera/traj/tessera-traj-filter.cpp)
+    target_link_libraries(${TARGET} PRIVATE tessera-traj-impl)
+    target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
+    # tessera-traj-split: deterministic 95/5 train/eval split.
+    set(TARGET tessera-traj-split)
+    add_executable(${TARGET} tessera/traj/tessera-traj-split.cpp)
+    target_link_libraries(${TARGET} PRIVATE tessera-traj-impl)
+    target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
+    # tessera-traj-manifest: emit / verify a content-addressed manifest.
+    set(TARGET tessera-traj-manifest)
+    add_executable(${TARGET} tessera/traj/tessera-traj-manifest.cpp)
+    target_link_libraries(${TARGET} PRIVATE tessera-traj-impl)
+    target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
+    # Test executables. These run fast and exit 0 on success.
+    set(TARGET test-traj-validate)
+    add_executable(${TARGET} tessera/traj/test_traj_validate.cpp)
+    target_link_libraries(${TARGET} PRIVATE tessera-traj-impl)
+    target_compile_features(${TARGET} PRIVATE cxx_std_17)
+    add_test(NAME ${TARGET} COMMAND ${TARGET})
+
+    set(TARGET test-traj-cli-openhands)
+    add_executable(${TARGET} tessera/traj/test_traj_cli_openhands.cpp)
+    target_link_libraries(${TARGET} PRIVATE tessera-traj-impl)
+    target_compile_features(${TARGET} PRIVATE cxx_std_17)
+    add_test(NAME ${TARGET} COMMAND ${TARGET})
+
+    set(TARGET test-traj-dedup)
+    add_executable(${TARGET} tessera/traj/test_traj_dedup.cpp)
+    target_link_libraries(${TARGET} PRIVATE tessera-traj-impl)
+    target_compile_features(${TARGET} PRIVATE cxx_std_17)
+    add_test(NAME ${TARGET} COMMAND ${TARGET})
+
+    set(TARGET test-traj-pipeline)
+    add_executable(${TARGET} tessera/traj/test_traj_pipeline.cpp)
+    target_link_libraries(${TARGET} PRIVATE tessera-traj-impl)
+    target_compile_features(${TARGET} PRIVATE cxx_std_17)
+    add_test(NAME ${TARGET} COMMAND ${TARGET})
+
+    # tessera-traj-scrub: ingest-time PII/secret scrub. Depends on
+    # the existing tessera-anonymizer + tessera-scrub .cpp files in
+    # the parent dir. Build a small object library for them to keep
+    # the dep surface flat (no DuckDB, no llama).
+    set(TESSERA_TRAJ_SCRUB_SOURCES
+        tessera/tessera-anonymizer.cpp
+        tessera/tessera-scrub.cpp
+        tessera/traj/tessera-traj-scrub.cpp)
+    add_library(tessera-traj-scrub-impl STATIC ${TESSERA_TRAJ_SCRUB_SOURCES})
+    target_include_directories(tessera-traj-scrub-impl PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/tessera
+        ${CMAKE_CURRENT_SOURCE_DIR}/tessera/traj)
+    if(NLOHMANN_JSON_INCLUDE_DIR)
+        target_include_directories(tessera-traj-scrub-impl PUBLIC
+            ${NLOHMANN_JSON_INCLUDE_DIR})
+    endif()
+    target_compile_features(tessera-traj-scrub-impl PUBLIC cxx_std_17)
+
+    set(TARGET tessera-traj-scrub)
+    add_executable(${TARGET} tessera/traj/tessera-traj-scrub.cpp)
+    target_link_libraries(${TARGET} PRIVATE tessera-traj-scrub-impl)
+    target_compile_features(${TARGET} PRIVATE cxx_std_17)
 endif()
