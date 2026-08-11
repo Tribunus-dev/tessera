@@ -1916,7 +1916,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
     ).set_env("LLAMA_ARG_MAX_REQUESTS").set_examples({LLAMA_EXAMPLE_SERVER}));
     add_opt(common_arg(
         {"--prefill-chunk-size"}, "N",
-        string_format("shared per-iteration prefill cap in tokens; prevents long prompts from stalling decode (default: %d, 0 = disabled, vLLM V1 default is 8192)",
+        string_format("shared per-iteration prefill cap in tokens; prevents long prompts from stalling decode (default: %d, 0 = disabled, effective value is clamped to min(user, n_ubatch * n_parallel, 8192))",
                       params.prefill_chunk_size),
         [](common_params & params, int value) {
             params.prefill_chunk_size = value;

@@ -875,7 +875,7 @@ struct common_params {
 
     // admission control + prefill pacing (server). Default 0 = disabled.
     int32_t max_admitted_requests = 0;
-    int32_t prefill_chunk_size    = 0;
+    int32_t prefill_chunk_size    = 2048; // 0 disables; clamped at configure to min(n_ubatch * n_parallel, 8192)
     // OpenTelemetry span export (server).
     bool        otel_enabled      = false;
     std::string otel_endpoint;

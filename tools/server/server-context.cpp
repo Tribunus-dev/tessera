@@ -1638,7 +1638,15 @@ private:
         }
         {
             tessera_prefill::policy_config pcfg;
-            pcfg.iteration_cap_tokens = params_base.prefill_chunk_size;
+            // Clamp the user-supplied cap to min(user, n_ubatch * n_parallel, 8192).
+            // A cap larger than the physical batch can ever hold is a no-op (the
+            // batch headroom clamp in reset() would catch it anyway, but the log
+            // would mislead); a cap of 0 stays 0 and disables chunked prefill.
+            const int32_t cap_user = params_base.prefill_chunk_size;
+            const int32_t cap_max  = std::min<int32_t>(
+                    params_base.n_ubatch * std::max<int32_t>(1, params_base.n_parallel),
+                    8192);
+            pcfg.iteration_cap_tokens = (cap_user > 0) ? std::min<int32_t>(cap_user, cap_max) : 0;
             prefill_budget.configure(pcfg);
         }
         admission_cfg.max_admitted             = params_base.max_admitted_requests;
@@ -1647,8 +1655,12 @@ private:
                     admission_cfg.max_admitted);
         }
         if (params_base.prefill_chunk_size > 0) {
-            SRV_INF("prefill policy: shared per-iteration cap = %d tokens\n",
-                    params_base.prefill_chunk_size);
+            SRV_INF("prefill policy: shared per-iteration cap = %d tokens (user = %d, clamp = %d)\n",
+                    prefill_budget.config().iteration_cap_tokens,
+                    params_base.prefill_chunk_size,
+                    std::min<int32_t>(
+                        params_base.n_ubatch * std::max<int32_t>(1, params_base.n_parallel),
+                        8192));
         }
 
         if (params_base.cache_idle_slots) {
