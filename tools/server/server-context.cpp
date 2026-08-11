@@ -2716,18 +2716,20 @@ private:
             const int64_t now_us = ggml_time_us();
             tessera_metrics::span_descriptor d;
             d.name          = "completion";
+            const int64_t total_us = std::max<int64_t>(0, now_us - slot.t_arrival_us);
             d.start_us      = slot.t_arrival_us;
-            d.duration_us   = std::max<int64_t>(0, now_us - slot.t_arrival_us);
+            d.duration_us   = total_us;
             tessera_metrics::tracer::new_trace_id(d.trace_id);
             tessera_metrics::tracer::new_span_id(d.span_id);
             std::memset(d.parent_span_id, 0, 8);
             d.attributes = {
-                {"request.id",            std::to_string(slot.task->id)},
-                {"request.prompt_tokens", std::to_string(slot.task->n_tokens())},
-                {"request.cached_tokens", std::to_string(slot.n_prompt_tokens_cache)},
-                {"request.decoded_tokens",std::to_string(slot.n_decoded)},
-                {"request.ttft_us", std::to_string(slot.t_first_token_us > 0
+                {"request.id",               std::to_string(slot.task->id)},
+                {"request.prompt_tokens",    std::to_string(slot.task->n_tokens())},
+                {"request.cached_tokens",    std::to_string(slot.n_prompt_tokens_cache)},
+                {"request.decoded_tokens",   std::to_string(slot.n_decoded)},
+                {"request.ttft_us",          std::to_string(slot.t_first_token_us > 0
                     ? std::max<int64_t>(0, slot.t_first_token_us - slot.t_arrival_us) : 0)},
+                {"request.total_duration_us",std::to_string(total_us)},
             };
             tracer.emit(std::move(d));
         }

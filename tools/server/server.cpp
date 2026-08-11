@@ -4,6 +4,7 @@
 #include "server-cors-proxy.h"
 #include "server-stream.h"
 #include "server-tools.h"
+#include "server-metrics.h"
 
 #include "arg.h"
 #include "build-info.h"
@@ -12,15 +13,83 @@
 #include "llama.h"
 #include "log.h"
 
+#include <cpp-httplib/httplib.h>
+
 #include <atomic>
 #include <clocale>
+#include <cstdio>
 #include <exception>
 #include <signal.h>
+#include <string>
 #include <thread> // for std::thread::hardware_concurrency
 
 #if defined(_WIN32)
 #include <windows.h>
 #endif
+
+// Strong override of the weak otel_http_post() stub in server-metrics.cpp. The
+// tracer calls this when --otel-endpoint is set; if it returns false the tracer
+// falls back to stderr. We support two endpoint shapes:
+//
+//   http://host[:port][/path]   POST the NDJSON payload via cpp-httplib
+//                               with Content-Type: application/x-ndjson.
+//                               Typical target: an OTel collector sidecar or
+//                               a custom NDJSON receiver at /v1/traces.
+//
+//   /path/to/file.ndjson        Append the NDJSON payload (one span per line,
+//                               the payload already ends with '\n') to the
+//                               file. Created if missing.
+//
+// The call site serializes emits under a mutex, so a plain blocking POST or
+// blocking fopen is fine. We intentionally do not retry: a lost span under
+// load is far less bad than a 200 ms stall on the inference thread.
+namespace tessera_metrics {
+bool otel_http_post(const std::string & endpoint, const std::string & ndjson_payload);
+} // namespace tessera_metrics
+
+bool tessera_metrics::otel_http_post(const std::string & endpoint, const std::string & ndjson_payload) {
+    if (endpoint.empty()) {
+        return false;
+    }
+    const bool is_http  = endpoint.rfind("http://",  0) == 0;
+    const bool is_https = endpoint.rfind("https://", 0) == 0;
+    if (is_http || is_https) {
+        // http://host[:port][/path] or https://host[:port][/path].
+        // httplib::Client(scheme_host_port) dispatches to SSLClient when the
+        // scheme is https, so a single type handles both.
+        const std::string scheme = is_https ? "https" : "http";
+        const std::string rest   = endpoint.substr(scheme.size() + 3); // after "://"
+        const size_t slash = rest.find('/');
+        const std::string hostport = slash == std::string::npos ? rest : rest.substr(0, slash);
+        const std::string path     = slash == std::string::npos ? std::string("/") : rest.substr(slash);
+        if (hostport.empty()) {
+            return false;
+        }
+        // httplib::Client accepts a "scheme://host[:port]" string for the
+        // universal constructor; the path is supplied to Post() separately.
+        httplib::Client cli(scheme + "://" + hostport);
+        if (!cli.is_valid()) {
+            return false;
+        }
+        // Keep the hot-path latency low. cpp-httplib takes (s, us).
+        cli.set_connection_timeout(0, 200000); // 200 ms connect
+        cli.set_read_timeout(2, 0);            // 2 s read
+        cli.set_write_timeout(2, 0);           // 2 s write
+        auto res = cli.Post(path, ndjson_payload, "application/x-ndjson");
+        if (!res) {
+            return false;
+        }
+        return res->status >= 200 && res->status < 300;
+    }
+    // File path: append one NDJSON span per call.
+    FILE * fp = std::fopen(endpoint.c_str(), "ae");
+    if (fp == nullptr) {
+        return false;
+    }
+    const size_t n = std::fwrite(ndjson_payload.data(), 1, ndjson_payload.size(), fp);
+    std::fclose(fp);
+    return n == ndjson_payload.size();
+}
 
 static std::function<void(int)> shutdown_handler;
 static std::atomic_flag is_terminating = ATOMIC_FLAG_INIT;
