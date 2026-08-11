@@ -63,6 +63,54 @@ compile_and_run l5          $T/test_l5.cpp          $T/tessera-l5.cpp
 compile_and_run imatrix     $T/test_imatrix.cpp     $T/tessera-imatrix.cpp
 compile_and_run corpus      $T/test_corpus.cpp      $T/tessera-corpus.cpp
 compile_and_run ppl         $T/test_ppl.cpp         $T/tessera-ppl.cpp
+
+# --- L5 joint search loop (v2/v3/v4 of plan-sess_57d0ae24-05b7-4442-b516-8175bc46df1d) ---
+# Case 1: target-only. Case 2: full 5-model joint. Case 3: strict-mode
+# acceptance gate (--tessera-l5-strict at 0.25%).
+printf "  %-30s" "l5_joint"
+if [ -f build-ane/bin/libggml.dylib ] || [ -f build/bin/libggml.dylib ]; then
+    if [ -f build-ane/bin/libggml.dylib ]; then
+        GGML_LIB="-L build-ane/bin -Wl,-rpath,build-ane/bin -lggml -lggml-base"
+    else
+        GGML_LIB="-L build/bin -Wl,-rpath,build/bin -lggml -lggml-base"
+    fi
+    compile_and_run l5_joint \
+        $T/test_l5_joint.cpp \
+        $T/tessera-ppl.cpp \
+        ../../common/tessera-ppl-harness.cpp \
+        ../../common/tessera-l5-joint.cpp \
+        -I ../../common -I ggml/include -I ggml/src -I vendor -I $C -I $T \
+        $GGML_LIB -framework Accelerate
+else
+    echo "SKIP (needs CMake build for libggml)"
+fi
+
+# --- L5 joint PPL harness (v1 of plan-sess_57d0ae24-05b7-4442-b516-8175bc46df1d) ---
+# Joint forward pass across target + 3 drafters + talker; per-model PPL
+# extraction; per-model AND-gate at --tessera-l5-epsilon. v1 sanity:
+# 5 synthetic all-zero-logits models, FP PPL == vocab size exactly.
+printf "  %-30s" "ppl_harness"
+if [ -f build-ane/bin/libggml.dylib ] || [ -f build/bin/libggml.dylib ]; then
+    if [ -f build-ane/bin/libggml.dylib ]; then
+        GGML_LIB="-L build-ane/bin -Wl,-rpath,build-ane/bin -lggml -lggml-base"
+    else
+        GGML_LIB="-L build/bin -Wl,-rpath,build/bin -lggml -lggml-base"
+    fi
+    compile_and_run ppl_harness \
+        $T/test_ppl_harness.cpp \
+        $T/tessera-ppl.cpp \
+        ../../common/tessera-ppl-harness.cpp \
+        -I ../../common -I ggml/include -I ggml/src -I vendor -I $C -I $T \
+        $GGML_LIB -framework Accelerate
+else
+    echo "SKIP (needs CMake build for libggml)"
+fi
+
+# --- L5 joint calibration set generator (v1 of plan-sess_57d0ae24-05b7-4442-b516-8175bc46df1d) ---
+# Writes JSONL with synthetic text + synthetic audio targets. v3 wires
+# the real text-to-audio target mapping. Schema-only at v1.
+printf "  %-30s" "gen_joint_calib"
+compile_and_run gen_joint_calib $T/gen_joint_calib.cpp
 compile_and_run ab_harness  $T/test_ab_harness.cpp  $T/tessera-ab-harness.cpp
 compile_and_run acceptance  $T/test_acceptance.cpp  $T/tessera-acceptance.cpp $T/tessera-ab-harness.cpp
 compile_and_run higgs       $T/test_higgs.cpp       $T/tessera-higgs.cpp
