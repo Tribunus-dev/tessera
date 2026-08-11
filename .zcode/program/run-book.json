@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "last_updated": "2026-08-11T06:15:59Z",
+  "last_updated": "2026-08-11T07:45:00Z",
   "objective": "Reduce inference memory (peak RSS) on Apple Silicon without sacrificing correctness, via low-bit KV paged-attention and calibrated per-tensor quantization.",
   "phases": [
     {
@@ -98,6 +98,48 @@
       "summary": "Tier 3 of the 3-tier CLI cleanup: agent-n added a Tessera config file feature. New --tessera-config FILE flag (and TESSERA_CONFIG env var) loads Tessera options from an INI-style file. Additive: 8 files, +1409 lines, 0 deletions. Pure new feature, no behavior change to existing flags. INI parser + per-section dispatch table in common/tessera-config.{h,cpp} (stdlib only, no new deps). 17 sections in examples/tessera-config.ini covering all 61 --tessera-* keys. Precedence: config < env < CLI (config loaded at top of common_params_parse_ex, env/CLI handling then override). 16 unit sub-tests in tests/test-tessera-config.cpp. 10/10 ctest pass. Deferred to Tier 2: retag --tessera-config to use a new LLAMA_EXAMPLE_TESSERA enum value (the flag is currently in the default examples, matching the convention of all other --tessera-* flags until Tier 2 retags them).",
       "artifact": "main@348476622 (FF-merged from evolve-review/tier3-tessera-config-file/agent-n, 6 commits)",
       "last_updated": "2026-08-04T04:25:00Z"
+    },
+    {
+      "id": "p15",
+      "capability": "refactor",
+      "status": "in_progress",
+      "summary": "W3 Worker 1: chat template library. Custom C++ evaluator (no Jinja2), 4 templates: granite3_guardian, granite4_guardian, orpheus, generic_agent. Token-fidelity invariant: one canonical header shared by training driver AND inference. Compiles to common/tessera-chat-template.{h,cpp} + tests/test-chat-template.cpp. Plan: .zcode/plans/plan-ibm-orpheus-flywheel-w3.md.",
+      "artifact": "branch scratch/w3-1-chat-template (worktree /Users/user/Developer/GitHub/w3-1-chat-template)"
+    },
+    {
+      "id": "p16",
+      "capability": "refactor",
+      "status": "in_progress",
+      "summary": "W3 Worker 4: embedding + tier-3 dedup. Granite embedding 311M multilingual R2 (ModernBERT, 22 layers, 768-dim, 100+ lang) via Tessera ONNX runner or ANE coremltools export. MinHash+LSH tier-3 dedup on embedding vectors. Standalone CMakeLists.txt, no DuckDB. Plan: .zcode/plans/plan-ibm-orpheus-flywheel-w3.md.",
+      "artifact": "branch scratch/w3-4-embed-dedup (worktree /Users/user/Developer/GitHub/w3-4-embed-dedup)"
+    },
+    {
+      "id": "p17",
+      "capability": "refactor",
+      "status": "pending",
+      "summary": "W3 Worker 2: Orpheus audio pipeline. GGUF conversion of Orpheus 3B safetensors via convert_hf_to_gguf.py (LlamaForCausalLM type). SNAC codec utilities (ts_snac_encode/decode). Tessera GGUF reader integration. TTS harness (text -> SNAC tokens -> WAV). PII scrub design TBD. Depends on p15. Plan: .zcode/plans/plan-ibm-orpheus-flywheel-w3.md.",
+      "artifact": "branch scratch/w3-2-orpheus-audio (to be created from scratch/ibm-orpheus-w3)"
+    },
+    {
+      "id": "p18",
+      "capability": "refactor",
+      "status": "pending",
+      "summary": "W3 Worker 3: D-PACE training driver. Teacher forward (Granite 3.3 8B GGUF), student forward, D-PACE weighted CE loss (from stage-0 findings), offline feature capture (trunk hidden states), mixed-modality batch (text + SNAC audio). Depends on p15. Teacher default: ibm-granite/granite-3.3-8b-instruct Q4_K_M GGUF. Plan: .zcode/plans/plan-ibm-orpheus-flywheel-w3.md.",
+      "artifact": "branch scratch/w3-3-train-agent (to be created from scratch/ibm-orpheus-w3)"
+    },
+    {
+      "id": "p19",
+      "capability": "refactor",
+      "status": "pending",
+      "summary": "W3 Worker 5: dataset assembly. Assembles validated trajectories (p15) -> PII-scrubbed (p17) -> deduped (p16) -> teacher-annotated (p18) -> llama.tessera.agent-traj.v1 JSONL. tessera-data-card.py generates Markdown + Croissant 1.1 JSON-LD. PROV-O CurationLedger provenance. Depends on p15+p16+p17+p18. Plan: .zcode/plans/plan-ibm-orpheus-flywheel-w3.md.",
+      "artifact": "branch scratch/w3-5-dataset-assembly (to be created from scratch/ibm-orpheus-w3)"
+    },
+    {
+      "id": "p20",
+      "capability": "alphaevolve",
+      "status": "pending",
+      "summary": "W3 alphaevolve: post-pipeline optimization only. Throughput (tok/s on Metal), memory (KV residency, batch-size scaling), latency (p95 TTFT for mixed-modality). NOT for correctness, architecture, or procurement decisions. alphaevolve reserved exclusively for this phase per architect directive.",
+      "artifact": "TBD (branch from p19 champion)"
     }
   ],
   "open_questions": [
