@@ -1832,7 +1832,9 @@ private:
         const auto & requested = slot.task->tokens;
         llama_pos prefix = slot.prompt.tokens.pos_next(
                 slot.prompt.tokens.get_common_prefix(requested));
-        if (prompt_cache && slot.task->params.cache_prompt) {
+        // With kv_unified the block radix is the canonical prefix mechanism;
+        // the snapshot path's O(n) restore is duplicate work, so skip it.
+        if (!params_base.kv_unified && prompt_cache && slot.task->params.cache_prompt) {
             if (auto * cached = prompt_cache->find_longest_prefix(requested)) {
                 prefix = std::max(prefix, cached->prompt.tokens.pos_next());
             }
@@ -1971,7 +1973,10 @@ private:
         // large resident idle contexts by preferring an empty or short slot
         // for restoration. This is cache-aware local admission without
         // reordering the task queue or starving a long-running request.
-        if (task.type == SERVER_TASK_TYPE_COMPLETION && task.params.cache_prompt && prompt_cache) {
+        // With kv_unified the block radix does the prefix probe below; the
+        // snapshot path's find_longest_prefix is duplicate work.
+        if (!params_base.kv_unified &&
+            task.type == SERVER_TASK_TYPE_COMPLETION && task.params.cache_prompt && prompt_cache) {
             radix_state = prompt_cache->find_longest_prefix(task.tokens);
             if (radix_state) {
                 metrics.on_kv_radix_hit(radix_state->prompt.tokens.pos_next());
@@ -2151,7 +2156,13 @@ private:
             // cache prompts only for completion tasks
             update_cache = update_cache && task.type == SERVER_TASK_TYPE_COMPLETION;
 
-            if (update_cache) {
+            // With kv_unified the block radix is the primary prefix mechanism
+            // and already attaches via O(1) seq_cp handoffs. The snapshot
+            // path's O(n) state copy/restore is duplicate work, so skip it.
+            // (--cache-idle-slots still saves idle-slot snapshots to RAM
+            // below, but those become dead data without this query path;
+            // users combining both should disable one.)
+            if (!params_base.kv_unified && update_cache) {
                 SRV_TRC("%s", "updating prompt cache\n");
 
                 const int64_t t_start = ggml_time_us();
