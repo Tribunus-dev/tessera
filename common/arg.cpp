@@ -5040,6 +5040,30 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_L5}));
     add_opt(common_arg(
+        {"--l5-metric"}, "MODE",
+        "Tessera: L5 joint search metric (how the per-model deltas "
+        "collapse to one scalar). MODE is one of: max (default; the "
+        "worst active delta drives the search so every active model - "
+        "including the 3 drafters and the talker - gets full optimization "
+        "when it is the worst case), sum (sum of active deltas; "
+        "smoother gradient but a single model with a large delta can "
+        "shade the others), mean (average of active deltas).",
+        [](common_params &, const std::string & value) {
+            const std::string v = value;
+            if (v == "max" || v == "MAX") {
+                tessera_params.l5_joint_metric = 0;
+            } else if (v == "sum" || v == "SUM") {
+                tessera_params.l5_joint_metric = 1;
+            } else if (v == "mean" || v == "MEAN") {
+                tessera_params.l5_joint_metric = 2;
+            } else {
+                throw std::invalid_argument(
+                    string_format("error: --l5-metric must be one of "
+                                  "max/sum/mean, got %s\n", v.c_str()));
+            }
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_L5}));
+    add_opt(common_arg(
         {"--l5-drafter-dflash"}, "PATH",
         "Tessera: DFlash drafter GGUF for the L5 joint pass. "
         "Empty = DFlash inactive (FP baseline, contributes 0 to AND-gate).",

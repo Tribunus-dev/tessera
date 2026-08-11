@@ -92,6 +92,31 @@ struct ts_l5_joint_policy {
     bool                models_active[TS_L5_MODEL_COUNT] = {false, false, false, false, false};
 };
 
+// --- Search metric (how the per-model deltas collapse to one scalar) ---
+//
+// MAX (default): worst active delta drives the search. This guarantees
+//                that every active model - including the 3 drafters and
+//                the talker - gets full optimization when it is the
+//                worst case. Without MAX, the SUM metric is dominated
+//                by the model with the largest normalized delta and
+//                the drafters are shaded by the target's own deltas.
+// SUM:           sum of active deltas. Earlier design; kept for
+//                comparison + for the case where the user wants a
+//                smoother gradient (sum is differentiable, max is not).
+// MEAN:          average of active deltas. Like SUM but normalized by
+//                count; useful when the active-model count varies.
+//
+// The AND-gate (all active deltas < epsilon) is always enforced
+// independently of the metric - it's the binary termination criterion.
+// The metric only drives the ranking, the slippery detection, and the
+// top-K convergence check.
+
+enum class ts_l5_joint_metric : int32_t {
+    MAX  = 0,
+    SUM  = 1,
+    MEAN = 2,
+};
+
 // --- Search parameters ---
 
 struct ts_l5_joint_params {
@@ -103,6 +128,7 @@ struct ts_l5_joint_params {
     int32_t n_evo_gens     = 2;        // evolutionary generations when escape fires
     float delta_converged  = 0.001f;   // top-K PPL convergence: max-min < this
     uint32_t rng_seed      = 0x5EED5u; // search RNG seed (deterministic by default)
+    ts_l5_joint_metric metric = ts_l5_joint_metric::MAX; // default MAX so drafters get full optimization
     bool   verbose         = false;
 };
 

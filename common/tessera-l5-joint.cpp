@@ -18,17 +18,54 @@
 // ---------------------------------------------------------------------------
 // ts_l5_joint_ppl_metric
 // ---------------------------------------------------------------------------
+//
+// Collapses the active per-model deltas to one scalar using `metric`.
+// Returns 0.0f on invalid args or no active models.
 
 float ts_l5_joint_ppl_metric(
         const ts_l5_ppl_joint_result * measure,
-        const ts_l5_joint_policy * policy) {
+        const ts_l5_joint_policy * policy,
+        ts_l5_joint_metric metric) {
     if (!measure || !policy) return 0.0f;
-    float sum = 0.0f;
+
+    // Walk the active models once; collect delta + count for use by
+    // the metric dispatch. Inactive models are skipped.
+    float max_delta = 0.0f;
+    float sum_delta = 0.0f;
+    int32_t n_active = 0;
     for (int m = 0; m < TS_L5_MODEL_COUNT; ++m) {
         if (!policy->models_active[m]) continue;
-        sum += measure->per_model[m].delta;
+        const float d = measure->per_model[m].delta;
+        if (d > max_delta) max_delta = d;
+        sum_delta += d;
+        ++n_active;
     }
-    return sum;
+    if (n_active == 0) return 0.0f;
+
+    switch (metric) {
+        case ts_l5_joint_metric::MAX:  return max_delta;
+        case ts_l5_joint_metric::SUM:  return sum_delta;
+        case ts_l5_joint_metric::MEAN: return sum_delta / (float)n_active;
+    }
+    // Unreachable; defensive fallback to MAX.
+    return max_delta;
+}
+
+// ---------------------------------------------------------------------------
+// ts_l5_joint_ppl_max_delta (always tracked, independent of metric)
+// ---------------------------------------------------------------------------
+
+float ts_l5_joint_ppl_max_delta(
+        const ts_l5_ppl_joint_result * measure,
+        const ts_l5_joint_policy * policy) {
+    if (!measure || !policy) return 0.0f;
+    float max_delta = 0.0f;
+    for (int m = 0; m < TS_L5_MODEL_COUNT; ++m) {
+        if (!policy->models_active[m]) continue;
+        const float d = measure->per_model[m].delta;
+        if (d > max_delta) max_delta = d;
+    }
+    return max_delta;
 }
 
 // ---------------------------------------------------------------------------
@@ -121,6 +158,10 @@ void ts_l5_joint_refine_topk(
 // ---------------------------------------------------------------------------
 // Helper: evaluate a batch of policies, return entries sorted by joint_ppl
 // ---------------------------------------------------------------------------
+//
+// Tie-breaking: AND-gate binary first, then joint_ppl lexicographic.
+// This ensures that a policy that meets the AND-gate always ranks
+// ahead of one that doesn't, even if its joint_ppl is slightly higher.
 
 static void ts_l5_joint_evaluate_batch(
         const ts_l5_ppl_harness * harness,
@@ -132,6 +173,8 @@ static void ts_l5_joint_evaluate_batch(
         std::vector<ts_l5_joint_topk_entry> * out_entries) {
     out_entries->clear();
     out_entries->reserve(policies.size());
+    const ts_l5_joint_metric metric = params ? params->metric
+                                             : ts_l5_joint_metric::MAX;
     for (const auto & p : policies) {
         ts_l5_ppl_joint_result measure;
         const int rc = ts_l5_ppl_joint_measure(
@@ -139,14 +182,24 @@ static void ts_l5_joint_evaluate_batch(
                 &p, params, &measure);
         if (rc != 0) continue;  // skip failed evaluations
         ts_l5_joint_topk_entry e;
-        e.policy   = p;
-        e.measure  = measure;
-        e.joint_ppl = ts_l5_joint_ppl_metric(&measure, &p);
+        e.policy              = p;
+        e.measure             = measure;
+        e.joint_ppl           = ts_l5_joint_ppl_metric(&measure, &p, metric);
+        e.max_per_model_delta = ts_l5_joint_ppl_max_delta(&measure, &p);
         out_entries->push_back(e);
     }
     std::sort(out_entries->begin(), out_entries->end(),
               [](const ts_l5_joint_topk_entry & a, const ts_l5_joint_topk_entry & b) {
-                  return a.joint_ppl < b.joint_ppl;
+                  // AND-gate binary: passing ranks ahead of failing.
+                  if (a.measure.all_pass != b.measure.all_pass) {
+                      return a.measure.all_pass;
+                  }
+                  // Then joint_ppl ascending (lower is better).
+                  if (a.joint_ppl != b.joint_ppl) {
+                      return a.joint_ppl < b.joint_ppl;
+                  }
+                  // Final tie-break: smaller max_per_model_delta wins.
+                  return a.max_per_model_delta < b.max_per_model_delta;
               });
 }
 
@@ -182,17 +235,12 @@ int ts_l5_joint_search(
     result->status = ts_l5_joint_search_result::Status::CONVERGED;
     result->winning_entry = ts_l5_joint_topk_entry{};
 
-    // Count active models for the slipperiness check + topk convergence.
-    int n_active = 0;
-    for (int m = 0; m < TS_L5_MODEL_COUNT; ++m) {
-        if (harness->model_ctx[m] || m == TS_L5_MODEL_TARGET) {
-            // The harness always has the target context; activity is
-            // communicated via the initial policy below.
-        }
-        // Note: activity is set by the search via models_active on the
-        // generated policies, not on the harness. We pass activity via
-        // the policy itself.
-    }
+    // Note: activity is set by the search via models_active on the
+    // generated policies, not on the harness. The harness does not
+    // carry activity; the search propagates it through the policy
+    // structs it generates. The activity below is set on every
+    // generated policy before evaluation.
+    (void)harness;  // activity is set on per-policy models_active below
 
     // For v2 the initial activity is "target only" (others inactive).
     // The harness doesn't carry activity; the search propagates it
@@ -310,9 +358,16 @@ int ts_l5_joint_search(
                         harness, trunk_forward, drafter_forwards, talker_forward,
                         params, evo_pop, &evo_sorted);
                 for (auto & e : evo_sorted) gr.all_entries.push_back(e);
+                // Re-sort the merged set: AND-gate first, then joint_ppl.
                 std::sort(gr.all_entries.begin(), gr.all_entries.end(),
                           [](const ts_l5_joint_topk_entry & a, const ts_l5_joint_topk_entry & b) {
-                              return a.joint_ppl < b.joint_ppl;
+                              if (a.measure.all_pass != b.measure.all_pass) {
+                                  return a.measure.all_pass;
+                              }
+                              if (a.joint_ppl != b.joint_ppl) {
+                                  return a.joint_ppl < b.joint_ppl;
+                              }
+                              return a.max_per_model_delta < b.max_per_model_delta;
                           });
                 ts_l5_joint_take_topk(gr.all_entries, params->top_k, &gr.top_k);
                 if (gr.top_k[0].measure.all_pass) {
@@ -330,17 +385,27 @@ int ts_l5_joint_search(
         }
 
         if (params->verbose) {
+            const char * metric_name = "MAX";
+            switch (params->metric) {
+                case ts_l5_joint_metric::MAX:  metric_name = "MAX";  break;
+                case ts_l5_joint_metric::SUM:  metric_name = "SUM";  break;
+                case ts_l5_joint_metric::MEAN: metric_name = "MEAN"; break;
+            }
             std::fprintf(stderr,
-                    "  [L5 gen %d] and_gate=%d converged=%d slippery=%d topk_ppl=%.6f\n",
-                    gen, (int)gr.and_gate_passed, (int)gr.converged,
+                    "  [L5 gen %d] metric=%s and_gate=%d converged=%d slippery=%d "
+                    "topk_metric=%.6f topk_max_delta=%.6f\n",
+                    gen, metric_name,
+                    (int)gr.and_gate_passed, (int)gr.converged,
                     (int)gr.switched_to_evolutionary,
-                    gr.top_k.empty() ? -1.0f : gr.top_k[0].joint_ppl);
+                    gr.top_k.empty() ? -1.0f : gr.top_k[0].joint_ppl,
+                    gr.top_k.empty() ? -1.0f : gr.top_k[0].max_per_model_delta);
         }
 
         // ---- Termination ----
         if (gr.and_gate_passed && gr.converged) {
             result->status = ts_l5_joint_search_result::Status::CONVERGED;
             result->winning_entry = gr.top_k[0];
+            result->winning_max_per_model_delta = gr.top_k[0].max_per_model_delta;
             return 0;
         }
         if (gr.and_gate_passed) {
@@ -352,6 +417,8 @@ int ts_l5_joint_search(
     // Forced termination: max_generations reached.
     if (!result->generations.empty() && !result->generations.back().top_k.empty()) {
         result->winning_entry = result->generations.back().top_k[0];
+        result->winning_max_per_model_delta =
+                result->generations.back().top_k[0].max_per_model_delta;
     }
     // If the AND-gate passed (even without top-K convergence), call
     // it CONVERGED; otherwise BEST_EFFORT.

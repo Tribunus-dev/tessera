@@ -417,6 +417,20 @@ static const std::vector<key_handler> k_l5 = {
     {"l5-joint-max-generations",  SET_INT_MIN(l5_joint_max_generations, 1)},
     {"l5-joint-top-k",            SET_INT_MIN(l5_joint_top_k, 1)},
     {"l5-joint-gen0-samples",     SET_INT_MIN(l5_joint_n_gen0_samples, 1)},
+    {"l5-joint-metric",           [](common_tessera_params & p, const std::string & v, std::string & err) -> bool {
+                                     int n = 0;
+                                     try { n = std::stoi(v); }
+                                     catch (...) {
+                                         err = "l5-joint-metric: not an integer: " + v;
+                                         return false;
+                                     }
+                                     if (n < 0 || n > 2) {
+                                         err = "l5-joint-metric: must be 0 (max), 1 (sum), or 2 (mean), got " + v;
+                                         return false;
+                                     }
+                                     p.l5_joint_metric = n;
+                                     return true;
+                                 }},
     {"l5-joint-drafter-dflash",   SET_STR(l5_joint_drafter_dflash)},
     {"l5-joint-drafter-dspark",   SET_STR(l5_joint_drafter_dspark)},
     {"l5-joint-drafter-mtp",      SET_STR(l5_joint_drafter_mtp)},

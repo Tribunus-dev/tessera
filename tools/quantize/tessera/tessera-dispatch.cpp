@@ -3252,6 +3252,7 @@ int ts_dispatch_run_l5_joint(
     jparams.n_gen0_samples    = params->l5_joint_n_gen0_samples;
     jparams.delta_converged   = 0.001f;
     jparams.rng_seed          = params->l5_joint_rng_seed;
+    jparams.metric            = static_cast<ts_l5_joint_metric>(params->l5_joint_metric);
     jparams.verbose           = params->verbose;
 
     // ---- Run the joint search ----
@@ -3269,6 +3270,12 @@ int ts_dispatch_run_l5_joint(
     result->l5_joint_and_gate_passed = sresult.winning_entry.measure.all_pass;
     result->l5_joint_winning_ppl   = sresult.winning_entry.joint_ppl;
     result->l5_joint_n_generations = sresult.n_generations_run;
+    // Worst per-model delta: tracked regardless of the metric so the
+    // report can show "the worst model in the winning policy" without
+    // recomputing. With the MAX metric, this equals l5_joint_winning_ppl.
+    result->l5_joint_winning_max_delta = sresult.winning_max_per_model_delta;
+    // Echo the metric the search used (0=MAX, 1=SUM, 2=MEAN).
+    result->l5_joint_metric_used = static_cast<int>(jparams.metric);
 
     // ---- Strict pass (if --tessera-l5-strict) ----
     if (params->l5_joint_strict) {
@@ -3309,8 +3316,22 @@ int ts_dispatch_run_l5_joint(
         report += "\",\n";
         report += "  \"n_generations\": " + std::to_string(sresult.n_generations_run) + ",\n";
         report += "  \"epsilon\": " + std::to_string(params->l5_joint_epsilon) + ",\n";
+        // Echo the search metric (0=MAX, 1=SUM, 2=MEAN) so the report
+        // shows which collapse the winning_ppl used.
+        const char * metric_name = "max";
+        switch (jparams.metric) {
+            case ts_l5_joint_metric::MAX:  metric_name = "max";  break;
+            case ts_l5_joint_metric::SUM:  metric_name = "sum";  break;
+            case ts_l5_joint_metric::MEAN: metric_name = "mean"; break;
+        }
+        report += "  \"metric\": \"" + std::string(metric_name) + "\",\n";
         report += "  \"and_gate_passed\": " + std::string(result->l5_joint_and_gate_passed ? "true" : "false") + ",\n";
         report += "  \"joint_ppl\": " + std::to_string(result->l5_joint_winning_ppl) + ",\n";
+        // Worst per-model delta: always tracked, with the MAX metric
+        // this equals joint_ppl. Useful for the report reader to see
+        // "the worst model in the winning policy" without re-reading
+        // per_model_delta.
+        report += "  \"max_per_model_delta\": " + std::to_string(result->l5_joint_winning_max_delta) + ",\n";
         report += "  \"per_model_delta\": [";
         for (int m = 0; m < TS_L5_MODEL_COUNT; ++m) {
             if (m > 0) report += ",";

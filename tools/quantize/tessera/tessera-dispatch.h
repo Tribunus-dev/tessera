@@ -96,6 +96,11 @@ struct ts_dispatch_params {
     int         l5_joint_top_k         = 4;       // top policies kept
     int         l5_joint_n_gen0_samples = 32;     // gen 0 random samples
     uint32_t    l5_joint_rng_seed      = 0x5EED5u;
+    // Search metric: 0=MAX (default, worst-case model drives the search;
+    // every active model - including the 3 drafters and the talker -
+    // gets full optimization when it is the worst case), 1=SUM, 2=MEAN.
+    // See ts_l5_joint_metric in common/tessera-ppl-harness.h.
+    int         l5_joint_metric        = 0;
     // Drafter / talker GGUFs. Empty = that model inactive (FP baseline,
     // contributes 0 to the AND-gate). At minimum, the target is always
     // active (it's the dispatch's input). For a real 5-model joint
@@ -216,6 +221,15 @@ struct ts_dispatch_result {
     bool        l5_joint_strict_converged = false; // true = STRICT_CONVERGED
     float       l5_joint_strict_epsilon = 0.0f;    // 0.25% if strict
     float       l5_joint_strict_worst_delta = 0.0f;
+    // Worst per-model delta in the winning entry. Always tracked (even
+    // when strict is off) so the report can show "the worst model in
+    // the winning policy" without recomputing. With the MAX metric,
+    // this equals l5_joint_winning_ppl; with SUM, it is the bound on
+    // the worst individual model regardless of the aggregate metric.
+    float       l5_joint_winning_max_delta = 0.0f;
+    // Which metric the search used (0=MAX, 1=SUM, 2=MEAN). Echoed in
+    // the JSON report so the user knows what drove the search.
+    int         l5_joint_metric_used = 0;
 };
 
 // Run the full Tessera quantization pipeline.

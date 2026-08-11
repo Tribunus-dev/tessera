@@ -58,6 +58,11 @@ struct common_tessera_params {
     int         l5_joint_top_k         = 4;
     int         l5_joint_n_gen0_samples = 32;
     uint32_t    l5_joint_rng_seed      = 0x5EED5u;
+    // L5 joint search metric. 0=MAX (default; worst-case model drives
+    // the search, so every active model - including the 3 drafters and
+    // the talker - gets full optimization when it is the worst case),
+    // 1=SUM, 2=MEAN. See ts_l5_joint_metric in common/tessera-ppl-harness.h.
+    int         l5_joint_metric        = 0;
     std::string l5_joint_drafter_dflash;   // empty = DFlash inactive
     std::string l5_joint_drafter_dspark;   // empty = DSPark inactive
     std::string l5_joint_drafter_mtp;      // empty = MTP inactive

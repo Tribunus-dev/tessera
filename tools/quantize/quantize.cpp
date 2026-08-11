@@ -2113,6 +2113,7 @@ int llama_quantize(int argc, char ** argv) {
         tparams.l5_joint_top_k               = tp.l5_joint_top_k;
         tparams.l5_joint_n_gen0_samples      = tp.l5_joint_n_gen0_samples;
         tparams.l5_joint_rng_seed            = tp.l5_joint_rng_seed;
+        tparams.l5_joint_metric              = tp.l5_joint_metric;
         tparams.dflash_gguf_path             = tp.l5_joint_drafter_dflash;
         tparams.dspark_gguf_path             = tp.l5_joint_drafter_dspark;
         tparams.mtp_gguf_path                = tp.l5_joint_drafter_mtp;

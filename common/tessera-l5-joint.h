@@ -33,14 +33,28 @@
 // --- Top-K entry in the search history ---
 //
 // A top-K entry holds the policy that was evaluated, the resulting
-// per-model deltas, and the joint PPL metric (sum of normalized
-// per-model deltas). The search keeps the top-K entries by ascending
-// joint_ppl.
+// per-model deltas, the joint PPL metric (the configured metric over
+// the active models' deltas), and the worst-case delta (always tracked
+// so the report can show the worst per-model delta without recomputing).
+//
+// The search keeps the top-K entries by ascending joint_ppl. With the
+// MAX metric (the default), joint_ppl == max_per_model_delta; with
+// SUM, joint_ppl is the sum; with MEAN, joint_ppl is the mean.
+//
+// The MAX default ensures every active model - including the 3
+// drafters and the talker - gets full optimization when it is the
+// worst case. SUM shades the smaller-delta models (often the
+// drafters) under the larger-delta model (often the target). MEAN
+// is a softer version of SUM normalized by the active-model count.
+//
+// Note: ts_l5_joint_metric is defined in tessera-ppl-harness.h
+// (alongside ts_l5_joint_params, which holds the metric field).
 
 struct ts_l5_joint_topk_entry {
     ts_l5_joint_policy    policy;
     ts_l5_ppl_joint_result measure;
-    float                 joint_ppl;     // sum of normalized per-model deltas (active only)
+    float                 joint_ppl;          // metric(per_model.delta) for active models
+    float                 max_per_model_delta; // worst active delta (always tracked)
 };
 
 // --- Generation result ---
@@ -73,6 +87,10 @@ struct ts_l5_joint_search_result {
         BEST_EFFORT        = 2,  // evolutionary escape did not converge; report achieved delta
     } status = Status::CONVERGED;
     int32_t n_generations_run = 0;
+    // Worst per-model delta in the winning entry. Always tracked so the
+    // report can show "the worst model in the winning policy" without
+    // recomputing. With the MAX metric, this equals winning_entry.joint_ppl.
+    float winning_max_per_model_delta = 0.0f;
 };
 
 // --- Strict-mode result (v4 acceptance gate) ---
@@ -125,12 +143,40 @@ int ts_l5_joint_search(
         const ts_l5_joint_params * params,
         ts_l5_joint_search_result * result);
 
-// --- Helper: compute the joint PPL metric (sum of normalized per-model deltas) ---
+// --- Helper: compute the joint PPL metric ---
 //
-// Only counts ACTIVE models (models_active[i] = true). Inactive models
-// contribute 0 by construction. The metric is the sum, not the mean,
-// so the search gradient scales with the number of active models.
+// Collapses the active models' per-model deltas to one scalar using
+// the metric selected by params->metric (MAX by default). The metric
+// drives the search's ranking, slippery detection, and convergence
+// check; the AND-gate is enforced independently.
+//
+// Only ACTIVE models (models_active[i] = true) are counted. Inactive
+// models contribute 0 by construction (their FP and quant PPL are
+// equal, so their delta is 0 - but they are also skipped entirely
+// for clarity).
+//
+// MAX (default): the worst active model drives the ranking. This
+//                guarantees every active model gets full optimization
+//                when it is the worst case; under SUM, the model with
+//                the largest delta dominates the gradient and the
+//                smaller-delta models are shaded.
+// SUM:           sum of active deltas. Smooth gradient, but a single
+//                model with a large delta can mask other models that
+//                are above epsilon.
+// MEAN:          average of active deltas. Like SUM but normalized by
+//                the count of active models.
 float ts_l5_joint_ppl_metric(
+        const ts_l5_ppl_joint_result * measure,
+        const ts_l5_joint_policy * policy,
+        ts_l5_joint_metric metric);
+
+// --- Helper: compute the worst per-model delta (always tracked) ---
+//
+// Returns the maximum per_model.delta across all ACTIVE models. This
+// is always computed (regardless of the search metric) so the report
+// can show the worst per-model delta without recomputing. Inactive
+// models are skipped.
+float ts_l5_joint_ppl_max_delta(
         const ts_l5_ppl_joint_result * measure,
         const ts_l5_joint_policy * policy);
 
