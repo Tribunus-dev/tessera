@@ -276,6 +276,19 @@ llama_build_and_test(test-backend-ops.cpp)
 if (NOT GGML_BACKEND_DL)
     llama_build(test-tq2-parity.cpp)
 endif()
+
+# Adversarial supports_op fuzzer (Aug 2026). Enumerates (op, type)
+# combinations across every registered backend and forks each probe so
+# a single honest-gate regression does not kill the test process. Catches
+# the third "backend advertises op it cannot compute" class of bug this
+# tree has shipped (after ANE CONT and Metal MUL_MAT/GET_ROWS).
+#
+# Out of ctest: 240+ probes * 0.14s each = ~35s wall; too slow for the
+# normal ctest loop. Run manually via
+#   ctest -R test-supports-op-fuzz --output-on-failure
+# or via the binary directly:
+#   ./build/bin/test-supports-op-fuzz
+llama_build(test-supports-op-fuzz.cpp)
 # Project B (auto backend selector) + Project C (memory
 # residency tracker) smoke test. Self-contained (no model
 # fixture); only the CPU backend is registered, the auto-select
@@ -697,6 +710,36 @@ if (NOT GGML_BACKEND_DL)
     llama_build_and_test(test-ane-tile640-dispatch.cpp)
     if (TARGET test-ane-tile640-dispatch)
         target_include_directories(test-ane-tile640-dispatch PRIVATE
+            ${PROJECT_SOURCE_DIR}/ggml/src)
+    endif()
+    # TILE640 matmul OUTPUT writeback test. Pre-bakes a packed tensor
+    # with all-zero trits + a known per-row outlier, runs the matmul
+    # on Metal, syncs, reads the output via ggml_backend_tensor_get,
+    # and asserts the values match the CPU reference. Regression
+    # gate for the f10569f8d slot-binding bug (act_scale was added
+    # to the kernel signature but never bound in the dispatch; the
+    # output was being written to an unbound slot, so the matmul
+    # silently produced nothing). The b5 test never caught this
+    # because it only checks the L1 dequant sidecar, never the
+    # matmul output. This test is the dedicated output-writeback
+    # gate; future kernel parameter additions must keep it green.
+    llama_build_and_test(test-tile640-matmul-output.cpp)
+    if (TARGET test-tile640-matmul-output)
+        target_include_directories(test-tile640-matmul-output PRIVATE
+            ${PROJECT_SOURCE_DIR}/ggml/src)
+    endif()
+    # Metal residency-set leak hardening (Aug 2026). Verifies that
+    # ggml_metal_rsets_free drains a leaked rset with a structured log
+    # instead of aborting. The test intentionally skips
+    # ggml_backend_buffer_free on a Metal buffer, captures stderr,
+    # and asserts (a) the process exits cleanly, (b) the leak warning
+    # header is emitted, (c) the rset label includes the buffer size
+    # so the leak is identifiable. If a future change reverts the
+    # drain to a hard assert, this test fails (process aborts, no
+    # log captured, exit code != 0).
+    llama_build_and_test(test-metal-rset-leak.cpp)
+    if (TARGET test-metal-rset-leak)
+        target_include_directories(test-metal-rset-leak PRIVATE
             ${PROJECT_SOURCE_DIR}/ggml/src)
     endif()
     # Phase 2 (iPhone demo): GGUF -> IOSurface weight streamer

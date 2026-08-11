@@ -86,6 +86,35 @@ else
     echo "SKIP (needs CMake build for libgguf)"
 fi
 
+# --- Tile640 core=nullptr transport parity (Aug 2026 transport cut)
+# Bit-exact gate for the 162G->33G tile-neutral transport compression at
+# commit 0e110f9fc (Aug 10, today). Packs the same ternary tensor with
+# and without core, dequantizes both, and asserts the radix-243+scales
+# reconstruction is within 1.5x between the two paths. Catches the
+# "core dropped silently degrades fidelity" class of bug at every commit.
+# Needs libggml (for the flat dequantize_row_tessera_t640 trait).
+printf "  %-30s" "t640_core_reconstruct_parity"
+if [ -f build/ggml/src/libggml.a ] || [ -f build-ffi/ggml/src/libggml.a ] || \
+   [ -f build-ane/bin/libggml.dylib ] || [ -f build/bin/libggml.dylib ]; then
+    # Pick the first available libggml.
+    if [ -f build-ffi/ggml/src/libggml.a ]; then
+        GGML_LIB="-L build-ffi/ggml/src -lggml -lggml-base -lggml-cpu"
+    elif [ -f build-ane/bin/libggml.dylib ]; then
+        GGML_LIB="-L build-ane/bin -Wl,-rpath,build-ane/bin -lggml -lggml-base -lggml-cpu"
+    elif [ -f build/bin/libggml.dylib ]; then
+        GGML_LIB="-L build/bin -Wl,-rpath,build/bin -lggml -lggml-base -lggml-cpu"
+    else
+        GGML_LIB="-L build/ggml/src -lggml -lggml-base -lggml-cpu"
+    fi
+    compile_and_run t640_core_reconstruct_parity \
+        $T/test_t640_core_reconstruct_parity.cpp \
+        $T/tessera-quant.cpp $T/tessera-vec.cpp $T/tile-detect.cpp $T/tessera-metal-stub.cpp \
+        -I ggml/include -I ggml/src -I $T \
+        $GGML_LIB -framework Accelerate
+else
+    echo "SKIP (needs CMake build for libggml)"
+fi
+
 # L5 dispatch integration test: same libgguf/libggml link line as dispatch,
 # plus the L2-diff/L5 modules the adaptive-requantize loop pulls in.
 printf "  %-30s" "l5_dispatch"
