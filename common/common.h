@@ -873,8 +873,13 @@ struct common_params {
     void *                  load_progress_callback_user_data = NULL;
     bool no_alloc = false; // Don't allocate model buffers
 
-    // admission control + prefill pacing (server). Default 0 = disabled.
-    int32_t max_admitted_requests = 0;
+    // Soft admission cap on in-flight requests (server). When the number of
+    // processing slots is >= this and a new task arrives, the admission
+    // controller may preempt the lowest-scoring active request (vLLM V1
+    // recompute preemption). Set to 0 to disable the controller and keep
+    // the legacy "slots only" behavior. Default 256 mirrors vLLM V1's
+    // max_num_seqs; raise above n_parallel to keep the controller inert.
+    int32_t max_admitted_requests = 256;
     int32_t prefill_chunk_size    = 2048; // 0 disables; clamped at configure to min(n_ubatch * n_parallel, 8192)
     // OpenTelemetry span export (server).
     bool        otel_enabled      = false;

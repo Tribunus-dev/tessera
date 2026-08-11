@@ -1907,13 +1907,13 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_env("LLAMA_ARG_CACHE_IDLE_SLOTS").set_examples({LLAMA_EXAMPLE_SERVER}));
     add_opt(common_arg(
-        {"--max-requests"}, "N",
+        {"--max-admitted"}, "N",
         string_format("soft cap on in-flight requests; under KV pressure the lowest-scoring active request is preempted (default: %d, 0 = disabled, matches vLLM V1 admission control)",
                       params.max_admitted_requests),
         [](common_params & params, int value) {
             params.max_admitted_requests = value;
         }
-    ).set_env("LLAMA_ARG_MAX_REQUESTS").set_examples({LLAMA_EXAMPLE_SERVER}));
+    ).set_env("LLAMA_ARG_MAX_ADMITTED").set_examples({LLAMA_EXAMPLE_SERVER}));
     add_opt(common_arg(
         {"--prefill-chunk-size"}, "N",
         string_format("shared per-iteration prefill cap in tokens; prevents long prompts from stalling decode (default: %d, 0 = disabled, effective value is clamped to min(user, n_ubatch * n_parallel, 8192))",
