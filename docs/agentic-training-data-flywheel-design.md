@@ -285,8 +285,11 @@ as `tessera-dataset.cpp:170-174` extended to the trajectory level.
 dedup** computes a SHA-256 of the normalized `(system_prompt.text,
 [message.content for message in messages if source != "user"])` and
 drops byte-identical duplicates. **Tier 2 fuzzy dedup** shingles messages
-into 5-grams, computes MinHash with 128 permutations, LSH bands at
-`num_bands=20, minhashes_per_band=13`, drops pairs above Jaccard 0.8.
+into 5-grams, computes MinHash with 260 permutations, LSH bands at
+`num_bands=20, minhashes_per_band=13` (so 20*13 = 260 fits exactly),
+drops pairs above Jaccard 0.8. LSH inflection sits at Jaccard
+J where J^13 = 0.5 -> J ~= 0.949; the 0.8 threshold keeps a margin
+under the inflection so we only catch true near-duplicates.
 **Tier 3 semantic dedup** embeds each trajectory (using a Tessera-side
 embedding model, not an API call - the no-egress preference is preserved)
 and drops near-cluster-center neighbors above cosine 0.87. The output is
@@ -404,7 +407,19 @@ round-trip to a valid `*.agent-traj.v1.jsonl`. **Status: landed.**
 the halt-on-anomaly safety), `tessera-traj-scrub` (anonymizer+scrub
 wrapper), `tessera-traj-filter` (multi-turn + outcome filters),
 `tessera-traj-split` (deterministic by task_id, manifest-pinned).
-**Status: landed.**
+**Status: landed.** Pipeline test `test_traj_pipeline` runs the
+end-to-end flow (validate -> dedup -> scrub -> filter -> split ->
+manifest) on a 10-record synthetic corpus with 3 near-dup pairs
+and asserts per-stage counts plus manifest round-trip. Dedup unit
+test `test_traj_dedup` covers the tier-1 exact, tier-2 fuzzy
+(near-dup cluster, Jaccard 0.8, anomaly halt at 35%), and tier-3
+deferred paths. Scrub CLI wraps the existing `tessera-anonymizer` +
+`tessera-scrub` egress tools in light/balanced/aggressive modes.
+The CLI build wires the parent-dir `tessera-anonymizer.cpp` and
+`tessera-scrub.cpp` into a separate `tessera-traj-scrub-impl`
+STATIC lib so the trajectory modules stay standalone (no DuckDB,
+no llama/ggml, no ggml-ane.h) - see the Lessons Learned section
+for the why.
 
 **Phase 3 (W3) - train and close the loop.** `tessera-train-agent`
 (agentic SFT driver with token-fidelity invariant and reward
@@ -449,3 +464,114 @@ enforcement.
 important test in the whole flywheel; without it, the eval numbers
 are fiction. It's small (one hash check), and it should be the very
 first test written, not the last.
+
+## 11. Lessons learned (W1 + W2 implementation)
+
+These are the concrete findings from the W1/W2 implementation that
+are not in the plan above but will save the W3 work real time.
+
+**1. Standalone sub-library for trajectory modules.** The
+`tessera-traj-impl` STATIC lib and `tessera-traj-scrub-impl` STATIC
+lib are wired in `tools/quantize/CMakeLists.txt` to include ONLY
+the trajectory .cpp files plus the existing `tessera-anonymizer`
+and `tessera-scrub` .cpp files. They do NOT link the parent
+`tessera-quantize-impl`, so the trajectory CLIs and tests don't pull
+in the DuckDB amalgamation, `ggml-ane.h`, or any other quantize
+heavyweight. The build is a few seconds and ~700 MB; linking the
+parent lib OOMed the build host during W1. Do not fold the
+trajectory modules into the existing `llama-quantize-impl` target
+even if it looks tidier.
+
+**2. Union-find parent must be identity-init, not -1.** The
+`tier2_fuzzy` cluster join uses union-find. Initializing
+`parent[i] = -1` to mark "i is a root" looks compact but breaks
+`find()`: it follows `parent[i] = -1` then reads `parent[-1]`
+(out-of-bounds UB on `std::vector`), then returns -1 as a "root"
+that other indices then try to follow. Symptom: records get
+incorrectly lumped into one cluster, and the leader (lowest
+index) is a record that may have Jaccard 0 with the actual
+duplicates - so the (leader, j) Jaccard check never sees the
+real pair. Fix: `parent[i] = i` (each record is its own root
+until united). Always identity-init union-find.
+
+**3. Pairwise Jaccard within cluster, not leader-vs-rest.** LSH
+banding is approximate; an unrelated record can false-positive
+into a duplicate's cluster. If dedup only checks (leader, j)
+pairs, the false positive (the leader itself) blocks the real
+duplicate pair from being compared. Always do pairwise
+Jaccard within each cluster, removing the higher-index member
+of any pair above threshold. Cost is O(n^2) per cluster but
+clusters are small (LSH is selective).
+
+**4. NUM_PERM must equal NUM_BANDS * MINHASHES_PER_BAND.**
+The LSH band access `sigs[i][b * minhashes_per_band + k]` is
+out-of-bounds when b * minhashes_per_band + k >= num_perm.
+Defaulting to 128 perms with 20 bands * 13 per band (260) is
+inconsistent - we hit OOB reads that produced consistent
+"garbage" values, putting unrelated records into the same LSH
+bucket. Pick the LSH geometry first, then set NUM_PERM to
+match. (20, 13) -> 260 perms is the NeMo Curator shape; the
+LSH inflection at J=0.5^(1/13) ~= 0.949 means collisions become
+likely only above ~0.85 Jaccard, which is the right shape for
+"fuzzy" tier.
+
+**5. Survivor-mask carry-forward is the bug source for "n+1
+records out of n input".** When tier N's survivor mask is
+initialized to all 1s (rather than copied from tier N-1's
+mask), records removed by tier N-1 reappear in tier N's
+output. The removal log shows the right removal; the file
+emission is wrong because the writer trusts the mask. Always
+write `*survivor_mask = in_mask;` at the start of each
+downstream tier.
+
+**6. Shingle SET Jaccard != body-content similarity.** A
+mid-body insertion disrupts ~21% of 5-grams (the 5-grams that
+contain the insertion point), pushing shingle Jaccard from
+~0.97 to ~0.61 for a 40-token body. The LSH threshold
+(J=0.8) is below 0.61, so the pair is not caught. Two
+mitigations: (a) for synthetic test data, append the change
+at the END of the body so only the last 4 5-grams are
+disrupted; (b) for real data, use a body long enough that
+boundary 5-grams are a small fraction of the total (200+
+tokens keeps Jaccard above 0.9 even with mid-body edits).
+
+**7. Repeated body content collapses the unique shingle set.**
+An agent trajectory with N turns of agent messages that all
+echo the user body creates a fingerprint with the body
+content repeated N times. The 5-grams within the body are
+NOT unique shingles - they're the same shingle FNV-1a hash
+repeated, and MinHash's set semantics treat them as one
+shingle. With a 90-token body repeated 6 times in agent
+messages, the unique shingle set is ~100 even though the
+raw 5-gram count is ~600, and MinHash Jaccard with a
+near-dup drops to 0.65 (not 0.97). For synthetic test
+fixtures, keep agent messages short and body-independent
+("agent turn N response ack") so the body only appears in
+the user message.
+
+**8. scrub order: anonymize first, then scrub.** Running
+scrub-then-anonymize breaks the redaction placeholder: the
+anonymizer renames "secret" and "email" inside `<secret:email>`
+to `tsd` and `tsb`, producing `<tsd:tsb>`. The reverse order
+keeps the placeholder intact because the anonymizer doesn't
+touch the email (no identifier chars). Known limitation:
+API keys in plain text get renamed by the anonymizer first
+(sk-abc -> ts-xyz), so the scrubber's API-key regex doesn't
+match. Fixing this needs the anonymizer to skip tokens that
+match a known secret shape - tracked for a follow-on wave.
+
+**9. step_id is required by the schema-gate, not optional.**
+The validator enforces sequential step_id (1, 2, 3, ...) on
+every message in messages[]. A trajectory with valid content
+but missing step_id fails validate with 0 valid / N invalid.
+This is the right behavior (catches half-built records), but
+every test fixture and the dedup-test `make_traj` helper
+needs to set it explicitly. Pattern: `m["step_id"] = i + 1;`
+inside the message-construction loop.
+
+**10. Stale binaries masquerade as test failures.** A test
+that was passing can start failing because the .cpp was
+edited but the build dir didn't pick up the change. Pattern:
+`make -j1 <test_target>` and check the binary mtime against
+the source mtime before re-running. Don't trust a test
+result that comes from a binary older than its source.

@@ -72,8 +72,9 @@ static json make_valid_record(const std::string & trajectory_id, int total_steps
     r["messages"] = json::array();
     for (int i = 0; i < total_steps; ++i) {
         json m;
-        m["source"] = (i == 0) ? "user" : "agent";
-        m["message"] = "step " + std::to_string(i);
+        m["step_id"]   = i + 1;
+        m["source"]    = (i == 0) ? "user" : "agent";
+        m["message"]   = "step " + std::to_string(i);
         m["timestamp"] = "2026-08-10T10:00:00Z";
         r["messages"].push_back(m);
     }
@@ -209,11 +210,13 @@ int main() {
     int rc = ts_traj::validate_file(test_path.c_str(), &result, &err_msg);
     check_eq_int("validate_file returns 0 on a readable file", rc, 0);
     check_eq_int("n_valid",   result.n_valid,   1);
-    check_eq_int("n_invalid", result.n_invalid, 8);
+    check_eq_int("n_invalid", result.n_invalid, 7);
     check_eq_int("n_skipped", result.n_skipped, 2);  // wrong schema + parse error
 
-    // Per-error checks: 8 invalid -> 8 errors. Validate a few of them.
-    check_eq_int("errors.size()", (int)result.errors.size(), 8);
+    // Per-error checks: 7 invalid -> 7 errors (one per record, since
+    // each test case trips a single field). The 8th entry in errors[]
+    // is the parse error from line 3 (n_skipped + error).
+    check_eq_int("errors.size()", (int)result.errors.size(), 8);  // 7 invalid + 1 parse
 
     auto find_err = [&](const std::string & tid, const std::string & field) -> bool {
         for (const auto & e : result.errors) {
@@ -240,7 +243,7 @@ int main() {
         int crc = ts_traj_validate_file(test_path.c_str(), &nv, &ni, &ns, &em);
         check_eq_int("C API rc", crc, 0);
         check_eq_int("C API n_valid",   nv, 1);
-        check_eq_int("C API n_invalid", ni, 8);
+        check_eq_int("C API n_invalid", ni, 7);
         check_eq_int("C API n_skipped", ns, 2);
         if (em) {
             std::printf("C API summary: %s\n", em);

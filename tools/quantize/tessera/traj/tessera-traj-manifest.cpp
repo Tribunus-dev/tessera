@@ -169,8 +169,8 @@ int cmd_emit(int argc, char ** argv) {
     std::vector<std::string> input_manifests;
     for (int i = 0; i < argc; ++i) {
         std::string a = argv[i];
-        auto need = [&](const char * flag) -> std::string {
-            if (i + 1 >= argc) { std::fprintf(stderr, "missing value for %s\n", flag); std::exit(2); }
+        auto need = [&](std::string flag) -> std::string {
+            if (i + 1 >= argc) { std::fprintf(stderr, "missing value for %s\n", flag.c_str()); std::exit(2); }
             return std::string(argv[++i]);
         };
         if      (a == "--stage")             stage = need(a);

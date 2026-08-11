@@ -156,7 +156,6 @@ static std::string sha256_hex(const std::string & s) {
 // above ~ 0.8).
 
 constexpr uint64_t MINHASH_PRIME    = ((uint64_t)1 << 61) - 1;
-constexpr uint64_t MINHASH_MAX_HASH = ((uint64_t)1 << 32) - 1;
 
 struct minhash_perms {
     std::vector<uint64_t> a;
@@ -209,13 +208,23 @@ static std::vector<uint32_t> shingles5(const std::string & s) {
 
 static std::vector<uint64_t> minhash_signature(const std::vector<uint32_t> & shingles,
                                                const minhash_perms & perms) {
-    std::vector<uint64_t> sig(perms.a.size(), MINHASH_MAX_HASH);
-    if (shingles.empty()) return sig;
+    // Empty-shingle edge case: return an EMPTY vector (not a vector of
+    // sentinel max-hash values) so the LSH skip check `sigs[i].empty()`
+    // works. Without this, records with no shingles (very short
+    // trajectories) all hash to the same bucket and look 100%
+    // similar to MinHash, producing false-positive clusters.
+    if (shingles.empty()) return std::vector<uint64_t>{};
+    std::vector<uint64_t> sig(perms.a.size(), MINHASH_PRIME);
     for (uint32_t sh : shingles) {
         uint64_t h = sh;
         for (size_t i = 0; i < perms.a.size(); ++i) {
-            uint64_t v = (perms.a[i] * h + perms.b[i]) % MINHASH_PRIME;
-            if (v < sig[i]) sig[i] = v;
+            // Multiply in __uint128_t to avoid uint64_t overflow: a
+            // and h are both < 2^61 / 2^32 respectively, so a*h can
+            // approach 2^93 which doesn't fit in uint64_t. The
+            // modular reduction brings the result back to [0, p).
+            __uint128_t v = (__uint128_t)perms.a[i] * h + perms.b[i];
+            uint64_t r = (uint64_t)(v % MINHASH_PRIME);
+            if (r < sig[i]) sig[i] = r;
         }
     }
     return sig;
@@ -292,7 +301,7 @@ static int run_tier1(const std::vector<record_parsed> & records,
                       std::vector<int> * survivor_mask,
                       std::ofstream * log,
                       ts_tier_stats * stats,
-                      std::string * err_msg) {
+                      std::string * /*err_msg*/) {
     stats->n_input = (int)records.size();
     std::unordered_map<std::string, int> seen;
     survivor_mask->assign(records.size(), 1);
@@ -337,7 +346,9 @@ static int run_tier2(const std::vector<record_parsed> & records,
     stats->n_input = 0;
     for (int v : in_mask) if (v) stats->n_input++;
 
-    survivor_mask->assign(records.size(), 1);
+    // Carry forward the incoming mask: a record removed by tier 1 stays
+    // removed; tier 2 only marks additional duplicates.
+    *survivor_mask = in_mask;
     minhash_perms perms(params->num_perm, 0xc0ffee1234ULL);
     std::vector<std::vector<uint64_t>> sigs(records.size());
     for (int i = 0; i < (int)records.size(); ++i) {
@@ -358,11 +369,48 @@ static int run_tier2(const std::vector<record_parsed> & records,
         }
     }
 
-    // Union-find per cluster.
-    std::vector<int> parent(records.size(), -1);
+    // Diag: dump sig values for the first 3 records, plus pairwise
+    // MinHash Jaccard for the closest candidates.
+    std::fprintf(stderr, "tier2 sig+band-hash diag (first 3 records):\n");
+    int diag_n = 0;
+    for (int i = 0; i < (int)records.size() && diag_n < 3; ++i) {
+        if (!in_mask[i] || sigs[i].empty()) continue;
+        std::fprintf(stderr, "  %s sig[0..9]:", records[i].trajectory_id.c_str());
+        for (int s = 0; s < 10 && s < (int)sigs[i].size(); ++s) {
+            std::fprintf(stderr, " %016llx", (unsigned long long)sigs[i][s]);
+        }
+        std::fprintf(stderr, "\n");
+        diag_n++;
+    }
+    // Pairwise Jaccard for all pairs among first 3.
+    std::vector<int> first3;
+    for (int i = 0; i < (int)records.size() && (int)first3.size() < 3; ++i) {
+        if (!in_mask[i] || sigs[i].empty()) continue;
+        first3.push_back(i);
+    }
+    for (size_t a = 0; a < first3.size(); ++a) {
+        for (size_t b = a + 1; b < first3.size(); ++b) {
+            int ia = first3[a], ib = first3[b];
+            int agree = 0;
+            for (int s = 0; s < params->num_perm; ++s) {
+                if (sigs[ia][s] == sigs[ib][s]) ++agree;
+            }
+            std::fprintf(stderr, "  pairwise jaccard(%s, %s) = %.4f (%d / %d)\n",
+                records[ia].trajectory_id.c_str(),
+                records[ib].trajectory_id.c_str(),
+                (double)agree / params->num_perm, agree, params->num_perm);
+        }
+    }
+
+    // Union-find per cluster. parent[i] = i means "i is its own root";
+    // any other value points toward the root. We use a flat identity
+    // init (NOT -1) so find() can early-exit on the trivial case
+    // without following parent[-1] into UB.
+    std::vector<int> parent(records.size());
+    for (int i = 0; i < (int)records.size(); ++i) parent[i] = i;
     std::function<int(int)> find = [&](int x) -> int {
         while (parent[x] != x) {
-            if (parent[parent[x]] != parent[x]) parent[x] = parent[parent[x]];
+            parent[x] = parent[parent[x]];  // path compression
             x = parent[x];
         }
         return x;
@@ -382,14 +430,13 @@ static int run_tier2(const std::vector<record_parsed> & records,
     }
     }
 
-    // For each cluster (parent), compute Jaccard of the first two
-    // members and decide if it crosses the threshold. We approximate
-    // by checking the signature intersection / union; this is the
-    // standard MinHash-Jaccard estimator.
-    for (int i = 0; i < (int)records.size(); ++i) {
-        if (parent[i] < 0) parent[i] = i;
-    }
-    // For each cluster, find the leader (min index).
+    // For each cluster (root), compute Jaccard pairwise and remove the
+    // higher-index member of any pair above threshold. Pairwise (not
+    // leader-based) is robust to LSH false positives that pull an
+    // unrelated record into the cluster: if u-1 false-positives into
+    // the (n-1, n-2) cluster, the (n-1, n-2) pair still gets compared
+    // and n-2 still gets removed. Cluster sizes are small in practice
+    // (LSH is selective), so N^2 per cluster is cheap.
     std::unordered_map<int, std::vector<int>> clusters;
     for (int i = 0; i < (int)records.size(); ++i) {
         if (!in_mask[i]) continue;
@@ -398,26 +445,31 @@ static int run_tier2(const std::vector<record_parsed> & records,
     }
     for (const auto & kv : clusters) {
         if (kv.second.size() < 2) continue;
-        int leader = kv.second.front();
-        for (size_t k = 1; k < kv.second.size(); ++k) {
-            int j = kv.second[k];
-            // Compute Jaccard from signatures.
-            int agree = 0;
-            for (int s = 0; s < params->num_perm; ++s) {
-                if (sigs[leader][s] == sigs[j][s]) ++agree;
-            }
-            double est_jaccard = (double)agree / params->num_perm;
-            if (est_jaccard >= params->jaccard_threshold) {
-                (*survivor_mask)[j] = 0;
-                stats->n_removed++;
-                if (log) {
-                    json e;
-                    e["kept_id"]    = records[leader].trajectory_id;
-                    e["removed_id"] = records[j].trajectory_id;
-                    e["tier"]       = "tier2_fuzzy";
-                    e["similarity"] = est_jaccard;
-                    e["reason"]     = "minhash jaccard >= threshold";
-                    *log << e.dump() << "\n";
+        for (size_t a = 0; a < kv.second.size(); ++a) {
+            for (size_t b = a + 1; b < kv.second.size(); ++b) {
+                int ia = kv.second[a];
+                int ib = kv.second[b];
+                int agree = 0;
+                for (int s = 0; s < params->num_perm; ++s) {
+                    if (sigs[ia][s] == sigs[ib][s]) ++agree;
+                }
+                double est_jaccard = (double)agree / params->num_perm;
+                if (est_jaccard >= params->jaccard_threshold) {
+                    int loser  = ia > ib ? ia : ib;
+                    int winner = ia > ib ? ib : ia;
+                    if ((*survivor_mask)[loser]) {
+                        (*survivor_mask)[loser] = 0;
+                        stats->n_removed++;
+                        if (log) {
+                            json e;
+                            e["kept_id"]    = records[winner].trajectory_id;
+                            e["removed_id"] = records[loser].trajectory_id;
+                            e["tier"]       = "tier2_fuzzy";
+                            e["similarity"] = est_jaccard;
+                            e["reason"]     = "minhash jaccard >= threshold";
+                            *log << e.dump() << "\n";
+                        }
+                    }
                 }
             }
         }
@@ -436,14 +488,14 @@ static int run_tier2(const std::vector<record_parsed> & records,
 // so downstream tools know the tier ran but produced no decisions.
 // ---------------------------------------------------------------------------
 
-static int run_tier3(const std::vector<record_parsed> & records,
+static int run_tier3(const std::vector<record_parsed> & /*records*/,
                      const std::vector<int> & in_mask,
                      std::vector<int> * survivor_mask,
                      std::ofstream * log,
                      ts_tier_stats * stats) {
     stats->n_input = 0;
     for (int v : in_mask) if (v) stats->n_input++;
-    survivor_mask->assign(records.size(), 1);
+    *survivor_mask = in_mask;
     stats->n_kept = 0;
     for (int v : in_mask) if (v) stats->n_kept++;
     if (log) {
@@ -527,7 +579,17 @@ int ts_traj_dedup_run(const ts_dedup_params * params,
         rc = run_tier3(records, mask_t2, &mask_t3, &flog, &result->tier3);
         if (rc != 0) return rc;
     } else {
+        // Tier 3 is deferred (no on-device embedder yet). Log a
+        // single entry so the removal log shows the pipeline reached
+        // the tier boundary even though it made no decision.
         result->tier3 = ts_tier_stats{};
+        json e;
+        e["kept_id"]    = "";
+        e["removed_id"] = "";
+        e["tier"]       = "tier3_semantic";
+        e["similarity"] = 0.0;
+        e["reason"]     = "deferred: requires on-device embedding model";
+        flog << e.dump() << "\n";
     }
 
     // Write survivors (records that survived tier 2, or tier 3 if

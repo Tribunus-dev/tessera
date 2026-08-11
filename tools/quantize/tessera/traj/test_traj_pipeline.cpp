@@ -89,8 +89,17 @@ int main() {
         r["messages"] = json::array();
         for (int i = 0; i < n_turns; ++i) {
             json m;
-            m["source"] = (i == 0) ? "user" : "agent";
-            m["message"] = (i == 0) ? body : "ack " + body + " turn " + std::to_string(i);
+            m["source"]  = (i == 0) ? "user" : "agent";
+            // The body lives in the user message only. Agent turns are
+            // short, body-independent, and unique per turn - mirroring
+            // a realistic agent loop where the assistant takes a
+            // different action each turn. The previous version
+            // ("ack " + body + " turn N") repeated the body 6x and
+            // crushed the LSH shingle Jaccard from 0.97 to 0.65
+            // (each repetition added 6 new boundary 5-grams).
+            m["message"]   = (i == 0) ? body
+                                    : ("agent turn " + std::to_string(i) + " response ack");
+            m["step_id"]   = i + 1;
             m["timestamp"] = "2026-08-10T10:00:0" + std::to_string(i) + "Z";
             r["messages"].push_back(m);
         }
@@ -113,17 +122,27 @@ int main() {
         return r.dump();
     };
 
+    // Each near-dup pair (t1/t2, t3/t4, t5/t6) uses a long body so
+    // appending " with extra detail" at the end keeps shingle
+    // Jaccard well above the 0.8 tier-2 threshold. The other four
+    // records are unique short bodies.
+    const std::string t1_body =
+        "this is a longish message about alpha with several words for the fuzzy shingler to chew on and produce a unique signature on this fine day of the year today we test things and produce a great result on this fine day and the rest of the day is also fine because we are testing the fuzzy dedup and we want to see if the shingles overlap enough to trigger the minhash lsh banding for near duplicate detection at a high enough jaccard threshold to be useful";
+    const std::string t3_body =
+        "another long message about beta that goes on for a while with enough content to make 5-gram shingles overlap meaningfully with a near-duplicate that appends a small extra phrase at the very end of the body to test the append-at-end pattern for the LSH fuzzy dedup tier to confirm the shingle jaccard stays well above the inflection point";
+    const std::string t5_body =
+        "yet another long message about gamma content with many words and phrases to make the 5-gram shingler produce a stable signature for near duplicate detection using the append-at-end pattern that we know keeps the shingle jaccard above the threshold for the LSH banding to fire and catch the near duplicate pair reliably";
     std::string body;
-    body += mk("t1", "task-A", "alpha body", 7, "pass") + "\n";
-    body += mk("t2", "task-A", "alpha body", 7, "pass") + "\n";          // tier-2 near-dup of t1
-    body += mk("t3", "task-B", "beta body",  6, "pass") + "\n";
-    body += mk("t4", "task-B", "beta body",  6, "pass") + "\n";          // tier-2 near-dup of t3
-    body += mk("t5", "task-C", "gamma body", 5, "pass") + "\n";
-    body += mk("t6", "task-C", "gamma body", 5, "pass") + "\n";          // tier-2 near-dup of t5
-    body += mk("t7", "task-D", "delta body", 8, "pass") + "\n";
-    body += mk("t8", "task-E", "epsilon body", 4, "pass") + "\n";        // 4 turns: filtered
-    body += mk("t9", "task-F", "zeta body",   5, "fail") + "\n";        // kept (default: keep fail)
-    body += mk("ta", "task-G", "eta body",    5, "pass") + "\n";
+    body += mk("t1", "task-A", t1_body,                                            7, "pass") + "\n";
+    body += mk("t2", "task-A", t1_body + " with extra detail",                     7, "pass") + "\n";  // tier-2 near-dup of t1
+    body += mk("t3", "task-B", t3_body,                                            7, "pass") + "\n";
+    body += mk("t4", "task-B", t3_body + " with extra detail",                     7, "pass") + "\n";  // tier-2 near-dup of t3
+    body += mk("t5", "task-C", t5_body,                                            7, "pass") + "\n";
+    body += mk("t6", "task-C", t5_body + " with extra detail",                     7, "pass") + "\n";  // tier-2 near-dup of t5
+    body += mk("t7", "task-D", "completely unique short body for task D trajectory", 7, "pass") + "\n";
+    body += mk("t8", "task-E", "unique short body for task E trajectory only",     4, "pass") + "\n";  // 4 turns: filtered
+    body += mk("t9", "task-F", "unique short body for task F trajectory only",     6, "fail") + "\n";  // 6 turns, fail: kept (default)
+    body += mk("ta", "task-G", "unique short body for task G trajectory only",     7, "pass") + "\n";
     write_file(in_path, body);
 
     // ---------------------------------------------------------------------
@@ -165,12 +184,34 @@ int main() {
     }
 
     // ---------------------------------------------------------------------
+    // Stage 4: scrub. Wraps tessera-anonymizer + tessera-scrub; reuses
+    // the existing egress privacy tools in light-touch mode for the
+    // pipeline test (we're not asserting on the exact redaction here -
+    // just that the stage runs, doesn't drop records, and the output
+    // still passes the schema gate).
+    // ---------------------------------------------------------------------
+    const std::string scrub_p = "/tmp/test_pipe_scrub.jsonl";
+    {
+        std::string out;
+        int rc = run("tessera-traj-scrub " + dedup_p + " " + scrub_p + " balanced", &out);
+        check_eq_int("scrub rc", rc, 0);
+        check("scrub ran", out.find("scrubbed") != std::string::npos);
+    }
+    {
+        ts_traj::ts_traj_validation_result vr;
+        std::string em;
+        ts_traj::validate_file(scrub_p.c_str(), &vr, &em);
+        check_eq_int("scrub survivors n_valid",   vr.n_valid,   7);
+        check_eq_int("scrub survivors n_invalid", vr.n_invalid, 0);
+    }
+
+    // ---------------------------------------------------------------------
     // Stage 5: filter. With --min-assistant-turns 5 and a 4-turn record
     // (t8), we drop 1 (t8). t9 (fail) is kept by default.
     // ---------------------------------------------------------------------
     {
         std::string out;
-        int rc = run("tessera-traj-filter " + dedup_p + " " + filter_p + " " + filter_log_p, &out);
+        int rc = run("tessera-traj-filter " + scrub_p + " " + filter_p + " " + filter_log_p, &out);
         check_eq_int("filter rc", rc, 0);
         check("filter kept=6", out.find("kept=6") != std::string::npos);
         check("filter drop_turns=1", out.find("drop_turns=1") != std::string::npos);
@@ -207,8 +248,8 @@ int main() {
         std::ifstream mf(m_path);
         std::stringstream mb; mb << mf.rdbuf();
         json m; try { m = json::parse(mb.str()); } catch (...) { m = json::object(); }
-        check_eq_int("manifest schema_version", 0,
-            std::string(m.value("schema_version", "")) == "tessera.dataset-manifest.v1" ? 1 : 0);
+        check("manifest schema_version",
+            std::string(m.value("schema_version", "")) == "tessera.dataset-manifest.v1");
         check("manifest stage", m.value("stage", "") == "dedup");
 
         // verify round-trip

@@ -58,11 +58,13 @@ static std::string make_traj(const std::string & tid, const std::string & task_i
     r["messages"] = json::array();
     {
         json m; m["source"] = "user"; m["message"] = body_text;
+        m["step_id"]   = 1;
         m["timestamp"] = "2026-08-10T10:00:00Z";
         r["messages"].push_back(m);
     }
     {
         json m; m["source"] = "agent"; m["message"] = "ack " + body_text;
+        m["step_id"]   = 2;
         m["timestamp"] = "2026-08-10T10:00:01Z";
         r["messages"].push_back(m);
     }
@@ -90,10 +92,21 @@ int main() {
     // ---------------------------------------------------------------------
     std::string body;
     body += make_traj("u-1", "task-A", "unique message about alpha\n") + "\n";
+    // Exact duplicate pair (caught by tier 1).
     body += make_traj("e-1", "task-B", "exact dup body beta\n") + "\n";
-    body += make_traj("e-2", "task-B", "exact dup body beta\n") + "\n";  // tier-1 dup of e-1
-    body += make_traj("n-1", "task-C", "this is a longish message about gamma with several words for the fuzzy shingler to chew on and produce a signature\n") + "\n";
-    body += make_traj("n-2", "task-C", "this is a longish message about gamma with several words for the fuzzy shingler to chew on and produce a signature\n") + "\n";  // tier-2 dup of n-1
+    body += make_traj("e-2", "task-B", "exact dup body beta\n") + "\n";
+    // Near-duplicate pair: n-1 is a long body (~87 tokens). n-2 is
+    // n-1's body with " with extra detail" (3 tokens) appended at the
+    // END. Mid-body insertion would shift a large fraction of 5-grams
+    // and push the shingle-set Jaccard well under 0.8; appending at
+    // the end only disrupts the last few 5-grams, leaving the shared
+    // set at ~92% which is well above the LSH inflection (J ~ 0.949
+    // for the (20, 13) NeMo Curator defaults with NUM_PERM = 260).
+    const std::string n1_body =
+        "this is a longish message about alpha with several words for the fuzzy shingler to chew on and produce a unique signature on this fine day of the year today we test things and produce a great result on this fine day and the rest of the day is also fine because we are testing the fuzzy dedup and we want to see if the shingles overlap enough to trigger the minhash lsh banding for near duplicate detection at a high enough jaccard threshold to be useful\n";
+    const std::string n2_body = n1_body + " with extra detail\n";
+    body += make_traj("n-1", "task-C", n1_body) + "\n";
+    body += make_traj("n-2", "task-C", n2_body) + "\n";
     body += make_traj("d-1", "task-D", "completely different content about delta task D run\n") + "\n";
 
     // Anomaly cluster: 5 records, all near-identical. Tier 2 will

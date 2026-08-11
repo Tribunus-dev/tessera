@@ -37,10 +37,15 @@
 
 namespace ts_traj_dedup {
 
-// Default MinHash configuration. Matches NeMo Curator's fuzzy
-// defaults: 128 permutations, 20 bands * 13 hashes per band, Jaccard
-// threshold 0.8.
-constexpr int    NUM_PERM             = 128;
+// Default MinHash configuration. Matches the design doc's stated
+// band/hash count: 20 bands * 13 hashes per band = 260 permutations.
+// LSH inflection is at Jaccard J where J^13 = 0.5 -> J ~= 0.949, so
+// collisions become likely only above ~0.85 Jaccard and very likely
+// above ~0.92. This is the right shape for the "fuzzy" tier: we want
+// to catch true near-duplicates (>=0.85 body overlap) and not waste
+// budget on loose overlaps. JACCARD_THRESHOLD below keeps a safety
+// margin under the inflection.
+constexpr int    NUM_PERM             = 260;
 constexpr int    NUM_BANDS            = 20;
 constexpr int    MINHASHES_PER_BAND   = 13;
 constexpr double JACCARD_THRESHOLD    = 0.8;

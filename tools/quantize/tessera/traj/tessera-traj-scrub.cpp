@@ -1,5 +1,5 @@
 //
-// tessera-traj-scrub.h
+// tessera-traj-scrub.cpp
 //
 // Ingest-time PII / secret scrubber for v1 trajectory records. Thin
 // wrapper around the existing tessera-anonymizer and tessera-scrub
@@ -21,6 +21,7 @@
 //
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <string>
@@ -53,6 +54,66 @@ const char * agg_name(aggressiveness a) {
         case aggressiveness::aggressive: return "aggressive";
     }
     return "balanced";
+}
+
+ts_anon_level agg_to_anon_level(aggressiveness a) {
+    switch (a) {
+        case aggressiveness::light:      return TS_ANON_LIGHT;
+        case aggressiveness::balanced:   return TS_ANON_BALANCED;
+        case aggressiveness::aggressive: return TS_ANON_AGGRESSIVE;
+    }
+    return TS_ANON_BALANCED;
+}
+
+// Run anonymizer + scrub on a string. Returns the (possibly modified)
+// text. Counts are updated in-place: n_pii is bumped when anonymizer
+// changed the text, n_secrets_chars is bumped by the byte-delta of the
+// scrub pass.
+//
+// KNOWN LIMITATION: we run the anonymizer first, then the scrubber.
+// The anonymizer renames C-like identifiers; if a user pastes an API
+// key in plain text, the anonymizer can rename the prefix (e.g.
+// "sk-abc..." -> "ts-...") and break the scrubber's secret pattern.
+// The scrubber still catches high-confidence shapes the anonymizer
+// cannot touch: emails (no identifier chars), IPs, absolute paths,
+// PEM blocks, and ENV-style KEY=value tokens. Fixing the API-key
+// gap needs the anonymizer to skip tokens that match a known secret
+// shape - tracked as a follow-on, not in scope for this wave.
+std::string scrub_text(const std::string & s,
+                       aggressiveness agg,
+                       int * n_pii,
+                       int * n_secrets_chars) {
+    // Anonymize first (symbol renaming).
+    std::string after_anon = s;
+    {
+        ts_anon_params p;
+        ts_anon_default_params(&p);
+        p.level = agg_to_anon_level(agg);
+        p.emit_map = false;
+        char * out = nullptr;
+        char * map = nullptr;
+        int rc = ts_anonymize_run(&p, s.c_str(), &out, &map);
+        if (rc == 0 && out != nullptr) {
+            after_anon = std::string(out);
+            if (after_anon != s) (*n_pii)++;
+            std::free(out);
+        }
+        if (map) std::free(map);
+    }
+
+    // Scrub secrets on the anonymized text.
+    std::string after_scrub = after_anon;
+    {
+        char * out = nullptr;
+        int n_red = 0;
+        int rc = ts_scrub_run(after_anon.c_str(), &out, &n_red);
+        if (rc == 0 && out != nullptr) {
+            after_scrub = std::string(out);
+            *n_secrets_chars += std::abs((int)after_scrub.size() - (int)after_anon.size());
+            std::free(out);
+        }
+    }
+    return after_scrub;
 }
 
 }  // namespace
@@ -89,8 +150,7 @@ int main(int argc, char ** argv) {
     }
 
     int n_written = 0, n_skipped = 0;
-    int n_pii_removed = 0, n_secrets_removed = 0;
-    int n_redacted_chars = 0;
+    int n_pii_removed = 0, n_secrets_chars = 0;
     std::string line;
     while (std::getline(fin, line)) {
         if (line.empty()) continue;
@@ -107,33 +167,15 @@ int main(int argc, char ** argv) {
             for (auto & m : rec["messages"]) {
                 if (m.contains("message") && m["message"].is_string()) {
                     std::string s = m["message"].get<std::string>();
-                    std::string out;
-                    std::string err;
-                    int rc = ts_anonymize_text(s, agg_name(agg), &out, &err);
-                    if (rc == 0) {
-                        if (out != s) n_pii_removed++;
-                        m["message"] = out;
-                    }
-                    std::string scrubbed;
-                    int scr = ts_scrub_secrets(out.empty() ? s : out, &scrubbed, &err);
-                    if (scr == 0 && scrubbed != (out.empty() ? s : out)) {
-                        n_secrets_removed += std::abs((int)scrubbed.size() - (int)(out.empty() ? s : out).size());
-                        m["message"] = scrubbed;
-                        n_redacted_chars += std::abs((int)scrubbed.size() - (int)s.size());
-                    }
+                    std::string out = scrub_text(s, agg, &n_pii_removed, &n_secrets_chars);
+                    if (out != s) m["message"] = out;
                 }
                 if (m.contains("tool_calls") && m["tool_calls"].is_array()) {
                     for (auto & tc : m["tool_calls"]) {
                         if (tc.contains("arguments") && tc["arguments"].is_string()) {
                             std::string s = tc["arguments"].get<std::string>();
-                            std::string scrubbed;
-                            std::string err;
-                            int scr = ts_scrub_secrets(s, &scrubbed, &err);
-                            if (scr == 0 && scrubbed != s) {
-                                n_secrets_removed += std::abs((int)scrubbed.size() - (int)s.size());
-                                tc["arguments"] = scrubbed;
-                                n_redacted_chars += std::abs((int)scrubbed.size() - (int)s.size());
-                            }
+                            std::string out = scrub_text(s, agg, &n_pii_removed, &n_secrets_chars);
+                            if (out != s) tc["arguments"] = out;
                         }
                     }
                 }
@@ -144,10 +186,10 @@ int main(int argc, char ** argv) {
         // the user already wrote something; only fill the fields the
         // tool actually controlled.
         json scrub_meta;
-        scrub_meta["applied"]       = true;
-        scrub_meta["aggressiveness"] = agg_name(agg);
-        scrub_meta["removed_pii"]    = n_pii_removed;
-        scrub_meta["removed_secrets"] = n_secrets_removed;
+        scrub_meta["applied"]          = true;
+        scrub_meta["aggressiveness"]   = agg_name(agg);
+        scrub_meta["removed_pii"]      = n_pii_removed;
+        scrub_meta["redacted_chars"]   = n_secrets_chars;
         scrub_meta["redaction_map_id"] = std::string("redmap-") + agg_name(agg);
         rec["ingest_scrub"] = scrub_meta;
 
@@ -156,6 +198,6 @@ int main(int argc, char ** argv) {
     }
 
     std::printf("scrubbed %d records, skipped %d, pii_removed=%d secrets_redacted_chars=%d\n",
-                n_written, n_skipped, n_pii_removed, n_redacted_chars);
+                n_written, n_skipped, n_pii_removed, n_secrets_chars);
     return 0;
 }
