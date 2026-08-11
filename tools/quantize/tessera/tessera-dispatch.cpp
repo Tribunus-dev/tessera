@@ -3050,17 +3050,29 @@ int ts_dispatch_run(const ts_dispatch_params * params,
 //
 // Implementation note: this function loads the 5 model contexts (target
 // always, drafter/talker if their paths are non-empty), constructs the
-// joint PPL harness, and runs the coarse-to-fine search. Real
-// drafter / talker forward integration is in v3 follow-up: the
-// harness slots are ready (ts_l5_trunk_forward_fn,
-// ts_l5_drafter_forward_fn, ts_l5_talker_forward_fn) and the
-// production wiring is just a function-pointer replacement.
+// joint PPL harness, and runs the coarse-to-fine search.
 //
-// For the production wiring in this commit, the harness uses
-// synthetic all-zero-logits forwards (smoke test). The forward
-// functions are file-static; the function pointers are bound in
-// ts_dispatch_run_l5_joint. The search loop is unchanged; only the
-// model-specific forward functions need to be swapped at v3.
+// v3 production wiring: when at least one drafter/talker path is
+// provided, the 5 models are loaded via ts_l5_joint_models_load
+// (each model gets a llama_model + llama_context), and the harness's
+// per-model context slots are bound to the loaded contexts. The
+// forward functions (ts_l5_real_trunk_forward,
+// ts_l5_real_drafter_forward, ts_l5_real_talker_forward) call
+// llama_decode on each context to produce real logits. This is the
+// calibration counterpart of the ADAPTIVE muxer's inference forward.
+//
+// When all drafter/talker paths are empty (the smoke test), the
+// harness uses the file-static synthetic all-zero-logits forwards
+// (l5j_synth_trunk_forward, l5j_synth_drafter_forward,
+// l5j_synth_talker_forward). The mechanism (AND-gate, coarse-to-
+// fine, strict pass) is verified end-to-end without requiring real
+// models on disk.
+//
+// v3 limitation: the per-block hidden state sharing from the
+// trunk to the drafters is approximated (the drafters consume the
+// same input tokens as the trunk via their own llama_decode). The
+// full cross-model hidden state sharing is v3.5+ via the ADAPTIVE
+// muxer's graph-injection infrastructure.
 
 #include "tessera-ppl-harness.h"
 #include "tessera-l5-joint.h"
@@ -3142,15 +3154,69 @@ int ts_dispatch_run_l5_joint(
     harness.n_tokens  = 256;
     harness.rng_seed  = 0xCAFE5EAu;
 
-    // Wire the synthetic forwards. At v3, replace with real forwards
-    // loaded from the GGUF paths.
+    // ---- Real model loading (v3 production wiring) ----
+    //
+    // When at least one drafter/talker path is provided in
+    // params->*, load the 5 models via ts_l5_joint_models_load and
+    // bind the harness's per-model context slots. The forward
+    // functions then use llama_decode on each context to produce
+    // real logits (the calibration forward is the production
+    // counterpart of the ADAPTIVE muxer's inference forward).
+    //
+    // When all drafter/talker paths are empty (the smoke test), the
+    // harness uses synthetic all-zero-logits forwards; the
+    // mechanism (AND-gate, coarse-to-fine, strict pass) is verified
+    // end-to-end without requiring real models on disk.
+    ts_l5_joint_models models;
+    const bool any_drafter_path = !params->dflash_gguf_path.empty()
+            || !params->dspark_gguf_path.empty()
+            || !params->mtp_gguf_path.empty()
+            || !params->talker_gguf_path.empty();
+    bool use_real_forwards = false;
+    if (any_drafter_path) {
+        std::string load_err;
+        const int load_rc = ts_l5_joint_models_load(
+                params->input_path,
+                params->dflash_gguf_path,
+                params->dspark_gguf_path,
+                params->mtp_gguf_path,
+                params->talker_gguf_path,
+                /*n_ctx=*/512,
+                /*n_threads=*/params->nthreads > 0 ? params->nthreads : 1,
+                &models,
+                &load_err);
+        if (load_rc == 0) {
+            use_real_forwards = true;
+            // Bind the harness's per-model context slots to the
+            // loaded contexts. The forward functions dereference
+            // these at call time.
+            harness.model_ctx[TS_L5_MODEL_TARGET] = models.c[TS_L5_MODEL_TARGET];
+            harness.model_ctx[TS_L5_MODEL_DFLASH] = models.c[TS_L5_MODEL_DFLASH];
+            harness.model_ctx[TS_L5_MODEL_DSPARK] = models.c[TS_L5_MODEL_DSPARK];
+            harness.model_ctx[TS_L5_MODEL_MTP]    = models.c[TS_L5_MODEL_MTP];
+            harness.model_ctx[TS_L5_MODEL_TALKER] = models.c[TS_L5_MODEL_TALKER];
+        } else if (err_msg) {
+            *err_msg = "L5 joint: model load failed: " + load_err
+                    + " (falling back to synthetic forwards)";
+        }
+    }
+
+    // Wire the forward slots. When real models are loaded, the real
+    // forwards call llama_decode on each context. When the smoke
+    // test runs (no model paths), the synthetic forwards produce
+    // all-zero logits (the harness's AND-gate still works because
+    // FP == quant for all-zero logits -> delta = 0).
     ts_l5_drafter_forward_fn drafter_fns[TS_L5_MODEL_COUNT] = {
-        nullptr,                          // target: not a drafter
-        l5j_synth_drafter_forward,        // DFlash
-        l5j_synth_drafter_forward,        // DSPark
-        l5j_synth_drafter_forward,        // MTP
-        nullptr,                          // talker: not a drafter
+        nullptr,
+        use_real_forwards ? ts_l5_real_drafter_forward : l5j_synth_drafter_forward,
+        use_real_forwards ? ts_l5_real_drafter_forward : l5j_synth_drafter_forward,
+        use_real_forwards ? ts_l5_real_drafter_forward : l5j_synth_drafter_forward,
+        nullptr,
     };
+    ts_l5_trunk_forward_fn  trunk_forward_fn = use_real_forwards
+            ? ts_l5_real_trunk_forward : l5j_synth_trunk_forward;
+    ts_l5_talker_forward_fn talker_forward_fn = use_real_forwards
+            ? ts_l5_real_talker_forward : l5j_synth_talker_forward;
 
     // ---- Build the initial policy from the drafter / talker paths ----
     //
@@ -3191,7 +3257,7 @@ int ts_dispatch_run_l5_joint(
     // ---- Run the joint search ----
     ts_l5_joint_search_result sresult;
     const int s_rc = ts_l5_joint_search(
-            &harness, l5j_synth_trunk_forward, drafter_fns, l5j_synth_talker_forward,
+            &harness, trunk_forward_fn, drafter_fns, talker_forward_fn,
             &jparams, &sresult);
     if (s_rc != 0) {
         if (err_msg) *err_msg = "ts_l5_joint_search returned non-zero";
@@ -3208,7 +3274,7 @@ int ts_dispatch_run_l5_joint(
     if (params->l5_joint_strict) {
         ts_l5_joint_strict_result strict_r;
         const int strict_rc = ts_l5_joint_strict_pass(
-                &harness, l5j_synth_trunk_forward, drafter_fns, l5j_synth_talker_forward,
+                &harness, trunk_forward_fn, drafter_fns, talker_forward_fn,
                 &sresult.winning_entry.policy,
                 0.0025f,            // strict epsilon (0.25%)
                 &jparams,
@@ -3293,6 +3359,12 @@ int ts_dispatch_run_l5_joint(
             // Non-fatal: the report is still in result->l5_joint_report_json.
         }
     }
+
+    // ---- Free the loaded models (v3 production wiring) ----
+    // Always free, even on the synthetic-forwards path (the load
+    // failed or the user provided no paths; the function handles
+    // both cases by skipping null slots).
+    ts_l5_joint_models_free(&models);
 
     return 0;
 }

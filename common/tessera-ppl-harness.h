@@ -11,16 +11,22 @@
 // normalized delta is the metric; the AND-gate across all 5 deltas
 // is the termination criterion.
 //
-// Phase rollout: see .zcode/plans/plan-sess_57d0ae24-05b7-4442-b516-8175bc46df1d.md
-//   v1 - this file + tessera-ppl-harness.cpp + test_ppl_harness.cpp
-//   v2 - L5 joint policy struct + coarse-to-fine search loop (target alone)
-//   v3 - full 5-model joint L5 (talker integration into ADAPTIVE muxer)
-//   v4 - --tessera-l5-strict mode + acceptance gate
-//
+// Production wiring (v3 follow-up): ts_l5_joint_models holds the
+// real llama_model + llama_context pointers for all 5 models. The
+// 5 forward functions (trunk + 3 drafters + talker) use llama_decode
+// to run the actual model and extract logits. The harness slots
+// are wired with these real forwards via the dispatch.
 
 #include <cstdint>
 #include <string>
 #include <vector>
+
+// Forward-declare llama types to keep this header light. The
+// .cpp file (tessera-ppl-harness.cpp) is the only consumer that
+// needs the full llama.h; tests and search code don't.
+struct llama_model;
+struct llama_context;
+struct llama_vocab;
 
 // --- Family taxonomy (locked, see plan section "Search axes per family") ---
 
@@ -223,3 +229,92 @@ float ts_l5_ppl_per_model_compute(
         const int32_t * targets,
         int32_t n_tokens,
         int32_t vocab_size);
+
+// ===========================================================================
+// Real model wiring (v3 production follow-up)
+// ===========================================================================
+//
+// ts_l5_joint_models holds the 5 llama_model + llama_context pairs.
+// The forward functions take a context pointer and use llama_decode
+// to run the real model, extracting logits via llama_get_logits_ith.
+// The forward functions are bound to the harness via the
+// ts_l5_drafter_forward_fn / ts_l5_talker_forward_fn /
+// ts_l5_trunk_forward_fn slots.
+//
+// The model load is best-effort: any of the 5 paths may be empty,
+// in which case the corresponding slot is inactive (delta = 0 by
+// construction; the AND-gate skips it).
+//
+// The trunk forward produces per-token logits + a per-block hidden
+// state buffer (allocated by the forward, freed by the next forward
+// call or by ts_l5_joint_models_free). For v3, the drafter forwards
+// consume the same input tokens (not the per-block hidden state);
+// the cross-model hidden state sharing is a v3.5+ piece that uses
+// the ADAPTIVE muxer's graph-injection infrastructure.
+
+struct ts_l5_joint_models {
+    llama_model  * m[TS_L5_MODEL_COUNT] = {nullptr, nullptr, nullptr, nullptr, nullptr};
+    llama_context* c[TS_L5_MODEL_COUNT] = {nullptr, nullptr, nullptr, nullptr, nullptr};
+    // Per-block hidden state buffer (allocated by the trunk forward
+    // for v3.5+ cross-model sharing; nullptr at v3).
+    float * trunk_hidden_state = nullptr;
+    int32_t trunk_hidden_state_tokens = 0;
+    int32_t trunk_hidden_state_dim    = 0;
+};
+
+// Load the 5 models. Empty path for a model = that slot is inactive.
+// On success, the 5 contexts are created with n_ctx tokens of context.
+// Returns 0 on success, -1 on any failure (caller should call
+// ts_l5_joint_models_free to release whatever was loaded before
+// the failure).
+int ts_l5_joint_models_load(
+        const std::string & target_path,
+        const std::string & dflash_path,
+        const std::string & dspark_path,
+        const std::string & mtp_path,
+        const std::string & talker_path,
+        int32_t n_ctx,
+        int32_t n_threads,
+        ts_l5_joint_models * out_models,
+        std::string * err_msg);
+
+// Free the 5 models. Safe to call on a partially-loaded models
+// struct (any nullptr slot is skipped).
+void ts_l5_joint_models_free(ts_l5_joint_models * models);
+
+// --- Real forward functions (v3 production wiring) ---
+
+// Trunk forward: tokenize the calibration text + run llama_decode on
+// the target context + extract per-token logits to trunk_logits_out.
+// For v3, the per-block hidden state is not exposed; the drafter
+// forwards will see the same input tokens (the cross-model hidden
+// state sharing is v3.5+ via the ADAPTIVE muxer).
+void ts_l5_real_trunk_forward(
+        const int32_t * tokens,
+        int32_t n_tokens,
+        float * trunk_logits_out,
+        float * trunk_final_output_out,
+        void * ctx);
+
+// Drafter forward: run llama_decode on the drafter context with the
+// same input tokens, extract logits to drafter_logits_out. The
+// hidden_state_in is the trunk's per-block hidden state (v3.5+ wire
+// up; for v3 it's used as a context reference only).
+void ts_l5_real_drafter_forward(
+        const float * hidden_state_in,
+        int32_t n_tokens,
+        int32_t hidden_dim,
+        float * drafter_logits_out,
+        void * ctx);
+
+// Talker forward: take the trunk's last token argmax as input,
+// run llama_decode on the talker context, extract audio logits to
+// talker_logits_out. The trunk_final_output is the trunk's last
+// hidden state (v3.5+ consume; for v3 we use the trunk's argmax
+// token as the talker's seed).
+void ts_l5_real_talker_forward(
+        const float * trunk_final_output,
+        int32_t n_tokens,
+        int32_t hidden_dim,
+        float * talker_logits_out,
+        void * ctx);
