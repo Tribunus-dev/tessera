@@ -47,17 +47,28 @@ class GraniteModel(LlamaModel):
             self.gguf_writer.add_logit_scale(logits_scale)
             logger.info("gguf: (granite) logits_scale = %s", logits_scale)
 
-        # If being used as the base for Granite4 Vision, add deepstack_layer_arr
-        if self.hparams.get("spatial_target_layers") or self.hparams.get("deepstack_layer_map"):
+        # If being used as the base for Granite4 Vision, add deepstack_layer_arr.
+        # Guard: only run for TEXT models, not for MmprojModel components embedded in the
+        # same GGUF. MmprojModel calls GraniteModel.set_gguf_parameters() via the
+        # inheritance chain, but it should not write deepstack params (the TEXT model does).
+        has_spatial = self.hparams.get("spatial_target_layers")
+        has_deepstack = self.hparams.get("deepstack_layer_map")
+        is_mmproj = isinstance(self, MmprojModel)
+        if not is_mmproj and (has_spatial or has_deepstack):
             normalized_projector_map = Granite4VisionMmprojModel.get_normalized_projector_map(self.hparams)
-            deepstack_mapping_arr = [-1 for _ in range(self.block_count)] # Populate with -1 sentinels
-            for proj_idx, (_, llm_layer, _, _) in enumerate(normalized_projector_map):
-                # Skip the first projector which is handled as the base embedding
-                # stream like normal
-                if proj_idx == 0:
-                    continue
-                deepstack_mapping_arr[llm_layer] = proj_idx
+            deepstack_mapping_arr = [-1 for _ in range(self.block_count)]
+            n_layerwise = len(self.hparams.get("deepstack_layer_map", []))
+            # Layerwise projectors (proj_idx 1..n_layerwise) use deepstack indices 0..n_layerwise-1.
+            # Spatial projectors use deepstack indices n_layerwise..n_proj-2 (same LLM layer, overriding).
+            for proj_idx, (_, llm_layer, proj_type, type_idx) in enumerate(normalized_projector_map):
+                # ds_idx for layerwise: proj_idx (sorted order, 0..n_layerwise-1).
+                # ds_idx for spatial: type_idx + n_layerwise (spatial_idx 0..n_spatial-1 maps to 4..7).
+                ds_idx = (type_idx + n_layerwise) if proj_type == "spatial" else proj_idx
+                deepstack_mapping_arr[llm_layer] = ds_idx
+            non_sentinel = [v for v in deepstack_mapping_arr if v >= 0]
+            n_deepstack_layers = (max(non_sentinel) + 1) if non_sentinel else 1
             self.gguf_writer.add_deepstack_mapping(deepstack_mapping_arr)
+            self.gguf_writer.add_num_deepstack_layers(n_deepstack_layers)
 
     @classmethod
     def filter_tensors(cls, item: tuple[str, Callable[[], Tensor]]) -> tuple[str, Callable[[], Tensor]] | None:
@@ -387,10 +398,10 @@ class Granite4VisionMmprojModel(MmprojModel):
         (vision_layer, llm_layer, <type>, type_index)
 
         Granite4Vision has:
-        - 4 layerwise projectors: read from specific vision encoder layers, inject at specific LLM layers
-          (identified by spatial_target_layers in config, vision_layer inferred from projector index)
-        - 4 spatial projectors: read from last vision encoder layer, inject at specific LLM layers
-          (spatial_target_layers in config, spatial_vision_layer=-1 means last vision layer)
+        - 4 layerwise projectors: read from specific intermediate vision encoder layers,
+          inject at specific LLM layers (from deepstack_layer_map)
+        - 4 spatial projectors: read from last vision encoder layer,
+          inject at specific LLM layers (from spatial_target_layers)
 
         This is then used to populate the following mappings:
         - vision_feature_layers (mmproj hparam): ordered list of all
@@ -405,27 +416,23 @@ class Granite4VisionMmprojModel(MmprojModel):
         Output: (vision_layer, llm_layer, <type>, type_index)
         """
         spatial_target_layers = global_config.get("spatial_target_layers", [])  # [llm_layer, ...]
-        n_text_layers = global_config["text_config"]["num_hidden_layers"]
+        deepstack_layer_map = global_config.get("deepstack_layer_map", [])  # [[vision_offset, llm_layer], ...]
         n_vision_layers = global_config["vision_config"]["num_hidden_layers"]
 
         # Granite4Vision has 4 layerwise + 4 spatial projectors = 8 total
-        # spatial_target_layers = [12, 15, 18, 21] for 4 layerwise projectors
-        # The remaining 4 projectors are spatial (read from last vision layer)
         n_projectors = 8
-        n_layerwise = len(spatial_target_layers)  # expected 4
+        n_layerwise = len(deepstack_layer_map)  # expected 4
         n_spatial = n_projectors - n_layerwise  # remaining = spatial projectors
 
         normalized_projector_map = []
 
-        # Layerwise projectors: read from specific intermediate vision layers
-        # The vision_layer for each layerwise projector is: 12, 15, 18, 21
-        # (inferred from the Granite4Vision paper/spec: these are intermediate layers)
-        vision_layers_for_layerwise = [12, 15, 18, 21]
-        for proj_idx, llm_layer in enumerate(spatial_target_layers):
-            vision_layer = vision_layers_for_layerwise[proj_idx] if proj_idx < len(vision_layers_for_layerwise) else n_vision_layers - 1
+        # Layerwise projectors: vision_layer from deepstack_layer_map offset, llm_layer from deepstack_layer_map
+        # deepstack_layer_map = [[-19, 9], [-13, 6], [-7, 3], [-1, 0]] for Granite4Vision
+        for proj_idx, (vision_offset, llm_layer) in enumerate(deepstack_layer_map):
+            vision_layer = n_vision_layers + vision_offset if vision_offset < 0 else vision_offset
             normalized_projector_map.append((vision_layer, llm_layer, "layerwise", proj_idx))
 
-        # Spatial projectors: read from last vision layer with different spatial offsets
+        # Spatial projectors: read from last vision layer, inject at spatial_target_layers
         spatial_vision_layer = global_config.get("spatial_vision_layer", -1)
         if spatial_vision_layer < 0:
             spatial_vision_layer = n_vision_layers + spatial_vision_layer
@@ -451,8 +458,11 @@ class Granite4VisionMmprojModel(MmprojModel):
         ]
 
     def set_gguf_parameters(self):
+        # NOTE: call MmprojModel directly to avoid GraniteModel.set_gguf_parameters()
+        # writing n_deepstack_layers/n_deepstack_mapping to the shared GGUFWriter.
+        # Only Granite4VisionTextModel (the TEXT side) should write deepstack params.
         assert self.hparams_vision is not None
-        super().set_gguf_parameters()
+        MmprojModel.set_gguf_parameters(self)
 
         self.gguf_writer.add_clip_projector_type(gguf.VisionProjectorType.GRANITE4_VISION)
 

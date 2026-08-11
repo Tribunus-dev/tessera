@@ -4733,7 +4733,9 @@ int clip_n_mmproj_embd(const struct clip_ctx * ctx) {
         case PROJECTOR_TYPE_GRANITE_SPEECH:
             return ctx->model.qf_proj_blocks[0].qf_proj_linear_w->ne[1];
         case PROJECTOR_TYPE_GRANITE4_VISION:
-            return ctx->model.qf_proj_blocks.size() * ctx->model.hparams.projection_dim;
+            // (1 + n_deepstack_layers) * projection_dim to match TEXT model's n_embd_inp
+            // = (1 + qf_proj_blocks.size()) * projection_dim since qf_proj_blocks holds the deepstack projectors
+            return (1 + ctx->model.qf_proj_blocks.size()) * ctx->model.hparams.projection_dim;
         case PROJECTOR_TYPE_GLM4V:
             return ctx->model.mm_ffn_down_w->ne[1];
         default:
