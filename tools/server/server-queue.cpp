@@ -93,6 +93,113 @@ void server_prep_pool::loop() {
     }
 }
 
+//
+// server_host_pool
+//
+
+server_host_pool::~server_host_pool() {
+    stop();
+}
+
+bool server_host_pool::start(size_t n_workers) {
+    std::unique_lock<std::mutex> lock(mutex);
+    if (running.load()) {
+        return true;
+    }
+    if (n_workers == 0) {
+        n_workers = std::thread::hardware_concurrency();
+        if (n_workers == 0) {
+            n_workers = 1;
+        }
+    }
+    stop_requested.store(false);
+    workers.reserve(n_workers);
+    try {
+        for (size_t i = 0; i < n_workers; ++i) {
+            workers.emplace_back([this]() { this->worker_loop(); });
+        }
+    } catch (...) {
+        for (auto & w : workers) {
+            if (w.joinable()) {
+                w.join();
+            }
+        }
+        workers.clear();
+        n_workers = 0;
+        return false;
+    }
+    this->n_workers = n_workers;
+    running.store(true);
+    return true;
+}
+
+void server_host_pool::stop() {
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        if (!running.load()) {
+            return;
+        }
+        stop_requested.store(true);
+    }
+    cv.notify_all();
+    for (auto & w : workers) {
+        if (w.joinable()) {
+            w.join();
+        }
+    }
+    workers.clear();
+    running.store(false);
+    std::unique_lock<std::mutex> lock(mutex);
+    queue.clear();
+    n_workers = 0;
+}
+
+bool server_host_pool::dispatch_async(task_fn fn) {
+    if (!running.load()) {
+        return false;
+    }
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        if (queue.size() >= capacity) {
+            return false;
+        }
+        queue.emplace_back(std::move(fn));
+    }
+    cv.notify_one();
+    return true;
+}
+
+size_t server_host_pool::queue_size() const {
+    std::unique_lock<std::mutex> lock(mutex);
+    return queue.size();
+}
+
+void server_host_pool::worker_loop() {
+    while (true) {
+        task_fn fn;
+        {
+            std::unique_lock<std::mutex> lock(mutex);
+            cv.wait(lock, [&] {
+                return stop_requested.load() || !queue.empty();
+            });
+            if (stop_requested.load() && queue.empty()) {
+                return;
+            }
+            if (!queue.empty()) {
+                fn = std::move(queue.front());
+                queue.pop_front();
+            } else {
+                continue;
+            }
+        }
+        try {
+            fn();
+        } catch (...) {
+            // prep is best-effort: never let a worker exception escape
+        }
+    }
+}
+
 int server_queue::post(server_task && task, bool front) {
     std::unique_lock<std::mutex> lock(mutex_tasks);
     GGML_ASSERT(task.id != -1);
@@ -138,6 +245,14 @@ void server_queue::defer(server_task && task) {
     std::unique_lock<std::mutex> lock(mutex_tasks);
     QUE_DBG("defer task, id = %d\n", task.id);
     queue_tasks_deferred.push_back(std::move(task));
+    time_last_task = ggml_time_ms();
+    condition_tasks.notify_one();
+}
+
+void server_queue::post_ready(server_task && task) {
+    std::unique_lock<std::mutex> lock(mutex_tasks);
+    QUE_DBG("post_ready task, id = %d\n", task.id);
+    queue_tasks_ready.push_back(std::move(task));
     time_last_task = ggml_time_ms();
     condition_tasks.notify_one();
 }
@@ -213,6 +328,30 @@ void server_queue::start_loop(int64_t idle_sleep_ms) {
     while (true) {
         QUE_DBG("%s", "processing new tasks\n");
 
+        // Drain the host-pool ready queue first. These tasks have already
+        // paid their CPU prep cost on a server_host_pool worker; running
+        // them before any fresh dispatch from queue_tasks keeps the
+        // overlap scheduler's invariant (inference thread only sees
+        // ready-to-run tasks) and avoids stalling ready tasks behind
+        // newly-arrived HTTP dispatches.
+        while (true) {
+            std::unique_lock<std::mutex> lock(mutex_tasks);
+            if (!running) {
+                QUE_DBG("%s", "terminate\n");
+                return;
+            }
+            if (queue_tasks_ready.empty()) {
+                lock.unlock();
+                break;
+            }
+            server_task task = std::move(queue_tasks_ready.front());
+            queue_tasks_ready.pop_front();
+            lock.unlock();
+
+            QUE_DBG("processing ready task, id = %d\n", task.id);
+            callback_new_task(std::move(task));
+        }
+
         while (true) {
             std::unique_lock<std::mutex> lock(mutex_tasks);
             if (!running) {
@@ -244,7 +383,7 @@ void server_queue::start_loop(int64_t idle_sleep_ms) {
         QUE_DBG("%s", "waiting for new tasks\n");
         while (true) {
             std::unique_lock<std::mutex> lock(mutex_tasks);
-            if (!running || !queue_tasks.empty()) {
+            if (!running || !queue_tasks.empty() || !queue_tasks_ready.empty()) {
                 break; // go back to process new tasks or terminate
             }
 
@@ -271,7 +410,7 @@ void server_queue::start_loop(int64_t idle_sleep_ms) {
             } else {
                 // wait for new tasks or timeout for checking sleeping condition
                 bool res = condition_tasks.wait_for(lock, max_wait_time, [&]{
-                    return (!queue_tasks.empty() || !running);
+                    return (!queue_tasks.empty() || !queue_tasks_ready.empty() || !running);
                 });
                 if (res) {
                     break; // new task arrived or terminate

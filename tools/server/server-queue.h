@@ -71,6 +71,66 @@ private:
     prep_fn                 fn;
 };
 
+// General-purpose worker pool for CPU prep work that should run in parallel
+// with the inference thread. vLLM's EngineCore-in-separate-process buys
+// throughput by overlapping Python CPU work with GPU work (vllm-concurrency
+// study section 14.2). Tessera's hot path is already C++ with no GIL, so the
+// reason for the split does not apply; the spirit does. The single-thread
+// server_prep_pool above covers the cache-key staging use case; this pool is
+// the general fan-out for any other pure-function CPU prep (CLI tokenization,
+// future Jinja template application, etc.) so the inference thread only sees
+// "ready to run" tasks.
+//
+// API shape mirrors a std::thread::hardware_concurrency()-sized executor:
+//   pool.dispatch_async([this, t = std::move(task)] { ... });
+// dispatch_async returns false when the pool is at capacity or not running;
+// the caller is expected to fall back to inline execution. The queue is
+// bounded to keep HTTP-driven dispatch from OOMing the process under load.
+struct server_host_pool {
+    using task_fn = std::function<void()>;
+
+    server_host_pool() = default;
+    ~server_host_pool();
+
+    // Start n_workers background threads. n_workers = 0 picks
+    // std::thread::hardware_concurrency() (or 1 if the query returns 0).
+    // Idempotent; returns false if thread creation failed (caller falls
+    // back to inline execution).
+    bool start(size_t n_workers = 0);
+
+    // Stop and join. Safe to call from any thread. Pending tasks are dropped.
+    void stop();
+
+    // Submit a task for background execution. Returns true if the task was
+    // accepted, false if the pool is at capacity or not running. Bounded by
+    // set_queue_capacity() (default 1024) so dispatch_async is the
+    // observable backpressure point, not the heap.
+    bool dispatch_async(task_fn fn);
+
+    // Pending-task count. For observability.
+    size_t queue_size() const;
+
+    // Max pending tasks. dispatch_async returns false once the queue
+    // reaches this size. Default 1024; settable for tests.
+    void   set_queue_capacity(size_t cap) { capacity = cap; }
+    size_t queue_capacity() const         { return capacity; }
+
+    // Number of worker threads (0 if not started).
+    size_t pool_size() const { return n_workers; }
+
+private:
+    void worker_loop();
+
+    mutable std::mutex       mutex;
+    std::condition_variable  cv;
+    std::deque<task_fn>      queue;
+    std::vector<std::thread> workers;
+    std::atomic<bool>        running { false };
+    std::atomic<bool>        stop_requested { false };
+    size_t                   capacity  = 1024;
+    size_t                   n_workers = 0;
+};
+
 // struct for managing server tasks
 // in most cases, use server_response_reader to post new tasks and retrieve results
 struct server_queue {
@@ -84,6 +144,17 @@ private:
     // queues
     std::deque<server_task> queue_tasks;
     std::deque<server_task> queue_tasks_deferred;
+
+    // Tasks whose CPU prep phase ran on a server_host_pool worker and are
+    // ready to be processed on the inference thread. Workers post via
+    // post_ready(); start_loop() drains this before the regular queue, so
+    // a task that already paid its CPU cost does not wait behind a fresh
+    // dispatch.
+    //
+    // The same mutex_tasks / condition_tasks used for queue_tasks guard
+    // this deque, so a single condition variable wakes the inference
+    // thread for either source.
+    std::deque<server_task> queue_tasks_ready;
 
     std::mutex mutex_tasks;
     std::condition_variable condition_tasks;
@@ -102,6 +173,11 @@ public:
 
     // Add a new task, but defer until one slot is available
     void defer(server_task && task);
+
+    // Called by server_host_pool workers to push a task that has finished
+    // its CPU prep phase (tokenization, template application, etc.) and
+    // is ready to be admitted to a slot. The task is moved in.
+    void post_ready(server_task && task);
 
     // Get the next id for creating a new task
     int get_new_id();

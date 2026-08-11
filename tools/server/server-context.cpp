@@ -946,6 +946,10 @@ public:
     }
 
     ~server_context_impl() {
+        // stop the host prep pool before the prep pool: any task that a
+        // host worker is mid-flight on needs the prep pool still alive
+        // when it tries to submit cache-key staging.
+        host_pool.stop();
         // stop the overlap-scheduler worker before tearing anything else down
         prep_pool.stop();
         if (!sleeping) {
@@ -1011,6 +1015,17 @@ private:
     uint64_t n_prep_staged_total   = 0; // requests handed to the prep worker
     uint64_t n_prep_hits_total     = 0; // staged results consumed on the hot path
     uint64_t n_prep_inline_total   = 0; // falls back to inline computation
+
+    // General host prep pool: fan-out worker threads for CPU prep work that
+    // should run in parallel with the inference thread (vllm-concurrency
+    // study section 14.2). The prep_pool above is single-threaded and
+    // dedicated to cache-key staging; this pool handles the rest of the
+    // pure-function prep work (currently CLI tokenization; future
+    // candidates include Jinja template application for the OAI chat path
+    // and chat-message diffing for streaming tool calls).
+    server_host_pool host_pool;
+    uint64_t n_host_dispatched_total = 0; // tasks accepted by host_pool
+    uint64_t n_host_inline_total     = 0; // tasks that fell back to inline (pool full / not running)
 
     server_metrics metrics;
 
@@ -1618,6 +1633,18 @@ private:
             }
             prep_cache_keys[req.task_id] = std::move(keys);
         });
+
+        // Start the host prep pool: a std::thread::hardware_concurrency()-
+        // sized fan-out for CPU prep work that should overlap with the
+        // inference thread. Best-effort: if the pool cannot start, all
+        // dispatch_async() calls fall back to inline execution on the
+        // inference thread (the existing behavior).
+        if (!host_pool.start()) {
+            SRV_WRN("%s", "host prep pool failed to start; CPU prep work will run inline on the inference thread\n");
+        } else {
+            SRV_INF("host prep pool started with %zu workers (queue capacity = %zu)\n",
+                    host_pool.pool_size(), host_pool.queue_capacity());
+        }
 
         metrics.init();
 
@@ -2922,8 +2949,51 @@ private:
             case SERVER_TASK_TYPE_RERANK:
                 {
                     // special case: if input is provided via CLI, tokenize it first
-                    // otherwise, no need to tokenize as it's already done inside the HTTP thread
+                    // otherwise, no need to tokenize as it's already done inside the HTTP thread.
+                    //
+                    // CLI tokenization is CPU-bound and currently runs on the
+                    // inference thread. The vllm-concurrency study (section
+                    // 14.2) identifies the spirit of vLLM's split as
+                    // "keep CPU work off the inference-driving thread". We
+                    // dispatch the tokenize call (and the cache-key staging
+                    // that follows it) to the host prep pool, then re-post
+                    // the prepared task to the inference queue. The pool
+                    // can refuse (at capacity or not running); in that case
+                    // we fall back to inline execution.
                     if (task.cli) {
+                        // shared_ptr is the seam that lets std::function
+                        // (C++17) capture the move-only server_task by
+                        // value. The pool worker re-posts via post_ready
+                        // after tokenizing and priming the cache-key
+                        // staging, then the inference thread re-enters
+                        // process_single_task for the now-ready task.
+                        auto shared_task = std::make_shared<server_task>(std::move(task));
+                        const bool accepted = host_pool.dispatch_async(
+                            [this, shared_task]() {
+                                if (!tokenize_cli_input(*shared_task)) {
+                                    // error already sent via send_error(); just drop
+                                    return;
+                                }
+                                if (!shared_task->tokens.empty() && !shared_task->tokens.has_mtmd) {
+                                    ++n_prep_staged_total;
+                                    server_prep_pool::request req;
+                                    req.task_id  = shared_task->id;
+                                    req.has_mtmd = false;
+                                    req.tokens   = shared_task->tokens.get_tokens();
+                                    prep_pool.submit(std::move(req));
+                                }
+                                queue_tasks.post_ready(std::move(*shared_task));
+                            });
+                        if (accepted) {
+                            ++n_host_dispatched_total;
+                            // The task is now owned by the host pool; do NOT
+                            // continue with the inline path for this entry.
+                            break;
+                        }
+                        // Pool at capacity or not running: fall back to
+                        // inline tokenization on the inference thread.
+                        ++n_host_inline_total;
+                        task = std::move(*shared_task);
                         if (!tokenize_cli_input(task)) {
                             break;
                         }
@@ -3146,6 +3216,9 @@ private:
                     res->n_prep_staged_total   = n_prep_staged_total;
                     res->n_prep_hits_total     = n_prep_hits_total;
                     res->n_prep_inline_total   = n_prep_inline_total;
+                    res->n_host_dispatched_total = n_host_dispatched_total;
+                    res->n_host_inline_total     = n_host_inline_total;
+                    res->n_host_pool_workers     = host_pool.pool_size();
                     res->n_scheduler_prefill_selections_total = metrics.n_scheduler_prefill_selections_total;
                     res->scheduler_prefix_positions_total = metrics.scheduler_prefix_positions_total;
                     res->scheduler_estimated_cost_tokens_total = metrics.scheduler_estimated_cost_tokens_total;
@@ -5295,6 +5368,14 @@ void server_routes::init_routes() {
                     {"name",  "prep_inline_total"},
                     {"help",  "Cache-key derivations that ran inline (worker miss)."},
                     {"value",  res_task->n_prep_inline_total}
+            }, {
+                    {"name",  "host_dispatched_total"},
+                    {"help",  "CPU prep tasks accepted by the host prep pool (offloaded off the inference thread)."},
+                    {"value",  res_task->n_host_dispatched_total}
+            }, {
+                    {"name",  "host_inline_total"},
+                    {"help",  "CPU prep tasks that fell back to inline execution (pool full or not running)."},
+                    {"value",  res_task->n_host_inline_total}
             }, {
                     {"name",  "scheduler_prefill_selections_total"},
                     {"help",  "Prompt selections ranked by the Tessera cache-aware scheduler."},

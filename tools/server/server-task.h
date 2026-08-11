@@ -544,6 +544,9 @@ struct server_task_result_metrics : server_task_result {
     uint64_t n_prep_staged_total = 0;
     uint64_t n_prep_hits_total   = 0;
     uint64_t n_prep_inline_total = 0;
+    uint64_t n_host_dispatched_total = 0;
+    uint64_t n_host_inline_total     = 0;
+    uint64_t n_host_pool_workers     = 0;
     uint64_t n_scheduler_prefill_selections_total = 0;
     uint64_t scheduler_prefix_positions_total = 0;
     uint64_t scheduler_estimated_cost_tokens_total = 0;
