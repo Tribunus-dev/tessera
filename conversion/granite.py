@@ -386,11 +386,16 @@ class Granite4VisionMmprojModel(MmprojModel):
         """Normalize both deepstack and spatial projector maps to the form:
         (vision_layer, llm_layer, <type>, type_index)
 
+        Granite4Vision has:
+        - 4 layerwise projectors: read from specific vision encoder layers, inject at specific LLM layers
+          (identified by spatial_target_layers in config, vision_layer inferred from projector index)
+        - 4 spatial projectors: read from last vision encoder layer, inject at specific LLM layers
+          (spatial_target_layers in config, spatial_vision_layer=-1 means last vision layer)
+
         This is then used to populate the following mappings:
         - vision_feature_layers (mmproj hparam): ordered list of all
           vision_layer values where order corresponds with the order of the
           stacked projector tensors
-          NOTE: Values may appear multiple times for spatial projectors
         - tensor_prefix_map (mmproj tensors): mapping from tensor prefixes to
           the index of the corresponding projector in the stacked tensors
         - deepstack_layer_arr (llm hparam): per-text-layer array indicating
@@ -399,25 +404,36 @@ class Granite4VisionMmprojModel(MmprojModel):
 
         Output: (vision_layer, llm_layer, <type>, type_index)
         """
-        deepstack_map = global_config.get("deepstack_layer_map", [])  # [[vis_layer, llm_layer], ...]
-        spatial_layers = global_config.get("spatial_target_layers", [])  # [llm_layer, ...]
+        spatial_target_layers = global_config.get("spatial_target_layers", [])  # [llm_layer, ...]
         n_text_layers = global_config["text_config"]["num_hidden_layers"]
         n_vision_layers = global_config["vision_config"]["num_hidden_layers"]
+
+        # Granite4Vision has 4 layerwise + 4 spatial projectors = 8 total
+        # spatial_target_layers = [12, 15, 18, 21] for 4 layerwise projectors
+        # The remaining 4 projectors are spatial (read from last vision layer)
+        n_projectors = 8
+        n_layerwise = len(spatial_target_layers)  # expected 4
+        n_spatial = n_projectors - n_layerwise  # remaining = spatial projectors
+
         normalized_projector_map = []
-        if deepstack_map:
-            for deepstack_idx, (vision_layer, llm_layer) in enumerate(sorted(deepstack_map)):
-                if vision_layer < 0:
-                    vision_layer = n_vision_layers + vision_layer
-                if llm_layer < 0:
-                    llm_layer = n_text_layers + llm_layer
-                normalized_projector_map.append((vision_layer, llm_layer, "layerwise", deepstack_idx))
-        if spatial_layers:
-            spatial_vision_layer = global_config.get("spatial_vision_layer", -1)
-            if spatial_vision_layer < 0:
-                spatial_vision_layer = n_vision_layers + spatial_vision_layer
-            for spatial_idx, llm_layer in enumerate(spatial_layers):
-                normalized_projector_map.append((spatial_vision_layer, llm_layer, "spatial", spatial_idx))
-        return list(sorted(normalized_projector_map, key=(lambda entry: entry[1])))
+
+        # Layerwise projectors: read from specific intermediate vision layers
+        # The vision_layer for each layerwise projector is: 12, 15, 18, 21
+        # (inferred from the Granite4Vision paper/spec: these are intermediate layers)
+        vision_layers_for_layerwise = [12, 15, 18, 21]
+        for proj_idx, llm_layer in enumerate(spatial_target_layers):
+            vision_layer = vision_layers_for_layerwise[proj_idx] if proj_idx < len(vision_layers_for_layerwise) else n_vision_layers - 1
+            normalized_projector_map.append((vision_layer, llm_layer, "layerwise", proj_idx))
+
+        # Spatial projectors: read from last vision layer with different spatial offsets
+        spatial_vision_layer = global_config.get("spatial_vision_layer", -1)
+        if spatial_vision_layer < 0:
+            spatial_vision_layer = n_vision_layers + spatial_vision_layer
+        for spatial_idx in range(n_spatial):
+            llm_layer = spatial_target_layers[spatial_idx] if spatial_idx < len(spatial_target_layers) else -1
+            normalized_projector_map.append((spatial_vision_layer, llm_layer, "spatial", spatial_idx))
+
+        return list(sorted(normalized_projector_map, key=(lambda entry: (entry[1], 0 if entry[2] == "layerwise" else 1))))
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -504,3 +520,108 @@ class Granite4VisionMmprojModel(MmprojModel):
             yield from super().modify_tensors(data_torch, new_name, new_bid)
             return
         yield from super().modify_tensors(data_torch, name, bid)
+
+
+# Granite 4.1 Vision: text backbone.
+# The SigLIP vision encoder + 8-projector deepstack are handled by Granite4VisionMmprojModel.
+# This class provides the TEXT model so Granite4VisionForConditionalGeneration is
+# registered in _model_classes[TEXT] with the correct MODEL_ARCH.GRANITE4VISION.
+@ModelBase.register("Granite4VisionForConditionalGeneration")
+class Granite4VisionTextModel(GraniteModel):
+    model_arch = gguf.MODEL_ARCH.GRANITE4VISION
+    # set_gguf_parameters inherited from GraniteModel (handles deepstack_mapping_arr)
+
+    @classmethod
+    def get_model_architecture(cls, hparams: dict, model_type) -> str:
+        # The Granite4Vision config has a nested text_config.architectures = ["GraniteForCausalLM"].
+        # We must return the OUTER architecture name so Granite4VisionTextModel is used, not GraniteModel.
+        arches = hparams.get("architectures")
+        if arches:
+            return arches[0]
+        return super().get_model_architecture(hparams, model_type)
+
+    @classmethod
+    def filter_tensors(cls, item: tuple[str, Callable[[], Tensor]]) -> tuple[str, Callable[[], Tensor]] | None:
+        name, gen = item
+        # Granite4Vision tensors are prefixed "model." (e.g. model.language_model.embed_tokens.weight).
+        # Strip it so the base class can remap "language_model.*" -> "blk.*" / "token_embd.*".
+        if name.startswith("model."):
+            name = name[len("model."):]
+        # Skip vision / projector / encoder tensors (handled by Granite4VisionMmprojModel).
+        if (
+            "vision_tower." in name
+            or "layerwise_projectors" in name
+            or "spatial_projectors" in name
+            or "image_newline" in name
+        ):
+            return None
+        return super().filter_tensors((name, gen))
+
+
+# Granite Speech: text backbone (whisper-style audio encoder is handled by GraniteSpeechMmprojModel).
+@ModelBase.register("GraniteSpeechForConditionalGeneration")
+class GraniteSpeechTextModel(GraniteModel):
+    model_arch = gguf.MODEL_ARCH.GRANITE_SPEECH_PLUS
+    # Granite Speech uses the same text backbone parameters as GraniteModel
+
+
+# Granite Speech Plus: text backbone (GraniteSpeechPlusMmprojModel handles audio encoder).
+@ModelBase.register("GraniteSpeechPlusForConditionalGeneration")
+class GraniteSpeechPlusTextModel(GraniteModel):
+    model_arch = gguf.MODEL_ARCH.GRANITE_SPEECH_PLUS
+
+
+# Granite Docling: text backbone for Idefics3ForConditionalGeneration.
+# The SigLIP vision encoder + Idefics3 QFormer are handled by GraniteDoclingMmprojModel.
+@ModelBase.register("Idefics3ForConditionalGeneration")
+class GraniteDoclingTextModel(GraniteModel):
+    model_arch = gguf.MODEL_ARCH.GRANITE_DOCLING
+
+    @classmethod
+    def filter_tensors(cls, item: tuple[str, Callable[[], Tensor]]) -> tuple[str, Callable[[], Tensor]] | None:
+        name, gen = item
+        # Granite Docling tensors are prefixed "model." (e.g. model.text_model.model.embed_tokens.weight).
+        # Strip it so the base class can remap "text_model.*" -> "blk.*" / "token_embd.*".
+        if name.startswith("model."):
+            name = name[len("model."):]
+        # Skip vision / connector tensors (handled by GraniteDoclingMmprojModel).
+        if "vision_model." in name or "connector." in name:
+            return None
+        return super().filter_tensors((name, gen))
+
+
+# Granite Docling: mmproj for SigLIP vision encoder + Idefics3 QFormer.
+# Registered for "idefics3" model_type to distinguish from SmolVLM (which uses "smolvlm_vision").
+# Both models share "Idefics3ForConditionalGeneration" in the HF model registry.
+@ModelBase.register("idefics3")
+class GraniteDoclingMmprojModel(MmprojModel):
+    """Conversion for Granite Docling mmproj (SigLIP encoder + Idefics3 QFormer connector)."""
+    has_vision_encoder = True
+    has_audio_encoder = False
+
+    def set_gguf_parameters(self):
+        assert self.hparams_vision is not None
+        super().set_gguf_parameters()
+
+        self.gguf_writer.add_clip_projector_type(gguf.VisionProjectorType.IDEFICS3)
+
+        # SigLIP encoder hparams
+        self.gguf_writer.add_vision_attention_layernorm_eps(
+            self.hparams_vision.get("layer_norm_eps", 1e-6))
+        self.gguf_writer.add_vision_use_gelu(True)
+
+        # QFormer projector config
+        self.gguf_writer.add_vision_projector_scale_factor(
+            self.global_config.get("scale_factor", 4))
+
+        # Preprocessor
+        self.gguf_writer.add_vision_preproc_image_size(
+            self.preprocessor_config.get("size", {}).get("longest_edge", self.image_size))
+
+    @classmethod
+    def filter_tensors(cls, item: tuple[str, Callable[[], Tensor]]) -> tuple[str, Callable[[], Tensor]] | None:
+        name, _ = item
+        # Skip language model tensors (text backbone, not mmproj).
+        if "language_model." in name:
+            return None
+        return super().filter_tensors(item)
