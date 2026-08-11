@@ -44,7 +44,7 @@
 #include <vector>
 
 static void print_usage(const char * prog) {
-    printf("usage: %s -m drafter.gguf --dflash-data blocks.jsonl -o trained.gguf [options]\n", prog);
+    printf("usage: %s -m drafter.gguf --trunk-model trunk.gguf --dflash-data blocks.jsonl -o trained.gguf [options]\n", prog);
     printf("\n");
     printf("DFlash / D-PACE block-drafter training: minimize the per-position weighted\n");
     printf("cross-entropy of the drafter against the verifier's argmax, with weights\n");
@@ -53,6 +53,7 @@ static void print_usage(const char * prog) {
     printf("exponential baseline (A/B via data swap, no graph change).\n");
     printf("\n");
     printf("Tessera options:\n");
+    printf("  --trunk-model PATH    trunk GGUF (provides tok_embd + output via ctx_other)\n");
     printf("  --dflash-data PATH    llama.tessera.dflash-block.v1 JSONL (from tessera-dataset --tessera-dataset-mode dflash)\n");
     printf("  --block-size B        drafted tokens per step; n_ctx = B+1 (default: auto-detect modal)\n");
     printf("  --max-examples N      dataset cap, bounds sparse-label memory (default 512)\n");
@@ -78,6 +79,7 @@ int main(int argc, char ** argv) {
     std::setlocale(LC_NUMERIC, "C");
 
     // ---- pull tessera-specific flags out of argv; pass the rest to common ----
+    std::string trunk_model_path;
     std::string dflash_data_path;
     int  block_size   = 0;     // 0 -> auto-detect modal n_dft
     int  max_examples = 512;
@@ -88,10 +90,11 @@ int main(int argc, char ** argv) {
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "-h" || a == "--help") { print_usage(argv[0]); return 0; }
-        else if (a == "--dflash-data"    && i + 1 < argc) { dflash_data_path = argv[++i]; }
-        else if (a == "--block-size"     && i + 1 < argc) { block_size       = std::atoi(argv[++i]); }
-        else if (a == "--max-examples"   && i + 1 < argc) { max_examples     = std::atoi(argv[++i]); }
-        else if (a == "--weight-scheme"  && i + 1 < argc) {
+        else if (a == "--trunk-model"   && i + 1 < argc) { trunk_model_path = argv[++i]; }
+        else if (a == "--dflash-data"   && i + 1 < argc) { dflash_data_path = argv[++i]; }
+        else if (a == "--block-size"    && i + 1 < argc) { block_size       = std::atoi(argv[++i]); }
+        else if (a == "--max-examples"  && i + 1 < argc) { max_examples     = std::atoi(argv[++i]); }
+        else if (a == "--weight-scheme" && i + 1 < argc) {
             const std::string s = argv[++i];
             if      (s == "dpace") { weight_scheme = 0; }
             else if (s == "decay") { weight_scheme = 1; }
@@ -104,6 +107,11 @@ int main(int argc, char ** argv) {
         else { pass.push_back(a); }
     }
 
+    if (trunk_model_path.empty()) {
+        print_usage(argv[0]);
+        LOG_ERR("--trunk-model is required (path to the trunk GGUF)\n");
+        return 1;
+    }
     if (dflash_data_path.empty()) {
         print_usage(argv[0]);
         LOG_ERR("--dflash-data is required\n");
@@ -158,31 +166,87 @@ int main(int argc, char ** argv) {
     llama_backend_init();
     llama_numa_init(params.numa);
 
-    auto llama_init = common_init_from_params(params);
-    auto * model = llama_init->model();
-    auto * ctx   = llama_init->context();
-
-    if (model == NULL || ctx == NULL) {
-        LOG_ERR("%s: unable to load model\n", __func__);
-        return 1;
-    }
-
-    {
-        LOG_INF("\n");
-        LOG_INF("%s\n", common_params_get_system_info(params).c_str());
-    }
-
-    const int n_vocab = llama_vocab_n_tokens(llama_model_get_vocab(model));
-    LOG_INF("drafter: n_vocab = %d, n_ctx = %d (block_size = %d, weight_scheme = %s)\n",
-            n_vocab, n_ctx_dp, block_size, weight_scheme == 0 ? "dpace" : "decay");
-
-    // ---- collect usable dflash-block records (capped), then build the dataset ----
+    // all variables declared before any goto so C++ is happy about jumps
+    llama_model   * model_trunk = nullptr;
+    llama_context * ctx_trunk   = nullptr;
+    llama_model   * model_dft   = nullptr;
+    llama_context * ctx_dft     = nullptr;
+    ggml_opt_dataset_t dataset = nullptr;
+    struct llama_model_params mparams_trunk;
+    struct llama_context_params cparams_trunk;
+    struct llama_model_params mparams_dft;
+    struct llama_context_params cparams_dft;
     std::vector<std::string> usable;
+    int ndata = 0;
+    llama_token * data_ptr   = nullptr;
+    llama_token * labels_ptr = nullptr;
+    std::vector<float> weights_buffer;
+    struct llama_opt_params lopt_params;
+    struct lr_opt & lr = params.lr;
+    int64_t idata_split = 0;
+    ggml_opt_result_t result_train = nullptr;
+    ggml_opt_result_t result_eval  = nullptr;
+    int n_vocab = 0;
+
+    // ---- Step 1: load trunk model (provides frozen tok_embd + output via ctx_other) ----
+    // The trunk context needs only enough n_ctx to hold the KV working set;
+    // token embeddings are resolved at the model level before the context is created.
+    mparams_trunk = common_model_params_to_llama(params);
+    model_trunk = llama_model_load_from_file(trunk_model_path.c_str(), mparams_trunk);
+    if (model_trunk == NULL) {
+        LOG_ERR("failed to load trunk model: %s\n", trunk_model_path.c_str());
+        goto cleanup;
+    }
+
+    cparams_trunk = llama_context_default_params();
+    cparams_trunk.n_ctx    = 128;  // minimal; trunk KV working set is unused at train
+    cparams_trunk.n_batch  = 128;
+    cparams_trunk.n_ubatch = 128;
+    ctx_trunk = llama_init_from_model(model_trunk, cparams_trunk);
+    if (ctx_trunk == NULL) {
+        LOG_ERR("failed to create trunk context\n");
+        goto cleanup;
+    }
+
+    // ---- Step 2: load drafter model and bind ctx_other to the trunk ----
+    // The drafter GGUF may have its own tok_embd/output tensors allocated
+    // (Gemma4-style, n_embd x n_vocab), but the forward pass checks
+    //   if (model.tok_embd == nullptr) { tok_embd = ctx_other->model->tok_embd; }
+    // so we always borrow from the trunk. This is the correct behavior for
+    // training: the drafter's trunk-borrowed tok_embd + output are frozen,
+    // and only the drafter's own params (encoder FC, drafter layers, norms,
+    // dspark heads) carry gradients.
+    mparams_dft = common_model_params_to_llama(params);
+    model_dft = llama_model_load_from_file(params.model.path.c_str(), mparams_dft);
+    if (model_dft == NULL) {
+        LOG_ERR("failed to load drafter model: %s\n", params.model.path.c_str());
+        goto cleanup;
+    }
+
+    cparams_dft = common_context_params_to_llama(params);
+    cparams_dft.ctx_other = ctx_trunk;  // key: drafter borrows trunk tok_embd + output
+    ctx_dft = llama_init_from_model(model_dft, cparams_dft);
+    if (ctx_dft == NULL) {
+        LOG_ERR("failed to create drafter context\n");
+        goto cleanup;
+    }
+
+    LOG_INF("\n%s\n", common_params_get_system_info(params).c_str());
+
+    // vocab: the drafter's logits dimension must match the trunk's. The vocab
+    // should be identical (same tokenizer as the trunk); n_vocab from the trunk
+    // is the authoritative value since that's what the shared lm_head uses.
+    n_vocab = llama_vocab_n_tokens(llama_model_get_vocab(model_trunk));
+    LOG_INF("trunk:  n_vocab = %d  (tok_embd + output borrowed by drafter via ctx_other)\n", n_vocab);
+    LOG_INF("drafter: n_ctx = %d (block_size = %d, weight_scheme = %s)\n",
+            n_ctx_dp, block_size, weight_scheme == 0 ? "dpace" : "decay");
+
+    // ---- Step 3: load and build the dataset ----
     {
         std::ifstream fin(dflash_data_path);
         if (!fin) {
             LOG_ERR("cannot open dflash data: %s\n", dflash_data_path.c_str());
-            return 1;
+            goto cleanup;
         }
         std::string line;
         while (std::getline(fin, line) && (int) usable.size() < max_examples) {
@@ -192,27 +256,20 @@ int main(int argc, char ** argv) {
         }
     }
 
-    const int ndata = (int) usable.size();
+    ndata = (int) usable.size();
     if (ndata == 0) {
         LOG_ERR("no usable dflash-block.v1 records with n_dft == %d in %s\n",
                 block_size, dflash_data_path.c_str());
-        return 1;
+        goto cleanup;
     }
 
-    // ggml_opt_dataset_t: tokens (I32) and labels (I32, sparse token id) per
-    // datapoint. The per-position weight is held in a parallel
-    // weights_buffer (F32, ndata * n_ctx) that the driver hands to the llama
-    // context via llama_set_opt_label_weights before each epoch. Keeping the
-    // weight buffer out of the ggml_opt dataset keeps the dataset type-stable
-    // (matches the LK driver's I32/I32 shape) and makes the additive
-    // llama-context.cpp change a single write site.
-    ggml_opt_dataset_t dataset = ggml_opt_dataset_init(
+    dataset = ggml_opt_dataset_init(
             GGML_TYPE_I32, GGML_TYPE_I32, n_ctx_dp, /*ne_label =*/ n_ctx_dp, ndata, /*ndata_shard =*/ 1);
 
-    llama_token * data_ptr   = (llama_token *) ggml_opt_dataset_data(dataset)->data;
-    llama_token * labels_ptr = (llama_token *) ggml_opt_dataset_labels(dataset)->data;
+    data_ptr   = (llama_token *) ggml_opt_dataset_data(dataset)->data;
+    labels_ptr = (llama_token *) ggml_opt_dataset_labels(dataset)->data;
 
-    std::vector<float> weights_buffer((size_t) ndata * n_ctx_dp, 0.0f);
+    weights_buffer.assign((size_t) ndata * n_ctx_dp, 0.0f);
 
     for (int idata = 0; idata < ndata; ++idata) {
         float * w = weights_buffer.data() + (size_t) idata * n_ctx_dp;
@@ -223,10 +280,8 @@ int main(int argc, char ** argv) {
                 w);
         if (rc != 1) {
             LOG_ERR("failed to build training example %d (rc = %d)\n", idata, rc);
-            return 1;
+            goto cleanup;
         }
-        // Sanity: anchor pos must carry weight 0; the label-fill path depends
-        // on it to avoid any gradient from the (sentinel) anchor target.
         if (w[0] != 0.0f) {
             LOG_WRN("example %d: anchor weight = %f (expected 0); resetting to 0\n", idata, w[0]);
             w[0] = 0.0f;
@@ -237,51 +292,34 @@ int main(int argc, char ** argv) {
     usable.clear();
     usable.shrink_to_fit();
 
-    // Hand the per-position weight buffer to the llama context. The
-    // opt_epoch loop reads weights_buffer[idata * n_ctx_dp + pos] when
-    // use_weighted_ce is set; n_ctx_dp is recorded as opt_label_weights_n_tok
-    // for the assert inside opt_epoch_iter.
-    llama_set_opt_label_weights(ctx, weights_buffer.data(), (size_t) n_ctx_dp);
+    llama_set_opt_label_weights(ctx_dft, weights_buffer.data(), (size_t) n_ctx_dp);
 
     if (dry_run) {
         LOG_INF("dry-run: dataset built OK; skipping training and save\n");
-        ggml_opt_dataset_free(dataset);
-        llama_backend_free();
-        return 0;
+        goto cleanup;
     }
 
-    struct lr_opt & lr = params.lr;
     LOG_INF("-optimizer %s -lr0 %.2g -wd %.2g -epochs %d -period %.2g -val %.2g\n",
             ggml_opt_optimizer_name(params.optimizer), (double) lr.lr0, (double) lr.wd,
             (unsigned) lr.epochs, (double) params.n_batch / params.n_ubatch, (double) params.val_split);
 
-    // Pin the training context to one block per datapoint. The context
-    // capacity is padded up to a multiple of 256, but each datapoint is
-    // exactly n_ctx_dp tokens and must be KV-independent; n_ctx_train tells
-    // the epoch loop to process exactly that many positions per datapoint.
-    //
-    // The cross-entropy loss is unchanged (GGML_OPT_LOSS_TYPE_CROSS_ENTROPY);
-    // use_weighted_ce is the additive opt_init flag that points the label
-    // fill at the per-position weight buffer.
-    struct llama_opt_params lopt_params{
-        /*n_ctx_train     =*/(uint32_t) n_ctx_dp,
-        /*param_filter    =*/llama_opt_param_filter_all,
-        /*param_filter_ud =*/nullptr,
-        /*get_opt_pars    =*/common_opt_lr_pars,
-        /*get_opt_pars_ud =*/&params.lr,
-        /*optimizer_type  =*/params.optimizer,
-        /*loss_type       =*/GGML_OPT_LOSS_TYPE_CROSS_ENTROPY,
-        /*use_weighted_ce =*/true,
-    };
-    llama_opt_init(ctx, model, lopt_params);
+    lopt_params.n_ctx_train     = (uint32_t) n_ctx_dp;
+    lopt_params.param_filter     = llama_opt_param_filter_all;
+    lopt_params.param_filter_ud  = nullptr;
+    lopt_params.get_opt_pars     = common_opt_lr_pars;
+    lopt_params.get_opt_pars_ud  = &params.lr;
+    lopt_params.optimizer_type   = params.optimizer;
+    lopt_params.loss_type        = GGML_OPT_LOSS_TYPE_CROSS_ENTROPY;
+    lopt_params.use_weighted_ce  = true;
+    llama_opt_init(ctx_dft, model_dft, lopt_params);
 
-    const int64_t idata_split = ggml_opt_dataset_ndata(dataset) * (1.0f - params.val_split);
+    idata_split = ggml_opt_dataset_ndata(dataset) * (1.0f - params.val_split);
 
-    ggml_opt_result_t result_train = ggml_opt_result_init();
-    ggml_opt_result_t result_eval  = ggml_opt_result_init();
+    result_train = ggml_opt_result_init();
+    result_eval  = ggml_opt_result_init();
 
     for (lr.epoch = 0; lr.epoch < lr.epochs; ++lr.epoch) {
-        llama_opt_epoch(ctx, dataset, result_train, result_eval, idata_split,
+        llama_opt_epoch(ctx_dft, dataset, result_train, result_eval, idata_split,
                         ggml_opt_epoch_callback_progress_bar, ggml_opt_epoch_callback_progress_bar);
         fprintf(stderr, "\n");
 
@@ -302,11 +340,15 @@ int main(int argc, char ** argv) {
     if (params.out_file.empty()) {
         LOG_ERR("no --out-file specified; trained model not saved\n");
     } else {
-        llama_model_save_to_file(model, params.out_file.c_str());
+        llama_model_save_to_file(model_dft, params.out_file.c_str());
         LOG_INF("saved trained drafter to %s\n", params.out_file.c_str());
     }
 
+cleanup:
+    if (ctx_dft)     { llama_free(ctx_dft); }
+    if (model_dft)   { llama_model_free(model_dft); }
+    if (ctx_trunk)   { llama_free(ctx_trunk); }
+    if (model_trunk) { llama_model_free(model_trunk); }
     llama_backend_free();
-
     return 0;
 }
