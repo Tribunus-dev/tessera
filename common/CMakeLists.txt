@@ -138,12 +138,17 @@ if (APPLE)
     # architecturally justified: the events are the cross-timeline
     # lock-free primitive between the ANE side (in common) and
     # the Metal side (in ggml). ggml-base pulls in nothing extra.
-    # ggml-metal is a MODULE_LIBRARY loaded at runtime, so we link
-    # the SHARED ggml (which carries the symbols) and add Metal +
-    # the ggml-metal public include path directly.
+    #
+    # ggml-mtl-shared-events is a separate SHARED library
+    # containing the ggml_mtl_shared_event_* implementations. It's
+    # the canonical home for the symbols so that BOTH ggml-metal
+    # (a MODULE_LIBRARY loaded at runtime by ggml) and llama-common
+    # (linked directly) can call them. We link to the shared lib
+    # directly (not the MODULE ggml-metal, which CMake refuses to
+    # link into other targets). ggml-base pulls in nothing extra.
     target_include_directories(${TARGET} PRIVATE ${CMAKE_SOURCE_DIR}/ggml/src/ggml-metal)
     target_link_libraries(${TARGET} PRIVATE
-        ggml ggml-base
+        ggml ggml-base ggml-mtl-shared-events
         "-framework CoreML" "-framework Foundation" "-framework IOSurface" "-framework Metal")
 endif()
 

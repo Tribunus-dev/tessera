@@ -4,16 +4,49 @@ find_library(METALKIT_FRAMEWORK MetalKit   REQUIRED)
 
 message(STATUS "Metal framework found")
 
+# The MTLSharedEvent symbols (ggml_mtl_shared_event_*) live in a
+# separate SHARED library `ggml-mtl-shared-events` so that
+# llama-common (which is a SHARED library, not a MODULE) can link
+# them directly. The ggml-metal MODULE_LIBRARY also links to the
+# shared lib (PRIVATE) so the encode_wait / encode_signal functions
+# resolve at MODULE load time; this works because llama-common
+# loads ggml-mtl-shared-events at process startup, and ggml-metal
+# is dlopen'd later by the ggml MODULE loader.
+#
+# Why a separate shared lib: when GGML_BACKEND_DL=ON (the macOS
+# production build), ggml-metal is a MODULE_LIBRARY and cannot be
+# linked INTO llama-common (CMake refuses). The shared lib is the
+# standard CMake escape: SHARED_LIBRARYs can be linked into any
+# target, so llama-common gets the symbols, ggml-metal gets them
+# at MODULE load time, and the source of truth is one file.
+add_library(ggml-mtl-shared-events SHARED ggml-mtl-shared-events.mm)
+target_compile_features(ggml-mtl-shared-events PRIVATE cxx_std_17)
+target_link_libraries(ggml-mtl-shared-events PRIVATE ggml-base)
+set_target_properties(ggml-mtl-shared-events PROPERTIES
+    POSITION_INDEPENDENT_CODE ON)
+# ggml-mtl-shared-events needs the Metal + Foundation frameworks
+# (it imports <Metal/Metal.h> for MTLSharedEvent / MTLCommandBuffer).
+target_link_libraries(ggml-mtl-shared-events PRIVATE
+                       ${FOUNDATION_LIBRARY}
+                       ${METAL_FRAMEWORK})
+set_target_properties(ggml-mtl-shared-events PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+
 ggml_add_backend_library(ggml-metal
                          ggml-metal.cpp
                          ggml-metal-device.m
                          ggml-metal-device.cpp
                          ggml-metal-common.cpp
                          ggml-metal-context.m
-                         ggml-metal-event.mm
                          ggml-metal-ops.cpp
                          metal-dump-dequant.mm
                         )
+
+# ggml-metal uses the MTLSharedEvent symbols (ggml_mtl_shared_event_*
+# + encode_wait / encode_signal) which now live in the shared lib
+# above. PRIVATE: ggml-metal doesn't re-export the symbols; it just
+# calls them.
+target_link_libraries(ggml-metal PRIVATE ggml-mtl-shared-events)
 
 # Tessera Layer 1 instrumentation: metal-dump-dequant.mm includes
 # tessera-debug.h. The header is on the llama-tessera-debug include
