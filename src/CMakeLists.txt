@@ -57,6 +57,13 @@ target_include_directories(llama PUBLIC ../include)
 target_compile_features   (llama PRIVATE cxx_std_17) # don't bump
 
 target_link_libraries(llama PUBLIC ggml)
+if (GGML_METAL AND BUILD_SHARED_LIBS)
+    # ggml-metal symbols (e.g. ggml_mtl_shared_event_*) are forward-declared
+    # in llama-model.cpp and used directly. On macOS shared-library builds,
+    # ggml-metal and ggml-mtl-shared-events are separate dylibs, so the link
+    # must be direct — transitive propagation via ggml does not reach llama.
+    target_link_libraries(llama PRIVATE ggml-metal ggml-mtl-shared-events)
+endif()
 
 if (BUILD_SHARED_LIBS)
     set_target_properties(llama PROPERTIES POSITION_INDEPENDENT_CODE ON)
