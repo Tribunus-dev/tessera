@@ -32,9 +32,14 @@ static bool tessera_tile640_f32_input_enabled() {
     return value && strcmp(value, "1") == 0;
 }
 
+// TESSERA_PAGED_ATTN: gate for the paged-attention kernel. Default is ON.
+// Set to "0" to opt out and force the standard MHA path. Any other value
+// (including "1" or unset) leaves paged attention enabled. The dispatch
+// itself still requires kv_unified + causal + decode + a built page map,
+// so backends without the kernel fall through to build_attn_mha.
 static bool tessera_paged_attn_enabled() {
     const char * value = std::getenv("TESSERA_PAGED_ATTN");
-    return value && strcmp(value, "1") == 0;
+    return !value || strcmp(value, "0") != 0;
 }
 
 // dedup helpers
