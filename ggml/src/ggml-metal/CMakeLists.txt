@@ -51,6 +51,18 @@ if (GGML_METAL_EMBED_LIBRARY)
 
     add_compile_definitions(GGML_METAL_EMBED_LIBRARY)
 
+    # The embedded metallib is compiled once and ships with the binary,
+    # so the M5 cooperative-tensor path must be baked in (or not) at
+    # build time. GGML_METAL_HAS_TENSOR is auto-detected on M5+ hosts
+    # in the parent CMakeLists; the user can override with
+    # -DGGML_METAL_HAS_TENSOR=ON/OFF if shipping to a different host
+    # class than the build host.
+    if (GGML_METAL_HAS_TENSOR)
+        message(STATUS "ggml-metal: GGML_METAL_HAS_TENSOR=ON (M5 cooperative-tensor path compiled in)")
+    else()
+        message(STATUS "ggml-metal: GGML_METAL_HAS_TENSOR=OFF (M1-M4 scalar-FMA path only)")
+    endif()
+
     set(METALLIB_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/ggml-metal.metal")
     set(METALLIB_IMPL   "${CMAKE_CURRENT_SOURCE_DIR}/ggml-metal-impl.h")
 
@@ -110,6 +122,12 @@ else()
     if (GGML_METAL_STD)
         message(STATUS "Adding  -std=${GGML_METAL_STD} flag to metal compilation")
         list   (APPEND XC_FLAGS -std=${GGML_METAL_STD})
+    endif()
+
+    # Bake the M5 cooperative-tensor path into the embedded metallib
+    # if the build host is M5+ (auto-detected in the parent CMakeLists).
+    if (GGML_METAL_HAS_TENSOR)
+        list(APPEND XC_FLAGS -DGGML_METAL_HAS_TENSOR=1)
     endif()
 
     add_custom_command(

@@ -239,6 +239,31 @@ option(GGML_METAL                           "ggml: use Metal"                   
 option(GGML_METAL_NDEBUG                    "ggml: disable Metal debugging"                   OFF)
 option(GGML_METAL_SHADER_DEBUG              "ggml: compile Metal with -fno-fast-math"         OFF)
 option(GGML_METAL_EMBED_LIBRARY             "ggml: embed Metal library"                       ${GGML_METAL})
+# Auto-detect M5+ on the build host. Used by the embedded-Metal-library
+# path (GGML_METAL_EMBED_LIBRARY) to decide whether the M5 cooperative-
+# tensor path in ggml-metal.metal is compiled in. The JIT path
+# (default) does this at runtime via ggml_metal_device_get_props, so
+# this option only matters for pre-built metallib distributions.
+# Override with -DGGML_METAL_HAS_TENSOR=ON/OFF if shipping the
+# pre-built metallib to a different host class than the build host.
+option(GGML_METAL_HAS_TENSOR                 "ggml: compile M5 cooperative-tensor path into embedded metallib" OFF)
+
+# Probe the build host for M5 (or newer) Apple Silicon. If detected,
+# default the embedded metallib to compile the M5 path. The probe is
+# macOS-only; on other platforms the option stays at the user-provided
+# default.
+if (APPLE AND NOT DEFINED GGML_METAL_HAS_TENSOR_OVERRIDE)
+    execute_process(
+        COMMAND sysctl -n machdep.cpu.brand_string
+        OUTPUT_VARIABLE GGML_HOST_CPU_BRAND
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE GGML_HOST_CPU_PROBE_RC
+    )
+    if (GGML_HOST_CPU_PROBE_RC EQUAL 0 AND GGML_HOST_CPU_BRAND MATCHES "Apple M([5-9]|[1-9][0-9])")
+        message(STATUS "Apple Silicon M5+ detected (${GGML_HOST_CPU_BRAND}); enabling GGML_METAL_HAS_TENSOR for embedded metallib")
+        set(GGML_METAL_HAS_TENSOR ON CACHE BOOL "" FORCE)
+    endif()
+endif()
 set   (GGML_METAL_MACOSX_VERSION_MIN "" CACHE STRING
                                             "ggml: metal minimum macOS version")
 set   (GGML_METAL_STD "" CACHE STRING       "ggml: metal standard version (-std flag)")
