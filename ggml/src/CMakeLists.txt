@@ -522,6 +522,16 @@ ggml_add_backend(OPENVINO)
 # ggml_backend_ane_graph_compute) can reach it.
 ggml_add_backend(ANE)
 
+# ANE's public header (ggml/include/ggml-ane.h) includes the private
+# gguf_weight_stream.h from ggml/src/ggml-ane/. Export that path via
+# the ggml target so consumers of the public header (e.g. llama) can
+# resolve the include.
+if (TARGET ggml-ane)
+    target_include_directories(ggml PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/ggml-ane>
+        $<INSTALL_INTERFACE:include/ggml-ane>)
+endif()
+
 foreach (target ggml-base ggml)
     target_include_directories(${target} PUBLIC    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include> $<INSTALL_INTERFACE:include>)
     target_compile_features   (${target} PRIVATE c_std_11 cxx_std_17) # don't bump
