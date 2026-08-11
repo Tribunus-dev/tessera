@@ -41,9 +41,9 @@ int main(int argc, char ** argv) {
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
-        auto need = [&](const char * flag) -> std::string {
+        auto need = [&](std::string flag) -> std::string {
             if (i + 1 >= argc) {
-                std::fprintf(stderr, "tessera-traj-dedup: missing value for %s\n", flag);
+                std::fprintf(stderr, "tessera-traj-dedup: missing value for %s\n", flag.c_str());
                 std::exit(2);
             }
             return std::string(argv[++i]);
