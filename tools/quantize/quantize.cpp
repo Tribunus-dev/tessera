@@ -2104,6 +2104,21 @@ int llama_quantize(int argc, char ** argv) {
         tparams.l5_outlier_overshoot_scale   = tp.l5_outlier_overshoot_scale;
         tparams.l5_outlier_frac_cap          = tp.l5_outlier_frac_cap;
         tparams.l5_out_path                  = tp.l5_out;
+        // L5 joint PPL (the production default; supersedes the
+        // weights-only adaptive_requantize path)
+        tparams.l5_joint_mode                = tp.l5_joint_mode;
+        tparams.l5_joint_strict              = tp.l5_joint_strict;
+        tparams.l5_joint_epsilon             = tp.l5_joint_epsilon;
+        tparams.l5_joint_max_generations     = tp.l5_joint_max_generations;
+        tparams.l5_joint_top_k               = tp.l5_joint_top_k;
+        tparams.l5_joint_n_gen0_samples      = tp.l5_joint_n_gen0_samples;
+        tparams.l5_joint_rng_seed            = tp.l5_joint_rng_seed;
+        tparams.dflash_gguf_path             = tp.l5_joint_drafter_dflash;
+        tparams.dspark_gguf_path             = tp.l5_joint_drafter_dspark;
+        tparams.mtp_gguf_path                = tp.l5_joint_drafter_mtp;
+        tparams.talker_gguf_path             = tp.l5_joint_drafter_talker;
+        tparams.l5_joint_calibration_path    = tp.l5_joint_calibration;
+        tparams.l5_joint_out_path            = tp.l5_joint_out;
         tparams.tessera_db_path              = tp.tessera_db;
         tparams.force_requantize             = tp.force_requantize;
         tparams.runtime_probe                = tp.runtime_probe;

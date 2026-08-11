@@ -410,6 +410,19 @@ static const std::vector<key_handler> k_l5 = {
     {"l5-outlier-overshoot-scale",SET_F_NONNEG(l5_outlier_overshoot_scale)},
     {"l5-outlier-frac-cap",       SET_F_RANGE(l5_outlier_frac_cap, 0.0f, 1.0f, true)},
     {"l5-out",                    SET_STR(l5_out)},
+    // L5 joint PPL (the production default)
+    {"l5-joint",                  SET_BOOL(l5_joint_mode)},
+    {"l5-strict",                 SET_BOOL(l5_joint_strict)},
+    {"l5-epsilon",                SET_F_POS(l5_joint_epsilon)},
+    {"l5-joint-max-generations",  SET_INT_MIN(l5_joint_max_generations, 1)},
+    {"l5-joint-top-k",            SET_INT_MIN(l5_joint_top_k, 1)},
+    {"l5-joint-gen0-samples",     SET_INT_MIN(l5_joint_n_gen0_samples, 1)},
+    {"l5-joint-drafter-dflash",   SET_STR(l5_joint_drafter_dflash)},
+    {"l5-joint-drafter-dspark",   SET_STR(l5_joint_drafter_dspark)},
+    {"l5-joint-drafter-mtp",      SET_STR(l5_joint_drafter_mtp)},
+    {"l5-joint-drafter-talker",   SET_STR(l5_joint_drafter_talker)},
+    {"l5-joint-calibration",      SET_STR(l5_joint_calibration)},
+    {"l5-joint-out",              SET_STR(l5_joint_out)},
 };
 static const std::vector<key_handler> k_awq = {
     {"awq-alpha", SET_STR(awq_alpha)},

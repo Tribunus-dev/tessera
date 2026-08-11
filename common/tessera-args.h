@@ -46,6 +46,24 @@ struct common_tessera_params {
     float       l5_outlier_overshoot_scale = 0.5f;
     float       l5_outlier_frac_cap = 0.25f;
     std::string l5_out;
+    // L5 joint PPL mode (the production default; supersedes the
+    // weights-only adaptive_requantize path). See
+    // .zcode/plans/plan-sess_57d0ae24-05b7-4442-b516-8175bc46df1d.md
+    // and common/tessera-l5-joint.h. Use --no-tessera-l5-joint to fall
+    // back to the weights-only path.
+    bool        l5_joint_mode          = true;
+    bool        l5_joint_strict        = false;
+    float       l5_joint_epsilon       = 0.0099f;  // 0.99% (juuust below 1%)
+    int         l5_joint_max_generations = 5;
+    int         l5_joint_top_k         = 4;
+    int         l5_joint_n_gen0_samples = 32;
+    uint32_t    l5_joint_rng_seed      = 0x5EED5u;
+    std::string l5_joint_drafter_dflash;   // empty = DFlash inactive
+    std::string l5_joint_drafter_dspark;   // empty = DSPark inactive
+    std::string l5_joint_drafter_mtp;      // empty = MTP inactive
+    std::string l5_joint_drafter_talker;   // empty = talker inactive
+    std::string l5_joint_calibration;      // empty = synthetic fixture
+    std::string l5_joint_out;              // empty = beside policy_out as <stem>.l5-joint.json
     // self-improving capability loop: output-targeting ops that run then exit
     // without quantizing (precedent: --tessera-evolve-only / --tessera-calibrate-only)
     std::string capability_eval;

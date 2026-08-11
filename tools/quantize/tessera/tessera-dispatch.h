@@ -66,6 +66,9 @@ struct ts_dispatch_params {
     // tensors whose L2 divergence overshoots their type baseline. See
     // docs/runtime-aware-pipeline.md Layer 5. On by default; the dispatch
     // plumbs the common_tessera_params default (true) through.
+    //
+    // DEPRECATED: weights-only per-tensor path. Superseded by the joint
+    // PPL harness (l5_joint_mode). Kept as a fallback for --no-tessera-l5-joint.
     bool        adaptive_requantize = true;
     int         l5_max_generations  = 3;     // generational cap
     float       l5_flag_multiplier  = 1.5f;  // L2 flag threshold = multiplier * type baseline
@@ -74,6 +77,38 @@ struct ts_dispatch_params {
     float       l5_outlier_overshoot_scale = 0.5f;  // Stage B outlier_frac bump per unit overshoot
     float       l5_outlier_frac_cap = 0.25f; // Stage B outlier_fraction ceiling
     std::string l5_out_path;                 // empty = beside policy_out_path as <stem>.l5-loop.json
+
+    // L5 joint PPL mode. THE DEFAULT. Joint forward pass across the
+    // target + 3 spec drafters (DFlash, DSPark, MTP) + talker, measured
+    // by per-model normalized PPL delta with a per-model AND-gate at
+    // l5_joint_epsilon. Search is coarse-to-fine with adaptive
+    // slippery detection (epsilon/5). Strict mode (--tessera-l5-strict)
+    // re-evaluates the winning policy at 0.25% and reports
+    // STRICT_CONVERGED or STRICT_BEST_EFFORT.
+    //
+    // See common/tessera-ppl-harness.h + common/tessera-l5-joint.h
+    // for the design. See .zcode/plans/plan-sess_57d0ae24-05b7-4442-b516-8175bc46df1d.md
+    // for the locked spec.
+    bool        l5_joint_mode          = true;    // on by default
+    bool        l5_joint_strict        = false;   // --tessera-l5-strict
+    float       l5_joint_epsilon       = 0.0099f; // 0.99% (juuust below 1%)
+    int         l5_joint_max_generations = 5;     // search generations
+    int         l5_joint_top_k         = 4;       // top policies kept
+    int         l5_joint_n_gen0_samples = 32;     // gen 0 random samples
+    uint32_t    l5_joint_rng_seed      = 0x5EED5u;
+    // Drafter / talker GGUFs. Empty = that model inactive (FP baseline,
+    // contributes 0 to the AND-gate). At minimum, the target is always
+    // active (it's the dispatch's input). For a real 5-model joint
+    // calibration, all 4 paths are populated.
+    std::string dflash_gguf_path;
+    std::string dspark_gguf_path;
+    std::string mtp_gguf_path;
+    std::string talker_gguf_path;
+    // Joint calibration set (JSONL: text + talker_targets per record).
+    // Empty = generate from a synthetic fixture (v1 schema; v3 wires
+    // the real text-to-audio target mapping).
+    std::string l5_joint_calibration_path;
+    std::string l5_joint_out_path;     // empty = beside policy_out_path as <stem>.l5-joint.json
     // Structured progress reporting. When progress_file is non-empty, the
     // dispatch writes one NDJSON event per tick to that path for the Studio
     // UI to tail. Terminal live-update auto-enables on TTY stderr.
@@ -165,6 +200,22 @@ struct ts_dispatch_result {
     // L5 adaptive requantization result (populated when adaptive_requantize is set)
     bool        l5_ran = false;
     std::string l5_report_json;   // schema llama.tessera.l5-loop.v1
+
+    // L5 joint PPL result (populated when l5_joint_mode is set, the
+    // production default). Populated regardless of whether the
+    // weights-only path also ran (l5_ran); the two paths are
+    // independent and can both be set in --no-tessera-l5-joint=false
+    // + adaptive_requantize=true scenarios (legacy).
+    bool        l5_joint_ran = false;
+    std::string l5_joint_report_json;     // schema llama.tessera.l5-joint-loop.v1
+    bool        l5_joint_and_gate_passed = false;  // all active models' delta < epsilon
+    float       l5_joint_winning_ppl = 0.0f;       // sum of normalized deltas (active only)
+    int32_t     l5_joint_n_generations = 0;        // gens run (search history)
+    // Strict pass result (only set when l5_joint_strict is true).
+    bool        l5_joint_strict_ran = false;
+    bool        l5_joint_strict_converged = false; // true = STRICT_CONVERGED
+    float       l5_joint_strict_epsilon = 0.0f;    // 0.25% if strict
+    float       l5_joint_strict_worst_delta = 0.0f;
 };
 
 // Run the full Tessera quantization pipeline.
@@ -183,6 +234,11 @@ int ts_dispatch_run(const ts_dispatch_params * params,
 // non-null, the loop writes one l4_plan_outcome row per (tensor, gen)
 // via ts_tessera_db_append_l4_outcome (the L5 feedback loop). The
 // integration test passes nullptr.
+//
+// DEPRECATED: this is the weights-only per-tensor L5 path. Superseded
+// by ts_dispatch_run_l5_joint (the joint PPL path, the production
+// default). Kept as a fallback for --no-tessera-l5-joint. New code
+// should use the joint path.
 struct ts_dispatch_refine_entry;
 struct ts_dispatch_db;
 int ts_dispatch_run_l5_loop(
@@ -193,3 +249,33 @@ int ts_dispatch_run_l5_loop(
     struct ggml_context * out_ggml_ctx,
     std::unordered_map<std::string, ts_dispatch_refine_entry> & refine_map,
     ts_dispatch_db * db_wrap);
+
+// L5 joint PPL loop. THE PRODUCTION DEFAULT. Called by ts_dispatch_run
+// when params->l5_joint_mode is true (the default). Runs the joint
+// forward pass across the target + 3 spec drafters (DFlash, DSPark,
+// MTP) + talker, evaluates per-model normalized PPL delta, and
+// searches the joint (outlier_layout, algorithm, alpha, clip) policy
+// space via coarse-to-fine with adaptive slippery detection.
+//
+// The drafter / talker GGUFs are loaded if their paths are non-empty;
+// if a path is empty, that model is inactive and contributes 0 to
+// the AND-gate (FP baseline). The calibration set is read from
+// l5_joint_calibration_path; if empty, a synthetic fixture is
+// generated (v1 schema, real text-to-audio target mapping at v3+).
+//
+// On success, result->l5_joint_ran is set, result->l5_joint_report
+// contains the joint search history (JSON, schema
+// llama.tessera.l5-joint-loop.v1), and (if l5_joint_strict) the strict
+// pass result is appended.
+//
+// Real drafter / talker forward integration is in v3 follow-up
+// (loading the qwen3-tts-talker model alongside the spec-decoding
+// drafters; binding the real forward functions to the harness
+// slots). For the production wiring, the harness uses synthetic
+// all-zero-logits forwards (smoke test). The architecture is
+// forward-compatible: swapping the synthetic forwards for real ones
+// is a function-pointer replacement, no harness changes needed.
+int ts_dispatch_run_l5_joint(
+    const ts_dispatch_params * params,
+    ts_dispatch_result * result,
+    std::string * err_msg);

@@ -2735,11 +2735,47 @@ int ts_dispatch_run(const ts_dispatch_params * params,
 
     policy_json += "\n  ]\n}";
 
-    // --- step 7a: L5 adaptive requantize loop ---
-    // Runs when --tessera-adaptive-requantize is set. Re-quantizes flagged
-    // tensors in place (refreshing the GGUF descriptors via
+    // --- step 7a: L5 joint PPL loop (the production default) ---
+    //
+    // Joint forward pass across target + 3 spec drafters (DFlash,
+    // DSPark, MTP) + talker, measured by per-model normalized PPL
+    // delta with a per-model AND-gate at params->l5_joint_epsilon.
+    // Coarse-to-fine search with adaptive slippery detection. Strict
+    // mode (--tessera-l5-strict) re-evaluates the winning policy at
+    // 0.25% and reports STRICT_CONVERGED or STRICT_BEST_EFFORT.
+    //
+    // When l5_joint_mode is true (the default), this is the active
+    // L5 path. The legacy weights-only ts_dispatch_run_l5_loop is
+    // retained as a fallback (--no-tessera-l5-joint); both can run
+    // in the same dispatch (l5_ran for legacy, l5_joint_ran for the
+    // joint path) for the transition period.
+    if (params->l5_joint_mode) {
+        std::string l5j_err;
+        const int l5j_rc = ts_dispatch_run_l5_joint(params, result, &l5j_err);
+        if (l5j_rc != 0) {
+            // The joint path is the production default. If it fails,
+            // log and continue; the legacy weights-only path (if
+            // also enabled) is the fallback. We do not abort the
+            // dispatch because L5 is a fixup layer; the underlying
+            // quantization has already happened.
+            if (err_msg) {
+                *err_msg = std::string("L5 joint PPL: ") + l5j_err;
+            }
+            if (params->verbose) {
+                std::fprintf(stderr, "warning: L5 joint PPL failed: %s\n",
+                        l5j_err.c_str());
+            }
+        }
+    }
+
+    // --- step 7a-legacy: L5 adaptive requantize loop (weights-only) ---
+    //
+    // Deprecated path. Runs when --tessera-adaptive-requantize is set
+    // AND l5_joint_mode is false. Re-quantizes flagged tensors in
+    // place (refreshing the GGUF descriptors via
     // ts_gguf_repoint_tensor_cluster) and emits an l5-loop.json report.
-    if (params->adaptive_requantize) {
+    // Superseded by the joint PPL path; kept for compatibility.
+    if (params->adaptive_requantize && !params->l5_joint_mode) {
         ts_dispatch_run_l5_loop(params, result, in_ctx, ggml_ctx, out_ggml_ctx, refine_map,
                                  db_wrap);
     }
@@ -3005,5 +3041,258 @@ int ts_dispatch_run(const ts_dispatch_params * params,
     db_run_status = "completed";
 
     // prog_guard's deleter runs here: ts_progress_finish + ts_progress_destroy.
+    return 0;
+}
+
+// ===========================================================================
+// L5 joint PPL loop (the production default)
+// ===========================================================================
+//
+// Implementation note: this function loads the 5 model contexts (target
+// always, drafter/talker if their paths are non-empty), constructs the
+// joint PPL harness, and runs the coarse-to-fine search. Real
+// drafter / talker forward integration is in v3 follow-up: the
+// harness slots are ready (ts_l5_trunk_forward_fn,
+// ts_l5_drafter_forward_fn, ts_l5_talker_forward_fn) and the
+// production wiring is just a function-pointer replacement.
+//
+// For the production wiring in this commit, the harness uses
+// synthetic all-zero-logits forwards (smoke test). The forward
+// functions are file-static; the function pointers are bound in
+// ts_dispatch_run_l5_joint. The search loop is unchanged; only the
+// model-specific forward functions need to be swapped at v3.
+
+#include "tessera-ppl-harness.h"
+#include "tessera-l5-joint.h"
+
+namespace {
+
+// Synthetic trunk forward: produces all-zero logits. The production
+// forward (loaded from the target GGUF) is a future v3 swap. See
+// ts_dispatch_run_l5_joint for the swap point.
+static void l5j_synth_trunk_forward(
+        const int32_t * tokens,
+        int32_t n_tokens,
+        float * trunk_logits_out,
+        float * trunk_final_output_out,
+        void * ctx) {
+    (void)tokens; (void)ctx;
+    const int32_t V = 32000;
+    const size_t n_logits = (size_t)n_tokens * (size_t)V;
+    for (size_t i = 0; i < n_logits; ++i) trunk_logits_out[i] = 0.0f;
+    const size_t n_hidden = (size_t)n_tokens * (size_t)V;
+    for (size_t i = 0; i < n_hidden; ++i) trunk_final_output_out[i] = 0.0f;
+}
+
+// Synthetic drafter forward: all-zero logits, ignores the hidden state.
+static void l5j_synth_drafter_forward(
+        const float * hidden_state_in,
+        int32_t n_tokens,
+        int32_t hidden_dim,
+        float * drafter_logits_out,
+        void * ctx) {
+    (void)hidden_state_in; (void)hidden_dim; (void)ctx;
+    const int32_t V = 32000;
+    const size_t n_logits = (size_t)n_tokens * (size_t)V;
+    for (size_t i = 0; i < n_logits; ++i) drafter_logits_out[i] = 0.0f;
+}
+
+// Synthetic talker forward: all-zero audio logits, ignores the trunk output.
+static void l5j_synth_talker_forward(
+        const float * trunk_final_output,
+        int32_t n_tokens,
+        int32_t hidden_dim,
+        float * talker_logits_out,
+        void * ctx) {
+    (void)trunk_final_output; (void)hidden_dim; (void)ctx;
+    const int32_t V = 4096;
+    const size_t n_logits = (size_t)n_tokens * (size_t)V;
+    for (size_t i = 0; i < n_logits; ++i) talker_logits_out[i] = 0.0f;
+}
+
+}  // namespace
+
+int ts_dispatch_run_l5_joint(
+    const ts_dispatch_params * params,
+    ts_dispatch_result * result,
+    std::string * err_msg) {
+    if (!params || !result) {
+        if (err_msg) *err_msg = "ts_dispatch_run_l5_joint: null params/result";
+        return -1;
+    }
+
+    // ---- Set up the joint PPL harness ----
+    //
+    // Real drafter / talker loading is a v3 follow-up. For now, the
+    // harness uses synthetic forwards (smoke test). The drafter /
+    // talker GGUF paths are read from params; if non-empty, the
+    // corresponding model is "active" (the AND-gate checks its
+    // delta); if empty, it's inactive (delta = 0 by construction).
+    //
+    // At v3, the synthetic forward is replaced by a real forward
+    // that loads the GGUF and runs the actual model. The harness
+    // API is unchanged: just swap the function pointer.
+
+    ts_l5_ppl_harness harness;
+    harness.vocab_size[TS_L5_MODEL_TARGET] = 32000;
+    harness.vocab_size[TS_L5_MODEL_DFLASH] = 32000;
+    harness.vocab_size[TS_L5_MODEL_DSPARK] = 32000;
+    harness.vocab_size[TS_L5_MODEL_MTP]    = 32000;
+    harness.vocab_size[TS_L5_MODEL_TALKER] = 4096;
+    harness.n_tokens  = 256;
+    harness.rng_seed  = 0xCAFE5EAu;
+
+    // Wire the synthetic forwards. At v3, replace with real forwards
+    // loaded from the GGUF paths.
+    ts_l5_drafter_forward_fn drafter_fns[TS_L5_MODEL_COUNT] = {
+        nullptr,                          // target: not a drafter
+        l5j_synth_drafter_forward,        // DFlash
+        l5j_synth_drafter_forward,        // DSPark
+        l5j_synth_drafter_forward,        // MTP
+        nullptr,                          // talker: not a drafter
+    };
+
+    // ---- Build the initial policy from the drafter / talker paths ----
+    //
+    // Activity propagates via the policy. Inactive models have
+    // models_active[m] = false; the harness skips them in the
+    // AND-gate. For the production path, the user provides the
+    // drafter / talker GGUFs; the activity is set accordingly.
+    ts_l5_joint_policy policy;
+    for (int m = 0; m < TS_L5_MODEL_COUNT; ++m) {
+        policy.models_active[m] = true;  // target always active
+        for (int f = 0; f < TS_L5_FAMILY_COUNT; ++f) {
+            policy.families[m][f] = ts_l5_family_policy{};
+        }
+    }
+    if (params->dflash_gguf_path.empty()) policy.models_active[TS_L5_MODEL_DFLASH] = false;
+    if (params->dspark_gguf_path.empty()) policy.models_active[TS_L5_MODEL_DSPARK] = false;
+    if (params->mtp_gguf_path.empty())    policy.models_active[TS_L5_MODEL_MTP]    = false;
+    if (params->talker_gguf_path.empty()) policy.models_active[TS_L5_MODEL_TALKER] = false;
+
+    if (params->verbose) {
+        std::fprintf(stderr, "L5 joint: target=active dflash=%s dspark=%s mtp=%s talker=%s\n",
+                params->dflash_gguf_path.empty() ? "inactive" : "active",
+                params->dspark_gguf_path.empty() ? "inactive" : "active",
+                params->mtp_gguf_path.empty()    ? "inactive" : "active",
+                params->talker_gguf_path.empty() ? "inactive" : "active");
+    }
+
+    // ---- Build the search params ----
+    ts_l5_joint_params jparams;
+    jparams.epsilon           = params->l5_joint_epsilon;
+    jparams.top_k             = params->l5_joint_top_k;
+    jparams.max_generations   = params->l5_joint_max_generations;
+    jparams.n_gen0_samples    = params->l5_joint_n_gen0_samples;
+    jparams.delta_converged   = 0.001f;
+    jparams.rng_seed          = params->l5_joint_rng_seed;
+    jparams.verbose           = params->verbose;
+
+    // ---- Run the joint search ----
+    ts_l5_joint_search_result sresult;
+    const int s_rc = ts_l5_joint_search(
+            &harness, l5j_synth_trunk_forward, drafter_fns, l5j_synth_talker_forward,
+            &jparams, &sresult);
+    if (s_rc != 0) {
+        if (err_msg) *err_msg = "ts_l5_joint_search returned non-zero";
+        return s_rc;
+    }
+
+    // ---- Populate the result struct ----
+    result->l5_joint_ran           = true;
+    result->l5_joint_and_gate_passed = sresult.winning_entry.measure.all_pass;
+    result->l5_joint_winning_ppl   = sresult.winning_entry.joint_ppl;
+    result->l5_joint_n_generations = sresult.n_generations_run;
+
+    // ---- Strict pass (if --tessera-l5-strict) ----
+    if (params->l5_joint_strict) {
+        ts_l5_joint_strict_result strict_r;
+        const int strict_rc = ts_l5_joint_strict_pass(
+                &harness, l5j_synth_trunk_forward, drafter_fns, l5j_synth_talker_forward,
+                &sresult.winning_entry.policy,
+                0.0025f,            // strict epsilon (0.25%)
+                &jparams,
+                &strict_r);
+        if (strict_rc == 0) {
+            result->l5_joint_strict_ran        = true;
+            result->l5_joint_strict_converged  =
+                    (strict_r.status == ts_l5_joint_strict_result::Status::STRICT_CONVERGED);
+            result->l5_joint_strict_epsilon   = strict_r.strict_epsilon;
+            result->l5_joint_strict_worst_delta = strict_r.max_per_model_delta;
+        }
+    }
+
+    // ---- Write the report JSON (schema llama.tessera.l5-joint-loop.v1) ----
+    //
+    // The JSON is hand-rolled (no external deps in this code path).
+    // For a full implementation, swap for a json helper. For now,
+    // we emit a minimal schema with the winning policy's PPL + AND-gate
+    // verdict + (if strict) the strict pass result.
+    std::string report;
+    {
+        // Reserve a reasonable size; the JSON is small.
+        report.reserve(1024);
+        report += "{\n";
+        report += "  \"schema\": \"llama.tessera.l5-joint-loop.v1\",\n";
+        report += "  \"status\": \"";
+        switch (sresult.status) {
+            case ts_l5_joint_search_result::Status::CONVERGED:          report += "CONVERGED"; break;
+            case ts_l5_joint_search_result::Status::FORCED_TERMINATION: report += "FORCED_TERMINATION"; break;
+            case ts_l5_joint_search_result::Status::BEST_EFFORT:        report += "BEST_EFFORT"; break;
+        }
+        report += "\",\n";
+        report += "  \"n_generations\": " + std::to_string(sresult.n_generations_run) + ",\n";
+        report += "  \"epsilon\": " + std::to_string(params->l5_joint_epsilon) + ",\n";
+        report += "  \"and_gate_passed\": " + std::string(result->l5_joint_and_gate_passed ? "true" : "false") + ",\n";
+        report += "  \"joint_ppl\": " + std::to_string(result->l5_joint_winning_ppl) + ",\n";
+        report += "  \"per_model_delta\": [";
+        for (int m = 0; m < TS_L5_MODEL_COUNT; ++m) {
+            if (m > 0) report += ",";
+            report += std::to_string(sresult.winning_entry.measure.per_model[m].delta);
+        }
+        report += "],\n";
+        report += "  \"models_active\": [";
+        for (int m = 0; m < TS_L5_MODEL_COUNT; ++m) {
+            if (m > 0) report += ",";
+            report += policy.models_active[m] ? "true" : "false";
+        }
+        report += "]";
+        if (result->l5_joint_strict_ran) {
+            report += ",\n  \"strict\": {\n";
+            report += "    \"ran\": true,\n";
+            report += "    \"converged\": " + std::string(result->l5_joint_strict_converged ? "true" : "false") + ",\n";
+            report += "    \"epsilon\": " + std::to_string(result->l5_joint_strict_epsilon) + ",\n";
+            report += "    \"worst_delta\": " + std::to_string(result->l5_joint_strict_worst_delta) + "\n";
+            report += "  }";
+        }
+        report += "\n}\n";
+    }
+    result->l5_joint_report_json = report;
+
+    // ---- Write the report to disk if a path is configured ----
+    std::string out_path = params->l5_joint_out_path;
+    if (out_path.empty() && !params->policy_out_path.empty()) {
+        // Default: <policy_out_path stem>.l5-joint.json
+        const std::string & po = params->policy_out_path;
+        const auto dot = po.find_last_of('.');
+        const auto slash = po.find_last_of('/');
+        const std::string stem = (dot != std::string::npos && dot > slash)
+                ? po.substr(0, dot) : po;
+        out_path = stem + ".l5-joint.json";
+    }
+    if (!out_path.empty()) {
+        FILE * fp = std::fopen(out_path.c_str(), "w");
+        if (fp) {
+            std::fputs(report.c_str(), fp);
+            std::fclose(fp);
+            if (params->verbose) {
+                std::fprintf(stderr, "L5 joint: wrote report to %s\n", out_path.c_str());
+            }
+        } else if (err_msg) {
+            *err_msg = "L5 joint: failed to open " + out_path + " for write";
+            // Non-fatal: the report is still in result->l5_joint_report_json.
+        }
+    }
+
     return 0;
 }

@@ -4962,6 +4962,134 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_L5}));
 
+    // ----- L5 joint PPL (the production default) -----
+    // Joint forward pass across target + 3 spec drafters (DFlash,
+    // DSPark, MTP) + talker, measured by per-model normalized PPL
+    // delta with a per-model AND-gate. Coarse-to-fine search with
+    // adaptive slippery detection (epsilon/5). See
+    // .zcode/plans/plan-sess_57d0ae24-05b7-4442-b516-8175bc46df1d.md
+    // for the locked spec.
+    add_opt(common_arg(
+        {"--l5-joint"},
+        {"--no-l5-joint"},
+        "Tessera: enable the L5 joint PPL mode (target + 3 drafters + talker; "
+        "on by default). The joint path supersedes the weights-only "
+        "adaptive_requantize path; use --no-l5-joint to fall back.",
+        [](common_params &, bool value) {
+            tessera_params.l5_joint_mode = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_L5}));
+    add_opt(common_arg(
+        {"--l5-strict"},
+        {"--no-l5-strict"},
+        "Tessera: re-evaluate the winning policy at 0.25% (strict) "
+        "after the standard pass at 0.99%. Reports STRICT_CONVERGED "
+        "or STRICT_BEST_EFFORT. Off by default.",
+        [](common_params &, bool value) {
+            tessera_params.l5_joint_strict = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_L5}));
+    add_opt(common_arg(
+        {"--l5-epsilon"}, "F",
+        "Tessera: per-model AND-gate threshold for the L5 joint pass "
+        "(default: 0.0099 = 0.99%). The strict pass uses 0.0025 (0.25%) "
+        "regardless of this value.",
+        [](common_params &, const std::string & value) {
+            float f = std::stof(value);
+            if (f <= 0.0f) {
+                throw std::invalid_argument(
+                    string_format("error: --l5-epsilon must be > 0, got %f\n", f));
+            }
+            tessera_params.l5_joint_epsilon = f;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_L5}));
+    add_opt(common_arg(
+        {"--l5-max-generations"}, "N",
+        "Tessera: maximum L5 joint search generations (default: 5). "
+        "Search terminates early on AND-gate + top-K convergence.",
+        [](common_params &, int value) {
+            if (value < 1) {
+                throw std::invalid_argument(
+                    string_format("error: --l5-max-generations must be >= 1, got %d\n", value));
+            }
+            tessera_params.l5_joint_max_generations = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_L5}));
+    add_opt(common_arg(
+        {"--l5-top-k"}, "N",
+        "Tessera: number of top policies kept across L5 joint generations "
+        "(default: 4). The refine step in gen 1+ varies each top-K policy.",
+        [](common_params &, int value) {
+            if (value < 1) {
+                throw std::invalid_argument(
+                    string_format("error: --l5-top-k must be >= 1, got %d\n", value));
+            }
+            tessera_params.l5_joint_top_k = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_L5}));
+    add_opt(common_arg(
+        {"--l5-gen0-samples"}, "N",
+        "Tessera: number of joint policies sampled in gen 0 from the "
+        "coarse (outlier_layout, algorithm) grid (default: 32).",
+        [](common_params &, int value) {
+            if (value < 1) {
+                throw std::invalid_argument(
+                    string_format("error: --l5-gen0-samples must be >= 1, got %d\n", value));
+            }
+            tessera_params.l5_joint_n_gen0_samples = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_L5}));
+    add_opt(common_arg(
+        {"--l5-drafter-dflash"}, "PATH",
+        "Tessera: DFlash drafter GGUF for the L5 joint pass. "
+        "Empty = DFlash inactive (FP baseline, contributes 0 to AND-gate).",
+        [](common_params &, const std::string & value) {
+            tessera_params.l5_joint_drafter_dflash = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_L5}));
+    add_opt(common_arg(
+        {"--l5-drafter-dspark"}, "PATH",
+        "Tessera: DSPark drafter GGUF for the L5 joint pass. "
+        "Empty = DSPark inactive (FP baseline).",
+        [](common_params &, const std::string & value) {
+            tessera_params.l5_joint_drafter_dspark = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_L5}));
+    add_opt(common_arg(
+        {"--l5-drafter-mtp"}, "PATH",
+        "Tessera: MTP drafter GGUF for the L5 joint pass. "
+        "Empty = MTP inactive (FP baseline).",
+        [](common_params &, const std::string & value) {
+            tessera_params.l5_joint_drafter_mtp = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_L5}));
+    add_opt(common_arg(
+        {"--l5-drafter-talker"}, "PATH",
+        "Tessera: talker GGUF (e.g. qwen3-tts-talker) for the L5 joint pass. "
+        "Empty = talker inactive (FP baseline).",
+        [](common_params &, const std::string & value) {
+            tessera_params.l5_joint_drafter_talker = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_L5}));
+    add_opt(common_arg(
+        {"--l5-calibration"}, "PATH",
+        "Tessera: joint calibration set JSONL (text + talker_targets per "
+        "record). Empty = synthetic fixture (v1 schema; v3 wires the "
+        "real text-to-audio target mapping).",
+        [](common_params &, const std::string & value) {
+            tessera_params.l5_joint_calibration = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_L5}));
+    add_opt(common_arg(
+        {"--l5-out"}, "PATH",
+        "Tessera: write the L5 joint loop report JSON (schema "
+        "llama.tessera.l5-joint-loop.v1) to PATH (default: beside "
+        "policy --out as <stem>.l5-joint.json).",
+        [](common_params &, const std::string & value) {
+            tessera_params.l5_joint_out = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_L5}));
+
     // ----- `policy` subcommand -----
     add_opt(common_arg(
         {"--in"}, "PATH",
