@@ -4,6 +4,7 @@
 #import "ggml-backend-impl.h"
 
 #include <Foundation/Foundation.h>
+#import <objc/runtime.h>
 
 #include <Metal/Metal.h>
 
@@ -564,6 +565,40 @@ struct ggml_metal_device {
 // MTLResidenceSet wrapper
 //
 
+// Associated-object key used to store the descriptive label on each
+// MTLResidencySet so ggml_metal_rsets_free can name a leaked set in
+// the drain log.
+//
+// IMPLEMENTATION NOTE — why the placeholder char exists:
+//
+//   The contract for objc_setAssociatedObject / objc_getAssociatedObject
+//   is that the key identifies an associated object on a per-pair
+//   (object, key) basis. The natural-looking self-referential idiom
+//   does NOT work:
+//
+//       static const void * kKey = &kKey;       // BROKEN
+//       objc_setAssociatedObject(obj, kKey, value, ...);
+//
+//   On some toolchains / linkers the address of kKey is a relocation
+//   resolved at load time. When the rset's associated object is read
+//   back, the lookup uses the resolved address — but the lookup hash
+//   is keyed on the (pre-relocation) address stored at the call site.
+//   The two disagree, objc_getAssociatedObject returns nil, and the
+//   leak log falls through to the default NSObject description
+//   ("AGXG13GFamilyResidencySet: 0x...") instead of the buffer's
+//   descriptive label. The first version of this file had exactly
+//   this bug; the test caught it; the placeholder fix is the one
+//   that ships.
+//
+//   The fix is to use a separate file-scope static char as the
+//   address target. Its address is known at link time, used as the
+//   key at both set and get sites, and is unique per binary (the
+//   kGGMLMetalRsetLabelKeyPlaceholder symbol is private to this TU).
+//   This matches the pattern used throughout Apple's own frameworks
+//   for associated-object keys.
+static const char kGGMLMetalRsetLabelKeyPlaceholder = 0;
+static const void * const kGGMLMetalRsetLabelKey = &kGGMLMetalRsetLabelKeyPlaceholder;
+
 struct ggml_metal_rsets {
     NSLock * lock;
 
@@ -643,8 +678,65 @@ void ggml_metal_rsets_free(ggml_metal_rsets_t rsets) {
         return;
     }
 
-    // note: if you hit this assert, most likely you haven't deallocated all Metal resources before exiting
-    GGML_ASSERT([rsets->data count] == 0);
+    // If the caller forgot to call ggml_backend_buffer_free for some
+    // buffer that was allocated via ggml_backend_alloc_ctx_tensors, the
+    // rset is still in the collection here. Drain it with a structured
+    // log instead of aborting — the OS reclaims the underlying Metal
+    // resources at process exit regardless, and a hard abort makes
+    // the leak hard to diagnose (you get a backtrace, not the leak
+    // identity). The label on each rset (set in
+    // ggml_metal_buffer_rset_init) tells you which buffer leaked.
+    //
+    // The contract is still: every ggml_backend_alloc_ctx_tensors()
+    // call MUST be matched with a ggml_backend_buffer_free() before
+    // the context is destroyed. This branch surfaces violations
+    // loudly without crashing the process.
+    //
+    // WHEN THIS RUNS: this function is called from ggml_metal_device_free
+    // via the device's std::unique_ptr deleter. The deleter fires when
+    // the file-scope std::vector<ggml_metal_device_ptr> devs in
+    // ggml_metal_device_get is destroyed at process exit. The destruction
+    // order is determined by the C++ runtime: atexit handlers and
+    // C++ static destructors run in REVERSE construction order. That
+    // means: this drain runs AFTER the user's main() returns and
+    // AFTER any explicit ggml_backend_free(backend) calls. A user
+    // who calls std::_Exit(0) instead of return / std::exit(0) in
+    // their test will SKIP this drain (POSIX _Exit terminates without
+    // running C++ static destructors). Tests that need to verify
+    // the drain fires must use std::exit(0) or normal return. The
+    // test-metal-rset-leak test uses std::exit(0) for exactly this
+    // reason.
+    [rsets->lock lock];
+    const NSUInteger leaked = rsets->data.count;
+    if (leaked > 0) {
+        GGML_LOG_ERROR("ggml_metal_rsets: %lu residency set(s) still in the collection at device teardown.\n"
+                       "This usually means ggml_backend_buffer_free() was not called for every buffer\n"
+                       "returned by ggml_backend_alloc_ctx_tensors(). Leaked sets:\n",
+                       (unsigned long) leaked);
+        for (NSUInteger i = 0; i < leaked; ++i) {
+            id rset = rsets->data[i];
+            NSString * label = objc_getAssociatedObject(rset, kGGMLMetalRsetLabelKey);
+            // Defensive fallback: some old rset objects may not have
+            // a label attached (e.g. rset was created before the
+            // associated-object wiring was added). Print whatever
+            // NSObject description we can get in that case.
+            if (label == nil && [rset respondsToSelector:@selector(description)]) {
+                label = [rset performSelector:@selector(description)];
+            }
+            const char * label_cstr = "<no label>";
+            char label_buf[256];
+            if (label != nil) {
+                const char * utf8 = [[label description] UTF8String];
+                if (utf8 != NULL) {
+                    snprintf(label_buf, sizeof(label_buf), "%s", utf8);
+                    label_cstr = label_buf;
+                }
+            }
+            GGML_LOG_ERROR("  [%lu] label=%s\n", (unsigned long) i, label_cstr);
+        }
+        [rsets->data removeAllObjects];
+    }
+    [rsets->lock unlock];
 
     atomic_store_explicit(&rsets->d_stop, true, memory_order_relaxed);
 
@@ -1667,7 +1759,15 @@ static bool ggml_metal_buffer_rset_init(ggml_metal_buffer_t buf) {
 #if defined(GGML_METAL_HAS_RESIDENCY_SETS)
     if (@available(macOS 15.0, iOS 18.0, tvOS 18.0, visionOS 2.0, *)) {
         MTLResidencySetDescriptor * desc = [[MTLResidencySetDescriptor alloc] init];
-        desc.label = @"ggml_metal";
+        // Label includes the buffer's size, n_buffers, and shared flag
+        // so that a leak log (see ggml_metal_rsets_free) names the
+        // specific buffer that wasn't freed. Without this, a leak log
+        // says "1 rset leaked" with no way to identify which one.
+        desc.label = [NSString stringWithFormat:@"ggml_metal_buffer(size=%zu,n=%d,shared=%d,addr=%p)",
+                                                (size_t) buf->all_size,
+                                                buf->n_buffers,
+                                                buf->is_shared ? 1 : 0,
+                                                buf->all_data];
         desc.initialCapacity = buf->n_buffers;
 
         NSError * error;
@@ -1686,6 +1786,21 @@ static bool ggml_metal_buffer_rset_init(ggml_metal_buffer_t buf) {
 
         [buf->rset commit];
         [buf->rset requestResidency];
+
+        // Attach the descriptive label to the rset as an associated
+        // object so ggml_metal_rsets_free can name the leaked buffer
+        // in its drain log. MTLResidencySet's own `label`/`description`
+        // accessors don't return the descriptor's label (they return
+        // the class name + address), so we keep a back-reference via
+        // the associated-object mechanism. The label is a retained
+        // NSString (semantics: OBJC_ASSOCIATION_RETAIN).
+        NSString * label = [NSString stringWithFormat:@"ggml_metal_buffer(size=%zu,n=%d,shared=%d,addr=%p)",
+                                                    (size_t) buf->all_size,
+                                                    buf->n_buffers,
+                                                    buf->is_shared ? 1 : 0,
+                                                    buf->all_data];
+        objc_setAssociatedObject(buf->rset, kGGMLMetalRsetLabelKey, label,
+                                 OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
         return true;
     }

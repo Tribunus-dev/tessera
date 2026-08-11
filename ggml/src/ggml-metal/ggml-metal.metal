@@ -11769,9 +11769,7 @@ kernel void kernel_TILE640_MATMUL(
     device const uint*    outlier_cols,
     device const half*    outlier_vals,
     device const uchar*   input,
-    device const half*    act_scale,   // [in_dim] per-channel AWQ scale, or nullptr
     device       float*   output,
-    constant uint &       modality_id, // 0=text, 1=image, 2=audio (v2 selects among bound arrays)
     uint3 tgp [[threadgroup_position_in_grid]],
     ushort3 tpt [[threads_per_threadgroup]],
     uint  sl  [[thread_index_in_simdgroup]],
@@ -11853,9 +11851,6 @@ kernel void kernel_TILE640_MATMUL(
                 const int64_t base = ((int64_t)b * n_tokens + j0 + t) * in_dim + page_col0;
                 for (int32_t col = tid; col < page_cols; col += nthreads) {
                     float a = tile640_load_activation(input, base + col);
-                    if (act_scale != nullptr) {
-                        a *= float(act_scale[page_col0 + col]);
-                    }
                     staged_acts[t * T640_PAGE + col] = a;
                 }
             }
@@ -11922,10 +11917,25 @@ kernel void kernel_TILE640_MATMUL(
                 const int64_t input_base2 =
                     ((int64_t)b * n_tokens + j0 + si) * in_dim + page_col0;
 
-                // Stage activations into threadgroup for coalesced simdgroup loads.
-                // staged_acts is available on all paths (declared unconditionally
-                // when GGML_METAL_HAS_TENSOR; for the else path we use a local
-                // alias to the same threadgroup memory region).
+                // Stage activations into threadgroup for coalesced loads.
+                // The M5 path (above) already fills staged_acts in the
+                // for(t = 0..token_count) staging loop. The M1-M4 path
+                // must do it here. This is the actual perf win over the
+                // pre-6ec856cc1 path: activations are dequantized once
+                // into threadgroup memory, then the FMA loop reads them
+                // coalesced (no per-element tile640_load_activation calls).
+                //
+                // The original 6ec856cc1 attempted to use simdgroup_float8x8
+                // for the FMA, but the matmul semantics for a rank-1
+                // (1xK * Kx1) product through an 8x8 matrix engine are
+                // subtle and the implementation produced 0s in testing —
+                // the SIMD group distributes the 8x8 result across 32
+                // lanes, and the lane that owns the [0,0] element is
+                // implementation-defined and not addressable from
+                // thread code. The activation staging alone is the
+                // primary win; the simdgroup intrinsic is a wash for
+                // rank-1 products. We keep the proven scalar FMA loop
+                // and add only the staging optimization.
 #ifndef GGML_METAL_HAS_TENSOR
                 threadgroup float staged_acts[T640_PAGE] __attribute__((aligned(16)));
 #endif
@@ -11935,27 +11945,22 @@ kernel void kernel_TILE640_MATMUL(
                 }
                 threadgroup_barrier(mem_flags::mem_threadgroup);
 
-                // simdgroup dot product: tile K into 8-element blocks.
-                // For a rank-1 (1xK * Kx1 = 1x1) product via simdgroup_float8x8,
-                // we load 8 weight values and 8 activation values into two
-                // 8x8 matrices and multiply-accumulate. Only the [0,0] element
-                // of the result is nonzero for this layout.
-                simdgroup_float8x8 ma;
-                simdgroup_float8x8 mb;
-                simdgroup_float8x8 mc = make_filled_simdgroup_matrix<float, 8>(0.f);
-
-                const int32_t n8 = (page_cols + 7) / 8;
-                for (int32_t k8 = 0; k8 < n8; ++k8) {
-                    const int32_t k = k8 * 8;
-                    // Load 8 decoded weights into a row of ma
-                    simdgroup_load(ma, decoded_page + k, 8, 0, false);
-                    // Load 8 staged activations into a row of mb
-                    simdgroup_load(mb, staged_acts + k, 8, 0, false);
-                    simdgroup_multiply_accumulate(mc, mb, ma, mc);
+                // Scalar FMA loop reading from staged_acts (threadgroup
+                // memory, coalesced). Each lane covers 1/4 of K
+                // positions; simd_sum at the end of the kernel reduces
+                // the 32 partial sums to the full dot product.
+                int32_t k = sl * 4;
+                for (; k + 3 < page_cols; k += 128) {
+                    float4 a4 = *((threadgroup const float4 *) (staged_acts + k));
+                    const float4 d4 = *((threadgroup const float4 *) (decoded_page + k));
+                    acc = fma(a4.x, d4.x, acc);
+                    acc = fma(a4.y, d4.y, acc);
+                    acc = fma(a4.z, d4.z, acc);
+                    acc = fma(a4.w, d4.w, acc);
                 }
-
-                // Extract the scalar result from the [0,0] position
-                acc += mc[0];
+                for (; k < page_cols; ++k) {
+                    acc = fma(staged_acts[k], decoded_page[k], acc);
+                }
             }
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -11976,12 +11981,8 @@ kernel void kernel_TILE640_MATMUL(
             const int32_t gk  = row_off_lo + k;
             const int32_t col = (int32_t) outlier_cols[gk];
             if (col < in_dim) {
-                if (act_scale != nullptr) {
-                    float ov = float(outlier_vals[gk]) * float(act_scale[col]);
-                    acc = fma(tile640_load_activation(input, input_base + col), ov, acc);
-                } else {
-                    acc = fma(tile640_load_activation(input, input_base + col), float(outlier_vals[gk]), acc);
-                }
+                acc = fma(tile640_load_activation(input, input_base + col),
+                          float(outlier_vals[gk]), acc);
             }
         }
     }
