@@ -342,3 +342,44 @@ in deploy and train mode.
 
 Stage hooks: Stage 1 asserts the token-fidelity invariant (7.1); Stage 4 wires
 harvesting as an interception layer (7.1).
+
+### 7.3 External precedent: RLM (Alex Zhang) as a small-model-on-trajectories sibling
+
+Source: Zhang, "Recursive Language Models", arXiv:2512.24601 (Oct 2025
+blog post, Dec 2025 paper, revised May; video cross-read 2026-08-10 via
+Cloud Codes, https://youtu.be/k2rkLm1eA9k). The result that matters here
+is the fine-tune, not the harness. An 8B Qwen was fine-tuned on 1,000
+recursive trajectories and beat its own base by ~28% across four long-
+context tasks, walking up to vanilla GPT-5 on three of them. The
+methodology is 1:1 with the DFlash drafter driver: collect trajectories
+from a big model, fine-tune a small model to imitate a specific behavior,
+measure on the same metric. The only difference is the target behavior -
+RLM trains "write Python against a Python variable holding the context";
+DFlash trains "speculate the next block given the trunk's hidden states".
+
+What this validates for Tessera:
+
+- The small-model-on-trajectories bet is the right shape. The 8B Qwen
+  results are the closest external precedent for "distill a specific
+  behavior from a big model into a small one, see real gains" and it
+  works. The drafter training driver is the same bet in a different
+  behavior space.
+- Offline feature-capture is the only option, and RLM does the same.
+  RLM's encoder also cannot run a forward pass without the cached
+  "context as variable" - exactly Tessera's situation with the
+  feature-conditioned DFlash decoder. Both projects are forced into
+  offline capture by the conditioning, and both end up with a clean
+  (captured input, model output) training pair. The fact that another
+  team landed on the same offline-capture pattern for the same
+  architectural reason is a sanity check on the design.
+- The trajectory-distillation math (CE on student logprobs vs teacher
+  targets) is the same math, the weights side-channel is the same
+  extension point. D-PACE's adaptive per-position weights compose
+  cleanly with this framing: the position-weight is the "drafter-
+  analogue of position / group reward shaping" the RLM paper implies
+  but does not name.
+
+What this does NOT change: the existing insertion point (llama-context.cpp
+label fill at line 3517-3527, write `dpace_weight` not 1.0), the offline
+tessera-features capture, or the DFlash graph topology. It validates the
+shape; it does not propose new graph ops.
