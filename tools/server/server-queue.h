@@ -6,8 +6,12 @@
 #include <condition_variable>
 #include <deque>
 #include <functional>
+#include <future>
+#include <memory>
 #include <mutex>
 #include <thread>
+#include <type_traits>
+#include <utility>
 #include <vector>
 #include <unordered_map>
 #include <unordered_set>
@@ -301,6 +305,71 @@ public:
     void terminate();
 };
 
+// Run a pure-function CPU prep unit on a host_pool worker, falling back to
+// inline execution on the calling thread if the pool is at capacity or not
+// running. The caller blocks on a future when the work is dispatched, so the
+// net effect for a single caller is identical to running inline - the win
+// comes from N workers serving M parked callers concurrently, parallelising
+// the CPU prep that would otherwise serialise on each caller's own thread.
+//
+// The caller is responsible for incrementing the matching counter
+// (server_context_impl::n_host_dispatched_total or n_host_inline_total) using
+// the `dispatched` field of the returned struct.
+//
+// The void overload is separate because the std::promise<void> type forces a
+// different template instantiation; keeping the two cases distinct avoids
+// forcing every caller to wrap a sentinel return value.
+template <typename R>
+struct host_pool_dispatch_result {
+    bool dispatched;
+    R     value;
+};
+
+template <typename F>
+auto host_pool_dispatch(server_host_pool & pool, F f) -> host_pool_dispatch_result<std::invoke_result_t<F>> {
+    using R = std::invoke_result_t<F>;
+    static_assert(!std::is_void_v<R>, "use host_pool_dispatch_void for void callables");
+
+    auto promise_ptr = std::make_shared<std::promise<R>>();
+    auto fut = promise_ptr->get_future();
+
+    bool accepted = pool.dispatch_async([promise_ptr, f = std::move(f)]() mutable {
+        try {
+            promise_ptr->set_value(f());
+        } catch (...) {
+            promise_ptr->set_exception(std::current_exception());
+        }
+    });
+
+    if (accepted) {
+        return {true, fut.get()};
+    } else {
+        return {false, f()};
+    }
+}
+
+inline bool host_pool_dispatch_void(server_host_pool & pool, std::function<void()> f) {
+    auto promise_ptr = std::make_shared<std::promise<void>>();
+    auto fut = promise_ptr->get_future();
+
+    bool accepted = pool.dispatch_async([promise_ptr, f = std::move(f)]() mutable {
+        try {
+            f();
+            promise_ptr->set_value();
+        } catch (...) {
+            promise_ptr->set_exception(std::current_exception());
+        }
+    });
+
+    if (accepted) {
+        fut.get();
+        return true;
+    } else {
+        f();
+        return false;
+    }
+}
+
 // RAII wrapper to make working with server_queue and server_response easier
 // it provides a generator-like API for server responses
 // support pooling connection state and aggregating multiple results
@@ -316,9 +385,25 @@ struct server_response_reader {
     // only used by streaming completions
     std::vector<task_result_state> states;
 
+    // Optional host_pool reference for offloading the per-chunk update() work
+    // (chat-msg diff via task_result_state::update_chat_msg) to CPU workers.
+    // Nullptr means inline execution on the HTTP thread. The two counter
+    // pointers are incremented by next() when work is dispatched or falls
+    // back; pass nullptr to skip accounting. Both fields default to nullptr
+    // so callers that don't care about the offload keep working unchanged.
+    server_host_pool * host_pool              = nullptr;
+    uint64_t         * n_host_dispatched_total = nullptr;
+    uint64_t         * n_host_inline_total     = nullptr;
+
     // should_stop function will be called each polling_interval_seconds
-    server_response_reader(server_queue & queue_tasks, server_response & queue_results, int polling_interval_seconds)
-        : queue_tasks(queue_tasks), queue_results(queue_results), polling_interval_seconds(polling_interval_seconds) {}
+    server_response_reader(server_queue & queue_tasks, server_response & queue_results, int polling_interval_seconds,
+                           server_host_pool * host_pool = nullptr,
+                           uint64_t * n_host_dispatched_total = nullptr,
+                           uint64_t * n_host_inline_total     = nullptr)
+        : queue_tasks(queue_tasks), queue_results(queue_results), polling_interval_seconds(polling_interval_seconds),
+          host_pool(host_pool),
+          n_host_dispatched_total(n_host_dispatched_total),
+          n_host_inline_total(n_host_inline_total) {}
     ~server_response_reader() {
         stop();
     }

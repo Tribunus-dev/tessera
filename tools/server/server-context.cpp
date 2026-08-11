@@ -923,6 +923,7 @@ struct server_metrics {
 
 struct server_context_impl {
     friend struct server_context;
+    friend struct server_routes;
 
 public:
     // only use these pointers outside of this class:
@@ -4858,7 +4859,13 @@ private:
     }
 
     server_response_reader get_response_reader() {
-        return server_response_reader(queue_tasks, queue_results, HTTP_POLLING_SECONDS);
+        // Wire the host_pool + dispatched/inline counters into the reader so
+        // the per-chunk update() (chat-msg diff on streamed tokens) is offloaded
+        // to CPU workers instead of running inline on the HTTP thread.
+        return server_response_reader(queue_tasks, queue_results, HTTP_POLLING_SECONDS,
+                                      &host_pool,
+                                      &n_host_dispatched_total,
+                                      &n_host_inline_total);
     }
 };
 
@@ -4940,8 +4947,13 @@ server_context_meta server_context::get_meta() const {
 // may have bypass_sleep = true if the task does not use ctx_server
 struct server_res_generator : server_res_spipe {
     server_response_reader rd;
-    server_res_generator(server_queue & queue_tasks, server_response & queue_results, int sleep_idle_seconds, bool bypass_sleep = false)
-            : rd(queue_tasks, queue_results, HTTP_POLLING_SECONDS) {
+    server_res_generator(server_queue & queue_tasks, server_response & queue_results, int sleep_idle_seconds,
+                         server_host_pool * host_pool,
+                         uint64_t * n_host_dispatched_total,
+                         uint64_t * n_host_inline_total,
+                         bool bypass_sleep = false)
+            : rd(queue_tasks, queue_results, HTTP_POLLING_SECONDS,
+                 host_pool, n_host_dispatched_total, n_host_inline_total) {
         // fast path in case sleeping is disabled
         bypass_sleep |= sleep_idle_seconds < 0;
         if (!bypass_sleep) {
@@ -5241,7 +5253,45 @@ std::unique_ptr<server_res_generator> server_routes::handle_completions_impl(
 }
 
 std::unique_ptr<server_res_generator> server_routes::create_response(bool bypass_sleep) {
-    return std::make_unique<server_res_generator>(queue_tasks, queue_results, params.sleep_idle_seconds, bypass_sleep);
+    // The host_pool + its dispatched/inline counters live on
+    // server_context_impl; we hand them to the generator so the reader can
+    // offload chat-msg diff work to CPU workers.
+    return std::make_unique<server_res_generator>(queue_tasks, queue_results, params.sleep_idle_seconds,
+                                                  &ctx_server.host_pool,
+                                                  &ctx_server.n_host_dispatched_total,
+                                                  &ctx_server.n_host_inline_total,
+                                                  bypass_sleep);
+}
+
+// Move body to a host_pool worker, run oaicompat_chat_params_parse there, and
+// return the parsed json + extracted files. The HTTP thread blocks on the
+// worker's future, but the CPU work (Jinja render + tool-call stitching + JSON
+// re-serialization) runs on a worker so N parked HTTP handlers share N workers
+// instead of each one doing the parse inline on its own thread. Falls back to
+// inline execution if the pool is at capacity or not running; the matching
+// counter (ctx_server.n_host_dispatched_total / n_host_inline_total) is
+// incremented in both cases for observability.
+//
+// Lifetime: meta->chat_params is a reference into the unique_ptr<const meta>
+// owned by this server_routes. meta is set once at startup and never reset
+// during request handling, so capturing `this` and dereferencing `meta` from
+// the worker is safe for the duration of any in-flight dispatch. The HTTP
+// handler blocks on the future before returning, so the work is done by the
+// time the handler yields control back to cpp-httplib.
+server_routes::chat_params_parse_result server_routes::parse_chat_params_offload(json body) {
+    auto fn = [this, body = std::move(body)]() mutable -> chat_params_parse_result {
+        std::vector<raw_buffer> files;
+        json body_parsed = oaicompat_chat_params_parse(body, meta->chat_params, files);
+        return chat_params_parse_result{ std::move(body_parsed), std::move(files), false };
+    };
+
+    auto dispatched = host_pool_dispatch(ctx_server.host_pool, std::move(fn));
+    if (dispatched.dispatched) {
+        ++ctx_server.n_host_dispatched_total;
+    } else {
+        ++ctx_server.n_host_inline_total;
+    }
+    return std::move(dispatched.value);
 }
 
 server_routes::server_routes(const common_params & params, server_context & ctx_server)
@@ -5703,17 +5753,13 @@ void server_routes::init_routes() {
 
     this->post_chat_completions = [this](const server_http_req & req) {
         auto res = create_response();
-        std::vector<raw_buffer> files;
         json body = json::parse(req.body);
-        json body_parsed = oaicompat_chat_params_parse(
-            body,
-            meta->chat_params,
-            files);
+        auto parsed = parse_chat_params_offload(std::move(body));
         return handle_completions_impl(
             req,
             SERVER_TASK_TYPE_COMPLETION,
-            body_parsed,
-            files,
+            parsed.body_parsed,
+            parsed.files,
             TASK_RESPONSE_TYPE_OAI_CHAT);
     };
 
@@ -5760,19 +5806,15 @@ void server_routes::init_routes() {
 
     this->post_responses_oai = [this](const server_http_req & req) {
         auto res = create_response();
-        std::vector<raw_buffer> files;
         json body = server_chat_convert_responses_to_chatcmpl(json::parse(req.body));
         SRV_DBG("%s\n", "Request converted: OpenAI Responses -> OpenAI Chat Completions");
         SRV_DBG("converted request: %s\n", body.dump().c_str());
-        json body_parsed = oaicompat_chat_params_parse(
-            body,
-            meta->chat_params,
-            files);
+        auto parsed = parse_chat_params_offload(std::move(body));
         return handle_completions_impl(
             req,
             SERVER_TASK_TYPE_COMPLETION,
-            body_parsed,
-            files,
+            parsed.body_parsed,
+            parsed.files,
             TASK_RESPONSE_TYPE_OAI_RESP);
     };
 
@@ -5796,33 +5838,26 @@ void server_routes::init_routes() {
             files);
         SRV_DBG("%s\n", "Request converted: OpenAI Transcriptions -> OpenAI Chat Completions");
         SRV_DBG("converted request: %s\n", body.dump().c_str());
-        json body_parsed = oaicompat_chat_params_parse(
-            body,
-            meta->chat_params,
-            files);
+        auto parsed = parse_chat_params_offload(std::move(body));
         return handle_completions_impl(
             req,
             SERVER_TASK_TYPE_COMPLETION,
-            body_parsed,
-            files,
+            parsed.body_parsed,
+            parsed.files,
             TASK_RESPONSE_TYPE_OAI_ASR);
     };
 
     this->post_anthropic_messages = [this](const server_http_req & req) {
         auto res = create_response();
-        std::vector<raw_buffer> files;
         json body = server_chat_convert_anthropic_to_oai(json::parse(req.body));
         SRV_DBG("%s\n", "Request converted: Anthropic -> OpenAI Chat Completions");
         SRV_DBG("converted request: %s\n", body.dump().c_str());
-        json body_parsed = oaicompat_chat_params_parse(
-            body,
-            meta->chat_params,
-            files);
+        auto parsed = parse_chat_params_offload(std::move(body));
         return handle_completions_impl(
             req,
             SERVER_TASK_TYPE_COMPLETION,
-            body_parsed,
-            files,
+            parsed.body_parsed,
+            parsed.files,
             TASK_RESPONSE_TYPE_ANTHROPIC);
     };
 
@@ -5833,13 +5868,12 @@ void server_routes::init_routes() {
     // same with handle_chat_completions, but without inference part
     this->post_apply_template = [this](const server_http_req & req) {
         auto res = create_response();
-        std::vector<raw_buffer> files; // dummy, unused
         json body = json::parse(req.body);
-        json data = oaicompat_chat_params_parse(
-            body,
-            meta->chat_params,
-            files);
-        res->ok({{ "prompt", std::move(data.at("prompt")) }});
+        // The apply-template endpoint returns the rendered prompt without
+        // running inference, so it's purely CPU prep work. Same offload as
+        // the chat/responses/transcriptions/anthropic paths above.
+        auto parsed = parse_chat_params_offload(std::move(body));
+        res->ok({{ "prompt", std::move(parsed.body_parsed.at("prompt")) }});
         return res;
     };
 
@@ -6311,7 +6345,6 @@ std::unique_ptr<server_res_generator> server_routes::handle_embeddings_impl(cons
 
 std::unique_ptr<server_res_generator> server_routes::handle_count_tokens(const llama_vocab * vocab, mtmd_context * mctx, const server_http_req & req, task_response_type res_type) {
     auto res = create_response();
-    std::vector<raw_buffer> files;
     json body = json::parse(req.body);
     bool is_oai = false;
 
@@ -6334,11 +6367,12 @@ std::unique_ptr<server_res_generator> server_routes::handle_count_tokens(const l
             return res;
     }
 
-    json body_parsed = oaicompat_chat_params_parse(
-            body,
-            meta->chat_params,
-            files);
-    json prompt = body_parsed.at("prompt");
+    // Same offload as the chat-completions path above: Jinja render +
+    // tool-call stitching can be heavy, and the count endpoint runs on the
+    // same HTTP thread pool. Returns the parsed body and any extracted
+    // files (used for mtmd below).
+    auto parsed = parse_chat_params_offload(std::move(body));
+    json prompt = parsed.body_parsed.at("prompt");
     // SRV_DBG("prompt = %s\n", prompt.dump().c_str());
 
     // TODO @ngxson : refactor this code block, move this to server-common and reuse it in other places
@@ -6347,7 +6381,7 @@ std::unique_ptr<server_res_generator> server_routes::handle_count_tokens(const l
         if (!prompt.is_string()) {
             throw std::runtime_error("for mtmd, input prompt must be a string.");
         }
-        n_tokens = process_mtmd_prompt(mctx, prompt.get<std::string>(), files, true).size();
+        n_tokens = process_mtmd_prompt(mctx, prompt.get<std::string>(), parsed.files, true).size();
     } else {
         n_tokens = tokenize_mixed(vocab, prompt, true, true).size();
     }

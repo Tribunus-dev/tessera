@@ -617,7 +617,39 @@ server_task_result_ptr server_response_reader::next(const std::function<bool()> 
                 // update the generation state if needed
                 const size_t idx = result->index;
                 GGML_ASSERT(idx < states.size());
-                result->update(states[idx]);
+
+                // Offload the chat-msg diff work (common_chat_parse +
+                // compute_diffs on the accumulated streamed text) to a
+                // host_pool worker when one is wired in. The HTTP thread
+                // blocks on the future, but the CPU work runs on a worker
+                // thread so N parked HTTP readers can share N workers
+                // instead of each one doing its own parse inline. Falls
+                // back to inline execution if the pool is at capacity or
+                // not running. The state mutation is exclusive because
+                // the reader owns `states[idx]` and the worker is the
+                // only one touching it during the update.
+                server_task_result * raw = result.get();
+                auto update_fn = [raw, &states = states, idx]() {
+                    raw->update(states[idx]);
+                };
+
+                if (host_pool != nullptr) {
+                    const bool dispatched = host_pool_dispatch_void(*host_pool, std::move(update_fn));
+                    if (dispatched) {
+                        if (n_host_dispatched_total != nullptr) {
+                            ++(*n_host_dispatched_total);
+                        }
+                    } else {
+                        if (n_host_inline_total != nullptr) {
+                            ++(*n_host_inline_total);
+                        }
+                    }
+                } else {
+                    // No pool wired in: pure inline path, no counter
+                    // updates (callers that want accounting configure
+                    // the reader with a non-null pool).
+                    update_fn();
+                }
             }
             if (result->is_stop()) {
                 received_count++;

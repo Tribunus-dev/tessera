@@ -170,11 +170,26 @@ private:
     std::unique_ptr<server_res_generator> handle_embeddings_impl(const server_http_req & req, task_response_type res_type);
     std::unique_ptr<server_res_generator> handle_count_tokens(const llama_vocab * vocab, mtmd_context * mctx, const server_http_req & req, task_response_type res_type);
 
+    // Offload oaicompat_chat_params_parse to a host_pool worker so the HTTP
+    // thread does not block on the Jinja render + tool-call stitching. Falls
+    // back to inline execution if the pool is at capacity or not running;
+    // the matching counter (n_host_dispatched_total / n_host_inline_total)
+    // is incremented for observability. The caller passes `body` by value
+    // because the worker may outlive the HTTP handler's stack frame.
+    struct chat_params_parse_result {
+        json                       body_parsed;
+        std::vector<raw_buffer>    files;
+        bool                       dispatched = false;
+    };
+    chat_params_parse_result parse_chat_params_offload(json body);
+
     // using unique_ptr to allow late initialization of const
     std::unique_ptr<const server_context_meta> meta;
 
     const common_params & params;
-    const server_context_impl & ctx_server;
+    // Non-const: routes dispatch to host_pool + increment dispatched/inline
+    // counters, both of which mutate impl-internal state.
+    server_context_impl & ctx_server;
 
     server_queue & queue_tasks;
     server_response & queue_results;
