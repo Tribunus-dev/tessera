@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "last_updated": "2026-08-04T04:25:00Z",
+  "last_updated": "2026-08-11T06:15:59Z",
   "objective": "Reduce inference memory (peak RSS) on Apple Silicon without sacrificing correctness, via low-bit KV paged-attention and calibrated per-tensor quantization.",
   "phases": [
     {
@@ -156,6 +156,16 @@
       "ts": "2026-08-04T04:25:00Z",
       "decision": "Tier 3 of the 3-tier CLI cleanup landed in main as 348476622 (6 commits, FF). New --tessera-config FILE flag + TESSERA_CONFIG env var for INI-style Tessera option files. Additive only, +1409 / -0. Stdlib-only INI parser, per-section dispatch table mapping 17 sections to 61 --tessera-* keys, example config, 16 unit sub-tests. Precedence config < env < CLI. The flag is currently in the default examples (matching the convention of all other --tessera-* flags); retagging to LLAMA_EXAMPLE_TESSERA is deferred to Tier 2. Tier 1 (collapse parse paths) and Tier 2 (subcommand restructure) are still in flight as agent-m and agent-o.",
       "capability": "refactor"
+    },
+    {
+      "ts": "2026-08-11T05:54:08Z",
+      "decision": "greenlit tessera-data-card.md as the first deliverable for the procurement idle-training workstream; data card before engineering, compliance advisor sign-off is the acceptance bar",
+      "capability": ""
+    },
+    {
+      "ts": "2026-08-11T06:15:59Z",
+      "decision": "data-card v2: locked 7 sign-off items per deep-research proposal (license vocab=OTDI, PII=layered, GG thresholds=per-dim \u03c4=0.5, bias probe=200/500/1000 tiered, deletion SLA=30/60 verified-receipt + backup carve-out, DP \u03b5=8/4 tiered, generator=tessera-data-card.py + Croissant 1.1 JSON-LD). Health/Gov SKU defaults tightened per section.",
+      "capability": ""
     }
   ]
 }
