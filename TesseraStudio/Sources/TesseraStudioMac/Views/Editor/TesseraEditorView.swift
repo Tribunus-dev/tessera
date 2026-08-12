@@ -682,6 +682,29 @@ public struct TesseraEditorView: NSViewRepresentable {
 public final class TesseraSTTextView: STTextView {
     private var initialAttributedString: NSAttributedString
 
+    // MARK: - Ghost Text (Phase 11 P0)
+
+    /// Active ghost text session. nil when no suggestion is showing.
+    private var ghostTextState: GhostTextState?
+
+    /// The ghost text manager. Set up in setupGhostTextManager().
+    private var ghostTextManager: TesseraGhostTextManager?
+
+    /// The streaming pipeline provider, injected by the Coordinator once the engine is ready.
+    /// Weak to avoid retain cycle; the pipeline lives in the Coordinator.
+    private weak var ghostTextProvider: LocalGhostTextProvider?
+
+    /// Wire up ghost text manager once the text content manager is injected.
+    private func setupGhostTextManager() {
+        let manager = TesseraGhostTextManager(provider: ghostTextProvider)
+        manager.delegate = self
+        self.ghostTextManager = manager
+    }
+
+    // MARK: - Writing Tools Coordinator (Phase 11 P3)
+
+    /// The Writing Tools coordinator. Set up in setupWritingToolsCoordinator().
+    private var writingToolsCoordinator: TesseraWritingToolsCoordinator?
     /// Controls whether the gutter shows line numbers.
     /// Mirrors STTextView.showsLineNumbers; wrapping it here keeps the
     /// @MainActor boundary inside this class so the Coordinator
@@ -742,6 +765,10 @@ public final class TesseraSTTextView: STTextView {
         self.textLayoutManager = textLayoutManager
         // Set the actual attributed content (didSet only sets self.text = String).
         self.replaceContent(with: initialAttributedString)
+        // Phase 11 P3: Wire up Writing Tools coordinator after storage is set.
+        setupWritingToolsCoordinator()
+        // Phase 11 P0: Wire up ghost text manager after storage is set.
+        setupGhostTextManager()
     }
 
     public required init?(coder: NSCoder) {
@@ -939,6 +966,41 @@ public final class TesseraSTTextView: STTextView {
     public override var acceptsFirstResponder: Bool { true }
 
     public override func keyDown(with event: NSEvent) {
+        // Ghost text interception (Phase 11 P0) — runs before existing shortcuts.
+        if let manager = ghostTextManager {
+            let mods = event.modifierFlags
+            let specialKey = event.specialKey
+            let char = event.charactersIgnoringModifiers ?? ""
+
+            // Tab → accept full suggestion
+            if specialKey == .tab && !mods.contains(.command) && !mods.contains(.option) {
+                manager.acceptFull()
+                return
+            }
+
+            // Cmd+→ → accept next word
+            if specialKey == .rightArrow && mods.contains(.command) && !mods.contains(.option) {
+                manager.acceptNextWord()
+                return
+            }
+
+            // Escape → dismiss
+            if specialKey == .escape {
+                manager.dismiss()
+                return
+            }
+
+            // Any other key: check for divergence
+            if !char.isEmpty && !mods.contains(.command) && !mods.contains(.control) {
+                // Build prompt from current text context
+                let prompt = currentTextContext()
+                if manager.onKeystroke(character: char, prompt: prompt) {
+                    // Divergence cancelled ghost text; fall through to normal handling
+                }
+            }
+        }
+
+        // [Rest of existing keyDown handling below]
         let mods = event.modifierFlags
         let cmd = mods.contains(.command)
         let opt = mods.contains(.option)
@@ -1696,5 +1758,151 @@ public final class TesseraSTTextView: STTextView {
 
     /// Called when Enter is pressed in focus mode.
     public var onExitFocusModeRequested: (() -> Void)?
+    // MARK: - Ghost Text Helpers (Phase 11 P0)
+
+    /// Returns the text context (surrounding text) for the ghost text prompt.
+    /// Returns ±500 chars around the caret.
+    private func currentTextContext() -> String {
+        guard let storage = (textContentManager as? NSTextContentStorage)?.textStorage else {
+            return ""
+        }
+        let selectedRange = self.selectedRange()
+        let text = storage.string as NSString
+        let contextStart = max(0, selectedRange.location - 500)
+        let contextEnd = min(text.length, selectedRange.location + 500)
+        return text.substring(
+            with: NSRange(location: contextStart, length: contextEnd - contextStart)
+        )
+    }
+
+    /// The current typing attributes at the caret, used for ghost text rendering.
+    private var typingAttributesForGhostText: [NSAttributedString.Key: Any] {
+        typingAttributes
+    }
+
+    /// Inject the GhostTextProvider (called by Coordinator once streaming pipeline exists).
+    public func setGhostTextProvider(_ provider: LocalGhostTextProvider?) {
+        self.ghostTextProvider = provider
+        ghostTextManager?.setProvider(provider)
+    }
+
+    // MARK: - Writing Tools Coordinator (Phase 11 P3)
+
+    /// Set up Writing Tools integration once text content manager is injected.
+    private func setupWritingToolsCoordinator() {
+        guard let cm = textContentManager as? TesseraTextContentManager else { return }
+        let coordinator = TesseraWritingToolsCoordinator(textView: self, contentManager: cm)
+        coordinator.rewriteDelegate = self
+        coordinator.writingToolsBehavior = .complete
+        coordinator.activate()
+        self.writingToolsCoordinator = coordinator
+    }
+
+    // MARK: - NSServicesMenuRequestor (Tier 2 Writing Tools shortcut)
+
+    /// Returns a requestor for Writing Tools service types so the Edit menu's
+    /// Transform submenu items (Rewrite, Proofread, etc.) are active when text
+    /// is selected. This is the Tier 2 shortcut — the full Tier 3 coordinator
+    /// (setup above) handles the actual rewrite lifecycle.
+    public override func validRequestor(forSendType sendType: NSPasteboard.PasteboardType?, returnType: NSPasteboard.PasteboardType?) -> NSObject? {
+        if sendType == .string || returnType == .string {
+            return self
+        }
+        return super.validRequestor(forSendType: sendType, returnType: returnType)
+    }
+
+    /// Write the current selection to the pasteboard for the service.
+    public override func writeSelection(to pasteboard: NSPasteboard, types: [NSPasteboard.PasteboardType]) {
+        guard types.contains(.string) else { return }
+        let range = selectedRange()
+        guard range.length > 0 else { return }
+        if let textStorage = (textContentManager as? NSTextContentStorage)?.textStorage {
+            let selectedText = textStorage.attributedSubstring(from: range)
+            pasteboard.clearContents()
+            pasteboard.setString(selectedText.string, forType: .string)
+        }
+    }
+
+    /// Read the replaced text from the pasteboard after the service runs.
+    public override func readSelection(from pasteboard: NSPasteboard, type: NSPasteboard.PasteboardType) -> Bool {
+        guard type == .string else { return false }
+        return pasteboard.string(forType: .string) != nil
+    }
 }
+
+// MARK: - GhostTextManagerDelegate
+
+extension TesseraSTTextView: GhostTextManagerDelegate {
+    public func ghostTextManager(
+        _ manager: TesseraGhostTextManager,
+        renderGhostText attributedString: NSAttributedString,
+        at range: NSRange
+    ) {
+        guard let storage = (textContentManager as? NSTextContentStorage)?.textStorage else {
+            return
+        }
+        storage.replaceCharacters(in: range, with: attributedString)
+    }
+
+    public func ghostTextManager(
+        _ manager: TesseraGhostTextManager,
+        removeGhostTextAt range: NSRange,
+        caretLocation: Int
+    ) {
+        guard let storage = (textContentManager as? NSTextContentStorage)?.textStorage else {
+            return
+        }
+        storage.replaceCharacters(in: range, with: NSAttributedString())
+        setSelectedRange(NSRange(location: caretLocation, length: 0))
+    }
+
+    public func ghostTextManager(
+        _ manager: TesseraGhostTextManager,
+        acceptGhostTextAt range: NSRange,
+        committedText: NSAttributedString
+    ) {
+        guard let storage = (textContentManager as? NSTextContentStorage)?.textStorage else {
+            return
+        }
+        storage.replaceCharacters(in: range, with: committedText)
+        let newCaret = range.location + committedText.length
+        setSelectedRange(NSRange(location: newCaret, length: 0))
+    }
+
+    public func ghostTextManager(
+        _ manager: TesseraGhostTextManager,
+        acceptPartialGhostTextAt range: NSRange,
+        wordCount: Int,
+        remainingGhostText: NSAttributedString
+    ) {
+        guard let storage = (textContentManager as? NSTextContentStorage)?.textStorage else {
+            return
+        }
+        // Already-committed words are in the storage as normal text.
+        // remainingGhostText replaces the rest of the ghost text range.
+        storage.replaceCharacters(in: range, with: remainingGhostText)
+    }
+}
+
+// MARK: - TesseraWritingToolsCoordinator.TesseraWritingToolsRewriteDelegate
+
+@available(macOS 15.2, *)
+extension TesseraSTTextView: TesseraWritingToolsCoordinator.TesseraWritingToolsRewriteDelegate {
+    public func tesseraWritingToolsCoordinator(
+        _ coordinator: TesseraWritingToolsCoordinator,
+        applyReplacement text: NSAttributedString,
+        at documentRange: NSRange,
+        originalContextRange: NSRange
+    ) {
+        guard let storage = (textContentManager as? NSTextContentStorage)?.textStorage else { return }
+        storage.replaceCharacters(in: documentRange, with: text)
+    }
+}
+
+// MARK: - TesseraWritingToolsTextViewProtocol conformance
+
+/// TesseraSTTextView conforms to TesseraWritingToolsTextViewProtocol via
+/// inherited members: textContentManager (NSView) and selectedRange() (STTextView).
+@available(macOS 15.2, *)
+extension TesseraSTTextView: TesseraWritingToolsCoordinator.TesseraWritingToolsTextViewProtocol {}
 

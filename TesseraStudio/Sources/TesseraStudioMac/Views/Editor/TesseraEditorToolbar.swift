@@ -250,6 +250,44 @@ public struct TesseraEditorToolbar: View {
                 StyleButton(label: "Heading 2", level: 2, isActive: formattingState.headingLevel == 2) { onCommand(.setBlockType(.heading)) }
                 StyleButton(label: "Heading 3", level: 3, isActive: formattingState.headingLevel == 3) { onCommand(.setBlockType(.heading)) }
             }
+            groupSeparator()
+
+            ribbonGroup {
+                aiRewriteMenu
+            }
+        }
+    }
+
+    // MARK: - AI Rewrite (Phase 11 P2)
+
+    private var aiRewriteMenu: some View {
+        Menu {
+            ForEach(RewriteMode.allCases, id: \.self) { mode in
+                Button {
+                    onCommand(.aiRewrite(mode: mode))
+                } label: {
+                    Label(mode.rawValue.capitalized, systemImage: modeIcon(mode))
+                }
+            }
+        } label: {
+            Image(systemName: "wand.and.stars")
+                .symbolRenderingMode(.hierarchical)
+                .font(.system(size: 13))
+                .frame(minWidth: 32, minHeight: 28)
+                .padding(.horizontal, 4)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .help("AI Rewrite")
+    }
+
+    private func modeIcon(_ mode: RewriteMode) -> String {
+        switch mode {
+        case .friendly:     return "face.smiling"
+        case .professional: return "briefcase"
+        case .concise:      return "scissors"
+        case .improve:      return "wand.and.stars"
+        case .custom:       return "text.cursor"
         }
     }
 
@@ -702,6 +740,8 @@ public enum EditorCommand: Codable, Equatable, Hashable {
     // Comment navigation
     case nextComment
     case previousComment
+    // AI Rewrite (Phase 11 P2)
+    case aiRewrite(mode: RewriteMode)
 }
 
 // MARK: - Ribbon-specific types
