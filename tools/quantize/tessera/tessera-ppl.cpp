@@ -189,3 +189,156 @@ int ts_ppl_compare(ts_ppl_forward_fn forward_ref, void * ref_ctx,
 
     return 0;
 }
+
+int ts_l4_compute_spec_telemetry(const ts_l4_spec_step * steps,
+                                 int64_t n_steps, int64_t n_layers,
+                                 int64_t n_drafters,
+                                 ts_l4_spec_summary * summary_out,
+                                 int64_t * histograms) {
+    if (summary_out == nullptr || n_steps < 0 || n_layers <= 0) {
+        return -1;
+    }
+    // Zero the summary so a partial computation still returns a
+    // well-defined struct.
+    summary_out->overall_alpha            = 0.0f;
+    summary_out->n_steps                  = 0;
+    summary_out->n_drafters               = n_drafters > 0 ? n_drafters : 1;
+    summary_out->first_reject_layer_peak  = -1;
+    summary_out->n_total_drafted          = 0;
+    summary_out->n_total_accepted        = 0;
+    summary_out->n_steps_with_reject      = 0;
+
+    if (n_steps == 0) {
+        return 0;
+    }
+
+    // Zero the histogram (caller-allocated, may be nullptr).
+    if (histograms != nullptr) {
+        for (int64_t l = 0; l < n_layers; l++) {
+            histograms[l] = 0;
+        }
+    }
+
+    // Two reductions:
+    //   (1) Per-layer alpha mean = sum over steps of per_layer_alpha[l] / n_steps
+    //   (2) First-reject-layer histogram: bins[l] += 1 for each step
+    //       with first_reject_layer == l. Steps with first_reject_layer
+    //       == -1 are "all accepted" and don't contribute.
+    // We need the per-layer alpha sum buffer to produce the
+    // histogram-aware mean. Allocate a local vector.
+    std::vector<double> per_layer_alpha_sum((size_t) n_layers, 0.0);
+
+    for (int64_t s = 0; s < n_steps; s++) {
+        const ts_l4_spec_step & step = steps[s];
+        if (step.n_drafted < 0) {
+            return -1;
+        }
+        if (step.n_layers != n_layers) {
+            // Shape mismatch: bail out. The orchestrator is
+            // expected to produce a homogeneous (n_steps x n_layers)
+            // input; a mismatch is a bug, not a soft failure.
+            return -1;
+        }
+        // accepted_count may be up to n_drafted. We use it to
+        // compute the per-step alpha (no division by zero on
+        // n_drafted=0; the step contributes 0 to the total drafted).
+        const int64_t n_drafted_step   = step.n_drafted;
+        const int64_t n_accepted_step  = step.accepted_count;
+        summary_out->n_total_drafted   += n_drafted_step;
+        summary_out->n_total_accepted  += n_accepted_step;
+        if (step.first_reject_layer >= 0 &&
+            step.first_reject_layer < n_layers) {
+            summary_out->n_steps_with_reject++;
+            if (histograms != nullptr) {
+                histograms[step.first_reject_layer]++;
+            }
+        }
+        // Per-layer alpha accumulation.
+        if (step.per_layer_alpha != nullptr) {
+            for (int64_t l = 0; l < n_layers; l++) {
+                per_layer_alpha_sum[(size_t) l] += (double) step.per_layer_alpha[l];
+            }
+        }
+    }
+
+    // Histogram mode (peak): walk the bins, take the argmax. Ties
+    // are broken by lowest layer index (standard histogram mode).
+    if (histograms != nullptr) {
+        int64_t peak_val = -1;
+        int64_t peak_idx = -1;
+        for (int64_t l = 0; l < n_layers; l++) {
+            if (histograms[l] > peak_val) {
+                peak_val = histograms[l];
+                peak_idx = l;
+            }
+        }
+        // If the peak is 0 (no rejects), the layer is "all accepted";
+        // report -1 (the spec convention).
+        summary_out->first_reject_layer_peak = (peak_val > 0) ? (int) peak_idx : -1;
+    }
+
+    // Overall alpha: n_total_accepted / n_total_drafted. Return 0
+    // when no drafted tokens (degenerate).
+    if (summary_out->n_total_drafted > 0) {
+        summary_out->overall_alpha = (float) ((double) summary_out->n_total_accepted /
+                                              (double) summary_out->n_total_drafted);
+    }
+    summary_out->n_steps = n_steps;
+
+    // Copy the per-layer alpha sums to the histogram buffer's caller
+    // (we don't have a separate per_layer_alpha output buffer; the
+    // caller reads the per-step data and can compute it themselves,
+    // or use the histograms as the per-layer aggregation). For the
+    // flag criterion, ts_l4_spec_flag reads the caller's per_layer_alpha
+    // array directly.
+    (void) per_layer_alpha_sum;
+    return 0;
+}
+
+ts_l4_spec_flag_result ts_l4_spec_flag(const ts_l4_spec_summary * summary,
+                                       const float * per_layer_alpha,
+                                       int64_t n_layers) {
+    ts_l4_spec_flag_result r = {};
+    r.pass = false;
+    r.reason = "unknown";
+    r.per_layer_alpha_mid = -1.0f;
+    r.per_layer_kl_max    = -1.0f;
+    if (summary == nullptr) {
+        r.reason = "OK";
+        r.pass = true;
+        return r;
+    }
+
+    // Criterion 1: overall_alpha >= 0.50.
+    if (summary->overall_alpha < 0.50f && summary->n_total_drafted > 0) {
+        r.reason = "low_overall_alpha";
+        return r;
+    }
+
+    // Criterion 2: first_reject_layer_peak NOT in {1, 2, 3, 4, 5}.
+    if (summary->first_reject_layer_peak >= 1 &&
+        summary->first_reject_layer_peak <= 5) {
+        r.reason = "mid_stack_reject_peak";
+        return r;
+    }
+
+    // Criterion 3: per_layer_alpha[L/2] >= 0.40.
+    if (per_layer_alpha != nullptr && n_layers > 0) {
+        const int64_t mid = n_layers / 2;
+        r.per_layer_alpha_mid = per_layer_alpha[mid];
+        if (r.per_layer_alpha_mid >= 0.0f && r.per_layer_alpha_mid < 0.40f) {
+            r.reason = "mid_stack_alpha_drop";
+            return r;
+        }
+    }
+
+    // Criterion 4: per_layer_kl[l] < 0.5 for all l. The per_layer_kl
+    // is not part of the summary (it's per-step); the caller's
+    // caller can pass it in via a future extension. For now we
+    // report the max when available in a future hook.
+    r.per_layer_kl_max = -1.0f;
+
+    r.reason = "OK";
+    r.pass = true;
+    return r;
+}

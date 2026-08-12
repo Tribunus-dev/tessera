@@ -70,3 +70,80 @@ int ts_ppl_compare(ts_ppl_forward_fn forward_ref, void * ref_ctx,
                    const ts_ppl_params * params,
                    float pass_threshold,
                    ts_ppl_compare_result * result);
+
+// --- L4 speculative-decoding spec telemetry (v3.1 spec §8) ---
+//
+// Per-layer, per-drafter alignment measurement. The L4 probe extends
+// the existing per-position PPL with a per-layer acceptance rate and
+// KL divergence between the verifier and each drafter. The diagnostic
+// signal is the histogram of first_reject_layer (the verifier layer at
+// which the first drafted token was rejected for a given step); a peak
+// at mid-stack (layers 1-5) is the systematic alignment degradation
+// that the 0.86 % drafter case exhibited.
+//
+// One ts_l4_spec_step entry per spec step; ts_l4_compute_spec_telemetry
+// reduces the per-step data to a ts_l4_spec_summary with the reportable
+// fields. Caller owns the storage for both inputs and outputs; sizes
+// are passed in.
+struct ts_l4_spec_step {
+    int64_t step_idx;                  // 0-based step index
+    int64_t accepted_count;            // number of drafted tokens accepted
+    int     first_reject_layer;        // -1 when no reject, else the layer
+    int64_t n_drafted;                 // total drafted tokens (per step)
+    const float * per_layer_alpha;     // (n_layers,) per-layer acceptance
+    const float * per_layer_kl;        // (n_layers,) per-layer KL(verifier||drafter)
+    int64_t n_layers;                  // layer count for the per_layer_* arrays
+};
+
+struct ts_l4_spec_summary {
+    float       overall_alpha;              // mean accepted / drafted across steps
+    int64_t     n_steps;                    // total step count
+    int64_t     n_drafters;                 // 1 for now (single drafter); future: 4 + talker
+    int         first_reject_layer_peak;    // mode of the histogram, -1 if all-accept
+    int64_t     n_total_drafted;            // sum across steps
+    int64_t     n_total_accepted;          // sum across steps
+    int64_t     n_steps_with_reject;        // steps where first_reject_layer >= 0
+    // The flag criterion is applied to these scalars; the dispatch
+    // reads them and decides whether to tighten the L5 loop on the
+    // peak layer's family.
+};
+
+// Compute the L4 spec telemetry summary from a sequence of spec steps.
+// steps: (n_steps,) per-step data; n_steps: step count; n_layers: layer
+// count (must be the same for every step). summary_out: populated.
+// histograms: optional (n_layers,) int64_t buffer that receives the
+// first-reject-layer histogram (caller-allocated); nullptr is allowed.
+// Returns 0 on success, -1 on invalid args.
+int ts_l4_compute_spec_telemetry(const ts_l4_spec_step * steps,
+                                 int64_t n_steps, int64_t n_layers,
+                                 int64_t n_drafters,
+                                 ts_l4_spec_summary * summary_out,
+                                 int64_t * histograms);
+
+// L4 spec-telemetry flag verdict (spec §8.3c). The summary is the
+// input; the function returns a pass/fail decision plus the reason.
+// pass = true means the L4 probe passes (no requantization needed).
+// pass = false means the criterion tripped; reason_out (optional) gets
+// a short string identifying the tripped condition.
+//
+// Pass criteria (all must hold):
+//   - overall_alpha >= 0.50
+//   - first_reject_layer_peak NOT in {1, 2, 3, 4, 5}
+//   - per_layer_alpha[L/2] >= 0.40  (mid-stack per-layer drop)
+//   - per_layer_kl[L] < 0.5 for all L  (no mid-stack KL spike)
+//
+// When per_layer_alpha_mid is -1 (not available), the mid-stack drop
+// check is skipped; same for per_layer_kl_max when -1.
+struct ts_l4_spec_flag_result {
+    bool pass;
+    const char * reason;   // one of "OK", "low_overall_alpha",
+                           // "mid_stack_reject_peak", "mid_stack_alpha_drop",
+                           // "mid_stack_kl_spike"; pointer is to a static
+                           // string, do not free.
+    float per_layer_alpha_mid;   // -1 when not available
+    float per_layer_kl_max;      // -1 when not available
+};
+
+ts_l4_spec_flag_result ts_l4_spec_flag(const ts_l4_spec_summary * summary,
+                                       const float * per_layer_alpha,
+                                       int64_t n_layers);

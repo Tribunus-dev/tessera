@@ -17,6 +17,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include <cmath>
@@ -344,6 +345,151 @@ static void test_l2() {
             check("attr null: attribution == OK", s.attribution == TS_L3_ATTR_OK);
             check("attr null: compounding_layer == -1", s.compounding_layer == -1);
         }
+    }
+
+    // --- L4 spec telemetry (v3.1 spec §8) ---
+    {
+        // Build a 5-step x 8-layer spec telemetry fixture. The
+        // per-step data simulates a drafter that loses acceptance
+        // at layer 4 (the spec's "Layer 4 symptom" case): 4 of 5
+        // steps have first_reject_layer == 4, one is all-accept.
+        const int64_t n_steps  = 5;
+        const int64_t n_layers = 8;
+        std::vector<std::vector<float>> per_layer_alpha(n_steps, std::vector<float>(n_layers, 0.0f));
+        std::vector<std::vector<float>> per_layer_kl   (n_steps, std::vector<float>(n_layers, 0.0f));
+        // Step 0: all-accept (high alpha across all layers).
+        per_layer_alpha[0] = { 0.95f, 0.94f, 0.92f, 0.90f, 0.88f, 0.85f, 0.83f, 0.80f };
+        // Steps 1-4: drop at layer 4 (the systematic reject).
+        for (int64_t s = 1; s < n_steps; s++) {
+            per_layer_alpha[(size_t) s] = { 0.95f, 0.94f, 0.92f, 0.90f, 0.30f, 0.85f, 0.83f, 0.80f };
+        }
+        std::vector<ts_l4_spec_step> steps((size_t) n_steps);
+        for (int64_t s = 0; s < n_steps; s++) {
+            steps[(size_t) s].step_idx            = s;
+            steps[(size_t) s].n_drafted           = 5;
+            steps[(size_t) s].accepted_count     = (s == 0) ? 5 : 1;  // step 0 all-accept
+            steps[(size_t) s].first_reject_layer = (s == 0) ? -1 : 4;
+            steps[(size_t) s].per_layer_alpha    = per_layer_alpha[(size_t) s].data();
+            steps[(size_t) s].per_layer_kl       = per_layer_kl[(size_t) s].data();
+            steps[(size_t) s].n_layers           = n_layers;
+        }
+
+        // Aggregate + histogram.
+        ts_l4_spec_summary summary = {};
+        std::vector<int64_t> histograms((size_t) n_layers, 0);
+        int rc = ts_l4_compute_spec_telemetry(
+            steps.data(), n_steps, n_layers, /*n_drafters=*/1,
+            &summary, histograms.data());
+        check("l4_spec rc == 0", rc == 0);
+        check("l4_spec n_steps == 5", summary.n_steps == 5);
+        check("l4_spec n_total_drafted == 25", summary.n_total_drafted == 25);
+        check("l4_spec n_total_accepted == 9", summary.n_total_accepted == 9);
+        check("l4_spec n_steps_with_reject == 4", summary.n_steps_with_reject == 4);
+        // overall_alpha = 9/25 = 0.36 (below 0.50 threshold).
+        check_close("l4_spec overall_alpha == 0.36",
+                    summary.overall_alpha, 0.36f, 1e-5f);
+        // Histogram mode at layer 4 (4 steps reject there).
+        check("l4_spec first_reject_layer_peak == 4",
+              summary.first_reject_layer_peak == 4);
+        // Per-layer histogram bin counts.
+        check("l4_spec histograms[4] == 4", histograms[4] == 4);
+        check("l4_spec histograms[0] == 0", histograms[0] == 0);
+
+        // Flag verdict: trips on the mid-stack reject peak (4 in {1..5})
+        // and ALSO on the overall alpha (0.36 < 0.50). The
+        // function returns the first trip in priority order; the
+        // overall_alpha is checked first.
+        const float per_layer_alpha_mean[8] = {
+            0.95f, 0.94f, 0.92f, 0.90f, 0.42f, 0.85f, 0.83f, 0.80f
+        };
+        ts_l4_spec_flag_result flag = ts_l4_spec_flag(
+            &summary, per_layer_alpha_mean, n_layers);
+        check("l4_spec flag: NOT pass (overall_alpha low)", !flag.pass);
+        check("l4_spec flag: reason == low_overall_alpha",
+              std::string(flag.reason) == "low_overall_alpha");
+
+        // Make a passing summary: bump the overall alpha to 0.55.
+        // Keep the mid-stack drop intact (we WANT to verify the
+        // mid-stack peak check fires when overall_alpha is OK).
+        for (int64_t s = 1; s < n_steps; s++) {
+            // Each non-zero step: 3 accepted out of 5 (instead of 1).
+            // total accepted = 5 + 4*3 = 17; total drafted = 25;
+            // overall_alpha = 17/25 = 0.68.
+            steps[(size_t) s].accepted_count = 3;
+        }
+        ts_l4_compute_spec_telemetry(
+            steps.data(), n_steps, n_layers, 1, &summary, histograms.data());
+        check_close("l4_spec passing overall_alpha == 0.68",
+                    summary.overall_alpha, 0.68f, 1e-5f);
+        // The per-layer alpha mid (layer 4) is still ~0.42 (below
+        // 0.40? no, 0.42 > 0.40 so this criterion is OK), but the
+        // peak is still at layer 4, so the mid-stack reject peak
+        // trips.
+        flag = ts_l4_spec_flag(&summary, per_layer_alpha_mean, n_layers);
+        check("l4_spec flag: NOT pass (mid-stack peak)",
+              !flag.pass);
+        check("l4_spec flag: reason == mid_stack_reject_peak",
+              std::string(flag.reason) == "mid_stack_reject_peak");
+
+        // Fix the mid-stack peak: spread the rejects across
+        // different layers so the mode is at the boundary or
+        // above.
+        steps[1].first_reject_layer = 7;  // late reject
+        steps[2].first_reject_layer = 6;
+        steps[3].first_reject_layer = 7;
+        steps[4].first_reject_layer = 6;
+        ts_l4_compute_spec_telemetry(
+            steps.data(), n_steps, n_layers, 1, &summary, histograms.data());
+        check("l4_spec peak NOT in {1..5}",
+              summary.first_reject_layer_peak < 1 || summary.first_reject_layer_peak > 5);
+        // The mid-stack drop is still 0.42 (below 0.40? no, 0.42
+        // > 0.40). Actually 0.42 is above 0.40 so the mid-stack
+        // drop test passes. But the per_layer_alpha_mid in the
+        // flag struct reads the input array; we set the mean
+        // explicitly to test the threshold.
+        const float per_layer_alpha_drop[8] = {
+            0.95f, 0.94f, 0.92f, 0.90f, 0.30f, 0.85f, 0.83f, 0.80f
+        };
+        flag = ts_l4_spec_flag(&summary, per_layer_alpha_drop, n_layers);
+        check("l4_spec flag: NOT pass (mid-stack drop)",
+              !flag.pass);
+        check("l4_spec flag: reason == mid_stack_alpha_drop",
+              std::string(flag.reason) == "mid_stack_alpha_drop");
+        check_close("l4_spec flag: per_layer_alpha_mid == 0.30",
+                    flag.per_layer_alpha_mid, 0.30f, 1e-5f);
+
+        // Passing flag: peak NOT in {1..5}, alpha_mid >= 0.40,
+        // overall_alpha >= 0.50.
+        const float per_layer_alpha_ok[8] = {
+            0.95f, 0.94f, 0.92f, 0.90f, 0.55f, 0.85f, 0.83f, 0.80f
+        };
+        flag = ts_l4_spec_flag(&summary, per_layer_alpha_ok, n_layers);
+        check("l4_spec flag: pass", flag.pass);
+        check("l4_spec flag: reason == OK", std::string(flag.reason) == "OK");
+
+        // Null summary: pass with reason "OK".
+        flag = ts_l4_spec_flag(nullptr, nullptr, 0);
+        check("l4_spec null summary: pass", flag.pass);
+
+        // n_steps = 0: returns zero summary, no flag checks fire.
+        ts_l4_spec_summary zero = {};
+        rc = ts_l4_compute_spec_telemetry(
+            steps.data(), 0, n_layers, 1, &zero, nullptr);
+        check("l4_spec n_steps=0: rc == 0", rc == 0);
+        check("l4_spec n_steps=0: n_steps == 0", zero.n_steps == 0);
+        check("l4_spec n_steps=0: overall_alpha == 0",
+              zero.overall_alpha == 0.0f);
+        check("l4_spec n_steps=0: peak == -1",
+              zero.first_reject_layer_peak == -1);
+
+        // Shape mismatch (per-step n_layers != top-level n_layers):
+        // returns -1.
+        ts_l4_spec_step bad_step = steps[0];
+        bad_step.n_layers = n_layers + 1;
+        std::vector<ts_l4_spec_step> one_step(1, bad_step);
+        rc = ts_l4_compute_spec_telemetry(
+            one_step.data(), 1, n_layers, 1, &summary, nullptr);
+        check("l4_spec shape mismatch: rc == -1", rc == -1);
     }
 
     // --- run + flagging ---
