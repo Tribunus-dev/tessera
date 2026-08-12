@@ -55,6 +55,11 @@ let cllamaCSettings: [CSetting] = hasLlamaHeaders
         .define("CLLAMA_NO_HEADERS"),
     ]
 
+// Homebrew Python 3.14 include path. Formula: <Cellar>/python@3.14/<version>/
+// Frameworks/Python.framework/Versions/3.14/include/python3.14.
+// python3.14-config --includes prints the authoritative value at build time.
+let pythonIncludeDir = "/opt/homebrew/opt/python@3.14/Frameworks/Python.framework/Versions/3.14/include/python3.14"
+
 let package = Package(
     name: "TesseraStudio",
     platforms: [
@@ -102,11 +107,30 @@ let package = Package(
             path: "Sources/CTesseraFFI",
             publicHeadersPath: "include"
         ),
+        // CPythonBridge: C library that provides linkable wrappers for Python's
+        // C API macros (PyDict_Check etc.) and renamed globals (Py_None/True/False
+        // in Python 3.14). Swift imports these via @_silgen_name; the compiled
+        // symbols are linked into TesseraCore via the target dependency.
+        .target(
+            name: "CPythonBridge",
+            dependencies: [],
+            path: "Sources/CPythonBridge",
+            publicHeadersPath: "include",
+            cSettings: [
+                .unsafeFlags(["-I", pythonIncludeDir]),
+                // PythonBridge.h lives at Sources/CPythonBridge/include/CPythonBridge/.
+                .unsafeFlags(["-I", repoRoot.appendingPathComponent("TesseraStudio/Sources/CPythonBridge/include").path]),
+            ],
+            linkerSettings: [
+                .linkedFramework("Python"),
+            ]
+        ),
         .target(
             name: "TesseraCore",
             dependencies: [
                 "CLlama",
                 "CTesseraFFI",
+                "CPythonBridge",
                 .product(name: "SwiftSoup", package: "SwiftSoup"),
                 // Data layer: Postgres (durable graph + receipts) and
                 // RediStack (Valkey/Redis cache). Only TesseraDataStore /
@@ -126,14 +150,41 @@ let package = Package(
                 .product(name: "ForceSimulation", package: "Grape"),
             ],
             path: "Sources/TesseraCore",
+            // Exclude agent work-in-progress files and the Python service script
+            // (loaded at runtime via dlopen, not compiled into the module).
+            exclude: [
+                // Agent work-in-progress files (disabled agent implementations).
+                "Agent/UpdateSystemPromptTool.swift.DISABLED",
+                "Agent/TesseraCurationCuratorTool.swift.DISABLED",
+                "Agent/SystemPromptStore.swift.DISABLED",
+                "Agent/TesseraVerdictDrivenOverlayProcessor.swift.DISABLED",
+                "Agent/GetSystemPromptContextTool.swift.DISABLED",
+                // Python service loaded at runtime via dlopen, not compiled in.
+                "DocumentProcessing/LibreOffice/tessera_lo_service.py",
+            ],
             // Ships the Skills format doc so the target has a resource bundle
             // (Bundle.module); the skill loader looks here for bundled skills.
-            resources: [.copy("Skills/README.md")]
+            resources: [.copy("Skills/README.md")],
+            // Python bridging is handled by the CPythonBridge target (C library).
+            // The compiled symbols (bridge_PyDict_Check etc.) are linked into
+            // TesseraCore via the CPythonBridge dependency. No local cSettings needed.
         ),
         .executableTarget(
             name: "TesseraStudioMac",
             dependencies: ["TesseraCore"],
-            path: "Sources/TesseraStudioMac"
+            path: "Sources/TesseraStudioMac",
+            // CPythonBridge links Python.framework. Add a framework search path so
+            // the linker can resolve Python at link time (Homebrew installs to a
+            // non-standard location that SPM doesn't know about by default).
+            linkerSettings: [
+                // Python.framework is at a non-standard Homebrew path; SPM needs
+                // the framework search path to find it at link time.
+                // NOTE: SPM defaults to macOS 14.0, but Python.framework was built
+                // targeting macOS 26.0. The linker warning "built for newer version"
+                // is harmless at runtime. The .pkg pipeline uses xcodebuild which
+                // has MACOSX_DEPLOYMENT_TARGET = 26.0 in the .xcodeproj (no warning).
+                .unsafeFlags(["-F", "/opt/homebrew/opt/python@3.14/Frameworks"]),
+            ]
         ),
         .target(
             name: "TesseraStudioiOS",

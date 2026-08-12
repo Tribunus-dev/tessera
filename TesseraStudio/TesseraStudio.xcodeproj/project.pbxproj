@@ -94,6 +94,7 @@
 		DE4F5E0C15001E320370F1C4 /* GraphWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 915190C136322A37F95920F2 /* GraphWindowView.swift */; };
 		EB996E0C1F8D39F72796CCF2 /* SlideDeckDetailView_iOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC7476784ED651664E8C645A /* SlideDeckDetailView_iOS.swift */; };
 		EC971CF761A0B5A7236ED2F1 /* C2PAManifestSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29979CD7254D23AE700907F1 /* C2PAManifestSheet.swift */; };
+		EEFA8FDFEFCE597320C0F734 /* Python.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = B050781FE5BA8E119A134821 /* Python.xcframework */; };
 		F65C4A28543800692ECDE3A7 /* SheetsListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30714C14AE68559057127E6 /* SheetsListView.swift */; };
 		F998B152FEC8A40DA88B19E9 /* EmailView_iOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC71AC3BD25D1A66CF96E26E /* EmailView_iOS.swift */; };
 		F9EE450491C7F04671A2B48E /* UnifiedChatDock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7EF31291859920A67AD42281 /* UnifiedChatDock.swift */; };
@@ -171,6 +172,7 @@
 		A24BA0CB02B2C07B4F40798A /* SheetGridView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SheetGridView.swift; sourceTree = "<group>"; };
 		A32824F05F0050B376AB4E9F /* ReminderDetailView_iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderDetailView_iOS.swift; sourceTree = "<group>"; };
 		ACDE06D68EFB3E03589167D6 /* WorkflowEditorStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkflowEditorStore.swift; sourceTree = "<group>"; };
+		B050781FE5BA8E119A134821 /* Python.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = Python.xcframework; path = artifacts/Python.xcframework; sourceTree = "<group>"; };
 		B30714C14AE68559057127E6 /* SheetsListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SheetsListView.swift; sourceTree = "<group>"; };
 		B33FF80343A789A2962B268F /* DocsListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocsListView.swift; sourceTree = "<group>"; };
 		BA6FEBA48E8F3A85052651FE /* ProductivityBootstraps.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductivityBootstraps.swift; sourceTree = "<group>"; };
@@ -224,6 +226,7 @@
 			files = (
 				94155ADF33A1FA2244B0096B /* TesseraCore in Frameworks */,
 				9062010338171FA15B703C64 /* tessera.xcframework in Frameworks */,
+				EEFA8FDFEFCE597320C0F734 /* Python.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -551,6 +554,7 @@
 		B8364AA1085CB31A892616E1 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				B050781FE5BA8E119A134821 /* Python.xcframework */,
 				12E04ED6FBF1FCC3CA154CC7 /* tessera.xcframework */,
 			);
 			name = Frameworks;

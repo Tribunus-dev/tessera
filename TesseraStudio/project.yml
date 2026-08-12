@@ -48,6 +48,10 @@ targets:
       # is false, so the engine tools fall back to the tessera-cli subprocess
       # (see TesseraCLIBinaryResolver).
       - framework: artifacts/tessera.xcframework
+      # Vendored Python.xcframework (Step 2 of release-build.sh). Not embedded
+      # here because we embed it in release-build.sh Step 4 after the build.
+      - framework: artifacts/Python.xcframework
+        embed: false
     settings:
       base:
         PRODUCT_NAME: TesseraStudioMac
