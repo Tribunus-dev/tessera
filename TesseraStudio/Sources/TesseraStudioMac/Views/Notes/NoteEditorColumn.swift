@@ -134,33 +134,12 @@ public struct NoteEditorColumn: View {
     }
 
     private var tagBar: some View {
-        HStack(spacing: 6) {
-            FlowLayout(spacing: 4) {
-                ForEach(viewModel.note.tags, id: \.self) { tag in
-                    Button {
-                        Task { await viewModel.removeTag(tag) }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text("#\(tag)")
-                            Image(systemName: "xmark")
-                                .symbolRenderingMode(.hierarchical)
-                                .font(.caption2)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(.quaternary, in: Capsule())
-                        .foregroundStyle(.tint)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            TextField("Add tag…", text: $viewModel.draftTag, onCommit: {
-                Task { await viewModel.addDraftTag() }
-            })
-            .textFieldStyle(.roundedBorder)
-            .controlSize(.small)
-            .frame(maxWidth: 160)
-        }
+        SurfaceTagBar(
+            tags: viewModel.note.tags,
+            draftTag: $viewModel.draftTag,
+            onRemove: { tag in Task { await viewModel.removeTag(tag) } },
+            onAdd: { Task { await viewModel.addDraftTag() } }
+        )
     }
 
     // MARK: - Editor (TesseraEditorView in notes mode)
@@ -234,7 +213,7 @@ public struct NoteEditorColumn: View {
             } else {
                 FlowLayout(spacing: 6) {
                     ForEach(viewModel.note.linkedEntityIDs, id: \.self) { id in
-                        LinkedEntityChip(
+                        SurfaceLinkedEntityChip(
                             id: id,
                             onClick: { /* open in graph view (Phase 6) */ }
                         )
@@ -250,23 +229,11 @@ public struct NoteEditorColumn: View {
     // MARK: - Focus mode status bar
 
     private var focusStatusBar: some View {
-        HStack {
-            Text("\(viewModel.note.wordCount) words · \(viewModel.note.readingTimeMinutes) min read")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Spacer()
-            Button {
-                isFocusMode = false
-            } label: {
-                Label("Exit Focus", systemImage: "arrow.up.right.and.arrow.down.left.rectangle")
-                    .font(.caption)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 6)
-        .background(.bar)
+        SurfaceFocusStatusBar(
+            wordCount: viewModel.note.wordCount,
+            readingMinutes: viewModel.note.readingTimeMinutes,
+            onExit: { isFocusMode = false }
+        )
     }
 
     // MARK: - Toolbar (editor formatting + focus toggle + delete)
@@ -438,29 +405,3 @@ public struct NoteEditorColumn: View {
     }
 }
 
-// MARK: - LinkedEntityChip
-
-/// A small chip showing a linked entity's UUID in a
-/// compact form. v1 is a placeholder — v2 will resolve
-/// the UUID to the entity's display label via the data
-/// layer.
-struct LinkedEntityChip: View {
-    let id: UUID
-    let onClick: () -> Void
-
-    var body: some View {
-        Button(action: onClick) {
-            HStack(spacing: 4) {
-                Image(systemName: "link")
-                    .symbolRenderingMode(.hierarchical)
-                Text(id.uuidString.prefix(8) + "…")
-            }
-            .font(.caption)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(.quaternary, in: Capsule())
-            .foregroundStyle(.secondary)
-        }
-        .buttonStyle(.plain)
-    }
-}

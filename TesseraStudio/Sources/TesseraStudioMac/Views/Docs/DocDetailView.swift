@@ -243,49 +243,25 @@ public struct DocDetailView: View {
     // MARK: - Metadata row
 
     private var metadataRow: some View {
-        HStack(spacing: 8) {
-            Text("\(viewModel.doc.wordCount) words")
-                .font(.caption).foregroundStyle(.secondary)
-            Text("·").font(.caption).foregroundStyle(.tertiary)
-            Text("\(viewModel.doc.readingTimeMinutes) min read")
-                .font(.caption).foregroundStyle(.secondary)
-            Text("·").font(.caption).foregroundStyle(.tertiary)
-            Text(viewModel.doc.updatedAt, style: .relative)
-                .font(.caption).foregroundStyle(.secondary)
-            Spacer()
-            if viewModel.isSaving { ProgressView().controlSize(.small) }
-            if let err = viewModel.lastError {
-                Text(err).foregroundStyle(.red).font(.caption).lineLimit(1)
-            }
-        }
+        SurfaceMetadataRow(
+            isSaving: viewModel.isSaving,
+            lastError: viewModel.lastError,
+            stats: [
+                (label: "\(viewModel.doc.wordCount)", value: "words"),
+                (label: "\(viewModel.doc.readingTimeMinutes)", value: "min read"),
+            ]
+        )
     }
 
     // MARK: - Tag bar
 
     private var tagBar: some View {
-        HStack(spacing: 6) {
-            ForEach(viewModel.doc.tags, id: \.self) { tag in
-                Button {
-                    Task { await viewModel.removeTag(tag) }
-                } label: {
-                    HStack(spacing: 4) {
-                        Text("#\(tag)")
-                        Image(systemName: "xmark").font(.caption2)
-                            .symbolRenderingMode(.hierarchical)
-                    }
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(Capsule().fill(Color.accentColor.opacity(0.15)))
-                    .foregroundStyle(Color.accentColor)
-                }
-                .buttonStyle(.plain)
-            }
-            TextField("Add tag…", text: $viewModel.draftTag, onCommit: {
-                Task { await viewModel.addDraftTag() }
-            })
-            .textFieldStyle(.roundedBorder)
-            .controlSize(.small)
-            .frame(maxWidth: 160)
-        }
+        SurfaceTagBar(
+            tags: viewModel.doc.tags,
+            draftTag: $viewModel.draftTag,
+            onRemove: { tag in Task { await viewModel.removeTag(tag) } },
+            onAdd: { Task { await viewModel.addDraftTag() } }
+        )
     }
 
     // MARK: - Action row
@@ -353,7 +329,7 @@ public struct DocDetailView: View {
             } else {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(viewModel.doc.linkedEntityIDs, id: \.self) { id in
-                        DocLinkedEntityChip(id: id)
+                        SurfaceLinkedEntityChip(id: id)
                     }
                 }
             }
@@ -518,19 +494,3 @@ public struct DocDetailView: View {
     }
 }
 
-// MARK: - DocLinkedEntityChip
-
-struct DocLinkedEntityChip: View {
-    let id: UUID
-    var body: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "link")
-                .symbolRenderingMode(.hierarchical)
-            Text(id.uuidString.prefix(8) + "…")
-        }
-        .font(.caption)
-        .padding(.horizontal, 8).padding(.vertical, 3)
-        .background(Capsule().fill(.quaternary))
-        .foregroundStyle(.secondary)
-    }
-}

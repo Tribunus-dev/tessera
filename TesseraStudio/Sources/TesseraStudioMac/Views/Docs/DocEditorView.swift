@@ -101,26 +101,15 @@ public struct DocEditorView: View {
     // MARK: - Focus mode status bar
 
     private var focusStatusBar: some View {
-        HStack {
-            Text("\(viewModel.doc.wordCount) words · \(viewModel.doc.readingTimeMinutes) min read")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Spacer()
-            Button {
+        SurfaceFocusStatusBar(
+            wordCount: viewModel.doc.wordCount,
+            readingMinutes: viewModel.doc.readingTimeMinutes,
+            onExit: {
                 withAnimation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0.15)) {
                     isFocusMode.wrappedValue = false
                 }
-            } label: {
-                Label("Exit Focus", systemImage: "arrow.up.right.and.arrow.down.left.rectangle")
-                    .font(.caption)
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .help("Exit focus mode (Escape)")
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 6)
-        .background(.bar)
+        )
     }
 
     // MARK: - Editor command handling

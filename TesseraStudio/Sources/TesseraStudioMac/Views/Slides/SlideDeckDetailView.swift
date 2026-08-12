@@ -81,48 +81,25 @@ public struct SlideDeckDetailView: View {
     // MARK: - Metadata row
 
     private var metadataRow: some View {
-        HStack(spacing: 8) {
-            Text("\(viewModel.deck.slideCount) slide\(viewModel.deck.slideCount == 1 ? "" : "s")")
-                .font(.caption).foregroundStyle(.secondary)
-            Text("·").font(.caption).foregroundStyle(.tertiary)
-            Text("\(viewModel.deck.wordCount) words")
-                .font(.caption).foregroundStyle(.secondary)
-            Text("·").font(.caption).foregroundStyle(.tertiary)
-            Text(viewModel.deck.updatedAt, style: .relative)
-                .font(.caption).foregroundStyle(.secondary)
-            Spacer()
-            if viewModel.isSaving { ProgressView().controlSize(.small) }
-            if let err = viewModel.lastError {
-                Text(err).foregroundStyle(.red).font(.caption).lineLimit(1)
-            }
-        }
+        SurfaceMetadataRow(
+            isSaving: viewModel.isSaving,
+            lastError: viewModel.lastError,
+            stats: [
+                (label: "\(viewModel.deck.slideCount)", value: viewModel.deck.slideCount == 1 ? "slide" : "slides"),
+                (label: "\(viewModel.deck.wordCount)", value: "words"),
+            ]
+        )
     }
 
     // MARK: - Tag bar
 
     private var tagBar: some View {
-        HStack(spacing: 6) {
-            ForEach(viewModel.deck.tags, id: \.self) { tag in
-                Button {
-                    Task { await viewModel.removeTag(tag) }
-                } label: {
-                    HStack(spacing: 4) {
-                        Text("#\(tag)")
-                        Image(systemName: "xmark").font(.caption2)
-                            .symbolRenderingMode(.hierarchical)
-                    }
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(Capsule().fill(Color.accentColor.opacity(0.15)))
-                    .foregroundStyle(Color.accentColor)
-                }
-                .buttonStyle(.plain)
-            }
-            TextField("Add tag…", text: $viewModel.draftTag, onCommit: {
-                Task { await viewModel.addDraftTag() }
-            })
-            .textFieldStyle(.roundedBorder).controlSize(.small)
-            .frame(maxWidth: 160)
-        }
+        SurfaceTagBar(
+            tags: viewModel.deck.tags,
+            draftTag: $viewModel.draftTag,
+            onRemove: { tag in Task { await viewModel.removeTag(tag) } },
+            onAdd: { Task { await viewModel.addDraftTag() } }
+        )
     }
 
     // MARK: - Action row
@@ -360,7 +337,7 @@ public struct SlideDeckDetailView: View {
             } else {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(viewModel.deck.linkedEntityIDs, id: \.self) { id in
-                        SlideLinkedEntityChip(id: id)
+                        SurfaceLinkedEntityChip(id: id)
                     }
                 }
             }
@@ -440,20 +417,7 @@ public struct SlideDeckDetailView: View {
     }
 }
 
-// MARK: - SlideLinkedEntityChip
 
-private struct SlideLinkedEntityChip: View {
-    let id: UUID
-    var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "link").font(.caption2).foregroundStyle(.secondary)
-                .symbolRenderingMode(.hierarchical)
-            Text(id.uuidString.prefix(8) + "…").font(.caption).foregroundStyle(.primary)
-        }
-        .padding(.horizontal, 8).padding(.vertical, 4)
-        .background(Capsule().fill(.quaternary))
-    }
-}
 
 // MARK: - MiniToggleButton
 
