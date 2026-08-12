@@ -369,6 +369,9 @@ public final class SheetEditorViewModel: ObservableObject {
     @Published public var draftTag: String
     @Published public var isSaving: Bool = false
     @Published public private(set) var lastError: String?
+    /// Set when a newer recovery file exists than what was persisted.
+    /// The view prompts the user; set `recoverFromBackup` to restore it.
+    @Published public var pendingRecovery: Bool = false
 
     /// Grid editing state for the detail view's inline grid.
     @Published public var selectedCell: SheetCellCoord?
@@ -377,6 +380,15 @@ public final class SheetEditorViewModel: ObservableObject {
 
     public let store: SheetStore
     public let userID: UserID
+
+    private var saveDebounceTask: Task<Void, Never>?
+    private let debounceDelay: TimeInterval = 2.0
+
+    /// The file URL for the session recovery JSON in the app cache directory.
+    private var recoveryFileURL: URL {
+        let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        return cacheDir.appendingPathComponent("sheet-recovery-\(sheet.id.uuidString).json")
+    }
 
     public init(sheet: Sheet, store: SheetStore, userID: UserID) {
         self.sheet = sheet
@@ -387,10 +399,113 @@ public final class SheetEditorViewModel: ObservableObject {
         self.userID = userID
     }
 
+    // MARK: - Session recovery
+
+    /// Check for a session-recovery file on activate. Returns true if
+    /// a newer backup exists than the persisted sheet.
+    public func checkRecovery() {
+        let file = recoveryFileURL
+        guard FileManager.default.fileExists(atPath: file.path) else {
+            pendingRecovery = false
+            return
+        }
+        do {
+            let attrs = try FileManager.default.attributesOfItem(atPath: file.path)
+            guard let modDate = attrs[.modificationDate] as? Date else {
+                pendingRecovery = false
+                return
+            }
+            pendingRecovery = modDate > sheet.updatedAt
+        } catch {
+            pendingRecovery = false
+        }
+    }
+
+    /// Restore from the session-recovery file. Sets `pendingRecovery = false`.
+    public func recoverFromBackup() async {
+        let file = recoveryFileURL
+        guard FileManager.default.fileExists(atPath: file.path) else { return }
+        do {
+            let data = try Data(contentsOf: file)
+            let recoveredSheet = try Sheet.from(jsonData: data)
+            self.sheet = recoveredSheet
+            self.document = recoveredSheet.body
+            self.draftTitle = recoveredSheet.title
+            pendingRecovery = false
+        } catch {
+            lastError = "Failed to restore backup: \(error)"
+        }
+    }
+
+    /// Discard the recovery file (user chose to keep the persisted version).
+    public func discardRecovery() {
+        try? FileManager.default.removeItem(at: recoveryFileURL)
+        pendingRecovery = false
+    }
+
+    /// Save a recovery snapshot for session-crash recovery.
+    public func saveRecoveryFile() {
+        do {
+            let data = try sheet.jsonData()
+            try data.write(to: recoveryFileURL, options: .atomic)
+        } catch {
+            // Non-fatal: recovery is best-effort.
+            NSLog("SheetEditorViewModel.saveRecoveryFile: \(error)")
+        }
+    }
+
+    /// Clear the recovery file after a successful persist.
+    public func clearRecoveryFile() {
+        try? FileManager.default.removeItem(at: recoveryFileURL)
+    }
+
     public func refresh(with sheet: Sheet) {
+        saveDebounceTask?.cancel()
+        saveDebounceTask = nil
         self.sheet = sheet
         self.document = sheet.body
         self.draftTitle = sheet.title
+    }
+
+    // MARK: - Body
+
+    /// Debounced persist. Cancels any in-flight save, then schedules a
+    /// new one after `debounceDelay` seconds. This coalesces rapid
+    /// edits (e.g. pasting many cells) into a single round-trip.
+    public func commitBody(_ ast: DocumentAST) async {
+        guard ast != sheet.body else { return }
+        saveDebounceTask?.cancel()
+        saveDebounceTask = Task {
+            do {
+                try await Task.sleep(nanoseconds: UInt64(debounceDelay * 1_000_000_000))
+            } catch {
+                // Task was cancelled — discard this save.
+                return
+            }
+            await persistBody(ast)
+        }
+    }
+
+    /// Force an immediate save (flushes the debounce). Called on
+    /// scenePhase change to background.
+    public func flushBody() async {
+        saveDebounceTask?.cancel()
+        saveDebounceTask = nil
+        await persistBody(document)
+    }
+
+    private func persistBody(_ ast: DocumentAST) async {
+        guard ast != sheet.body else { return }
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            let updated = try await store.setBody(ast, for: sheet.id)
+            self.sheet = updated
+            self.document = updated.body
+            clearRecoveryFile()
+        } catch {
+            lastError = String(describing: error)
+        }
     }
 
     // MARK: - Title

@@ -39,6 +39,10 @@ public enum EditorMode: String, Codable, Sendable, Hashable, CaseIterable {
     /// `.codeWithConfig(CodeEditorConfiguration())` (the
     /// defaults).
     case codeWithConfig
+    /// Spreadsheet sheets: no rich-text editor (grid is the
+    /// surface), focus-mode toggle only. Coordinator is
+    /// minimal — no TesseraEditorView, no formatting state.
+    case sheets
 }
 
 // MARK: - CodeEditorConfiguration
@@ -120,7 +124,7 @@ extension EditorMode {
     public var isCodeMode: Bool {
         switch self {
         case .code, .codeWithConfig: return true
-        case .document, .notes: return false
+        case .document, .notes, .sheets: return false
         }
     }
 

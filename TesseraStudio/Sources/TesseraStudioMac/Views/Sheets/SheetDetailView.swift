@@ -3,20 +3,48 @@ import TesseraCore
 
 // MARK: - SheetDetailView
 
-/// The detail column for a single Sheet. Shows title + metadata
-/// row + tag bar + action row + grid + linked entities.
+/// The detail column for a single Sheet. Hosts the ribbon toolbar,
+/// shared editor state, and delegates the editing surface to
+/// ``SheetEditorView``.
+///
+/// **Ribbon toolbar.** The ``TesseraEditorToolbar`` lives in the
+/// macOS window toolbar (`.toolbar`) — it does not scroll with
+/// the document. The host owns the shared state
+/// (`formattingState`, `isFocusMode`, `editorCoordinator`) and
+/// passes them to both the toolbar and the editor.
+///
+/// **Focus mode.** Animates the grid to full-screen; a status bar
+/// shows "Sheet" (grid has no word count).
 public struct SheetDetailView: View {
 
     @ObservedObject public var viewModel: SheetEditorViewModel
     public let onDelete: () -> Void
 
+    @Environment(\.scenePhase) private var scenePhase
+
     @State private var showDeleteConfirm: Bool = false
     @State private var showLinkSearch: Bool = false
     @State private var linkSearchQuery: String = ""
-    /// Whether the grid's inline cell editor TextField should have keyboard focus.
-    /// `.focused()` requires a FocusState.Binding; we hold the @FocusState here
-    /// (at the highest common ancestor of the formula bar TextField and the
-    /// grid's cell TextField) so both can share the same focus source.
+
+    // MARK: - Ribbon state (shared with editor)
+
+    @State private var formattingState: FormattingState = FormattingState()
+    @State private var isFocusMode: Bool = false
+    @State private var editorCoordinator: TesseraEditorView.Coordinator = {
+        TesseraEditorView.Coordinator(
+            mode: .sheets,
+            theme: .light,
+            onMutationCommitted: nil,
+            onViewCommand: nil,
+            onFormattingStateChanged: nil
+        )
+    }()
+
+    /// Controls whether the grid's inline cell editor TextField
+    /// has keyboard focus. `.focused()` requires a FocusState.Binding;
+    /// we hold the `@FocusState` at the host so both the formula
+    /// bar TextField and the grid's cell TextField share the same
+    /// focus source.
     @FocusState private var gridEditingFocused: Bool
 
     public init(viewModel: SheetEditorViewModel, onDelete: @escaping () -> Void) {
@@ -28,29 +56,97 @@ public struct SheetDetailView: View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    headerSection
-                    metadataRow
-                    formulaBar
-                    tagBar
-                    actionRow
-                    Divider()
-                    gridSection
-                    Divider()
-                    linkedSection
+                    if !isFocusMode {
+                        headerSection
+                        metadataRow
+                        formulaBar
+                        tagBar
+                        actionRow
+                        Divider()
+                    }
+                    editorSection
+                    if !isFocusMode {
+                        Divider()
+                        linkedSection
+                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
             }
         }
         .background(.background)
-        .toolbar { detailToolbar }
+        .toolbar { editorToolbar }
         .sheet(isPresented: $showDeleteConfirm) { deleteSheet }
         .sheet(isPresented: $showLinkSearch) { linkSheet }
+        .alert("Restore unsaved changes?", isPresented: $viewModel.pendingRecovery) {
+            Button("Restore") {
+                Task { await viewModel.recoverFromBackup() }
+            }
+            Button("Discard", role: .destructive) {
+                viewModel.discardRecovery()
+            }
+        } message: {
+            Text("It looks like Tessera crashed during your last session. A more recent version of this sheet was found in the backup.")
+        }
         .onChange(of: viewModel.editingCell) { _, newCoord in
-            // Drive focus into the grid's inline TextField.
-            // When editingCell becomes non-nil, the TextField needs focus
-            // so the user can type immediately without a second click.
             gridEditingFocused = newCoord != nil
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            switch newPhase {
+            case .active:
+                viewModel.checkRecovery()
+            case .inactive, .background:
+                Task { await viewModel.flushBody() }
+                viewModel.saveRecoveryFile()
+            @unknown default:
+                break
+            }
+        }
+        .onAppear {
+            editorCoordinator.onFormattingStateChanged = { newState in
+                self.formattingState = newState
+            }
+        }
+    }
+
+    // MARK: - Toolbar
+
+    @ToolbarContentBuilder
+    private var editorToolbar: some ToolbarContent {
+        ToolbarItem(placement: .secondaryAction) {
+            TesseraEditorToolbar(
+                mode: .sheets,
+                formattingState: $formattingState,
+                onCommand: { command in
+                    handleEditorCommand(command)
+                },
+                isFocusModeActive: isFocusMode
+            )
+        }
+
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    isFocusMode.toggle()
+                }
+            } label: {
+                Label(
+                    isFocusMode ? "Exit Focus" : "Focus",
+                    systemImage: isFocusMode
+                        ? "arrow.up.right.and.arrow.down.left.rectangle"
+                        : "arrow.down.left.and.arrow.up.right.rectangle"
+                )
+            }
+            .help("Toggle focus mode")
+            .accessibilityLabel(isFocusMode ? "Exit Focus" : "Focus")
+        }
+
+        ToolbarItem(placement: .destructiveAction) {
+            Button(role: .destructive) { showDeleteConfirm = true } label: {
+                Label("Delete", systemImage: "trash")
+            }
+            .help("Hard-delete this sheet")
+            .accessibilityLabel("Delete sheet")
         }
     }
 
@@ -126,7 +222,6 @@ public struct SheetDetailView: View {
 
     private var formulaBar: some View {
         HStack(spacing: 0) {
-            // Cell address (e.g. "B3")
             Text(cellAddressLabel)
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(.secondary)
@@ -138,7 +233,6 @@ public struct SheetDetailView: View {
                 .fill(.separator)
                 .frame(width: 1, height: 20)
 
-            // fx label
             Text("fx")
                 .font(.system(.caption, design: .monospaced))
                 .fontWeight(.semibold)
@@ -149,7 +243,6 @@ public struct SheetDetailView: View {
                 .fill(.separator)
                 .frame(width: 1, height: 20)
 
-            // Editable formula bar
             if let coord = viewModel.selectedCell ?? viewModel.editingCell {
                 TextField(
                     "Enter value…",
@@ -194,8 +287,6 @@ public struct SheetDetailView: View {
     private func formulaBarBinding(coord: SheetCellCoord) -> Binding<String> {
         Binding(
             get: {
-                // Show the live editing text if this cell is being edited,
-                // otherwise show the cell's current value.
                 if viewModel.editingCell == coord {
                     return viewModel.editingText
                 }
@@ -203,7 +294,6 @@ public struct SheetDetailView: View {
             },
             set: { newText in
                 if viewModel.editingCell == nil {
-                    // Editing started from formula bar — enter edit mode
                     viewModel.beginEditingCell(coord)
                 }
                 viewModel.editingText = newText
@@ -211,50 +301,46 @@ public struct SheetDetailView: View {
         )
     }
 
-    // MARK: - Grid
+    // MARK: - Editor
 
-    private var gridSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Grid").font(.headline)
-                Spacer()
-                if viewModel.sheet.rowCount > 0 {
-                    Text("\(viewModel.sheet.rowCount) x \(viewModel.sheet.columnCount)")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            if viewModel.sheet.rowCount == 0 || viewModel.sheet.columnCount == 0 {
-                emptyGridState
-            } else {
-                SheetGridView(viewModel: viewModel, gridEditingFocused: $gridEditingFocused)
+    private var editorSection: some View {
+        VStack(spacing: 0) {
+            SheetEditorView(
+                viewModel: viewModel,
+                editorCoordinator: editorCoordinator,
+                formattingState: $formattingState,
+                gridEditingFocused: $gridEditingFocused
+            )
+
+            if isFocusMode {
+                focusStatusBar
+                    .transition(.opacity)
             }
         }
     }
 
-    private var emptyGridState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "tablecells.badge.ellipsis").font(.title2).foregroundStyle(.secondary)
-                .symbolRenderingMode(.hierarchical)
-            Text("No grid yet").font(.subheadline).foregroundStyle(.secondary)
-            Button("Create 5 x 4 grid") {
-                // Insert an initial table via a throwaway blank sheet's AST.
-                let blank = Sheet.makeBlank(title: viewModel.sheet.title, rows: 5, cols: 4)
-                Task {
-                    var updated = viewModel.sheet
-                    updated.body = blank.body
-                    updated.columns = blank.columns
-                    updated.updatedAt = Date()
-                    _ = try? await viewModel.store.upsert(updated)
-                    if let fresh = try? await viewModel.store.get(id: updated.id) {
-                        viewModel.refresh(with: fresh)
-                    }
+    // MARK: - Focus status bar
+
+    /// The focus-mode status bar shown at the bottom of the editor
+    /// when `isFocusMode` is active. Sheets have no word count (the
+    /// grid is the surface), so we show "Sheet" as the label.
+    private var focusStatusBar: some View {
+        SurfaceFocusStatusBar(
+            wordCount: 0,
+            readingMinutes: 0,
+            onExit: {
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    isFocusMode.toggle()
                 }
             }
-            .controlSize(.small)
+        )
+        .overlay(alignment: .leading) {
+            Text("Sheet")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 6)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
-        .background(RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.6)))
     }
 
     // MARK: - Linked entities
@@ -279,19 +365,6 @@ public struct SheetDetailView: View {
                     }
                 }
             }
-        }
-    }
-
-    // MARK: - Toolbar
-
-    @ToolbarContentBuilder
-    private var detailToolbar: some ToolbarContent {
-        ToolbarItem(placement: .destructiveAction) {
-            Button(role: .destructive) { showDeleteConfirm = true } label: {
-                Label("Delete", systemImage: "trash")
-            }
-            .help("Hard-delete this sheet")
-            .accessibilityLabel("Delete sheet")
         }
     }
 
@@ -348,5 +421,21 @@ public struct SheetDetailView: View {
     private var trashBinding: Binding<Bool> {
         Binding(get: { viewModel.sheet.isTrashed }, set: { _ in Task { await viewModel.toggleTrashed() } })
     }
-}
 
+    // MARK: - Editor command handling
+
+    /// Handles editor commands from the toolbar. Sheets only support
+    /// focus-mode commands; all other commands are forwarded to the
+    /// coordinator for future extension.
+    private func handleEditorCommand(_ command: EditorCommand) {
+        switch command {
+        case .enterFocusMode:
+            withAnimation(.easeInOut(duration: 0.25)) {
+                isFocusMode.toggle()
+                editorCoordinator.updateFocusMode(isFocusMode)
+            }
+        default:
+            editorCoordinator.handleViewCommand(command)
+        }
+    }
+}
