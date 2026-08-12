@@ -13,6 +13,7 @@
 #include "tessera-l2-diff.h"
 #include "tessera-l3-coherence.h"
 #include "tessera-l5.h"
+#include "tessera-linalg.h"
 #include "tessera-ppl.h"
 
 #include <cmath>
@@ -490,6 +491,77 @@ static void test_l2() {
         rc = ts_l4_compute_spec_telemetry(
             one_step.data(), 1, n_layers, 1, &summary, nullptr);
         check("l4_spec shape mismatch: rc == -1", rc == -1);
+    }
+
+    // --- L2 spectral metrics (v3.1 spec §5) ---
+    {
+        // Identity matrix: full rank, spectral_norm = 1, erank = n.
+        const int64_t m = 4, n = 4, k = 4;
+        std::vector<float> I((size_t) (m * n), 0.0f);
+        for (int64_t i = 0; i < m; i++) I[(size_t) (i * n + i)] = 1.0f;
+        ts_l2_spectral_metrics s_id = ts_l2_compute_spectral_metrics(
+            I.data(), m, n, k, /*n_singular_values=*/0, /*n_iters=*/100, 42);
+        check("spec identity: spectral_norm ~= 1",
+              std::fabs(s_id.spectral_norm - 1.0f) < 1e-3f);
+        check("spec identity: erank ~= n", std::fabs(s_id.erank - (float) n) < 1e-2f);
+        check("spec identity: top_k_concentration == 1.0",
+              s_id.top_k_concentration > 0.99f);
+
+        // Rank-1 matrix: spectral_norm = ||u||*||v||, erank ~= 1.
+        // A = u v^T where u = [1;2;3] and v = [1;2;3] (a column
+        // times a row). The spectral norm of an outer product is
+        // ||u|| * ||v|| = sqrt(14) * sqrt(14) = 14.
+        // Build A = [1 2 3; 2 4 6; 3 6 9] (rank 1, sigma_1 = 14).
+        const int64_t m2 = 3, n2 = 3, k2 = 2;
+        std::vector<float> A = { 1, 2, 3,  2, 4, 6,  3, 6, 9 };
+        ts_l2_spectral_metrics s_r1 = ts_l2_compute_spectral_metrics(
+            A.data(), m2, n2, k2, 0, 100, 42);
+        // Spectral norm: sigma_1 = 14 (the outer product norm).
+        check_close("spec rank-1: spectral_norm == 14",
+                    s_r1.spectral_norm, 14.0f, 1e-2f);
+        // Erank is between 1 and 2 (the second singular value is
+        // 0 in exact math but the power iteration picks up some
+        // numerical noise; we just check it's small).
+        check("spec rank-1: erank < 2", s_r1.erank < 2.0f);
+        check("spec rank-1: erank >= 1", s_r1.erank >= 1.0f);
+        // top_k_concentration for k=2 should be very close to 1.0
+        // (the first SV is dominant).
+        check("spec rank-1: top_k_concentration ~= 1",
+              s_r1.top_k_concentration > 0.99f);
+
+        // Drop computation: Y_ref has full rank, Y_quant is rank-1.
+        std::vector<float> Y_quant_r1 = A;  // rank-1
+        ts_l2_spectral_metrics s_drop = ts_l2_compute_spectral_drop(
+            I.data(), Y_quant_r1.data(), 3, 3, 2, 0, 100, 42);
+        check("spec drop: erank_drop > 0", s_drop.erank_drop > 0.0f);
+        check("spec drop: top_k_concentration_drop > 0 (quant has more concentrated spectrum)",
+              s_drop.top_k_concentration_drop > 0.0f);
+
+        // Flag verdict.
+        bool flagged = ts_l2_spectral_flagged(&s_drop);
+        check("spec drop: flagged (erank_drop > 0.1 * ref_erank)", flagged);
+
+        // Identical matrices: drops are 0, NOT flagged.
+        ts_l2_spectral_metrics s_none = ts_l2_compute_spectral_drop(
+            I.data(), I.data(), 4, 4, 4, 0, 100, 42);
+        check("spec identical: erank_drop ~= 0",
+              std::fabs(s_none.erank_drop) < 1e-3f);
+        check("spec identical: top_k_concentration_drop ~= 0",
+              std::fabs(s_none.top_k_concentration_drop) < 1e-3f);
+        check("spec identical: NOT flagged",
+              !ts_l2_spectral_flagged(&s_none));
+
+        // Null matrix: returns zero metrics, no crash.
+        ts_l2_spectral_metrics s_null = ts_l2_compute_spectral_metrics(
+            nullptr, 4, 4, 2, 0, 100, 42);
+        check("spec null: spectral_norm == 0", s_null.spectral_norm == 0.0f);
+        check("spec null: erank == 0", s_null.erank == 0.0f);
+
+        // 0x0: zero metrics.
+        std::vector<float> empty;
+        ts_l2_spectral_metrics s_0 = ts_l2_compute_spectral_metrics(
+            empty.data(), 0, 0, 2, 0, 100, 42);
+        check("spec 0x0: spectral_norm == 0", s_0.spectral_norm == 0.0f);
     }
 
     // --- run + flagging ---

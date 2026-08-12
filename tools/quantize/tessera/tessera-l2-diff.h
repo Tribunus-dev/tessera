@@ -49,6 +49,67 @@ struct ts_l2_act_divergence {
     int64_t n_samples;          // number of matmul invocations (= rows)
 };
 
+// Spectral L2 metrics (v3.1 spec §5). The Frobenius metric can hide
+// rank collapse: a quantized weight can have the same Frobenius
+// distance from BF16 as another candidate, but a different
+// singular-value profile. The downstream effect on the next layer
+// is different. These metrics surface the spectral signal.
+//
+// All four metrics are computed from the singular values of the
+// input matrix A (W_bf16 or Y_ref, depending on the call site):
+//
+//   spectral_norm     = sigma_1                  (operator norm)
+//   erank             = exp(-sum p_i log p_i)    (effective rank)
+//   top_k_concentration = sum_{i<=k} sigma_i^2 / sum sigma_i^2
+//
+// where p_i = sigma_i / sum sigma_i. The "k" for top_k_concentration
+// defaults to 4 (the spec's "k=4 top concentration"); callers can
+// pass a different k.
+struct ts_l2_spectral_metrics {
+    float spectral_norm;            // ||A||_2 = max(sigma_i)
+    float erank;                    // effective rank in [1, min(m,n)]
+    float top_k_concentration;      // sum_{i<=k} sigma_i^2 / sum sigma_i^2
+    int64_t k;                      // the k used for top_k_concentration
+    int64_t n_singular_values;      // number of singular values used
+    float erank_drop;               // Y_ref erank - Y_quant erank (only
+                                    // populated by the dual-matrix API;
+                                    // 0 for the single-matrix API)
+    float top_k_concentration_drop; // Y_ref top-k - Y_quant top-k (same)
+};
+
+// Compute spectral metrics for one matrix. A is (m x n) row-major.
+// k is the top-k for the concentration metric. singular values are
+// computed via ts_linalg_svd_topk (power iteration, n_iters
+// iterations). For small matrices the result is accurate to ~1e-4.
+// The function reduces over the top-k singular values returned by
+// the power iteration; if n_singular_values < min(m,n), the
+// remaining singular values are treated as 0 (this is the standard
+// approximation when only a sketch is available).
+//
+// When n_singular_values == -1 (or >= min(m,n)), the function
+// requests all singular values via the sketch dimension.
+ts_l2_spectral_metrics ts_l2_compute_spectral_metrics(
+    const float * A, int64_t m, int64_t n, int64_t k,
+    int64_t n_singular_values, int64_t n_iters, uint32_t seed);
+
+// Compute the spectral drop (Y_ref -> Y_quant) for the erank and
+// top-k concentration metrics. Calls the single-matrix API twice
+// (once for Y_ref, once for Y_quant) and populates the
+// erank_drop / top_k_concentration_drop fields in the output.
+ts_l2_spectral_metrics ts_l2_compute_spectral_drop(
+    const float * Y_ref, const float * Y_quant,
+    int64_t m, int64_t n, int64_t k,
+    int64_t n_singular_values, int64_t n_iters, uint32_t seed);
+
+// Spectral-flag verdict (spec §5.3b). The metrics are the input;
+// the function returns true when the criterion trips (the tensor
+// should be requantized). The criterion is: erank_drop > 0.1 *
+// erank_ref OR top_k_concentration_drop > 0.05. Returns false when
+// the inputs are well-behaved.
+bool ts_l2_spectral_flagged(const ts_l2_spectral_metrics * metrics,
+                           float erank_drop_eps    = 0.1f,
+                           float top_k_drop_eps    = 0.05f);
+
 // Compute activation-space L2 differential between two matmul-output
 // buffers. y_ref and y_quant are (n_samples * out_dim) F32 vectors in
 // row-major order (one row per matmul invocation, each row is

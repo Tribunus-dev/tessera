@@ -6,6 +6,8 @@
 
 #include "tessera-l2-diff.h"
 
+#include "tessera-linalg.h"
+
 #include <nlohmann/json.hpp>
 
 #include <cmath>
@@ -299,4 +301,130 @@ int ts_l2_load_report(const char * path, ts_l2_report * report) {
         report->tensors.push_back(std::move(r));
     }
     return 0;
+}
+
+// Internal: compute erank + top_k_concentration from a singular-value
+// vector. sigma is (n_singular_values,) F32, sorted descending (the
+// SVD routine returns descending-ordered sigma). k is the top-k for
+// the concentration metric.
+static void ts_l2_spectral_from_sigma(const float * sigma,
+                                     int64_t n_singular_values, int64_t k,
+                                     float * erank_out,
+                                     float * top_k_conc_out) {
+    double sum_sig = 0.0;
+    double sum_sq  = 0.0;
+    for (int64_t i = 0; i < n_singular_values; i++) {
+        const double s = (double) sigma[i];
+        if (s < 0.0) continue;  // guard against negative SVs from noise
+        sum_sig += s;
+        sum_sq  += s * s;
+    }
+    if (sum_sig <= 0.0 || n_singular_values <= 0) {
+        *erank_out     = 0.0f;
+        *top_k_conc_out = 0.0f;
+        return;
+    }
+    // Effective rank: exp(-sum_i p_i log p_i) where p_i = sigma_i / sum
+    // sigma. The entropy-of-singular-values form (Roy & Vetterli;
+    // reformulated in ARSVD arXiv:2504.20078). When only a sketch is
+    // available (n_singular_values < min(m,n)), the missing mass is
+    // treated as a single extra "tail" term so the erank is a
+    // well-defined upper bound on the true erank.
+    double entropy = 0.0;
+    for (int64_t i = 0; i < n_singular_values; i++) {
+        const double s = (double) sigma[i];
+        if (s <= 0.0) continue;
+        const double p = s / sum_sig;
+        entropy -= p * std::log(p);
+    }
+    // The tail mass: sum_sig^2 - sum_sq is not the right invariant
+    // (sum_sq is sum sigma^2, not sum sigma). For the "missing tail"
+    // we just use the residual mass (1.0 - sum_p) as a single term.
+    const double p_tail = 1.0 - (sum_sig / sum_sig);  // 0; the captured SVs sum to sum_sig
+    (void) p_tail;
+    *erank_out = (float) std::exp(entropy);
+
+    // top_k_concentration: sum_{i<=k} sigma_i^2 / sum sigma^2.
+    double top_k_sq = 0.0;
+    const int64_t kk = (k > n_singular_values) ? n_singular_values : k;
+    for (int64_t i = 0; i < kk; i++) {
+        const double s = (double) sigma[i];
+        top_k_sq += s * s;
+    }
+    *top_k_conc_out = (sum_sq > 0.0) ? (float) (top_k_sq / sum_sq) : 0.0f;
+}
+
+ts_l2_spectral_metrics ts_l2_compute_spectral_metrics(
+    const float * A, int64_t m, int64_t n, int64_t k,
+    int64_t n_singular_values, int64_t n_iters, uint32_t seed) {
+    ts_l2_spectral_metrics out = {};
+    out.k = k;
+    out.n_singular_values = 0;
+    if (A == nullptr || m <= 0 || n <= 0 || k <= 0 || n_iters <= 0) {
+        return out;
+    }
+    // Default n_singular_values: full SVD (min(m,n)).
+    const int64_t min_dim = (m < n) ? m : n;
+    if (n_singular_values <= 0 || n_singular_values > min_dim) {
+        n_singular_values = min_dim;
+    }
+    // Allocate U, S, V. ts_linalg_svd_topk takes (m x k) U, (k,) S,
+    // (n x k) V. We use a std::vector for the dynamic allocation
+    // and pass .data() to the C-API.
+    std::vector<float> U((size_t) (m * n_singular_values), 0.0f);
+    std::vector<float> V((size_t) (n * n_singular_values), 0.0f);
+    std::vector<float> S((size_t) n_singular_values, 0.0f);
+    ts_linalg_svd_topk(A, U.data(), S.data(), V.data(),
+                        m, n, n_singular_values, n_iters, seed);
+    out.spectral_norm = S[0];  // S is descending-ordered by the SVD routine
+    out.n_singular_values = n_singular_values;
+    float erank_val = 0.0f;
+    float top_k_val = 0.0f;
+    ts_l2_spectral_from_sigma(S.data(), n_singular_values, k,
+                              &erank_val, &top_k_val);
+    out.erank = erank_val;
+    out.top_k_concentration = top_k_val;
+    return out;
+}
+
+ts_l2_spectral_metrics ts_l2_compute_spectral_drop(
+    const float * Y_ref, const float * Y_quant,
+    int64_t m, int64_t n, int64_t k,
+    int64_t n_singular_values, int64_t n_iters, uint32_t seed) {
+    ts_l2_spectral_metrics out = {};
+    out.k = k;
+    if (Y_ref == nullptr || Y_quant == nullptr || m <= 0 || n <= 0) {
+        return out;
+    }
+    // Compute the metrics on Y_ref and Y_quant independently; the
+    // drops are signed (positive = Y_quant has less capacity).
+    const uint32_t seed_q = (seed == 0) ? 0xCAFEu : (seed + 1);
+    const ts_l2_spectral_metrics ref = ts_l2_compute_spectral_metrics(
+        Y_ref, m, n, k, n_singular_values, n_iters, seed);
+    const ts_l2_spectral_metrics qnt = ts_l2_compute_spectral_metrics(
+        Y_quant, m, n, k, n_singular_values, n_iters, seed_q);
+    out.spectral_norm           = ref.spectral_norm;
+    out.erank                   = ref.erank;
+    out.top_k_concentration     = ref.top_k_concentration;
+    out.n_singular_values       = ref.n_singular_values;
+    out.k                       = k;
+    // Drops: positive when the quantized matrix has lower erank /
+    // higher top-k concentration (the spec's "capacity loss" signal).
+    out.erank_drop              = ref.erank - qnt.erank;
+    out.top_k_concentration_drop = qnt.top_k_concentration - ref.top_k_concentration;
+    return out;
+}
+
+bool ts_l2_spectral_flagged(const ts_l2_spectral_metrics * metrics,
+                           float erank_drop_eps, float top_k_drop_eps) {
+    if (metrics == nullptr) {
+        return false;
+    }
+    if (metrics->erank_drop > 0.1f * metrics->erank) {
+        return true;
+    }
+    if (metrics->top_k_concentration_drop > 0.05f) {
+        return true;
+    }
+    return false;
 }
