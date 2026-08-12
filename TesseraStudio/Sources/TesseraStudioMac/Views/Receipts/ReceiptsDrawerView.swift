@@ -74,8 +74,18 @@ public struct ReceiptsDrawerView: View {
         .onAppear {
             Task {
                 await loadReceipts()
-                await bridge.refresh()
+                // Wave 3B (review #5): the bridge no longer
+                // polls the coordinator on a 200ms timer; it
+                // subscribes to the coordinator's
+                // `AsyncStream<Receipt>`. `start()` captures
+                // the current state with a prime, then reacts
+                // to every receipt arrival. `stop()` cancels
+                // the subscription on disappear.
+                await bridge.start()
             }
+        }
+        .onDisappear {
+            Task { await bridge.stop() }
         }
         .onChange(of: bridge.focus) { _, newFocus in
             if case .receipt(let id) = newFocus {
