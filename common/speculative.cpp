@@ -1,5 +1,7 @@
 #include "speculative.h"
 
+#include "ane-mtp.h"  // common_ane_mtp_program_load, common_ane_mtp_program_ptr
+
 #include "common.h"
 #include "ggml.h"
 #include "gguf.h"
@@ -31,24 +33,29 @@
 // snapshot). This probes the GGUF header for the MTP component marker without
 // loading tensors — used by server-context.cpp to decide whether to wire up
 // the embedded-MTP spec path.
-bool common_model_has_embedded_mtp(const std::string & path) {
-    if (path.empty()) {
-        return false;
-    }
-    struct gguf_init_params params = {
-        /*.no_alloc =*/ true,
-        /*.ctx      =*/ nullptr,
-    };
+// Probe a GGUF header (no tensor load) for a boolean KV key.
+// Used by server-context.cpp to auto-detect embedded components.
+static bool gguf_has_bool_key(const std::string & path, const char * key_name) {
+    if (path.empty()) return false;
+    struct gguf_init_params params = {/*.no_alloc=*/ true, /*.ctx=*/ nullptr};
     gguf_context * ctx = gguf_init_from_file(path.c_str(), params);
-    if (ctx == nullptr) {
-        return false;
-    }
-    const int64_t key = gguf_find_key(ctx, "mtp.component.present");
+    if (ctx == nullptr) return false;
+    const int64_t key = gguf_find_key(ctx, key_name);
     const bool present = key >= 0 &&
         gguf_get_kv_type(ctx, key) == GGUF_TYPE_BOOL &&
         gguf_get_val_bool(ctx, key);
     gguf_free(ctx);
     return present;
+}
+
+bool common_model_has_embedded_mtp(const std::string & path) {
+    return gguf_has_bool_key(path, "mtp.component.present");
+}
+bool common_model_has_embedded_dflash(const std::string & path) {
+    return gguf_has_bool_key(path, "dflash.component.present");
+}
+bool common_model_has_embedded_dspark(const std::string & path) {
+    return gguf_has_bool_key(path, "dspark.component.present");
 }
 
 #define SPC_DBG(fmt, ...) LOG_DBG("spec %12.*s: " fmt, 12, __func__, __VA_ARGS__)
@@ -2785,6 +2792,18 @@ struct common_speculative_init_result::impl {
     // note: the order in which model, context, etc. are declared matters because their destructors will be called bottom-to-top
     llama_model_ptr   model;
     llama_context_ptr context;
+    // Phase 0 fix (tessera-ane-mtp-prefill): separate MTP context and ANE program.
+    // context_mtp: separate llama_context for MTP next-token prediction. When
+    // has_draft=true (DFlash/etc.) this is nullptr; when spec_mtp=true this is
+    // the MTP draft context (same ctx as above, but stored separately for clarity).
+    // model_path: GGUF path used to load the ANE MTP program (needed by
+    // common_ane_mtp_program_load which reads mtp.ane.* GGUF keys).
+    // ane_mtp_program: Apple Neural Engine MTP program loaded from the GGUF's
+    // embedded mtp.ane.* bundle. nullptr when the GGUF has no ANE payload or
+    // when Core ML cannot load it on this hardware (Metal fallback is used instead).
+    llama_context_ptr        context_mtp;
+    std::string             model_path;
+    common_ane_mtp_program_ptr ane_mtp_program;
 };
 
 common_speculative_init_result::common_speculative_init_result(
@@ -2892,6 +2911,8 @@ common_speculative_init_result::common_speculative_init_result(
             LOG_INF("%s: loading draft model '%s'\n", __func__, model_path.c_str());
         }
 
+        pimpl->model_path = model_path;
+
         // Combined fit: ensure target+draft together leave margins free on host/device.
         // This prevents the Gemma4 MoE + drafter OOM kill by summing both models'
         // mmap + KV usage before the second mmap. Only adjusts draft params
@@ -2933,6 +2954,7 @@ common_speculative_init_result::common_speculative_init_result(
         pimpl->context.reset(ctx_dft);
     } else if (spec_mtp) {
         model_path = params.model.path;
+        pimpl->model_path = model_path;  // store so ANE loader can find mtp.ane.* GGUF keys
 
         LOG_INF("%s: creating MTP draft context against the target model '%s'\n", __func__, model_path.c_str());
 
@@ -2943,6 +2965,21 @@ common_speculative_init_result::common_speculative_init_result(
         }
 
         pimpl->context.reset(ctx_dft);
+        pimpl->context_mtp.reset(ctx_dft);  // same ctx for now; separate field for clarity
+
+        // Phase 0 fix: load the embedded ANE MTP program from the GGUF's mtp.ane.*
+        // namespace. Returns nullptr when the GGUF has no ANE payload or Core ML
+        // cannot load it (no ANE hardware, wrong macOS version, etc.); the caller
+        // falls back to the Metal/CPU draft path in that case. batch_hint=0 means
+        // "use the smallest warmable bucket" — the caller re-warms at the right
+        // sequence length on first use via warm_program(n_tokens).
+        pimpl->ane_mtp_program = common_ane_mtp_program_load(model_path, 0);
+        if (pimpl->ane_mtp_program) {
+            LOG_INF("%s: loaded embedded ANE MTP program from '%s'\n", __func__, model_path.c_str());
+        } else {
+            LOG_WRN("%s: no embedded ANE MTP program found in '%s'; using Metal/CPU draft path\n",
+                    __func__, model_path.c_str());
+        }
     }
 }
 
@@ -2962,11 +2999,11 @@ llama_context * common_speculative_init_result::context() {
 // checks for nullptr before using the result, so this is safe and unblocks the
 // build. Full MTP wiring can be added back when the WIP is finalized.
 llama_context * common_speculative_init_result::mtp_context() {
-    return nullptr;
+    return pimpl->context_mtp.get();
 }
 
 void * common_speculative_init_result::ane_mtp_program() {
-    return nullptr;
+    return pimpl->ane_mtp_program.get();
 }
 
 common_speculative_init_result_ptr common_speculative_init_from_params(common_params & params, llama_model * model_tgt, llama_context * ctx_tgt) {

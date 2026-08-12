@@ -1150,6 +1150,29 @@ private:
                     "to suppress this warning");
         }
 
+        // Phase 16: embedded dflash / dspark auto-detection. When the model GGUF
+        // carries a dflash.component.present or dspark.component.present marker AND
+        // the user has not explicitly set a speculative type (types == {NONE}) AND
+        // no standalone --model-draft is provided, auto-enable the embedded drafter.
+        // Unlike MTP (which is blocked on the ANE prefill path), dflash and dspark
+        // are fully wired and can be auto-enabled safely.
+        const bool spec_types_is_none =
+            params_base.speculative.types ==
+            std::vector<common_speculative_type>{COMMON_SPECULATIVE_TYPE_NONE};
+        bool has_embedded_dflash = false;
+        bool has_embedded_dspark = false;
+        if (spec_types_is_none && !params_base.speculative.has_dft()) {
+            has_embedded_dflash = common_model_has_embedded_dflash(params_base.model.path);
+            has_embedded_dspark = common_model_has_embedded_dspark(params_base.model.path);
+            if (has_embedded_dflash) {
+                params_base.speculative.types = { COMMON_SPECULATIVE_TYPE_DRAFT_DFLASH };
+                SRV_INF("%s\n", "auto-enabled embedded DFlash (dflash.component.present detected)");
+            } else if (has_embedded_dspark) {
+                params_base.speculative.types = { COMMON_SPECULATIVE_TYPE_DRAFT_DSPARK };
+                SRV_INF("%s\n", "auto-enabled embedded DSPark (dspark.component.present detected)");
+            }
+        }
+
         if (params_base.mmproj.path.empty() && !params_base.no_mmproj) {
             const mtmd_caps caps = mtmd_get_cap_from_file(params_base.model.path.c_str());
             if (caps.inp_vision || caps.inp_audio) {
@@ -1164,7 +1187,13 @@ private:
         const bool spec_mtp = std::find(params_base.speculative.types.begin(),
                                         params_base.speculative.types.end(),
                                         COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params_base.speculative.types.end();
-        const bool has_spec = has_draft || spec_mtp;
+        const bool spec_dflash = std::find(params_base.speculative.types.begin(),
+                                           params_base.speculative.types.end(),
+                                           COMMON_SPECULATIVE_TYPE_DRAFT_DFLASH) != params_base.speculative.types.end();
+        const bool spec_dspark = std::find(params_base.speculative.types.begin(),
+                                           params_base.speculative.types.end(),
+                                           COMMON_SPECULATIVE_TYPE_DRAFT_DSPARK) != params_base.speculative.types.end();
+        const bool has_spec = has_draft || spec_mtp || spec_dflash || spec_dspark;
 
         if (callback_state) {
             std::vector<std::string> stages = {"text_model"};
@@ -1234,8 +1263,10 @@ private:
         // optionally reserve VRAM for the draft / MTP context before fitting the target model
         if (params_base.fit_params) {
             if (has_spec) {
-                // MTP draft context lives on the target model, only context+compute are new
-                bool measure_model_bytes = has_draft || has_embedded_mtp;
+                // MTP draft context lives on the target model, only context+compute are new.
+                // DFlash/DSPark also load the same file as a separate model; their bytes are
+                // included in measure_model_bytes so the VRAM reservation accounts for them.
+                bool measure_model_bytes = has_draft || has_embedded_mtp || has_embedded_dflash || has_embedded_dspark;
 
                 common_params params_dft = common_base_params_to_speculative(params_base);
                 params_dft.speculative.draft.target_model_path = params_base.model.path;
@@ -1244,6 +1275,12 @@ private:
                 auto cparams_dft = common_context_params_to_llama(params_dft);
                 if (has_embedded_mtp) {
                     mparams_dft.component_prefix = "mtp.";
+                }
+                if (has_embedded_dflash) {
+                    mparams_dft.component_prefix = "dflash.";
+                }
+                if (has_embedded_dspark) {
+                    mparams_dft.component_prefix = "dspark.";
                 }
                 if (spec_mtp) {
                     cparams_dft.ctx_type = LLAMA_CONTEXT_TYPE_MTP;

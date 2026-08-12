@@ -338,22 +338,32 @@ class GGUFWriter:
             raise ValueError(f'Duplicated tensor name {name!r}')
 
         if raw_dtype is None:
-            if tensor_dtype == np.float16:
+            # Accept numpy dtypes; also accept torch dtypes (used by conversion
+            # scripts that pass torch tensors directly) and bf16 (added to the
+            # supported list for the Nemotron 3.5 Lightning and similar
+            # BF16-native architectures).
+            try:
+                import torch
+            except ImportError:
+                torch = None
+            if tensor_dtype == np.float16 or (torch is not None and tensor_dtype == torch.float16):
                 dtype = GGMLQuantizationType.F16
-            elif tensor_dtype == np.float32:
+            elif tensor_dtype == np.float32 or (torch is not None and tensor_dtype == torch.float32):
                 dtype = GGMLQuantizationType.F32
-            elif tensor_dtype == np.float64:
+            elif tensor_dtype == np.float64 or (torch is not None and tensor_dtype == torch.float64):
                 dtype = GGMLQuantizationType.F64
-            elif tensor_dtype == np.int8:
+            elif tensor_dtype == np.int8 or (torch is not None and tensor_dtype == torch.int8):
                 dtype = GGMLQuantizationType.I8
-            elif tensor_dtype == np.int16:
+            elif tensor_dtype == np.int16 or (torch is not None and tensor_dtype == torch.int16):
                 dtype = GGMLQuantizationType.I16
-            elif tensor_dtype == np.int32:
+            elif tensor_dtype == np.int32 or (torch is not None and tensor_dtype == torch.int32):
                 dtype = GGMLQuantizationType.I32
-            elif tensor_dtype == np.int64:
+            elif tensor_dtype == np.int64 or (torch is not None and tensor_dtype == torch.int64):
                 dtype = GGMLQuantizationType.I64
+            elif tensor_dtype == np.dtype('bfloat16') or (torch is not None and tensor_dtype == torch.bfloat16):
+                dtype = GGMLQuantizationType.BF16
             else:
-                raise ValueError("Only F16, F32, F64, I8, I16, I32, I64 tensors are supported for now")
+                raise ValueError("Only F16, F32, F64, I8, I16, I32, I64, BF16 tensors are supported for now")
         else:
             dtype = raw_dtype
             if tensor_dtype == np.uint8:
@@ -376,6 +386,44 @@ class GGUFWriter:
         self, name: str, tensor: np.ndarray[Any, Any], raw_shape: Sequence[int] | None = None,
         raw_dtype: GGMLQuantizationType | None = None, tensor_endianess: GGUFEndian | None = None
     ) -> None:
+        # Accept torch tensors too — the conversion scripts in
+        # conversion/nemotron.py and similar call add_tensor with torch
+        # tensors directly. Convert to numpy and let add_tensor_info handle
+        # the dtype dispatch (which now also accepts torch dtypes + BF16).
+        if not isinstance(tensor, np.ndarray):
+            # LazyBase is the umbrella for LazyNumpyTensor and the
+            # metaclass-auto-generated LazyTorchTensor; both expose
+            # to_eager(t) to materialize the underlying tensor.
+            try:
+                from .lazy import LazyBase
+            except ImportError:
+                LazyBase = None
+            if LazyBase is not None and isinstance(tensor, LazyBase):
+                # Resolve the underlying eager tensor and re-enter the
+                # torch/numpy normalization below if needed.
+                eager = type(tensor).to_eager(tensor)
+                if isinstance(eager, np.ndarray):
+                    tensor = eager
+                else:
+                    # LazyTorchTensor materializes to a torch.Tensor; recurse.
+                    return self.add_tensor(name, eager, raw_shape, raw_dtype, tensor_endianess)
+            else:
+                try:
+                    import torch
+                except ImportError:
+                    torch = None
+                if torch is not None and isinstance(tensor, torch.Tensor):
+                    # bfloat16 has no numpy equivalent dtype by default; map to
+                    # the explicit numpy bfloat16 dtype so add_tensor_info's
+                    # bf16 branch matches.
+                    if tensor.dtype == torch.bfloat16:
+                        tensor = tensor.detach().cpu().numpy().view(np.dtype('bfloat16'))
+                    else:
+                        tensor = tensor.detach().cpu().numpy()
+                else:
+                    raise TypeError(
+                        f"add_tensor expects np.ndarray, torch.Tensor, or LazyBase, got {type(tensor).__name__}")
+
         # if tensor endianness is not passed, assume it's native to system
         if tensor_endianess is None:
             tensor_endianess = GGUFEndian.BIG if sys.byteorder == 'big' else GGUFEndian.LITTLE

@@ -859,6 +859,17 @@ ts_unified_writer::ts_unified_writer(const std::string & dst_path,
         gguf_set_val_u32(p_->dst, "gemma4-assistant.mm.projector_dim",
                          (uint32_t)p_->mmproj_hparams.projector_dim);
     }
+    // Phase 16: emit component-present markers so the server can auto-detect
+    // embedded drafters without loading tensors. Follows the same pattern as
+    // mtp.component.present for the MTP path. Each prefix is the GGUF key
+    // the loader probes via common_model_has_embedded_dflash/dspark (speculative.cpp).
+    for (const auto & comp : p_->components) {
+        if (comp.model_role == "dflash") {
+            gguf_set_val_bool(p_->dst, "dflash.component.present", true);
+        } else if (comp.model_role == "dspark") {
+            gguf_set_val_bool(p_->dst, "dspark.component.present", true);
+        }
+    }
     // Tessera provenance
     if (!p_->meta.build_info.empty()) {
         gguf_set_val_str(p_->dst, "tessera.provenance.build_info", p_->meta.build_info.c_str());

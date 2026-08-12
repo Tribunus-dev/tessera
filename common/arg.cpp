@@ -4697,6 +4697,28 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             tessera_params.unified_mmproj_hparams = value;
         }
     ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_UNIFIED_WRITER}));
+    // unified-tts: qwen3-tts talker + code2wav vocoder. The writer prefix-routes
+    // their tensors (tts.* / tts.c2w.*) and sidecar-copies each source's KV
+    // namespace under the same prefix so the loader reads the unified GGUF via
+    // component_prefix = "tts." / "tts.c2w.".
+    add_opt(common_arg(
+        {"--tts-talker"}, "PATH",
+        "Tessera: path to the qwen3-tts talker GGUF. The writer prefix-routes\n"
+        "its tensors under 'tts.' to isolate them from trunk tensors that share\n"
+        "the same blk.{i}.* names. KV metadata is copied under 'tts.' prefix.",
+        [](common_params &, const std::string & value) {
+            tessera_params.unified_tts_talker = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_UNIFIED_WRITER}));
+    add_opt(common_arg(
+        {"--tts-code2wav"}, "PATH",
+        "Tessera: path to the qwen3-tts code2wav vocoder GGUF. The writer\n"
+        "prefix-routes its tensors under 'tts.c2w.' so the loader scopes the\n"
+        "whole qwen3-tts side with one component_prefix family.",
+        [](common_params &, const std::string & value) {
+            tessera_params.unified_tts_code2wav = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_UNIFIED_WRITER}));
 
     // ----- `export-ternary` subcommand -----
     // Reads a BF16 GGUF, quantizes each 2D weight to tile-agnostic ternary

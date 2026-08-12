@@ -86,6 +86,21 @@ static const struct ts_family_pattern {
     const char * fragment;
     const char * family;
 } ts_family_patterns[] = {
+    // ---- Nemotron-3.5-Lightning (NEMOTRON_H_MOE) ----
+    // SSM / Mamba-2 layers: "ssm" family — sequential state-space, distinct from dense FFN
+    { "ssm_in",      "ssm"     },
+    { "ssm_x",       "ssm"     },
+    { "ssm_conv1d",  "ssm"     },
+    { "ssm_dt",      "ssm"     },
+    { "ssm_a",       "ssm"     },
+    { "ssm_d",       "ssm"     },
+    { "ssm_norm",    "ssm"     },
+    { "ssm_out",     "ssm"     },
+    { "ssm_b_norm",  "ssm"     },
+    { "ssm_c_norm",  "ssm"     },
+    // LatentMoE gate projection: separate from routed_expert, smaller intermediate dim
+    { "ffn_latent_up",   "moe_gate" },
+    { "ffn_latent_down", "moe_gate" },
     // MoE routed expert variants: map to "routed_expert" (sparsity-aware regime)
     { "ffn_gate_exps",   "routed_expert" },
     { "ffn_up_exps",     "routed_expert" },

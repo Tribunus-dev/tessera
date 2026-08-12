@@ -3682,6 +3682,9 @@ MODEL_TENSORS: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
         MODEL_TENSOR.OUTPUT,
         MODEL_TENSOR.ATTN_NORM,
         MODEL_TENSOR.SSM_IN,
+        MODEL_TENSOR.SSM_X,         # z (gate) part of in_proj
+        MODEL_TENSOR.SSM_B_NORM,    # B (state input) part of in_proj
+        MODEL_TENSOR.SSM_C_NORM,    # C (state output) part of in_proj
         MODEL_TENSOR.SSM_CONV1D,
         MODEL_TENSOR.SSM_DT,
         MODEL_TENSOR.SSM_A,
@@ -3707,10 +3710,17 @@ MODEL_TENSORS: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
         MODEL_TENSOR.FFN_RES_PROJ,
         MODEL_TENSOR.OUTPUT_ATTN_RES_NORM,
         MODEL_TENSOR.OUTPUT_ATTN_RES_PROJ,
+        MODEL_TENSOR.FFN_GATE_INP,
         # shared expert
         MODEL_TENSOR.FFN_DOWN_SHEXP,
         MODEL_TENSOR.FFN_UP_SHEXP,
         MODEL_TENSOR.FFN_EXP_PROBS_B,
+        # MTP (multi-token prediction) — Nemotron 3.5 has 1 MTP layer
+        MODEL_TENSOR.NEXTN_EH_PROJ,
+        MODEL_TENSOR.NEXTN_ENORM,
+        MODEL_TENSOR.NEXTN_HNORM,
+        MODEL_TENSOR.NEXTN_SHARED_HEAD_HEAD,
+        MODEL_TENSOR.NEXTN_SHARED_HEAD_NORM,
     ],
     MODEL_ARCH.EXAONE: [
         MODEL_TENSOR.TOKEN_EMBD,

@@ -26,6 +26,8 @@ int32_t common_speculative_n_max(const common_params_speculative * spec);
 // Inspect a GGUF without loading its tensors and report whether it contains
 // a namespaced MTP component.
 bool common_model_has_embedded_mtp(const std::string & path);
+bool common_model_has_embedded_dflash(const std::string & path);
+bool common_model_has_embedded_dspark(const std::string & path);
 
 common_params common_base_params_to_speculative(const common_params & params);
 
