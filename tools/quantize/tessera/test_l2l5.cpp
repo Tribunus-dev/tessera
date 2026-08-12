@@ -771,6 +771,297 @@ static void test_l2() {
     ts_l5_adaptive_plan empty;
     check("l5 null report rc == 0", ts_l5_adaptive_requant(nullptr, &ap, 0, &empty) == 0);
     check("l5 null report empty", empty.n_requant == 0);
+
+    // --- L5 Hessian sensitivity scoring (v3.1 spec §9) ---
+    //
+    // OBQ criterion (Frantar & Alistarh 2022):
+    //   omega_ij = (w_ij - quant(w_ij))^2 / [H^{-1}]_ii
+    //   sensitivity[T] = mean over (i, j) of omega_ij
+    //
+    // For a lower-triangular Cholesky L of H^{-1}: [H^{-1}]_ii = L_ii^2.
+    //
+    // Tests below use:
+    //   - Identity L (L_ii = 1 for all i): L_ii^2 = 1, so omega_ij is
+    //     the raw squared error. This is the simplest case.
+    //   - Diagonal L with L_ii = 2, 3, 4, 5 (in_dim=4): L_ii^2 = 4, 9,
+    //     16, 25. Verifies the per-row division is index-correct.
+    //   - All-zero quantization error (weights_quant = nullptr):
+    //     sensitivity is 0 for every tensor.
+    //   - Mismatched in_dim: empty map (fail-closed).
+    //   - Null L: empty map.
+    //   - NYSTROM source: empty map (v2 deferred).
+    {
+        const int64_t in_dim  = 4;
+        const int64_t out_dim = 2;
+
+        // Identity L (4x4, row-major). L_ii = 1 for all i.
+        std::vector<float> L_identity(in_dim * in_dim, 0.0f);
+        for (int64_t i = 0; i < in_dim; i++) {
+            L_identity[i * in_dim + i] = 1.0f;
+        }
+
+        // Diagonal L with L_ii = 2, 3, 4, 5.
+        std::vector<float> L_diag(in_dim * in_dim, 0.0f);
+        L_diag[0 * in_dim + 0] = 2.0f;  // L_ii^2 = 4
+        L_diag[1 * in_dim + 1] = 3.0f;  // L_ii^2 = 9
+        L_diag[2 * in_dim + 2] = 4.0f;  // L_ii^2 = 16
+        L_diag[3 * in_dim + 3] = 5.0f;  // L_ii^2 = 25
+
+        // Two tensors, each (in_dim, out_dim) = (4, 2) = 8 weights.
+        // Layout is (in_dim, out_dim) row-major, so W[i, j] = W[i * out_dim + j].
+        // Tensor A: bf16 = (1, 1, 1, 1, 1, 1, 1, 1),
+        //          quant = (0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5)
+        //   per-weight error (1 - 0.5) = 0.5; per-row err_i = 0.5^2 + 0.5^2 = 0.5
+        //   mean omega = 0.5 / 1.0 = 0.5  (identity L: L_ii^2 = 1)
+        // Tensor B: bf16 = (1, 1, 1, 1, 1, 1, 1, 1),
+        //          quant = (0, 0, 0, 0, 0, 0, 0, 0)
+        //   per-weight error (1 - 0) = 1; per-row err_i = 1^2 + 1^2 = 2.0
+        //   mean omega = 2.0 / 1.0 = 2.0
+        // After normalize: A = 0.5/2.0 = 0.25, B = 1.0
+        std::vector<float> bf16_a  = { 1, 1, 1, 1, 1, 1, 1, 1 };
+        std::vector<float> quant_a = { 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f };
+        std::vector<float> quant_b = { 0, 0, 0, 0, 0, 0, 0, 0 };
+
+        std::vector<float> w_bf16 = bf16_a;
+        w_bf16.insert(w_bf16.end(), bf16_a.begin(), bf16_a.end());  // both tensors share bf16
+        std::vector<float> w_quant = quant_a;
+        w_quant.insert(w_quant.end(), quant_b.begin(), quant_b.end());
+
+        const char * names[2] = { "tensor_a", "tensor_b" };
+        const int64_t in_dims[2]  = { in_dim, in_dim };
+        const int64_t out_dims[2] = { out_dim, out_dim };
+
+        ts_l5_second_order_info soi;
+        soi.source   = TS_L5_SOI_IN_CORE;
+        soi.in_dim   = in_dim;
+        soi.L_in_core = L_identity.data();
+
+        ts_score_map s_id = ts_l5_hessian_sensitivity(
+            w_bf16.data(), w_quant.data(),
+            in_dims, out_dims, &soi, names, 2);
+        check("hessian: identity L: 2 entries", s_id.size() == 2);
+        check_close("hessian: identity L: tensor_a == 0.25",
+                    s_id["tensor_a"], 0.25f, 1e-5f);
+        check_close("hessian: identity L: tensor_b == 1.0",
+                    s_id["tensor_b"], 1.0f, 1e-5f);
+
+        // Diagonal L: L_ii^2 = 4, 9, 16, 25. Per-row err for tensor A
+        // is 0.5 (constant); tensor B is 2.0. The ratio A/B is
+        // preserved by the normalize step, so:
+        //   Tensor A: mean over i of 0.5 / L_ii^2
+        //           = ((0.5/4) + (0.5/9) + (0.5/16) + (0.5/25)) / 4
+        //           = 0.5 * (0.25 + 0.1111 + 0.0625 + 0.04) / 4
+        //           = 0.5 * 0.4636 / 4 = 0.05795
+        //   Tensor B: mean over i of 2.0 / L_ii^2
+        //           = 2.0 * 0.4636 / 4 = 0.2318
+        //   Ratio: B/A = 0.2318 / 0.05795 = 4.0  (uniform error scaling
+        //   with out_dim=2 makes B's row error 4x A's, not 2x)
+        // After normalize: A = 0.05795/0.2318 = 0.25, B = 1.0.
+        soi.L_in_core = L_diag.data();
+        ts_score_map s_diag = ts_l5_hessian_sensitivity(
+            w_bf16.data(), w_quant.data(),
+            in_dims, out_dims, &soi, names, 2);
+        check("hessian: diag L: 2 entries", s_diag.size() == 2);
+        check_close("hessian: diag L: tensor_a == 0.25 (ratio preserved)",
+                    s_diag["tensor_a"], 0.25f, 1e-4f);
+        check_close("hessian: diag L: tensor_b == 1.0",
+                    s_diag["tensor_b"], 1.0f, 1e-4f);
+
+        // All-zero error: weights_quant = nullptr -> sensitivity 0.
+        // After normalize (peak=0), all stay at 0.
+        ts_score_map s_zero = ts_l5_hessian_sensitivity(
+            w_bf16.data(), nullptr,
+            in_dims, out_dims, &soi, names, 2);
+        check("hessian: zero error: 2 entries", s_zero.size() == 2);
+        check_close("hessian: zero error: tensor_a == 0",
+                    s_zero["tensor_a"], 0.0f, 1e-9f);
+        check_close("hessian: zero error: tensor_b == 0",
+                    s_zero["tensor_b"], 0.0f, 1e-9f);
+
+        // Mismatched in_dim: soi.in_dim = 8, tensors have in_dim = 4.
+        // Empty map (fail-closed).
+        ts_l5_second_order_info soi_bad;
+        soi_bad.source   = TS_L5_SOI_IN_CORE;
+        soi_bad.in_dim   = 8;
+        soi_bad.L_in_core = L_identity.data();
+        ts_score_map s_bad = ts_l5_hessian_sensitivity(
+            w_bf16.data(), w_quant.data(),
+            in_dims, out_dims, &soi_bad, names, 2);
+        check("hessian: mismatched in_dim: empty map", s_bad.empty());
+
+        // Null L_in_core: empty map.
+        ts_l5_second_order_info soi_null;
+        soi_null.source   = TS_L5_SOI_IN_CORE;
+        soi_null.in_dim   = in_dim;
+        soi_null.L_in_core = nullptr;
+        ts_score_map s_nullL = ts_l5_hessian_sensitivity(
+            w_bf16.data(), w_quant.data(),
+            in_dims, out_dims, &soi_null, names, 2);
+        check("hessian: null L: empty map", s_nullL.empty());
+
+        // NYSTROM source: v2 deferred -> empty map in v1.
+        ts_l5_second_order_info soi_nys;
+        soi_nys.source   = TS_L5_SOI_NYSTROM;
+        soi_nys.in_dim   = in_dim;
+        soi_nys.nystrom_k = 2;
+        soi_nys.nystrom_U = L_identity.data();  // dummy
+        soi_nys.nystrom_W_inv = L_identity.data();
+        ts_score_map s_nys = ts_l5_hessian_sensitivity(
+            w_bf16.data(), w_quant.data(),
+            in_dims, out_dims, &soi_nys, names, 2);
+        check("hessian: nystrom: empty map (v2 deferred)", s_nys.empty());
+
+        // STREAMING source: v2+ deferred -> empty map in v1.
+        ts_l5_second_order_info soi_str;
+        soi_str.source   = TS_L5_SOI_STREAMING;
+        soi_str.in_dim   = in_dim;
+        soi_str.streaming_row = 0;
+        ts_score_map s_str = ts_l5_hessian_sensitivity(
+            w_bf16.data(), w_quant.data(),
+            in_dims, out_dims, &soi_str, names, 2);
+        check("hessian: streaming: empty map (v2+ deferred)", s_str.empty());
+
+        // Null safety: every null input -> empty map.
+        ts_score_map s_null_everywhere = ts_l5_hessian_sensitivity(
+            nullptr, nullptr, nullptr, nullptr, &soi, nullptr, 0);
+        check("hessian: null everywhere: empty map", s_null_everywhere.empty());
+
+        // n_tensors = 0: empty map.
+        ts_score_map s_zero_t = ts_l5_hessian_sensitivity(
+            w_bf16.data(), w_quant.data(),
+            in_dims, out_dims, &soi, names, 0);
+        check("hessian: n_tensors=0: empty map", s_zero_t.empty());
+
+        // Single tensor: no normalize (peak = self).
+        ts_score_map s_one = ts_l5_hessian_sensitivity(
+            bf16_a.data(), quant_a.data(),
+            in_dims, out_dims, &soi, names, 1);
+        check("hessian: single tensor: 1 entry", s_one.size() == 1);
+        check_close("hessian: single tensor: peak=1.0",
+                    s_one["tensor_a"], 1.0f, 1e-5f);
+
+        // SCORER_VERSION defined.
+        check("hessian: SCORER_VERSION defined",
+              TS_L5_HESSIAN_SCORER_VERSION >= 1);
+
+        // --- Independent readback validation (Nemotron-style lesson) ---
+        //
+        // The synthetic tests above use hand-computed expected values
+        // that share the same per-row loop as the SUT. That's not
+        // circular for the *scalar* value (the test's expected is a
+        // literal float, not a function call), but it doesn't exercise
+        // the off-diagonal L entries — the SUT reads L[i*in_dim+i] for
+        // the diagonal, and a bug in the index arithmetic would
+        // silently pick up an off-diagonal value.
+        //
+        // This fixture:
+        //   1. Uses a non-diagonal L (off-diagonals != 0) so a wrong
+        //      L_ii extraction cannot accidentally match a "correct"
+        //      off-diagonal value.
+        //   2. Uses a two-tensor input so the normalize step gives a
+        //      non-trivial ratio (single-tensor normalize is peak/self
+        //      = 1.0, which doesn't distinguish a wrong sensitivity
+        //      from a right one).
+        //   3. Computes the expected per-tensor mean omega by hand
+        //      from the inputs (not via a function call into the SUT).
+        //   4. Trap: a second L with misleading off-diagonal entries
+        //      (99.0 where a wrong index would land) must produce the
+        //      same output. If the SUT reads an off-diagonal, this
+        //      fails loudly.
+        {
+            const int64_t in_dim2  = 3;
+            const int64_t out_dim2 = 3;
+
+            // L is lower triangular with off-diagonal entries. L_ii
+            // are 1.0, 2.0, 3.0 (L_ii^2 = 1, 4, 9). The off-diagonals
+            // are deliberately non-zero so a bug in the diagonal
+            // extraction would pick up the wrong value.
+            //   L = [ 1    0    0 ]
+            //       [ 0.5  2    0 ]
+            //       [ 0.25 0.75 3 ]
+            std::vector<float> L_nondiag(in_dim2 * in_dim2, 0.0f);
+            L_nondiag[0 * in_dim2 + 0] = 1.0f;
+            L_nondiag[1 * in_dim2 + 0] = 0.5f;   // off-diag (ignored by scorer)
+            L_nondiag[1 * in_dim2 + 1] = 2.0f;
+            L_nondiag[2 * in_dim2 + 0] = 0.25f;  // off-diag
+            L_nondiag[2 * in_dim2 + 1] = 0.75f;  // off-diag
+            L_nondiag[2 * in_dim2 + 2] = 3.0f;
+
+            // Tensor A: bf16 = (1, 2, 3, 4, 5, 6, 7, 8, 9)
+            //          quant = (1.1, 1.9, 3.1, 3.9, 5.1, 4.9, 7.0, 7.9, 9.1)
+            //   Per-weight error: (-0.1, 0.1, -0.1, 0.1, -0.1, 1.1, 0, 0.1, -0.1)
+            //   Squared:          (0.01, 0.01, 0.01, 0.01, 0.01, 1.21, 0, 0.01, 0.01)
+            //   Per-row sums:     row 0 = 0.03, row 1 = 1.23, row 2 = 0.02
+            //   omega_i = err_i / L_ii^2:  0.03/1, 1.23/4, 0.02/9
+            //                         = 0.03, 0.3075, 0.002222
+            //   mean omega_A = (0.03 + 0.3075 + 0.002222) / 3 = 0.113241
+            //
+            // Tensor B: bf16 = (1, 1, 1, 1, 1, 1, 1, 1, 1)
+            //          quant = (0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5)
+            //   Per-weight error: 0.5, 0.5, ..., 0.5  (9 entries)
+            //   Squared:          0.25, 0.25, ..., 0.25
+            //   Per-row sums:     0.75, 0.75, 0.75
+            //   omega_i = 0.75 / L_ii^2:  0.75/1, 0.75/4, 0.75/9
+            //                        = 0.75, 0.1875, 0.083333
+            //   mean omega_B = (0.75 + 0.1875 + 0.083333) / 3 = 0.340278
+            //
+            // Peak = 0.340278, A_normalized = 0.113241 / 0.340278 = 0.332764
+            //                            B_normalized = 1.0
+            std::vector<float> bf16_a  = { 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+            std::vector<float> quant_a = { 1.1f, 1.9f, 3.1f, 3.9f, 5.1f,
+                                            4.9f, 7.0f, 7.9f, 9.1f };
+            std::vector<float> bf16_b(9, 1.0f);
+            std::vector<float> quant_b(9, 0.5f);
+
+            std::vector<float> w_bf16  = bf16_a;
+            w_bf16.insert(w_bf16.end(), bf16_b.begin(), bf16_b.end());
+            std::vector<float> w_quant = quant_a;
+            w_quant.insert(w_quant.end(), quant_b.begin(), quant_b.end());
+
+            ts_l5_second_order_info soi_nd;
+            soi_nd.source    = TS_L5_SOI_IN_CORE;
+            soi_nd.in_dim    = in_dim2;
+            soi_nd.L_in_core = L_nondiag.data();
+
+            const char * names_nd[2] = { "nd_a", "nd_b" };
+            const int64_t in_dims_nd[2]  = { in_dim2, in_dim2 };
+            const int64_t out_dims_nd[2] = { out_dim2, out_dim2 };
+
+            ts_score_map s_nd = ts_l5_hessian_sensitivity(
+                w_bf16.data(), w_quant.data(),
+                in_dims_nd, out_dims_nd, &soi_nd, names_nd, 2);
+            check("hessian readback: non-diag L: 2 entries", s_nd.size() == 2);
+            // Expected ratios (computed above):
+            //   A = 0.332764, B = 1.0
+            check_close("hessian readback: non-diag L: nd_a == 0.3328",
+                        s_nd["nd_a"], 0.332764f, 1e-4f);
+            check_close("hessian readback: non-diag L: nd_b == 1.0",
+                        s_nd["nd_b"], 1.0f, 1e-5f);
+
+            // Readback sanity: the scorer should NOT see the
+            // off-diagonal entries. Construct an L where the
+            // off-diagonals are deliberately misleading (99.0 where
+            // a wrong index would land) and verify the output is
+            // unchanged. If the SUT read an off-diagonal, the
+            // sensitivity would shift and the test would fail.
+            std::vector<float> L_nondiag_trap(in_dim2 * in_dim2, 0.0f);
+            L_nondiag_trap[0 * in_dim2 + 0] = 1.0f;
+            L_nondiag_trap[1 * in_dim2 + 0] = 99.0f;  // wrong index would land here
+            L_nondiag_trap[1 * in_dim2 + 1] = 2.0f;
+            L_nondiag_trap[2 * in_dim2 + 0] = 99.0f;
+            L_nondiag_trap[2 * in_dim2 + 1] = 99.0f;
+            L_nondiag_trap[2 * in_dim2 + 2] = 3.0f;
+            ts_l5_second_order_info soi_trap = soi_nd;
+            soi_trap.L_in_core = L_nondiag_trap.data();
+            ts_score_map s_trap = ts_l5_hessian_sensitivity(
+                w_bf16.data(), w_quant.data(),
+                in_dims_nd, out_dims_nd, &soi_trap, names_nd, 2);
+            check("hessian readback: off-diagonal trap: nd_a unchanged",
+                  fabsf(s_trap["nd_a"] - s_nd["nd_a"]) < 1e-5f);
+            check("hessian readback: off-diagonal trap: nd_b unchanged",
+                  fabsf(s_trap["nd_b"] - s_nd["nd_b"]) < 1e-5f);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

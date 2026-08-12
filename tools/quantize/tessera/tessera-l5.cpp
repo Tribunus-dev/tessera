@@ -406,3 +406,141 @@ int ts_l5_adaptive_requant(const ts_l2_report * report,
 
     return (int)plan->n_requant;
 }
+
+// --- Hessian sensitivity scoring (v3.1 spec §9) ---
+//
+// Per-tensor OBQ criterion:
+//   omega_ij = (w_ij - quant(w_ij))^2 / [H^{-1}]_ii
+//   sensitivity[T] = mean over (i, j) of omega_ij
+//
+// where [H^{-1}]_ii = L_ii^2 for a lower-triangular Cholesky factor
+// L of H^{-1} (only the diagonal L_ii contributes to the i-th
+// diagonal of L L^T when L is lower triangular).
+//
+// The scorer is O(n_tensors * in_dim * out_dim) per tensor; the
+// Cholesky factor itself is computed once per in_dim and shared
+// across all tensors with the same in_dim. For the v1 (in-core)
+// path the scorer reads the diagonal of L_in_core (a row-major
+// (in_dim, in_dim) buffer), squares each entry, and divides the
+// per-row (w - quant)^2 sum by that squared diagonal.
+//
+// The NYSTROM and STREAMING sources return an empty map in v1; the
+// v2 swap is an internal change with no caller updates (per the
+// spec's struct-based API).
+
+ts_score_map ts_l5_hessian_sensitivity(
+    const float * weights_bf16,
+    const float * weights_quant,
+    const int64_t * tensor_in_dims,
+    const int64_t * tensor_out_dims,
+    const ts_l5_second_order_info * soi,
+    const char ** tensor_names,
+    int64_t n_tensors) {
+    ts_score_map out;
+    if (n_tensors <= 0 || weights_bf16 == nullptr || tensor_in_dims == nullptr ||
+        tensor_out_dims == nullptr || tensor_names == nullptr || soi == nullptr) {
+        return out;
+    }
+    if (soi->in_dim <= 0) {
+        return out;
+    }
+
+    // Source dispatch. v1 supports IN_CORE only.
+    if (soi->source != TS_L5_SOI_IN_CORE) {
+        // NYSTROM and STREAMING are deferred to v2. The function
+        // returns an empty map rather than a partial result so the
+        // caller's combine() treats the missing scorer as a 0
+        // contribution (the same fallback the imatrix / gradient
+        // scorers use for missing-data tensors).
+        return out;
+    }
+    if (soi->L_in_core == nullptr) {
+        return out;
+    }
+
+    // Per-tensor walk. Compute the offset of each tensor's weight
+    // block in the concatenated arrays, then for each row i in the
+    // tensor's in_dim:
+    //   1. compute sum_j (w_ij - quant(w_ij))^2  -- call it err_i
+    //   2. read L_ii (diagonal of the Cholesky factor at offset i*in_dim + i)
+    //   3. omega_i = err_i / (L_ii * L_ii)
+    // sensitivity[T] = mean over i of omega_i
+    std::vector<float> sensitivities;
+    sensitivities.reserve((size_t) n_tensors);
+
+    int64_t offset = 0;
+    for (int64_t t = 0; t < n_tensors; t++) {
+        const int64_t in_dim  = tensor_in_dims[t];
+        const int64_t out_dim = tensor_out_dims[t];
+        if (in_dim <= 0 || out_dim <= 0) {
+            return out;  // invalid dims -- fail-closed on the whole call
+        }
+        if (in_dim != soi->in_dim) {
+            // Mismatched in_dim: the Cholesky factor was computed
+            // for a different in_dim. The caller is responsible for
+            // either re-running Cholesky or grouping tensors by
+            // in_dim; we return empty on the whole call.
+            return out;
+        }
+
+        const float * W  = weights_bf16  + offset;
+        const float * Wq = (weights_quant != nullptr) ? (weights_quant + offset)
+                                                      : weights_bf16 + offset;
+        const int64_t n_elem = in_dim * out_dim;
+
+        double sum_omega = 0.0;
+        for (int64_t i = 0; i < in_dim; i++) {
+            // Row i's quantization error sum over the out_dim axis.
+            double err_i = 0.0;
+            const float * row_w  = W  + i * out_dim;
+            const float * row_wq = Wq + i * out_dim;
+            for (int64_t j = 0; j < out_dim; j++) {
+                const float d = row_w[j] - row_wq[j];
+                err_i += (double) d * (double) d;
+            }
+            // L_ii = L_in_core[i * in_dim + i]  (row-major diagonal)
+            const float L_ii = soi->L_in_core[i * soi->in_dim + i];
+            const float L_ii_sq = L_ii * L_ii;
+            if (L_ii_sq <= 0.0f) {
+                // Degenerate Hessian diagonal: a non-positive
+                // L_ii^2 means the Cholesky factor is invalid (or
+                // the matrix is singular). Treat as a guard band:
+                // skip the row (the contribution to mean is zero)
+                // rather than dividing by zero.
+                continue;
+            }
+            sum_omega += err_i / (double) L_ii_sq;
+        }
+        // mean over i; if all rows were skipped (L_ii_sq <= 0 for
+        // every i), the sensitivity is zero.
+        const double mean_omega = (in_dim > 0) ? (sum_omega / (double) in_dim) : 0.0;
+        sensitivities.push_back((float) mean_omega);
+        offset += n_elem;
+    }
+
+    // Normalize to [0, 1] (peak tensor = 1.0). The peak is over
+    // tensors whose sensitivity is positive; tensors with zero
+    // sensitivity stay at zero. This matches the normalization the
+    // imatrix / gradient scorers use so the combine() weights
+    // compose cleanly.
+    float peak = 0.0f;
+    for (float s : sensitivities) {
+        if (s > peak) {
+            peak = s;
+        }
+    }
+    if (peak > 0.0f) {
+        for (int64_t t = 0; t < n_tensors; t++) {
+            out[tensor_names[t]] = sensitivities[(size_t) t] / peak;
+        }
+    } else {
+        // All-zero sensitivities (every tensor's quantization error
+        // is zero, or every L_ii is degenerate). Return the raw
+        // zeros; the caller can decide whether to skip the scorer
+        // or zero-weight it in the combine().
+        for (int64_t t = 0; t < n_tensors; t++) {
+            out[tensor_names[t]] = 0.0f;
+        }
+    }
+    return out;
+}

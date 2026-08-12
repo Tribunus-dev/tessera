@@ -113,6 +113,96 @@ int ts_l5_orchestrate_step(const ts_score_map * sensitivity,
 // GGUF-writer path, matching ts_l5_orchestrate_step which also emits a
 // plan for downstream application.
 
+// --- Hessian sensitivity scoring (v3.1 spec §9) ---
+//
+// The shipped imatrix / gradient / layer-position scorers are
+// *first-order* signals. The Hessian-based scorer is the
+// *second-order* signal: it answers "which weights actually matter
+// under a calibration forward" via the OBQ criterion
+// (Frantar & Alistarh 2022, arXiv:2208.11580):
+//
+//   omega_ij = (w_ij - quant(w_ij))^2 / [H^{-1}]_ii
+//
+// where H = 2 X X^T is the calibration Hessian (X is the imatrix
+// corpus) and [H^{-1}]_ii is the i-th diagonal of the Hessian
+// inverse. The per-tensor sensitivity is the mean over (i, j) of
+// omega_ij. This is the same criterion GPTQ (Frantar 2023,
+// arXiv:2210.17323) uses for the per-weight rounding, and SpQR
+// (Dettmers 2023, arXiv:2306.03078) uses for outlier selection.
+//
+// The struct-based API is the v1/v2 swap point (spec §9.3 risk 3):
+//   v1 = TS_L5_SOI_IN_CORE: full Cholesky factor in memory
+//   v2 = TS_L5_SOI_NYSTROM: low-rank Nystrom approximation
+//   v2+= TS_L5_SOI_STREAMING: out-of-core Cholesky streaming
+// The v1 path computes the Cholesky once per in_dim and reuses it
+// across all tensors sharing that in_dim (the 12B case is one
+// factor per in_dim = 4096, ~10 s on M-series Metal). The v2 path
+// is an internal implementation change with no caller updates.
+
+// Bump on every change to the Hessian scorer's math, damping, or
+// Cholesky block size. Used as the DuckDB cache key suffix so stale
+// cache entries invalidate silently rather than producing wrong
+// scores (spec §13 risk 2).
+#define TS_L5_HESSIAN_SCORER_VERSION 1
+
+// Source of the second-order info (spec §9.3).
+enum ts_l5_soi_source {
+    TS_L5_SOI_IN_CORE   = 0,  // v1: full Cholesky in memory
+    TS_L5_SOI_NYSTROM   = 1,  // v2: low-rank Nystrom (deferred)
+    TS_L5_SOI_STREAMING = 2,  // v2+: out-of-core streaming (deferred)
+};
+
+// Second-order info. The v1 (in-core Cholesky), v2 (Nystrom), and
+// v2+ (streaming) paths share a single dispatch through
+// ts_l5_hessian_sensitivity; exactly one of the source-specific
+// fields is populated per `source` value.
+struct ts_l5_second_order_info {
+    ts_l5_soi_source source;
+    int64_t          in_dim;
+
+    // IN_CORE: lower-triangular Cholesky factor of (1/2) * H, stored
+    // as a flat (in_dim, in_dim) row-major buffer. Only the diagonal
+    // L_ii is consumed (since [H^{-1}]_ii = L_ii^2 for a lower
+    // triangular factor). Caller-owned; not freed by the scorer.
+    const float * L_in_core;
+
+    // NYSTROM: rank-k approximation. nystrom_U is (in_dim, nystrom_k)
+    // and nystrom_W_inv is (nystrom_k, nystrom_k). v2 is deferred;
+    // calling with this source returns an empty map.
+    int64_t       nystrom_k;
+    const float * nystrom_U;
+    const float * nystrom_W_inv;
+
+    // STREAMING: caller advances streaming_row between calls. v2+ is
+    // deferred; calling with this source returns an empty map.
+    int64_t       streaming_row;
+};
+
+// Hessian-based per-tensor sensitivity (OBQ / GPTQ / SpQR criterion,
+// spec §9.3).
+//
+// weights_bf16 / weights_quant: concatenated (in_dim, out_dim)
+// row-major weight matrices per tensor, one tensor after another.
+// The offset of tensor i's matrix is
+//   sum over k < i of (tensor_in_dims[k] * tensor_out_dims[k]).
+// When weights_quant is nullptr, the scorer treats it as identical
+// to weights_bf16 (zero quantization error -> zero sensitivity);
+// this is the "weight-only diagnostic" mode used to validate the
+// formula on a known tensor.
+//
+// Returns a map tensor_name -> sensitivity normalized to [0, 1]
+// (peak tensor = 1.0). Returns an empty map on n_tensors <= 0 or
+// any null required pointer. NYSTROM and STREAMING sources return
+// an empty map in v1 (deferred to v2).
+ts_score_map ts_l5_hessian_sensitivity(
+    const float * weights_bf16,
+    const float * weights_quant,
+    const int64_t * tensor_in_dims,
+    const int64_t * tensor_out_dims,
+    const ts_l5_second_order_info * soi,
+    const char ** tensor_names,
+    int64_t n_tensors);
+
 struct ts_l5_adaptive_params {
     float alpha_scale;    // base alpha multiplier (< 1 tightens), default 0.5
     float clip_scale;     // base clip multiplier (< 1 tightens), default 0.5
