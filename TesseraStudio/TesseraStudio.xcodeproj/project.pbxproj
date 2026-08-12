@@ -8,12 +8,14 @@
 
 /* Begin PBXBuildFile section */
 		03FCDB138C2861BDF31C6D0D /* TrainingNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF9F199C740DC441D8D701F4 /* TrainingNotifier.swift */; };
+		06A696E1A725C35715FFF06B /* VersionHistorySheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 447D1741101946ABC0EDE81F /* VersionHistorySheet.swift */; };
 		076A33150EF33DE00DC2A10C /* CollabTraceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 216F6401DAB58BEE359B2CCB /* CollabTraceView.swift */; };
 		0874CDA0174B7E7ED65F2F2E /* DataLayerHTTPClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14EDB5B9D3D1DA88AD22717B /* DataLayerHTTPClient.swift */; };
 		09715BBB8CC72BF943809C1E /* RemindersView_iOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11C09646BE43FE7B1E9F3B09 /* RemindersView_iOS.swift */; };
 		0AEF0419384C58CCA51D78EF /* DocDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 842915B31E328119CB4C0F77 /* DocDetailView.swift */; };
 		0E4099EC4C4ABCC1B639FACA /* tessera.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 12E04ED6FBF1FCC3CA154CC7 /* tessera.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		132CBB1F35A58B42545162AA /* ProductivityBootstraps.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA6FEBA48E8F3A85052651FE /* ProductivityBootstraps.swift */; };
+		14C27896D0C272FE7AC9BB68 /* LayoutInspectorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2D4C992DB2F8E83DABAE66 /* LayoutInspectorView.swift */; };
 		14E5A74A80E7C2805E812FA3 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 543C41C3EF0C82A41F740F1E /* ContentView.swift */; };
 		157325803FA3DEEE5603020C /* DocsListView_iOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46702FBBBC194F492A8B10B8 /* DocsListView_iOS.swift */; };
 		19AD6CB2D3A3E0AA418EB428 /* DocsListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B33FF80343A789A2962B268F /* DocsListView.swift */; };
@@ -78,20 +80,24 @@
 		C2F23C7A9E4846FD2C647C79 /* EmailSurfaceBootstrap_iOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F148583EC8B91D154A61999 /* EmailSurfaceBootstrap_iOS.swift */; };
 		C2F5DA41114BF47A13A79D89 /* NoteEditorColumn.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8F87F7E38784649EE148AE2 /* NoteEditorColumn.swift */; };
 		C32D556DEA54086C990DF2C3 /* PleadTheFifthNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF926E12EF9F972E62F3F018 /* PleadTheFifthNotifications.swift */; };
+		C3D8AD06E1139EF043616C21 /* TesseraTableEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DED61298DFE5CE08DBE9FAC /* TesseraTableEditorView.swift */; };
 		C558678BB263AFCCE060DEB0 /* CalendarSurfaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0984E4B20FCB1D5AF3AE604A /* CalendarSurfaceView.swift */; };
 		C6A0E1FAE820404A123D0873 /* DualAgentChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86DE7A76E8E25029310D3EBD /* DualAgentChatView.swift */; };
 		C711E5902DC14E6DFA5B6BB3 /* LearningTrainingSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD1FE0CD17FC666E463147E4 /* LearningTrainingSection.swift */; };
 		CA2FCD5D78AF4EDF4AAC29A0 /* WorkflowCanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE2F125CEF082F7FA8395246 /* WorkflowCanvasView.swift */; };
 		CB8154AFE489638DE1306F78 /* SlidesListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 397D4EE4BF5604D29241CD63 /* SlidesListView.swift */; };
+		CF99324F941F08AB6A4C0D92 /* FindReplaceBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE95DA4BB3C52CF9B1305C6A /* FindReplaceBar.swift */; };
 		D01F786A4933554C369191FD /* ReceiptDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D2779339C44AD29BDA9565D /* ReceiptDetailView.swift */; };
 		D3B43A51CB7885704B6C80CE /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9839F117CD5A6CC1C9C5F7DE /* SettingsView.swift */; };
 		D428353BC427BE01BF41BE3C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6F4F9123B7EFA1C68054E8F5 /* Assets.xcassets */; };
 		D4B9C1644A7E90A4302166CF /* TesseraStudioiOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 437779B0DF7334909ED10304 /* TesseraStudioiOSApp.swift */; };
 		D7D06DAB518BCC02F3E8CAAB /* EmailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34E0577C17154654B8E97367 /* EmailView.swift */; };
+		DA58641277C4DDB09AF73EAF /* STTextView in Frameworks */ = {isa = PBXBuildFile; productRef = 45387480C11A234AE100C0C1 /* STTextView */; };
 		DAE539EEF1F75E5D07FD262E /* ReceiptsDrawerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98B83D56898985B53E820304 /* ReceiptsDrawerView.swift */; };
 		DC5CE32462F1725DD56C4A99 /* DocEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBB399B96779A479223863EB /* DocEditorView.swift */; };
 		DE12AD035A9DEF1AA463F79F /* WorkflowDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F27831D331D02ACFE0F58B1 /* WorkflowDocument.swift */; };
 		DE4F5E0C15001E320370F1C4 /* GraphWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 915190C136322A37F95920F2 /* GraphWindowView.swift */; };
+		E53B61AC254B6296FF5FA2BF /* CommentsSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5618D64A1D7DFE93F3EDCE2 /* CommentsSidebarView.swift */; };
 		EB996E0C1F8D39F72796CCF2 /* SlideDeckDetailView_iOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC7476784ED651664E8C645A /* SlideDeckDetailView_iOS.swift */; };
 		EC971CF761A0B5A7236ED2F1 /* C2PAManifestSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29979CD7254D23AE700907F1 /* C2PAManifestSheet.swift */; };
 		EEFA8FDFEFCE597320C0F734 /* Python.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = B050781FE5BA8E119A134821 /* Python.xcframework */; };
@@ -122,6 +128,7 @@
 		11C09646BE43FE7B1E9F3B09 /* RemindersView_iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemindersView_iOS.swift; sourceTree = "<group>"; };
 		12E04ED6FBF1FCC3CA154CC7 /* tessera.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = tessera.xcframework; path = artifacts/tessera.xcframework; sourceTree = "<group>"; };
 		14EDB5B9D3D1DA88AD22717B /* DataLayerHTTPClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataLayerHTTPClient.swift; sourceTree = "<group>"; };
+		1A2D4C992DB2F8E83DABAE66 /* LayoutInspectorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutInspectorView.swift; sourceTree = "<group>"; };
 		1DD3DBACCFF7C3215CDEA531 /* SlideDeckDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SlideDeckDetailView.swift; sourceTree = "<group>"; };
 		1F22948AED9597A94104B0C4 /* TesseraAppLifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TesseraAppLifecycle.swift; sourceTree = "<group>"; };
 		216F6401DAB58BEE359B2CCB /* CollabTraceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CollabTraceView.swift; sourceTree = "<group>"; };
@@ -134,6 +141,7 @@
 		3FE31A6FADD1FFB1193E0FD1 /* WorkflowsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkflowsView.swift; sourceTree = "<group>"; };
 		40729A9531A2DFABE1EA961D /* WorkflowParameterPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkflowParameterPanelView.swift; sourceTree = "<group>"; };
 		437779B0DF7334909ED10304 /* TesseraStudioiOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TesseraStudioiOSApp.swift; sourceTree = "<group>"; };
+		447D1741101946ABC0EDE81F /* VersionHistorySheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VersionHistorySheet.swift; sourceTree = "<group>"; };
 		4576A2E753799151F8818B11 /* AgentCursorOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCursorOverlay.swift; sourceTree = "<group>"; };
 		46702FBBBC194F492A8B10B8 /* DocsListView_iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocsListView_iOS.swift; sourceTree = "<group>"; };
 		4BE3EF723DE6781BC525F93C /* RemindersView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemindersView.swift; sourceTree = "<group>"; };
@@ -156,6 +164,7 @@
 		75205220F8E12273F58FC23E /* WorkflowNodeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkflowNodeView.swift; sourceTree = "<group>"; };
 		7771325795C1974253F62AE1 /* CodeFileTreeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeFileTreeView.swift; sourceTree = "<group>"; };
 		7D222D5A75213DE4EA6FBB98 /* WorkflowPaletteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkflowPaletteView.swift; sourceTree = "<group>"; };
+		7DED61298DFE5CE08DBE9FAC /* TesseraTableEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TesseraTableEditorView.swift; sourceTree = "<group>"; };
 		7EF31291859920A67AD42281 /* UnifiedChatDock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedChatDock.swift; sourceTree = "<group>"; };
 		842915B31E328119CB4C0F77 /* DocDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocDetailView.swift; sourceTree = "<group>"; };
 		86DE7A76E8E25029310D3EBD /* DualAgentChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DualAgentChatView.swift; sourceTree = "<group>"; };
@@ -171,6 +180,7 @@
 		A0B6100096E939B14FB5A142 /* SheetDetailView_iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SheetDetailView_iOS.swift; sourceTree = "<group>"; };
 		A24BA0CB02B2C07B4F40798A /* SheetGridView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SheetGridView.swift; sourceTree = "<group>"; };
 		A32824F05F0050B376AB4E9F /* ReminderDetailView_iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderDetailView_iOS.swift; sourceTree = "<group>"; };
+		A5618D64A1D7DFE93F3EDCE2 /* CommentsSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommentsSidebarView.swift; sourceTree = "<group>"; };
 		ACDE06D68EFB3E03589167D6 /* WorkflowEditorStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkflowEditorStore.swift; sourceTree = "<group>"; };
 		B050781FE5BA8E119A134821 /* Python.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = Python.xcframework; path = artifacts/Python.xcframework; sourceTree = "<group>"; };
 		B30714C14AE68559057127E6 /* SheetsListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SheetsListView.swift; sourceTree = "<group>"; };
@@ -208,6 +218,7 @@
 		FA00029C227E04B1E2D61C2B /* ConfirmationPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfirmationPanel.swift; sourceTree = "<group>"; };
 		FA8FE18A5EA86D5E3A938DFD /* ContactsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactsView.swift; sourceTree = "<group>"; };
 		FCD3045F308A4FC885C96939 /* LearningDashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LearningDashboardView.swift; sourceTree = "<group>"; };
+		FE95DA4BB3C52CF9B1305C6A /* FindReplaceBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FindReplaceBar.swift; sourceTree = "<group>"; };
 		FF21813F28DD00AAEC067404 /* TesseraEditorToolbar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TesseraEditorToolbar.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -225,6 +236,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				94155ADF33A1FA2244B0096B /* TesseraCore in Frameworks */,
+				DA58641277C4DDB09AF73EAF /* STTextView in Frameworks */,
 				9062010338171FA15B703C64 /* tessera.xcframework in Frameworks */,
 				EEFA8FDFEFCE597320C0F734 /* Python.xcframework in Frameworks */,
 			);
@@ -345,6 +357,7 @@
 				842915B31E328119CB4C0F77 /* DocDetailView.swift */,
 				DBB399B96779A479223863EB /* DocEditorView.swift */,
 				B33FF80343A789A2962B268F /* DocsListView.swift */,
+				447D1741101946ABC0EDE81F /* VersionHistorySheet.swift */,
 			);
 			path = Docs;
 			sourceTree = "<group>";
@@ -472,9 +485,13 @@
 			isa = PBXGroup;
 			children = (
 				4576A2E753799151F8818B11 /* AgentCursorOverlay.swift */,
+				A5618D64A1D7DFE93F3EDCE2 /* CommentsSidebarView.swift */,
 				6E33EB0CB8E4B73019CA2705 /* EditorUndoCoordinator.swift */,
+				FE95DA4BB3C52CF9B1305C6A /* FindReplaceBar.swift */,
+				1A2D4C992DB2F8E83DABAE66 /* LayoutInspectorView.swift */,
 				FF21813F28DD00AAEC067404 /* TesseraEditorToolbar.swift */,
 				D187A89CC07AF025A5D5277B /* TesseraEditorView.swift */,
+				7DED61298DFE5CE08DBE9FAC /* TesseraTableEditorView.swift */,
 			);
 			path = Editor;
 			sourceTree = "<group>";
@@ -722,6 +739,7 @@
 			name = TesseraStudioMac;
 			packageProductDependencies = (
 				558253DF4AD709A6F954A1B9 /* TesseraCore */,
+				45387480C11A234AE100C0C1 /* STTextView */,
 			);
 			productName = TesseraStudioMac;
 			productReference = 9075FB059F1B04D32002C2F2 /* TesseraStudioMac.app */;
@@ -751,6 +769,7 @@
 			mainGroup = E444049A8E6351CE88F16EC3;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				DE5401936E5A14A866F9BCA7 /* XCRemoteSwiftPackageReference "STTextView" */,
 				B8F6101CBB78B794C01EFF67 /* XCLocalSwiftPackageReference "." */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -826,6 +845,7 @@
 				211E8D7885F8945BBA5F36DA /* CodeSearchPanelView.swift in Sources */,
 				C2AD2D3977218ABD48292B3C /* CodeSurfaceView.swift in Sources */,
 				076A33150EF33DE00DC2A10C /* CollabTraceView.swift in Sources */,
+				E53B61AC254B6296FF5FA2BF /* CommentsSidebarView.swift in Sources */,
 				A2AFB3126E60571FB0435310 /* ConfirmationPanel.swift in Sources */,
 				45DE91F2EDDEDF030DF68AB2 /* ContactsView.swift in Sources */,
 				504CC16738EF99406D6B8529 /* ContentView.swift in Sources */,
@@ -837,10 +857,12 @@
 				FED231C11F231CA2B92CDC58 /* EditorUndoCoordinator.swift in Sources */,
 				7CC34E39B8273779D76EBCB9 /* EmailSurfaceBootstrap.swift in Sources */,
 				D7D06DAB518BCC02F3E8CAAB /* EmailView.swift in Sources */,
+				CF99324F941F08AB6A4C0D92 /* FindReplaceBar.swift in Sources */,
 				266B4DFC27D8BF64EFEF2069 /* FlowLayout.swift in Sources */,
 				DE4F5E0C15001E320370F1C4 /* GraphWindowView.swift in Sources */,
 				BC2CD741B23C890CCB9BE4E5 /* ImportExportAPI.swift in Sources */,
 				8715DC3A1DEAC8852D31FCE5 /* IntelligenceView.swift in Sources */,
+				14C27896D0C272FE7AC9BB68 /* LayoutInspectorView.swift in Sources */,
 				561C364154E0918D86AD8D30 /* LearningDashboardView.swift in Sources */,
 				C711E5902DC14E6DFA5B6BB3 /* LearningTrainingSection.swift in Sources */,
 				C2F5DA41114BF47A13A79D89 /* NoteEditorColumn.swift in Sources */,
@@ -870,8 +892,10 @@
 				7427247EF6B19D353B6E10A5 /* TesseraEditorToolbar.swift in Sources */,
 				B915FD1E2EB2C90CB1B5BE0A /* TesseraEditorView.swift in Sources */,
 				47AD6881245204EF1A0C514C /* TesseraStudioMacApp.swift in Sources */,
+				C3D8AD06E1139EF043616C21 /* TesseraTableEditorView.swift in Sources */,
 				03FCDB138C2861BDF31C6D0D /* TrainingNotifier.swift in Sources */,
 				F9EE450491C7F04671A2B48E /* UnifiedChatDock.swift in Sources */,
+				06A696E1A725C35715FFF06B /* VersionHistorySheet.swift in Sources */,
 				CA2FCD5D78AF4EDF4AAC29A0 /* WorkflowCanvasView.swift in Sources */,
 				DE12AD035A9DEF1AA463F79F /* WorkflowDocument.swift in Sources */,
 				716BCB07A97A34782A506338 /* WorkflowEditorStore.swift in Sources */,
@@ -1145,10 +1169,26 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		DE5401936E5A14A866F9BCA7 /* XCRemoteSwiftPackageReference "STTextView" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/krzyzanowskim/STTextView.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		3EE7F1E4BFBB3E93B73ACCC3 /* TesseraCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = TesseraCore;
+		};
+		45387480C11A234AE100C0C1 /* STTextView */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = DE5401936E5A14A866F9BCA7 /* XCRemoteSwiftPackageReference "STTextView" */;
+			productName = STTextView;
 		};
 		558253DF4AD709A6F954A1B9 /* TesseraCore */ = {
 			isa = XCSwiftPackageProductDependency;

@@ -45,6 +45,7 @@ public struct SlideDeckDetailView: View {
                     actionRow
                     Divider()
                     thumbnailRail
+                    slidesToolbar
                     canvasSection
                     notesSection
                     Divider()
@@ -212,6 +213,55 @@ public struct SlideDeckDetailView: View {
                     .padding(.vertical, 4)
                 }
             }
+        }
+    }
+
+    // MARK: - Slides formatting toolbar
+
+    /// A compact version of the ribbon, showing only text-formatting controls.
+    /// Mirrors the mini toolbar that PowerPoint shows on text selection.
+    private var slidesToolbar: some View {
+        HStack(spacing: 8) {
+            // Font family picker
+            Menu {
+                Button("System") { }
+                Button("Helvetica Neue") { }
+                Button("Georgia") { }
+                Button("Courier") { }
+            } label: {
+                Label("Font", systemImage: "textformat")
+                    .font(.system(size: 11))
+            }
+            .controlSize(.small)
+
+            Divider().frame(height: 16)
+
+            // Bold / Italic / Underline
+            MiniToggleButton(label: "B", weight: .bold) { }
+            MiniToggleButton(label: "I", italic: true) { }
+            MiniToggleButton(label: "U", underline: true) { }
+
+            Divider().frame(height: 16)
+
+            // Font size stepper
+            Stepper("18 pt", value: .constant(18), in: 8...144)
+                .labelsHidden()
+                .controlSize(.small)
+
+            Divider().frame(height: 16)
+
+            // Alignment
+            MiniToggleButton(icon: "text.alignleft") { }
+            MiniToggleButton(icon: "text.aligncenter") { }
+            MiniToggleButton(icon: "text.alignright") { }
+
+            Spacer()
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color(.controlBackgroundColor))
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Color(.separatorColor)).frame(height: 1)
         }
     }
 
@@ -402,5 +452,38 @@ private struct SlideLinkedEntityChip: View {
         }
         .padding(.horizontal, 8).padding(.vertical, 4)
         .background(Capsule().fill(.quaternary))
+    }
+}
+
+// MARK: - MiniToggleButton
+
+/// Compact toggle button for the slides mini toolbar.
+private struct MiniToggleButton: View {
+    var label: String? = nil
+    var weight: Font.Weight = .regular
+    var italic: Bool = false
+    var underline: Bool = false
+    var icon: String? = nil
+    var isActive: Bool = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            if let icon {
+                Image(systemName: icon)
+                    .symbolRenderingMode(.hierarchical)
+                    .font(.system(size: 12))
+            } else if let label {
+                Text(label)
+                    .font(.system(size: 11, weight: weight))
+                    .italic(italic)
+                    .underline(underline)
+            }
+        }
+        .buttonStyle(.plain)
+        .frame(minWidth: 24, minHeight: 22)
+        .padding(.horizontal, 4)
+        .background(isActive ? Color.accentColor.opacity(0.15) : Color.clear)
+        .cornerRadius(3)
     }
 }

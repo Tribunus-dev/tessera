@@ -1,5 +1,102 @@
 import SwiftUI
+import AppKit
 import TesseraCore
+
+// MARK: - GridKeyCapture
+
+/// An invisible NSView that becomes first responder and forwards
+/// Tab/Enter/Shift+modifiers, arrows, Escape, and F2 to the
+/// SheetEditorViewModel. Used as a ZStack overlay on the grid body.
+struct GridKeyCapture: NSViewRepresentable {
+    let viewModel: SheetEditorViewModel
+
+    func makeNSView(context: Context) -> KeyCaptureView {
+        let view = KeyCaptureView()
+        view.keyHandler = context.coordinator.handleKeyEvent
+        return view
+    }
+
+    func updateNSView(_ nsView: KeyCaptureView, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(viewModel: viewModel)
+    }
+
+    final class Coordinator: @unchecked Sendable {
+        let viewModel: SheetEditorViewModel
+
+        init(viewModel: SheetEditorViewModel) {
+            self.viewModel = viewModel
+        }
+
+        func handleKeyEvent(_ event: NSEvent) {
+            let keyCode = event.keyCode
+            let modifiers = event.modifierFlags
+
+            switch Int(keyCode) {
+            case 36: // Return
+                Task { @MainActor in
+                    _ = await viewModel.commitAndMove(modifiers.contains(.shift) ? .up : .down)
+                }
+            case 48: // Tab
+                Task { @MainActor in
+                    _ = await viewModel.commitAndMove(modifiers.contains(.shift) ? .left : .right)
+                }
+            case 53: // Escape
+                Task { @MainActor in
+                    if viewModel.editingCell != nil {
+                        viewModel.cancelEditingCell()
+                    }
+                }
+            case 123: // Left arrow
+                Task { @MainActor in
+                    if viewModel.editingCell == nil {
+                        viewModel.moveSelection(.left)
+                    }
+                }
+            case 124: // Right arrow
+                Task { @MainActor in
+                    if viewModel.editingCell == nil {
+                        viewModel.moveSelection(.right)
+                    }
+                }
+            case 126: // Up arrow
+                Task { @MainActor in
+                    if viewModel.editingCell == nil {
+                        viewModel.moveSelection(.up)
+                    }
+                }
+            case 125: // Down arrow
+                Task { @MainActor in
+                    if viewModel.editingCell == nil {
+                        viewModel.moveSelection(.down)
+                    }
+                }
+            default:
+                if event.charactersIgnoringModifiers == "f2" {
+                    Task { @MainActor in
+                        viewModel.toggleEditMode()
+                    }
+                }
+            }
+        }
+    }
+
+    class KeyCaptureView: NSView {
+        var keyHandler: ((NSEvent) -> Void)?
+
+        override var acceptsFirstResponder: Bool { true }
+
+        override func becomeFirstResponder() -> Bool {
+            window?.makeFirstResponder(self)
+            return true
+        }
+
+        override func keyDown(with event: NSEvent) {
+            keyHandler?(event)
+        }
+    }
+}
 
 // MARK: - SheetGridView
 
@@ -12,9 +109,13 @@ import TesseraCore
 public struct SheetGridView: View {
 
     @ObservedObject public var viewModel: SheetEditorViewModel
+    /// FocusState.Binding from SheetDetailView. Controls whether the
+    /// grid's inline cell TextField has keyboard focus.
+    public var gridEditingFocused: FocusState<Bool>.Binding
 
-    public init(viewModel: SheetEditorViewModel) {
+    public init(viewModel: SheetEditorViewModel, gridEditingFocused: FocusState<Bool>.Binding) {
         self.viewModel = viewModel
+        self.gridEditingFocused = gridEditingFocused
     }
 
     public var body: some View {
@@ -82,82 +183,101 @@ public struct SheetGridView: View {
         .background(.quaternary.opacity(0.5))
     }
 
+    // MARK: - Cell view
+
+    /// Broken out to a named method to keep the type-checker happy.
+    private func cellView(row: Int, col: Int) -> some View {
+        let coord = SheetCellCoord(row: row, col: col)
+        let isSelected = viewModel.selectedCell == coord
+        let isEditing = viewModel.editingCell == coord
+        let cellText = viewModel.sheet.cellText(row: row, col: col)
+
+        return Group {
+            if isEditing {
+                TextField("", text: $viewModel.editingText, onCommit: {
+                    Task { await viewModel.commitEditingCell() }
+                })
+                .textFieldStyle(.plain)
+                .font(.caption)
+                .padding(.horizontal, 6)
+                .focused(gridEditingFocused)
+                .onExitCommand {
+                    viewModel.cancelEditingCell()
+                    gridEditingFocused.wrappedValue = false
+                }
+            } else {
+                Text(cellText)
+                    .font(.caption)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 6)
+                    .contentShape(Rectangle())
+            }
+        }
+        .frame(maxWidth: .infinity).frame(height: 32)
+        .background(isEditing ? Color.accentColor.opacity(0.08) : (isSelected ? Color.accentColor.opacity(0.12) : Color.clear))
+        .overlay(
+            RoundedRectangle(cornerRadius: 2)
+                .stroke(isSelected || isEditing ? Color.accentColor : Color.clear, lineWidth: 1)
+        )
+        .overlay(Rectangle().frame(width: 1).foregroundStyle(.separator), alignment: .trailing)
+        .overlay(Rectangle().frame(height: 1).foregroundStyle(.separator), alignment: .bottom)
+        .onTapGesture {
+            if isEditing { return }
+            if isSelected {
+                viewModel.beginEditingCell(coord)
+            } else {
+                viewModel.selectCell(coord)
+            }
+        }
+        .onTapGesture(count: 2) {
+            viewModel.beginEditingCell(coord)
+        }
+    }
+
     // MARK: - Body
 
     private var gridBody: some View {
-        ScrollView([.horizontal, .vertical], showsIndicators: true) {
-            Grid(horizontalSpacing: 0, verticalSpacing: 0) {
-                ForEach(0..<viewModel.sheet.rowCount, id: \.self) { row in
-                    GridRow {
-                        // Row index
-                        HStack(spacing: 4) {
-                            Text("\(row + 1)").font(.caption2).foregroundStyle(.secondary)
-                            Menu {
-                                Button("Insert row above") { Task { await viewModel.insertRow(at: row) } }
-                                Button("Insert row below") { Task { await viewModel.insertRow(at: row + 1) } }
-                                if viewModel.sheet.rowCount > 1 {
-                                    Divider()
-                                    Button("Delete row", role: .destructive) { Task { await viewModel.deleteRow(at: row) } }
+        ZStack {
+            ScrollView([.horizontal, .vertical], showsIndicators: true) {
+                Grid(horizontalSpacing: 0, verticalSpacing: 0) {
+                    ForEach(0..<viewModel.sheet.rowCount, id: \.self) { row in
+                        GridRow {
+                            // Row index
+                            HStack(spacing: 4) {
+                                Text("\(row + 1)").font(.caption2).foregroundStyle(.secondary)
+                                Menu {
+                                    Button("Insert row above") { Task { await viewModel.insertRow(at: row) } }
+                                    Button("Insert row below") { Task { await viewModel.insertRow(at: row + 1) } }
+                                    if viewModel.sheet.rowCount > 1 {
+                                        Divider()
+                                        Button("Delete row", role: .destructive) { Task { await viewModel.deleteRow(at: row) } }
+                                    }
+                                } label: {
+                                    Image(systemName: "ellipsis").font(.caption2).foregroundStyle(.secondary)
+                                        .symbolRenderingMode(.hierarchical)
                                 }
-                            } label: {
-                                Image(systemName: "ellipsis").font(.caption2).foregroundStyle(.secondary)
-                                    .symbolRenderingMode(.hierarchical)
+                                .menuStyle(.borderlessButton).controlSize(.mini)
                             }
-                            .menuStyle(.borderlessButton).controlSize(.mini)
-                        }
-                        .frame(width: 40).frame(height: 32)
-                        .background(.quaternary.opacity(0.5))
-                        .overlay(Rectangle().frame(width: 1).foregroundStyle(.separator), alignment: .trailing)
-                        .overlay(Rectangle().frame(height: 1).foregroundStyle(.separator), alignment: .bottom)
-
-                        ForEach(0..<viewModel.sheet.columnCount, id: \.self) { col in
-                            let coord = SheetCellCoord(row: row, col: col)
-                            let isSelected = viewModel.selectedCell == coord
-                            let isEditing = viewModel.editingCell == coord
-                            Group {
-                                if isEditing {
-                                    TextField("", text: $viewModel.editingText, onCommit: {
-                                        Task { await viewModel.commitEditingCell() }
-                                    })
-                                    .textFieldStyle(.plain)
-                                    .font(.caption)
-                                    .padding(.horizontal, 6)
-                                    .onExitCommand { viewModel.cancelEditingCell() }
-                                } else {
-                                    Text(viewModel.sheet.cellText(row: row, col: col))
-                                        .font(.caption)
-                                        .lineLimit(1)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .padding(.horizontal, 6)
-                                        .contentShape(Rectangle())
-                                }
-                            }
-                            .frame(maxWidth: .infinity).frame(height: 32)
-                            .background(isEditing ? Color.accentColor.opacity(0.08) : (isSelected ? Color.accentColor.opacity(0.12) : Color.clear))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 2)
-                                    .stroke(isSelected || isEditing ? Color.accentColor : Color.clear, lineWidth: 1)
-                            )
+                            .frame(width: 40).frame(height: 32)
+                            .background(.quaternary.opacity(0.5))
                             .overlay(Rectangle().frame(width: 1).foregroundStyle(.separator), alignment: .trailing)
                             .overlay(Rectangle().frame(height: 1).foregroundStyle(.separator), alignment: .bottom)
-                            .onTapGesture {
-                                if isEditing { return }
-                                if isSelected {
-                                    viewModel.beginEditingCell(coord)
-                                } else {
-                                    viewModel.selectCell(coord)
-                                }
+
+                            ForEach(0..<viewModel.sheet.columnCount, id: \.self) { col in
+                                cellView(row: row, col: col)
                             }
-                            .onTapGesture(count: 2) {
-                                viewModel.beginEditingCell(coord)
-                            }
+                            // Add-column affordance per row is handled in the header.
                         }
-                        // Add-column affordance per row is handled in the header.
                     }
                 }
             }
+            .frame(minHeight: 120, maxHeight: 420)
+
+            // Invisible key-capture overlay (NSViewRepresentable above).
+            // Tab/Shift+Tab, Enter/Shift+Enter, arrows, Escape, F2 all handled here.
+            GridKeyCapture(viewModel: viewModel)
         }
-        .frame(minHeight: 120, maxHeight: 420)
     }
 
     private func columnLabel(index: Int) -> String {

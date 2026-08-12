@@ -54,6 +54,20 @@ struct SettingsView: View {
     // and the local UI state live in UserDefaults / @State.
     @AppStorage(TesseraSettingsKey.coercionMode) private var coercionMode = TesseraSettingsDefault.coercionMode
     @State private var covertTriggerPhraseDraft = ""
+    // Auto-formatting (Phase 3: MS Office W3/W4 fix). All default false.
+    @AppStorage(TesseraSettingsKey.autoBulletedLists) private var autoBulletedLists = TesseraSettingsDefault.autoBulletedLists
+    @AppStorage(TesseraSettingsKey.autoNumberedLists) private var autoNumberedLists = TesseraSettingsDefault.autoNumberedLists
+    @AppStorage(TesseraSettingsKey.autoCorrect) private var autoCorrect = TesseraSettingsDefault.autoCorrect
+    @AppStorage(TesseraSettingsKey.autoFormatBeginningOfListItem) private var autoFormatBeginningOfListItem = TesseraSettingsDefault.autoFormatBeginningOfListItem
+    @AppStorage(TesseraSettingsKey.autoBoldItalicUnderlineMath) private var autoBoldItalicUnderlineMath = TesseraSettingsDefault.autoBoldItalicUnderlineMath
+    @AppStorage(TesseraSettingsKey.defaultPasteFormat) private var defaultPasteFormat = TesseraSettingsDefault.defaultPasteFormat
+    @AppStorage(TesseraSettingsKey.defaultDocFontFamily) private var defaultDocFontFamily = TesseraSettingsDefault.defaultDocFontFamily
+    @AppStorage(TesseraSettingsKey.defaultDocFontSize) private var defaultDocFontSize = TesseraSettingsDefault.defaultDocFontSize
+    @AppStorage(TesseraSettingsKey.defaultSlidesFontFamily) private var defaultSlidesFontFamily = TesseraSettingsDefault.defaultSlidesFontFamily
+    @AppStorage(TesseraSettingsKey.defaultSlidesFontSize) private var defaultSlidesFontSize = TesseraSettingsDefault.defaultSlidesFontSize
+    // AI layer (Phase 5: opt-in, not bundled).
+    @AppStorage(TesseraSettingsKey.aiEnabled) private var aiEnabled = TesseraSettingsDefault.aiEnabled
+    @AppStorage(TesseraSettingsKey.aiRoute) private var aiRoute = TesseraSettingsDefault.aiRoute
     @State private var covertTriggerIsSet = false
     @State private var covertTriggerEditing = false
     @State private var covertTriggerTestNote: String?
@@ -118,13 +132,49 @@ struct SettingsView: View {
 
     private var generalTab: some View {
         Form {
-            Picker("Default runtime", selection: $defaultRuntime) {
-                ForEach(TesseraRuntime.allCases, id: \.rawValue) { rt in
-                    Text(rt.displayName).tag(rt.rawValue)
+            Section("Editing") {
+                Toggle("Automatic bulleted lists", isOn: $autoBulletedLists)
+                Toggle("Automatic numbered lists", isOn: $autoNumberedLists)
+                Toggle("AutoCorrect (text, email, date)", isOn: $autoCorrect)
+                Toggle("Match formatting of an inserted list to the preceding paragraph", isOn: $autoFormatBeginningOfListItem)
+                Toggle("Bold, italic, underline with math AutoCorrect", isOn: $autoBoldItalicUnderlineMath)
+                Picker("Default paste from other apps", selection: $defaultPasteFormat) {
+                    Text("Keep Source Formatting").tag("keepSourceFormatting")
+                    Text("Keep Text Only").tag("keepTextOnly")
+                    Text("Match Destination Formatting").tag("matchDestination")
                 }
             }
-            PathField("Model directory", text: $modelDirectory, picks: .directory)
-            Stepper("Threads: \(threadCount == 0 ? "all cores" : "\(threadCount)")", value: $threadCount, in: 0...64)
+            Section("Document Defaults") {
+                TextField("Default font family", text: $defaultDocFontFamily)
+                    .help("Use \"system\" for the OS default font")
+                Stepper("Default font size: \(defaultDocFontSize) pt", value: $defaultDocFontSize, in: 8...72)
+            }
+            Section("Slides Defaults") {
+                TextField("Default text box font family", text: $defaultSlidesFontFamily)
+                    .help("Use \"system\" for the OS default font")
+                Stepper("Default font size: \(defaultSlidesFontSize) pt", value: $defaultSlidesFontSize, in: 8...144)
+            }
+            Section("AI") {
+                Toggle("Enable AI features", isOn: $aiEnabled)
+                Picker("AI route", selection: $aiRoute) {
+                    Text("Granite · Local (no data leaves your machine)").tag("local")
+                    Text("Cloud API (requires API key in Model tab)").tag("cloud")
+                }
+                if aiEnabled && aiRoute == "cloud" {
+                    Text("Cloud mode sends prompts to the remote endpoint. Data is not retained by the model provider.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Section("Runtime") {
+                Picker("Default runtime", selection: $defaultRuntime) {
+                    ForEach(TesseraRuntime.allCases, id: \.rawValue) { rt in
+                        Text(rt.displayName).tag(rt.rawValue)
+                    }
+                }
+                PathField("Model directory", text: $modelDirectory, picks: .directory)
+                Stepper("Threads: \(threadCount == 0 ? "all cores" : "\(threadCount)")", value: $threadCount, in: 0...64)
+            }
         }
         .formStyle(.grouped)
         .padding()

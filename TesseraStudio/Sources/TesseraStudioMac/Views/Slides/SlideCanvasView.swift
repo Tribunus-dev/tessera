@@ -139,7 +139,7 @@ private struct SlideBlockRow: View {
             .background(RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.08)))
         case .divider:
             Divider()
-        case .table, .tableCell, .equation:
+        case .table, .tableCell, .equation, .comment, .trackInsertion, .trackDeletion:
             Text(SlideDeck.plainText(of: ast)).font(.caption).foregroundStyle(.secondary)
         }
     }

@@ -13,6 +13,11 @@ public struct SheetDetailView: View {
     @State private var showDeleteConfirm: Bool = false
     @State private var showLinkSearch: Bool = false
     @State private var linkSearchQuery: String = ""
+    /// Whether the grid's inline cell editor TextField should have keyboard focus.
+    /// `.focused()` requires a FocusState.Binding; we hold the @FocusState here
+    /// (at the highest common ancestor of the formula bar TextField and the
+    /// grid's cell TextField) so both can share the same focus source.
+    @FocusState private var gridEditingFocused: Bool
 
     public init(viewModel: SheetEditorViewModel, onDelete: @escaping () -> Void) {
         self.viewModel = viewModel
@@ -25,6 +30,7 @@ public struct SheetDetailView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     headerSection
                     metadataRow
+                    formulaBar
                     tagBar
                     actionRow
                     Divider()
@@ -40,6 +46,12 @@ public struct SheetDetailView: View {
         .toolbar { detailToolbar }
         .sheet(isPresented: $showDeleteConfirm) { deleteSheet }
         .sheet(isPresented: $showLinkSearch) { linkSheet }
+        .onChange(of: viewModel.editingCell) { _, newCoord in
+            // Drive focus into the grid's inline TextField.
+            // When editingCell becomes non-nil, the TextField needs focus
+            // so the user can type immediately without a second click.
+            gridEditingFocused = newCoord != nil
+        }
     }
 
     // MARK: - Header
@@ -136,6 +148,95 @@ public struct SheetDetailView: View {
         .font(.callout)
     }
 
+    // MARK: - Formula bar
+
+    private var formulaBar: some View {
+        HStack(spacing: 0) {
+            // Cell address (e.g. "B3")
+            Text(cellAddressLabel)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(width: 52, alignment: .center)
+                .padding(.vertical, 6)
+                .background(Color(.quaternarySystemFill))
+
+            Rectangle()
+                .fill(.separator)
+                .frame(width: 1, height: 20)
+
+            // fx label
+            Text("fx")
+                .font(.system(.caption, design: .monospaced))
+                .fontWeight(.semibold)
+                .foregroundStyle(.secondary)
+                .frame(width: 28, alignment: .center)
+
+            Rectangle()
+                .fill(.separator)
+                .frame(width: 1, height: 20)
+
+            // Editable formula bar
+            if let coord = viewModel.selectedCell ?? viewModel.editingCell {
+                TextField(
+                    "Enter value…",
+                    text: formulaBarBinding(coord: coord)
+                )
+                .font(.system(.caption, design: .monospaced))
+                .textFieldStyle(.plain)
+                .padding(.horizontal, 8)
+                .focused($gridEditingFocused)
+                .onSubmit {
+                    Task { await viewModel.commitEditingCell() }
+                }
+            } else {
+                Text("Select a cell")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 8)
+            }
+
+            Spacer()
+        }
+        .frame(height: 32)
+        .overlay(Rectangle().frame(height: 1).foregroundStyle(.separator), alignment: .bottom)
+    }
+
+    private var cellAddressLabel: String {
+        guard let coord = viewModel.selectedCell ?? viewModel.editingCell else { return "" }
+        let colLabel = columnLabel(index: coord.col)
+        return "\(colLabel)\(coord.row + 1)"
+    }
+
+    private func columnLabel(index: Int) -> String {
+        var label = ""
+        var n = index
+        repeat {
+            label = String(UnicodeScalar(65 + n % 26)!) + label
+            n = n / 26 - 1
+        } while n >= 0
+        return label
+    }
+
+    private func formulaBarBinding(coord: SheetCellCoord) -> Binding<String> {
+        Binding(
+            get: {
+                // Show the live editing text if this cell is being edited,
+                // otherwise show the cell's current value.
+                if viewModel.editingCell == coord {
+                    return viewModel.editingText
+                }
+                return viewModel.sheet.cellText(row: coord.row, col: coord.col)
+            },
+            set: { newText in
+                if viewModel.editingCell == nil {
+                    // Editing started from formula bar — enter edit mode
+                    viewModel.beginEditingCell(coord)
+                }
+                viewModel.editingText = newText
+            }
+        )
+    }
+
     // MARK: - Grid
 
     private var gridSection: some View {
@@ -151,7 +252,7 @@ public struct SheetDetailView: View {
             if viewModel.sheet.rowCount == 0 || viewModel.sheet.columnCount == 0 {
                 emptyGridState
             } else {
-                SheetGridView(viewModel: viewModel)
+                SheetGridView(viewModel: viewModel, gridEditingFocused: $gridEditingFocused)
             }
         }
     }

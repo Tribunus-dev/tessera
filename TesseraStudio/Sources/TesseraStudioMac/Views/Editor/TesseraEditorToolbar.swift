@@ -2,6 +2,39 @@ import SwiftUI
 import AppKit
 import TesseraCore
 
+// MARK: - RouteChip
+
+/// Privacy badge: shows the active AI route. Tapping opens Settings → AI.
+/// When AI is disabled, the chip is hidden entirely (opt-in, not bundled).
+struct RouteChip: View {
+    @AppStorage(TesseraSettingsKey.aiEnabled) private var aiEnabled = TesseraSettingsDefault.aiEnabled
+    @AppStorage(TesseraSettingsKey.aiRoute) private var aiRoute = TesseraSettingsDefault.aiRoute
+
+    var body: some View {
+        if aiEnabled {
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(aiRoute == "local" ? Color.green : Color.blue)
+                    .frame(width: 6, height: 6)
+                Text(aiRoute == "local" ? "Granite · Local" : "Cloud")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(
+                Capsule()
+                    .fill(Color(.controlBackgroundColor))
+                    .overlay(
+                        Capsule()
+                            .stroke(Color(.separatorColor), lineWidth: 0.5)
+                    )
+            )
+            .help("AI enabled: \(aiRoute == "local" ? "Granite running locally" : "Using cloud endpoint")")
+        }
+    }
+}
+
 // MARK: - FormattingState
 
 /// The current formatting state at the user's caret. The
@@ -18,6 +51,22 @@ public struct FormattingState: Equatable {
     public var headingLevel: Int? = nil
     public var linkURL: URL? = nil
     public var blockType: BlockType = .paragraph
+    public var alignment: Alignment = .leading
+    // Document-level state — not derived from text selection.
+    public var isTrackChangesEnabled: Bool = false
+    public var isCommentsPanelVisible: Bool = false
+    public var showLineNumbers: Bool = false
+    public var showRuler: Bool = false
+    public var showGridlines: Bool = false
+    public var commentCount: Int = 0
+    public var pendingChangeCount: Int = 0
+
+    public enum Alignment: Int, Equatable {
+        case leading = 0  // Left
+        case center = 1
+        case trailing = 2 // Right
+        case justify = 3
+    }
 
     public init() {}
 }
@@ -63,141 +112,456 @@ public struct TesseraEditorToolbar: View {
     public let mode: EditorMode
     @Binding public var formattingState: FormattingState
     public let onCommand: (EditorCommand) -> Void
+    /// When true, the Focus Mode button shows "Exit Focus" (active state).
+    /// If nil, the button acts as a one-shot "Enter Focus" trigger.
+    public var isFocusModeActive: Bool? = nil
+    @State private var activeTab: RibbonTab = .home
 
     public init(
         mode: EditorMode,
         formattingState: Binding<FormattingState>,
-        onCommand: @escaping (EditorCommand) -> Void
+        onCommand: @escaping (EditorCommand) -> Void,
+        isFocusModeActive: Bool? = nil
     ) {
         self.mode = mode
         self._formattingState = formattingState
         self.onCommand = onCommand
+        self.isFocusModeActive = isFocusModeActive
+    }
+
+    // MARK: - RibbonTab
+
+    private enum RibbonTab: String, CaseIterable {
+        case home, insert, layout, review, view
+
+        var title: String {
+            switch self {
+            case .home:    return "Home"
+            case .insert:  return "Insert"
+            case .layout:  return "Layout"
+            case .review:  return "Review"
+            case .view:    return "View"
+            }
+        }
+
+        func isAvailable(for mode: EditorMode) -> Bool {
+            switch self {
+            case .home:    return true
+            case .insert:  return mode == .document || mode == .notes
+            case .layout:  return mode == .document
+            case .review:  return mode == .document || mode == .notes
+            case .view:    return true
+            }
+        }
     }
 
     public var body: some View {
-        HStack(spacing: 8) {
-            // Inline formatting group
-            inlineFormattingGroup
-            Divider().frame(height: 18)
-            // Block type group
-            blockTypeGroup
-            if mode != .code {
-                Divider().frame(height: 18)
-                // Insert group (callout, table, image, code block)
-                insertGroup
+        VStack(spacing: 0) {
+            ribbonTabBar
+            ribbonContentArea
+        }
+        .background(Color(.windowBackgroundColor))
+    }
+
+    // MARK: - Tab bar
+
+    private var ribbonTabBar: some View {
+        HStack(spacing: 0) {
+            ForEach(RibbonTab.allCases, id: \.self) { tab in
+                RibbonTabButton(
+                    title: tab.title,
+                    isActive: activeTab == tab,
+                    hasContent: tab.isAvailable(for: mode)
+                ) {
+                    activeTab = tab
+                }
+            }
+            Spacer()
+            RouteChip()
+                .padding(.trailing, 8)
+        }
+        .padding(.horizontal, 8)
+        .padding(.top, 4)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Color(.separatorColor)).frame(height: 1)
+        }
+    }
+
+    // MARK: - Content area
+
+    private var ribbonContentArea: some View {
+        HStack(spacing: 0) {
+            switch activeTab {
+            case .home:    homeContent
+            case .insert:  insertContent
+            case .layout:  layoutContent
+            case .review:  reviewContent
+            case .view:    viewContent
             }
             Spacer()
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(.thinMaterial)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 4)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Color(.separatorColor)).frame(height: 1)
+        }
     }
 
-    // MARK: - Inline formatting
+    // MARK: - Home tab
 
-    @ViewBuilder
-    private var inlineFormattingGroup: some View {
-        if mode != .code {
-            HStack(spacing: 4) {
-                ToolbarButton(
-                    label: "B",
-                    weight: .bold,
-                    isActive: formattingState.isBold,
-                    shortcut: "⌘B"
-                ) { onCommand(.toggleBold) }
-                ToolbarButton(
-                    label: "I",
-                    italic: true,
-                    isActive: formattingState.isItalic,
-                    shortcut: "⌘I"
-                ) { onCommand(.toggleItalic) }
-                ToolbarButton(
-                    label: "U",
-                    underline: true,
-                    isActive: formattingState.isUnderline,
-                    shortcut: "⌘U"
-                ) { onCommand(.toggleUnderline) }
-                ToolbarButton(
-                    label: "S",
-                    strikethrough: true,
-                    isActive: formattingState.isStrikethrough
-                ) { onCommand(.toggleStrikethrough) }
-                ToolbarButton(
-                    label: "</>",
-                    monospaced: true,
-                    isActive: formattingState.isCode,
-                    shortcut: "⌘E"
-                ) { onCommand(.toggleCode) }
+    private var homeContent: some View {
+        HStack(spacing: 0) {
+            ribbonGroup {
+                RibbonButton(label: "Paste", icon: "doc.on.clipboard", shortcut: "⌘V") {
+                    onCommand(.insertLink(URL(string: "tessera://clipboard/paste")!))
+                }
+            }
+            groupSeparator()
+
+            ribbonGroup {
+                RibbonToggleButton(label: "B", weight: .bold, isActive: formattingState.isBold, shortcut: "⌘B", action: { onCommand(.toggleBold) })
+                RibbonToggleButton(label: "I", italic: true, isActive: formattingState.isItalic, shortcut: "⌘I", action: { onCommand(.toggleItalic) })
+                RibbonToggleButton(label: "U", underline: true, isActive: formattingState.isUnderline, shortcut: "⌘U", action: { onCommand(.toggleUnderline) })
+                RibbonToggleButton(label: "S", strikethrough: true, isActive: formattingState.isStrikethrough, action: { onCommand(.toggleStrikethrough) })
+                RibbonButton(label: "</>", shortcut: "⌘E", monospaced: true) { onCommand(.toggleCode) }
+                groupDivider()
+                RibbonButton(label: "A-", icon: nil, monospaced: true) { onCommand(.decreaseFontSize) }
+                RibbonButton(label: "A+", icon: nil, monospaced: true) { onCommand(.increaseFontSize) }
+            }
+            groupSeparator()
+
+            ribbonGroup {
+                RibbonToggleButton(icon: "text.alignleft", isActive: formattingState.alignment == .leading, shortcut: "⌘L", action: { onCommand(.alignLeft) })
+                RibbonToggleButton(icon: "text.aligncenter", isActive: formattingState.alignment == .center, shortcut: "⌘E", action: { onCommand(.alignCenter) })
+                RibbonToggleButton(icon: "text.alignright", isActive: formattingState.alignment == .trailing, shortcut: "⌘R", action: { onCommand(.alignRight) })
+                RibbonToggleButton(icon: "text.justify", isActive: formattingState.alignment == .justify, shortcut: "⌘J", action: { onCommand(.alignJustify) })
+                groupDivider()
+                RibbonButton(icon: "list.bullet", shortcut: "⌘⇧U") { onCommand(.toggleUnorderedList) }
+                RibbonButton(icon: "list.number", shortcut: "⌘⇧O") { onCommand(.toggleOrderedList) }
+                groupDivider()
+                RibbonButton(icon: "increase.indent", shortcut: "⌘]") { onCommand(.indent) }
+                RibbonButton(icon: "decrease.indent", shortcut: "⌘[") { onCommand(.outdent) }
+            }
+            groupSeparator()
+
+            ribbonGroup {
+                StyleButton(label: "Normal", isActive: formattingState.blockType == .paragraph) { onCommand(.setBlockType(.paragraph)) }
+                StyleButton(label: "Heading 1", level: 1, isActive: formattingState.headingLevel == 1) { onCommand(.setBlockType(.heading)) }
+                StyleButton(label: "Heading 2", level: 2, isActive: formattingState.headingLevel == 2) { onCommand(.setBlockType(.heading)) }
+                StyleButton(label: "Heading 3", level: 3, isActive: formattingState.headingLevel == 3) { onCommand(.setBlockType(.heading)) }
             }
         }
     }
 
-    // MARK: - Block type
+    // MARK: - Insert tab
 
-    @ViewBuilder
-    private var blockTypeGroup: some View {
-        HStack(spacing: 4) {
-            Picker("Block", selection: blockTypeBinding) {
-                Text("Paragraph").tag(BlockType.paragraph)
-                Text("Heading 1").tag(BlockType.heading)
-                if mode != .code {
-                    Text("Heading 2").tag(BlockType.heading)
-                    Text("Heading 3").tag(BlockType.heading)
-                }
-                if mode == .document || mode == .notes {
-                    Text("Quote").tag(BlockType.quote)
-                    Text("Callout").tag(BlockType.callout)
-                }
-                if mode == .document {
-                    Text("List").tag(BlockType.list)
-                    Text("Divider").tag(BlockType.divider)
-                }
-                if mode == .code {
-                    Text("Code Block").tag(BlockType.codeBlock)
-                }
+    private var insertContent: some View {
+        HStack(spacing: 0) {
+            ribbonGroup {
+                RibbonButton(label: "Table", icon: "tablecells") { onCommand(.insertTableCustom) }
             }
-            .pickerStyle(.menu)
-            .frame(maxWidth: 160)
+            groupSeparator()
+            ribbonGroup {
+                RibbonButton(label: "Image", icon: "photo") { onCommand(.insertImageCustom) }
+                RibbonButton(label: "Code Block", icon: "chevron.left.forwardslash.chevron.right") { onCommand(.insertCodeBlock) }
+            }
+            groupSeparator()
+            ribbonGroup {
+                RibbonButton(label: "Link", icon: "link") { onCommand(.insertLinkCustom) }
+            }
+            groupSeparator()
+            ribbonGroup {
+                RibbonButton(label: "Header", icon: "header") { onCommand(.insertHeader) }
+                RibbonButton(label: "Footer", icon: "footer") { onCommand(.insertFooter) }
+            }
+            groupSeparator()
+            ribbonGroup {
+                RibbonButton(label: "Page Break", icon: "rectangle.split.3x1") { onCommand(.insertPageBreak) }
+            }
         }
     }
 
-    private var blockTypeBinding: Binding<BlockType> {
-        Binding(
-            get: { formattingState.blockType },
-            set: { newValue in
-                formattingState.blockType = newValue
-                onCommand(.setBlockType(newValue))
+    // MARK: - Layout tab (Docs only)
+
+    private var layoutContent: some View {
+        HStack(spacing: 0) {
+            ribbonGroup {
+                RibbonButton(label: "Margins", icon: "square.dashed") { onCommand(.setMargins(.normal)) }
+                RibbonButton(label: "Orientation", icon: "rectangle.portrait") { onCommand(.setOrientation(.portrait)) }
+                RibbonButton(label: "Columns", icon: "rectangle.split.2x1") { onCommand(.setColumns(1)) }
             }
-        )
+            groupSeparator()
+            ribbonGroup {
+                RibbonButton(label: "Page Color", icon: "paintpalette") { onCommand(.setPageColor("white")) }
+            }
+        }
     }
 
-    // MARK: - Insert
+    // MARK: - Review tab
 
-    @ViewBuilder
-    private var insertGroup: some View {
-        HStack(spacing: 4) {
-            ToolbarIconButton(systemName: "tablecells") {
-                onCommand(.insertTable)
-            }
-            ToolbarIconButton(systemName: "photo") {
-                onCommand(.insertImage)
-            }
-            ToolbarIconButton(systemName: "chevron.left.forwardslash.chevron.right") {
-                onCommand(.insertCodeBlock)
-            }
-            if mode == .document || mode == .notes {
-                ToolbarIconButton(systemName: "exclamationmark.bubble") {
-                    onCommand(.insertCallout)
+    private var reviewContent: some View {
+        HStack(spacing: 0) {
+            ribbonGroup {
+                RibbonToggleButton(
+                    label: "Track Changes",
+                    icon: "pencil.line",
+                    isActive: formattingState.isTrackChangesEnabled
+                ) {
+                    formattingState.isTrackChangesEnabled.toggle()
+                    onCommand(.toggleTrackChanges)
                 }
-                ToolbarIconButton(systemName: "list.bullet") {
-                    onCommand(.toggleUnorderedList)
+                if formattingState.pendingChangeCount > 0 {
+                    Text("\(formattingState.pendingChangeCount)")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 3)
+                        .padding(.vertical, 1)
+                        .background(Color.orange)
+                        .cornerRadius(6)
                 }
-                ToolbarIconButton(systemName: "list.number") {
-                    onCommand(.toggleOrderedList)
+            }
+            groupSeparator()
+            ribbonGroup {
+                RibbonToggleButton(
+                    label: "Comments",
+                    icon: "bubble.left",
+                    isActive: formattingState.isCommentsPanelVisible
+                ) {
+                    formattingState.isCommentsPanelVisible.toggle()
+                    onCommand(.toggleCommentsPanel)
+                }
+                if formattingState.commentCount > 0 {
+                    Text("\(formattingState.commentCount)")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 3)
+                        .padding(.vertical, 1)
+                        .background(Color.accentColor)
+                        .cornerRadius(6)
+                }
+                RibbonButton(label: "New", icon: nil) { onCommand(.insertComment) }
+                    .help("Insert comment (Ctrl+Alt+M)")
+                RibbonButton(label: "Accept", icon: "checkmark.circle") { onCommand(.acceptChange) }
+                RibbonButton(label: "Reject", icon: "xmark.circle") { onCommand(.rejectChange) }
+            }
+            groupSeparator()
+            ribbonGroup {
+                RibbonButton(label: "Word Count", icon: "number") { onCommand(.showWordCount) }
+                RibbonButton(label: "History", icon: "clock.arrow.circlepath") { onCommand(.showVersionHistory) }
+            }
+        }
+    }
+
+    // MARK: - View tab
+
+    private var viewContent: some View {
+        HStack(spacing: 0) {
+            ribbonGroup {
+                RibbonToggleButton(
+                    label: "Ruler",
+                    icon: "ruler",
+                    isActive: formattingState.showRuler
+                ) {
+                    onCommand(.toggleRuler)
+                }
+                RibbonToggleButton(
+                    label: "Gridlines",
+                    icon: "grid",
+                    isActive: formattingState.showGridlines
+                ) {
+                    onCommand(.toggleGridlines)
+                }
+            }
+            groupSeparator()
+            ribbonGroup {
+                RibbonToggleButton(
+                    label: "Line Numbers",
+                    icon: "list.number",
+                    isActive: formattingState.showLineNumbers
+                ) {
+                    onCommand(.toggleLineNumbers)
+                }
+            }
+            groupSeparator()
+            ribbonGroup {
+                RibbonToggleButton(
+                    label: isFocusModeActive == true ? "Exit Focus" : "Focus Mode",
+                    icon: "rectangle.center.inset.filled",
+                    isActive: isFocusModeActive ?? false
+                ) {
+                    onCommand(.enterFocusMode)
                 }
             }
         }
     }
+
+    // MARK: - Ribbon helpers
+
+    private func ribbonGroup<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        HStack(spacing: 2) {
+            content()
+        }
+        .padding(.horizontal, 4)
+    }
+
+    private func groupSeparator() -> some View {
+        Rectangle()
+            .fill(Color(.separatorColor))
+            .frame(width: 1, height: 36)
+    }
+
+    private func groupDivider() -> some View {
+        Rectangle()
+            .fill(Color(.separatorColor))
+            .frame(width: 1, height: 18)
+    }
+
+    // MARK: - Ribbon button components
+
+    /// Tab button with underline active indicator (4px pill).
+    private struct RibbonTabButton: View {
+        let title: String
+        let isActive: Bool
+        let hasContent: Bool
+        let action: () -> Void
+
+        var body: some View {
+            Button(action: action) {
+                VStack(spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(hasContent ? (isActive ? Color.accentColor : Color.primary) : Color.secondary)
+
+                    Rectangle()
+                        .fill(isActive ? Color.accentColor : Color.clear)
+                        .frame(height: 2)
+                        .cornerRadius(1)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(isActive ? Color.accentColor.opacity(0.06) : Color.clear)
+                .cornerRadius(4)
+            }
+            .buttonStyle(.plain)
+            .disabled(!hasContent)
+        }
+    }
+
+    /// A group of buttons with a group label shown on hover.
+    private struct RibbonButton: View {
+        var label: String = ""
+        var icon: String? = nil
+        var shortcut: String? = nil
+        var monospaced: Bool = false
+        var action: () -> Void = {}
+
+        var body: some View {
+            Button(action: action) {
+                VStack(spacing: 1) {
+                    if let icon {
+                        Image(systemName: icon)
+                            .symbolRenderingMode(.hierarchical)
+                            .font(.system(size: 13))
+                    }
+                    if !label.isEmpty {
+                        Text(label)
+                            .font(.system(size: 9, design: monospaced ? .monospaced : .default))
+                            .lineLimit(1)
+                    }
+                }
+                .frame(minWidth: 32, minHeight: 28)
+                .padding(.horizontal, 4)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(shortcutHint)
+        }
+
+        private var shortcutHint: String {
+            if let s = shortcut { return "\(label) (\(s))" }
+            return label
+        }
+    }
+
+    /// Toggle button with active state (filled vs outlined).
+    private struct RibbonToggleButton: View {
+        var label: String? = nil
+        var weight: Font.Weight = .regular
+        var italic: Bool = false
+        var underline: Bool = false
+        var strikethrough: Bool = false
+        var monospaced: Bool = false
+        var icon: String? = nil
+        var isActive: Bool = false
+        var shortcut: String? = nil
+        var action: () -> Void = {}
+
+        var body: some View {
+            Button(action: action) {
+                VStack(spacing: 1) {
+                    if let icon {
+                        Image(systemName: icon)
+                            .symbolRenderingMode(.hierarchical)
+                            .font(.system(size: 13))
+                    } else if let label {
+                        Text(label)
+                            .font(.system(size: 13, weight: weight, design: monospaced ? .monospaced : .default))
+                            .italic(italic)
+                            .underline(underline)
+                            .strikethrough(strikethrough)
+                    }
+                    if let shortcut {
+                        Text(shortcut)
+                            .font(.system(size: 7))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(minWidth: 28, minHeight: 28)
+                .padding(.horizontal, 4)
+                .background(isActive ? Color.accentColor.opacity(0.15) : Color.clear)
+                .cornerRadius(4)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(isActive ? Color.accentColor.opacity(0.3) : Color.clear, lineWidth: 1)
+                )
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    /// Style picker button (Normal / Heading 1 / Heading 2 / Heading 3).
+    private struct StyleButton: View {
+        let label: String
+        var level: Int? = nil
+        var isActive: Bool = false
+        let action: () -> Void
+
+        private var font: Font {
+            if let l = level {
+                return .system(size: CGFloat(18 - l * 2), weight: .semibold)
+            }
+            return .system(size: 12)
+        }
+
+        var body: some View {
+            Button(action: action) {
+                Text(label)
+                    .font(font)
+                    .foregroundStyle(isActive ? Color.accentColor : .primary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(isActive ? Color.accentColor.opacity(0.12) : Color.clear)
+                    .cornerRadius(3)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 3)
+                            .stroke(isActive ? Color.accentColor.opacity(0.4) : Color.clear, lineWidth: 1)
+                    )
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
 }
 
 // MARK: - ToolbarButton
@@ -282,4 +646,70 @@ public enum EditorCommand: Codable, Equatable, Hashable {
     case toggleOrderedList
     case insertLink(URL)
     case removeLink
+    // Alignment
+    case alignLeft
+    case alignCenter
+    case alignRight
+    case alignJustify
+    // Font size
+    case increaseFontSize
+    case decreaseFontSize
+    case setFontSize(Int)
+    case setHeadingLevel(Int)
+    // Paste
+    case pastePlainText
+    // Breaks
+    case insertPageBreak
+    case insertColumnBreak
+    // Indent / outdent
+    case indent
+    case outdent
+    // Sort
+    case sortAscending
+    case sortDescending
+    // Insert tab
+    case insertTableCustom
+    case insertImageCustom
+    case insertLinkCustom
+    case insertHeader
+    case insertFooter
+    // Layout tab
+    case setMargins(MarginPreset)
+    case setOrientation(Orientation)
+    case setColumns(Int)
+    case setPageColor(String)
+    // Review tab
+    case toggleTrackChanges
+    case showWordCount
+    case showVersionHistory
+    case insertComment
+    case acceptChange
+    case rejectChange
+    case toggleCommentsPanel
+    // View tab
+    case toggleRuler
+    case toggleGridlines
+    case toggleLineNumbers
+    case enterFocusMode
+    // Find / Replace
+    case showFindReplace
+    case findNext
+    case findPrevious
+    case replaceNext
+    case replaceAll
+    // Spell check
+    case spellCheck
+    // Comment navigation
+    case nextComment
+    case previousComment
+}
+
+// MARK: - Ribbon-specific types
+
+public enum MarginPreset: String, Codable, Hashable {
+    case normal, narrow, wide, veryWide
+}
+
+public enum Orientation: String, Codable, Hashable {
+    case portrait, landscape
 }

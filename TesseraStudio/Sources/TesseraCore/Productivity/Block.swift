@@ -56,6 +56,17 @@ public enum BlockType: String, Codable, Sendable, Hashable, CaseIterable {
     case toggle
     /// Display equation. `attributes["latex"]` is the LaTeX source.
     case equation
+    /// An inline comment anchored to a text range. `attributes["anchorBlockID"]`
+    /// is the block being commented on; `attributes["anchorRangeStart"]` /
+    /// `attributes["anchorRangeEnd"]` mark the character range; `attributes["author"]`
+    /// and `attributes["timestamp"]` track the source. `children` holds reply blocks.
+    case comment
+    /// A tracked insertion. `attributes["author"]` and `attributes["timestamp"]`
+    /// track who inserted the text. The inserted text lives in `content`.
+    case trackInsertion
+    /// A tracked deletion. `attributes["author"]` and `attributes["timestamp"]`
+    /// track who deleted the text. The deleted text (shown struck-through) is in `content`.
+    case trackDeletion
 }
 
 // MARK: - InlineRun
@@ -128,6 +139,73 @@ public struct Block: Codable, Sendable, Identifiable, Hashable {
     }
 }
 
+// MARK: - DocumentPageLayout
+
+/// Page layout for a document. Stored in ``DocumentAST/meta``.
+public struct DocumentPageLayout: Codable, Sendable, Hashable {
+    /// Page width in points. A4 default = 595pt.
+    public var pageWidth: Double
+    /// Page height in points. A4 default = 842pt.
+    public var pageHeight: Double
+    /// Margins in points.
+    public var marginTop: Double
+    public var marginBottom: Double
+    public var marginLeft: Double
+    public var marginRight: Double
+    /// Number of text columns (1 = single column).
+    public var columnCount: Int
+    /// Space between columns in points.
+    public var columnGap: Double
+    /// Page background color as hex string (e.g. "#FFFFFF").
+    public var pageColor: String
+    /// Header block ID (stored in `blocks`).
+    public var headerBlockID: UUID?
+    /// Footer block ID (stored in `blocks`).
+    public var footerBlockID: UUID?
+
+    public init(
+        pageWidth: Double = 595,
+        pageHeight: Double = 842,
+        marginTop: Double = 72,
+        marginBottom: Double = 72,
+        marginLeft: Double = 72,
+        marginRight: Double = 72,
+        columnCount: Int = 1,
+        columnGap: Double = 18,
+        pageColor: String = "#FFFFFF",
+        headerBlockID: UUID? = nil,
+        footerBlockID: UUID? = nil
+    ) {
+        self.pageWidth = pageWidth
+        self.pageHeight = pageHeight
+        self.marginTop = marginTop
+        self.marginBottom = marginBottom
+        self.marginLeft = marginLeft
+        self.marginRight = marginRight
+        self.columnCount = columnCount
+        self.columnGap = columnGap
+        self.pageColor = pageColor
+        self.headerBlockID = headerBlockID
+        self.footerBlockID = footerBlockID
+    }
+
+    /// Returns the content width (page width minus left and right margins).
+    public var contentWidth: Double {
+        max(1, pageWidth - marginLeft - marginRight)
+    }
+}
+
+// MARK: - DocumentMeta
+
+/// Top-level document metadata. Stored as a field in ``DocumentAST``.
+public struct DocumentMeta: Codable, Sendable, Hashable {
+    public var pageLayout: DocumentPageLayout
+
+    public init(pageLayout: DocumentPageLayout = DocumentPageLayout()) {
+        self.pageLayout = pageLayout
+    }
+}
+
 // MARK: - DocumentAST
 
 /// The full document model. Stored in the data layer as the `body`
@@ -137,15 +215,33 @@ public struct Block: Codable, Sendable, Identifiable, Hashable {
 public struct DocumentAST: Codable, Sendable, Hashable {
     public var blocks: [UUID: Block]
     public var rootChildren: [UUID]
+    /// Document-level metadata (page layout, etc.).
+    public var meta: DocumentMeta
 
-    public init(blocks: [UUID: Block] = [:], rootChildren: [UUID] = []) {
+    public init(
+        blocks: [UUID: Block] = [:],
+        rootChildren: [UUID] = [],
+        meta: DocumentMeta = DocumentMeta()
+    ) {
         self.blocks = blocks
         self.rootChildren = rootChildren
+        self.meta = meta
     }
 
     /// The empty document. Useful as a starting point for new
     /// documents and for tests.
     public static let empty = DocumentAST()
+
+    // MARK: - Page layout helpers
+
+    /// Convenience: access the page layout directly.
+    public var pageLayout: DocumentPageLayout {
+        get { meta.pageLayout }
+        set { meta.pageLayout = newValue }
+    }
+
+    /// Returns content width in points.
+    public var contentWidth: Double { meta.pageLayout.contentWidth }
 
     // MARK: - Codable
 
@@ -172,6 +268,8 @@ public struct DocumentAST: Codable, Sendable, Hashable {
         }
         self.blocks = blocks
         self.rootChildren = try container.decode([UUID].self, forKey: .rootChildren)
+        // meta is optional in old documents; fall back to the default.
+        self.meta = try container.decodeIfPresent(DocumentMeta.self, forKey: .meta) ?? DocumentMeta()
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -183,11 +281,13 @@ public struct DocumentAST: Codable, Sendable, Hashable {
         }
         try container.encode(rawBlocks, forKey: .blocks)
         try container.encode(rootChildren, forKey: .rootChildren)
+        try container.encode(meta, forKey: .meta)
     }
 
     private enum CodingKeys: String, CodingKey {
         case blocks
         case rootChildren
+        case meta
     }
 
     // MARK: Tree helpers

@@ -284,7 +284,7 @@ MMPROJ_MODEL_MAP: dict[str, str] = {
     "GraniteSpeechForConditionalGeneration": "granite",
     "GraniteSpeechPlusForConditionalGeneration": "granite",
     "HunYuanVLForConditionalGeneration": "hunyuan",
-    "Idefics3ForConditionalGeneration": "smolvlm",
+    "Idefics3ForConditionalGeneration": "granite",
     "InternVisionModel": "internvl",
     "JanusForConditionalGeneration": "januspro",
     "KimiK25ForConditionalGeneration": "kimivl",

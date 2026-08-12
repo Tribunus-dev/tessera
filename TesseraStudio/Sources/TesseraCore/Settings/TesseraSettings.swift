@@ -81,6 +81,23 @@ public enum TesseraSettingsKey {
     // ``TesseraSecretStore`` account ``covertTriggerPhrase``);
     // only the coercion-mode flag lives in UserDefaults.
     public static let coercionMode = "tessera.settings.coercionMode"
+    // Auto-formatting (MS Office pain point W3/W4). All default false.
+    public static let autoBulletedLists = "tessera.settings.autoBulletedLists"
+    public static let autoNumberedLists = "tessera.settings.autoNumberedLists"
+    public static let autoCorrect = "tessera.settings.autoCorrect"
+    public static let autoFormatBeginningOfListItem = "tessera.settings.autoFormatBeginningOfListItem"
+    public static let autoBoldItalicUnderlineMath = "tessera.settings.autoBoldItalicUnderlineMath"
+    // Paste default (W4). "keepTextOnly" avoids Word's silent re-formatting.
+    public static let defaultPasteFormat = "tessera.settings.defaultPasteFormat"
+    // Document default font (W5: new text boxes inherit document default, not random).
+    public static let defaultDocFontFamily = "tessera.settings.defaultDocFontFamily"
+    public static let defaultDocFontSize = "tessera.settings.defaultDocFontSize"
+    // Slides default text box font (P3).
+    public static let defaultSlidesFontFamily = "tessera.settings.defaultSlidesFontFamily"
+    public static let defaultSlidesFontSize = "tessera.settings.defaultSlidesFontSize"
+    // AI layer (Phase 5). Off by default — the architect's rule: AI opt-in, not bundled.
+    public static let aiEnabled = "tessera.settings.aiEnabled"
+    public static let aiRoute = "tessera.settings.aiRoute"  // "local" | "cloud"
 }
 
 /// Factory defaults, registered at app launch.
@@ -165,6 +182,25 @@ public enum TesseraSettingsDefault {
     // flips it. When on, the "Plea the Fifth" Settings section
     // is collapsed by default.
     public static let coercionMode = false
+    // Auto-formatting (MS Office pain point W3). All OFF by default.
+    // Word's "As You Type" auto-format silently re-formats user text;
+    // Tessera stays passive until the user explicitly opts in.
+    public static let autoBulletedLists = false
+    public static let autoNumberedLists = false
+    public static let autoCorrect = false
+    public static let autoFormatBeginningOfListItem = false
+    public static let autoBoldItalicUnderlineMath = false
+    // Paste default. "keepTextOnly" avoids Word's silent re-formatting (W4).
+    public static let defaultPasteFormat = "keepTextOnly"
+    // Document default font. Uses the system font so it matches the OS look.
+    public static let defaultDocFontFamily = "system"
+    public static let defaultDocFontSize = 12
+    // Slides default text box font.
+    public static let defaultSlidesFontFamily = "system"
+    public static let defaultSlidesFontSize = 18
+    // AI layer. Off by default; local Granite is the preferred route.
+    public static let aiEnabled = false
+    public static let aiRoute = "local"
 }
 
 /// Log levels offered in Advanced settings.
@@ -259,6 +295,18 @@ public enum TesseraSettings {
             TesseraSettingsKey.searxngBaseURL: TesseraSettingsDefault.searxngBaseURL,
             TesseraSettingsKey.tavilyAPIKey: TesseraSettingsDefault.tavilyAPIKey,
             TesseraSettingsKey.coercionMode: TesseraSettingsDefault.coercionMode,
+            TesseraSettingsKey.autoBulletedLists: TesseraSettingsDefault.autoBulletedLists,
+            TesseraSettingsKey.autoNumberedLists: TesseraSettingsDefault.autoNumberedLists,
+            TesseraSettingsKey.autoCorrect: TesseraSettingsDefault.autoCorrect,
+            TesseraSettingsKey.autoFormatBeginningOfListItem: TesseraSettingsDefault.autoFormatBeginningOfListItem,
+            TesseraSettingsKey.autoBoldItalicUnderlineMath: TesseraSettingsDefault.autoBoldItalicUnderlineMath,
+            TesseraSettingsKey.defaultPasteFormat: TesseraSettingsDefault.defaultPasteFormat,
+            TesseraSettingsKey.defaultDocFontFamily: TesseraSettingsDefault.defaultDocFontFamily,
+            TesseraSettingsKey.defaultDocFontSize: TesseraSettingsDefault.defaultDocFontSize,
+            TesseraSettingsKey.defaultSlidesFontFamily: TesseraSettingsDefault.defaultSlidesFontFamily,
+            TesseraSettingsKey.defaultSlidesFontSize: TesseraSettingsDefault.defaultSlidesFontSize,
+            TesseraSettingsKey.aiEnabled: TesseraSettingsDefault.aiEnabled,
+            TesseraSettingsKey.aiRoute: TesseraSettingsDefault.aiRoute,
         ]
     }
 

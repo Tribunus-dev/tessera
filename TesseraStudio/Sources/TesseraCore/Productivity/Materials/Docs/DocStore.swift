@@ -443,6 +443,13 @@ public struct DocStore: Sendable {
         try await dataLayer.receipts(forEntity: docID)
     }
 
+    /// Return the receipt chain for a document, oldest first.
+    /// Decodes each row's payload into a typed ``Receipt``.
+    public func history(of docID: UUID, limit: Int = 100) async throws -> [Receipt] {
+        let chain = try await dataLayer.receiptChain(documentID: docID, limit: limit)
+        return chain.compactMap { Self.decodeReceipt(from: $0.receipt) }
+    }
+
     // MARK: - Helpers
 
     private func appendReceipt(
@@ -469,6 +476,29 @@ public struct DocStore: Sendable {
               entity.subtype == Doc.subtype else { return nil }
         guard let body = entity.body, !body.isEmpty else { return nil }
         return try Doc.from(jsonDataString: body)
+    }
+
+    // MARK: - JSON helpers (for history decoding)
+
+    private static let jsonEncoder: JSONEncoder = {
+        let e = JSONEncoder()
+        e.dateEncodingStrategy = .iso8601
+        return e
+    }()
+
+    private static let jsonDecoder: JSONDecoder = {
+        let d = JSONDecoder()
+        d.dateDecodingStrategy = .iso8601
+        return d
+    }()
+
+    /// Decode a typed ``Receipt`` from a ``GraphReceipt`` row.
+    private static func decodeReceipt(from row: GraphReceipt) -> Receipt? {
+        guard let data = try? jsonEncoder.encode(row.payload),
+              let receipt = try? jsonDecoder.decode(Receipt.self, from: data) else {
+            return nil
+        }
+        return receipt
     }
 }
 

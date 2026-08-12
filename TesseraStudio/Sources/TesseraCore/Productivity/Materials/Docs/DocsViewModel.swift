@@ -293,6 +293,18 @@ public struct DocRow: Identifiable, Sendable, Hashable {
 /// The view-model for the doc editor column. Owns the in-memory
 /// copy of the doc being edited and routes edits through the
 /// ``DocStore`` (which appends the constitutional receipt).
+///
+/// **Auto-save.** `commitBody` is debounced by 2 seconds: rapid
+/// edits coalesce into a single save. The debounce is cancelled
+/// when the editor is torn down.
+///
+/// **Session recovery.** When the app moves to the background
+/// (scenePhase change), `saveRecoveryFile()` writes the current
+/// AST to a JSON file in the app's cache directory. On the next
+/// launch of this doc, `checkRecovery()` compares the recovery
+/// file's timestamp with the persisted doc's `updatedAt`; if the
+/// recovery is newer, `pendingRecovery` is set and the view can
+/// prompt the user to restore.
 @MainActor
 public final class DocEditorViewModel: ObservableObject {
 
@@ -302,9 +314,21 @@ public final class DocEditorViewModel: ObservableObject {
     @Published public var draftTag: String
     @Published public var isSaving: Bool = false
     @Published public private(set) var lastError: String?
+    /// Set when a newer recovery file exists than what was persisted.
+    /// The view prompts the user; set `recoverFromBackup` to restore it.
+    @Published public var pendingRecovery: Bool = false
 
     public let store: DocStore
     public let userID: UserID
+
+    private var saveDebounceTask: Task<Void, Never>?
+    private let debounceDelay: TimeInterval = 2.0
+
+    /// The file URL for the session recovery JSON.
+    private var recoveryFileURL: URL {
+        let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        return cacheDir.appendingPathComponent("doc-recovery-\(doc.id.uuidString).json")
+    }
 
     public init(doc: Doc, store: DocStore, userID: UserID) {
         self.doc = doc
@@ -313,6 +337,64 @@ public final class DocEditorViewModel: ObservableObject {
         self.draftTag = ""
         self.store = store
         self.userID = userID
+    }
+
+    /// Check for a session-recovery file on init. Returns true if
+    /// a newer backup exists than the persisted doc.
+    public func checkRecovery() {
+        let file = recoveryFileURL
+        guard FileManager.default.fileExists(atPath: file.path) else {
+            pendingRecovery = false
+            return
+        }
+        do {
+            let attrs = try FileManager.default.attributesOfItem(atPath: file.path)
+            guard let modDate = attrs[.modificationDate] as? Date else {
+                pendingRecovery = false
+                return
+            }
+            pendingRecovery = modDate > doc.updatedAt
+        } catch {
+            pendingRecovery = false
+        }
+    }
+
+    /// Restore from the session-recovery file. Sets `pendingRecovery = false`.
+    public func recoverFromBackup() async {
+        let file = recoveryFileURL
+        guard FileManager.default.fileExists(atPath: file.path) else { return }
+        do {
+            let data = try Data(contentsOf: file)
+            let recoveredDoc = try Doc.from(jsonData: data)
+            self.document = recoveredDoc.body
+            self.doc = recoveredDoc
+            self.draftTitle = recoveredDoc.title
+            pendingRecovery = false
+        } catch {
+            lastError = "Failed to restore backup: \(error)"
+        }
+    }
+
+    /// Discard the recovery file (user chose to keep the persisted version).
+    public func discardRecovery() {
+        try? FileManager.default.removeItem(at: recoveryFileURL)
+        pendingRecovery = false
+    }
+
+    /// Save a recovery snapshot for session-crash recovery.
+    public func saveRecoveryFile() {
+        do {
+            let data = try doc.jsonData()
+            try data.write(to: recoveryFileURL, options: .atomic)
+        } catch {
+            // Non-fatal: recovery is best-effort.
+            NSLog("DocEditorViewModel.saveRecoveryFile: \(error)")
+        }
+    }
+
+    /// Clear the recovery file after a successful persist.
+    public func clearRecoveryFile() {
+        try? FileManager.default.removeItem(at: recoveryFileURL)
     }
 
     public func refresh(with doc: Doc) {
@@ -341,7 +423,35 @@ public final class DocEditorViewModel: ObservableObject {
 
     // MARK: - Body
 
+    /// Debounced persist. Cancels any in-flight save, then schedules a
+    /// new one after `debounceDelay` seconds. This coalesces rapid
+    /// edits (e.g. a paste of 100 lines) into a single network round-trip.
     public func commitBody(_ ast: DocumentAST) async {
+        // If the AST is identical to what's already saved, skip.
+        guard ast != doc.body else { return }
+        // Cancel any pending save.
+        saveDebounceTask?.cancel()
+        // Schedule a new save with debounce.
+        saveDebounceTask = Task {
+            do {
+                try await Task.sleep(nanoseconds: UInt64(debounceDelay * 1_000_000_000))
+            } catch {
+                // Task was cancelled — discard this save.
+                return
+            }
+            await persistBody(ast)
+        }
+    }
+
+    /// Force an immediate save (flushes the debounce). Called by
+    /// scenePhase change to background.
+    public func flushBody() async {
+        saveDebounceTask?.cancel()
+        saveDebounceTask = nil
+        await persistBody(document)
+    }
+
+    private func persistBody(_ ast: DocumentAST) async {
         guard ast != doc.body else { return }
         isSaving = true
         defer { isSaving = false }
@@ -349,6 +459,7 @@ public final class DocEditorViewModel: ObservableObject {
             let updated = try await store.setBody(ast, for: doc.id)
             self.doc = updated
             self.document = updated.body
+            clearRecoveryFile()
         } catch {
             lastError = String(describing: error)
         }

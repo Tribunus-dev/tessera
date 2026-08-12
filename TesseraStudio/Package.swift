@@ -94,6 +94,11 @@ let package = Package(
         // Used by the Graph view (Phase 6 productivity surface). Pinned at
         // 1.1.0+ per docs/tessera-productivity-contacts-graph-design.md §14.
         .package(url: "https://github.com/SwiftGraphs/Grape.git", from: "1.1.0"),
+        // STTextView (krzyzanowskim): TextKit 2 text view with built-in gutter,
+        // line numbers, syntax highlighting support, and a cleaner NSTextView
+        // surface. We subclass it (TesseraSTTextView) to inject our custom
+        // TesseraTextContentManager; see TesseraEditorView.swift §TesseraSTTextView.
+        .package(url: "https://github.com/krzyzanowskim/STTextView.git", from: "2.0.0"),
     ],
     targets: [
         .target(
@@ -171,7 +176,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "TesseraStudioMac",
-            dependencies: ["TesseraCore"],
+            dependencies: [
+                "TesseraCore",
+                .product(name: "STTextView", package: "STTextView"),
+            ],
             path: "Sources/TesseraStudioMac",
             // CPythonBridge links Python.framework. Add a framework search path so
             // the linker can resolve Python at link time (Homebrew installs to a

@@ -441,6 +441,58 @@ public final class SheetEditorViewModel: ObservableObject {
         editingCell = nil
     }
 
+    // MARK: - Keyboard navigation (Excel muscle memory: Tab/Enter/arrows)
+
+    /// Move selection in a direction without committing any in-progress edit.
+    public func moveSelection(_ direction: Direction) {
+        guard let current = selectedCell ?? editingCell else { return }
+        switch direction {
+        case .up:
+            if current.row > 0 {
+                selectedCell = SheetCellCoord(row: current.row - 1, col: current.col)
+            }
+        case .down:
+            if current.row < sheet.rowCount - 1 {
+                selectedCell = SheetCellCoord(row: current.row + 1, col: current.col)
+            }
+        case .left:
+            if current.col > 0 {
+                selectedCell = SheetCellCoord(row: current.row, col: current.col - 1)
+            }
+        case .right:
+            if current.col < sheet.columnCount - 1 {
+                selectedCell = SheetCellCoord(row: current.row, col: current.col + 1)
+            }
+        }
+    }
+
+    /// Commit any in-progress edit and move selection in a direction.
+    /// Used for Tab / Shift+Tab / Enter / Shift+Enter.
+    /// Returns the new selected cell so the grid can scroll to it.
+    @discardableResult
+    public func commitAndMove(_ direction: Direction) async -> SheetCellCoord? {
+        if editingCell != nil {
+            await commitEditingCell()
+        }
+        moveSelection(direction)
+        return selectedCell
+    }
+
+    /// F2: toggle between select mode and edit mode on the selected cell.
+    public func toggleEditMode() {
+        if let coord = selectedCell {
+            if editingCell == coord {
+                editingCell = nil
+            } else {
+                beginEditingCell(coord)
+            }
+        }
+    }
+
+    public enum Direction {
+        case up, down, left, right
+    }
+
     // MARK: - Rows / Columns
 
     public func insertRow(at index: Int) async {

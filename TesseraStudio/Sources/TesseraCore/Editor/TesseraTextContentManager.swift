@@ -141,6 +141,135 @@ public final class TesseraTextContentManagerData {
     }
 }
 
+// MARK: - TesseraTextContentStorage
+
+/// A `NSTextContentStorage` subclass that owns a `TesseraTextContentManagerData`
+/// and adapts it to the `NSTextContentStorage` interface that STTextView
+/// requires internally.
+///
+/// **Why this wrapper exists.** STTextView's internal code calls
+/// `(textContentManager as? NSTextContentStorage)?.textStorage?.attributedString`
+/// to access the mutable attributed string for editing. Our `TesseraTextContentManager`
+/// is a raw `NSTextContentManager` (no `textStorage` property), so it can't satisfy
+/// that call site. `TesseraTextContentStorage` fills the gap:
+///
+///   - It IS an `NSTextContentStorage` (subclass), so the STTextView cast succeeds.
+///   - It HOLDS a `TesseraTextContentManagerData`, so element queries delegate to it.
+///   - Its `tesseraDelegate` is set to a `TesseraTextContentManager`, which implements
+///     the `NSTextContentManagerDelegate` methods (shared logic with the data queries).
+///
+/// **attributedString override.** `NSTextContentStorage.attributedString` is a
+/// `NSAttributedString?` (copy-on-write, mutable). We back the property with an
+/// associated `NSMutableAttributedString` so the getter returns it and the setter
+/// mutates it — satisfying the covariant override and providing a writable store
+/// for `replaceCharacters(in:with:)`.
+///
+/// The `textContentManager` injected into `TesseraSTTextView` is this wrapper.
+/// STTextView talks to it as a storage; the wrapper talks to `TesseraTextContentManagerData`
+/// for element queries; `TesseraTextContentManager` implements the delegate interface.
+public final class TesseraTextContentStorage: NSTextContentStorage {
+
+    /// The data layer: holds the DocumentAST, element list, and renderer.
+    public let data: TesseraTextContentManagerData
+
+    /// Delegate for `NSTextContentManagerDelegate` callbacks from the layout pipeline.
+    public weak var tesseraDelegate: TesseraTextContentManager?
+
+    // Associated-object backing store for the mutable attributedString property.
+    private static var storedStringKey: UInt8 = 0
+    private var _storedString: NSMutableAttributedString {
+        if let existing = objc_getAssociatedObject(self, &Self.storedStringKey) as? NSMutableAttributedString {
+            return existing
+        }
+        let new = NSMutableAttributedString(attributedString: data.fullAttributedString())
+        objc_setAssociatedObject(self, &Self.storedStringKey, new, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        return new
+    }
+
+    public init(data: TesseraTextContentManagerData) {
+        self.data = data
+        super.init()
+        objc_setAssociatedObject(
+            self, &Self.storedStringKey,
+            NSMutableAttributedString(attributedString: data.fullAttributedString()),
+            .OBJC_ASSOCIATION_RETAIN_NONATOMIC
+        )
+    }
+
+    public init(document: DocumentAST, mode: EditorMode = .document) {
+        self.data = TesseraTextContentManagerData(
+            document: document,
+            renderer: BlockRenderer(),
+            mode: mode
+        )
+        super.init()
+        objc_setAssociatedObject(
+            self, &Self.storedStringKey,
+            NSMutableAttributedString(attributedString: data.fullAttributedString()),
+            .OBJC_ASSOCIATION_RETAIN_NONATOMIC
+        )
+    }
+
+    public required init?(coder: NSCoder) {
+        self.data = TesseraTextContentManagerData()
+        super.init(coder: coder)
+        objc_setAssociatedObject(
+            self, &Self.storedStringKey,
+            NSMutableAttributedString(),
+            .OBJC_ASSOCIATION_RETAIN_NONATOMIC
+        )
+    }
+
+    // MARK: - NSTextContentStorage overrides
+
+    /// The mutable attributed string backing store.
+    public override var attributedString: NSAttributedString? {
+        get { _storedString }
+        set {
+            guard let newValue else { return }
+            _storedString.setAttributedString(newValue)
+        }
+    }
+
+    /// The document range. Used by the layout manager to know the full extent.
+    public override var documentRange: NSTextRange {
+        let totalLength = data.elements.last?.rangeEnd ?? 0
+        return makeIntTextRange(start: 0, end: totalLength)
+            ?? makeIntTextRange(start: 0, end: 0)!
+    }
+
+    // MARK: - Convenience (satisfies TesseraSTTextView.replaceContent)
+
+    /// Replace all characters in the storage with a new attributed string.
+    /// The range is computed from the current `_storedString`, not from
+    /// `data.elements` (which may lag during active editing).
+    public func replaceAllCharacters(with newString: NSAttributedString) {
+        let range = NSRange(location: 0, length: _storedString.length)
+        _storedString.replaceCharacters(in: range, with: newString)
+    }
+
+    // MARK: - NSTextContentManagerDelegate
+
+    public func textContentManager(
+        _ textContentManager: NSTextContentManager,
+        textElementAt location: NSTextLocation
+    ) -> NSTextElement? {
+        tesseraDelegate?.textElement(at: location)
+    }
+
+    public func textContentManager(
+        _ textContentManager: NSTextContentManager,
+        shouldEnumerate textElement: NSTextElement,
+        options: NSTextContentManager.EnumerationOptions = []
+    ) -> Bool {
+        tesseraDelegate?.textContentManager(
+            textContentManager,
+            shouldEnumerate: textElement,
+            options: options
+        ) ?? true
+    }
+}
+
 #if canImport(AppKit) || canImport(UIKit)
 /// The platform-typed `NSTextContentManager` subclass
 /// that backs the editor. The subclass is a thin

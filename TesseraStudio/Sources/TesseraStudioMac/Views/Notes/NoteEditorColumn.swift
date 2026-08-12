@@ -64,6 +64,11 @@ public struct NoteEditorColumn: View {
         .sheet(isPresented: $showLinkSearch) {
             linkSearchSheet
         }
+        .onAppear {
+            editorCoordinator.onFormattingStateChanged = { newState in
+                self.formattingState = newState
+            }
+        }
     }
 
     // MARK: - Top bar (title + tag bar + pin/archive)
@@ -162,8 +167,19 @@ public struct NoteEditorColumn: View {
 
     @Environment(\.colorScheme) private var editorColorScheme
 
+    // Coordinator created here so the toolbar can forward view commands to it.
+    @State private var editorCoordinator: TesseraEditorView.Coordinator = {
+        TesseraEditorView.Coordinator(
+            mode: .notes,
+            theme: .light,
+            onMutationCommitted: nil,
+            onViewCommand: nil,
+            onFormattingStateChanged: nil
+        )
+    }()
+
     private var editor: some View {
-        TesseraEditorView(
+        var editorView = TesseraEditorView(
             mode: .notes,
             theme: EditorTheme.current(isDark: editorColorScheme == .dark),
             document: documentBinding,
@@ -175,8 +191,17 @@ public struct NoteEditorColumn: View {
                 // the persist is a debounced commit.
                 let ast = viewModel.document
                 Task { await viewModel.commitBody(ast) }
+            },
+            onViewCommand: { command in
+                // View-level commands (gutter, focus) need to
+                // update the toolbar's FormattingState.
+                handleEditorCommand(command)
             }
         )
+        // Inject the pre-created coordinator so the toolbar can
+        // forward view commands to it.
+        editorView.injectedCoordinator = editorCoordinator
+        return editorView
     }
 
     private var documentBinding: Binding<DocumentAST> {
@@ -254,7 +279,8 @@ public struct NoteEditorColumn: View {
                 formattingState: $formattingState,
                 onCommand: { command in
                     handleEditorCommand(command)
-                }
+                },
+                isFocusModeActive: isFocusMode
             )
         }
         ToolbarItem(placement: .primaryAction) {
@@ -364,9 +390,49 @@ public struct NoteEditorColumn: View {
     // MARK: - Editor command handling
 
     private func handleEditorCommand(_ command: EditorCommand) {
-        // The editor view's coalescer applies the command
-        // to the document binding. We just trigger a body
-        // commit so the new state persists.
+        switch command {
+        case .toggleLineNumbers:
+            formattingState.showLineNumbers.toggle()
+            editorCoordinator.handleViewCommand(command)
+        case .toggleRuler:
+            formattingState.showRuler.toggle()
+            editorCoordinator.handleViewCommand(command)
+        case .toggleGridlines:
+            formattingState.showGridlines.toggle()
+            editorCoordinator.handleViewCommand(command)
+        case .enterFocusMode:
+            isFocusMode = true
+            editorCoordinator.handleViewCommand(command)
+        case .toggleBold:
+            formattingState.isBold.toggle()
+            editorCoordinator.handleViewCommand(command)
+        case .toggleItalic:
+            formattingState.isItalic.toggle()
+            editorCoordinator.handleViewCommand(command)
+        case .toggleUnderline:
+            formattingState.isUnderline.toggle()
+            editorCoordinator.handleViewCommand(command)
+        case .toggleStrikethrough:
+            formattingState.isStrikethrough.toggle()
+            editorCoordinator.handleViewCommand(command)
+        case .toggleCode:
+            formattingState.isCode.toggle()
+            editorCoordinator.handleViewCommand(command)
+        case .alignLeft:
+            formattingState.alignment = .leading
+            editorCoordinator.handleViewCommand(command)
+        case .alignCenter:
+            formattingState.alignment = .center
+            editorCoordinator.handleViewCommand(command)
+        case .alignRight:
+            formattingState.alignment = .trailing
+            editorCoordinator.handleViewCommand(command)
+        case .alignJustify:
+            formattingState.alignment = .justify
+            editorCoordinator.handleViewCommand(command)
+        default:
+            editorCoordinator.handleViewCommand(command)
+        }
         let ast = viewModel.document
         Task { await viewModel.commitBody(ast) }
     }

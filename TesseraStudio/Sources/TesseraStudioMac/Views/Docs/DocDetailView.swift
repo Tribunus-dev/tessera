@@ -3,18 +3,41 @@ import TesseraCore
 
 // MARK: - DocDetailView
 
-/// The detail column for a single Doc. Shows the cover image +
-/// icon + title + metadata row + tag bar + editor + linked
-/// entities. The editor is ``DocEditorView`` configured for
-/// `EditorMode.document`.
+/// The detail column for a single Doc. Shows the cover image,
+/// icon, title, metadata row, tag bar, editor, and linked
+/// entities.
+///
+/// **Ribbon toolbar.** The ``TesseraEditorToolbar`` lives in the
+/// macOS window toolbar (`.toolbar`) — it does not scroll with
+/// the document. The host owns the shared state
+/// (`formattingState`, `isFocusMode`, `editorCoordinator`) and
+/// passes them to both the toolbar and the editor.
 public struct DocDetailView: View {
 
     @ObservedObject public var viewModel: DocEditorViewModel
     public let onDelete: () -> Void
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var showDeleteConfirm: Bool = false
     @State private var showLinkSearch: Bool = false
+    @State private var showVersionHistory: Bool = false
+    @State private var showLayoutInspector: Bool = false
+    @State private var showCommentsSidebar: Bool = false
     @State private var linkSearchQuery: String = ""
+
+    // MARK: - Ribbon state (shared with editor)
+
+    @State private var formattingState: FormattingState = FormattingState()
+    @State private var isFocusMode: Bool = false
+    @State private var editorCoordinator: TesseraEditorView.Coordinator = {
+        TesseraEditorView.Coordinator(
+            mode: .document,
+            theme: .light,
+            onMutationCommitted: nil,
+            onViewCommand: nil,
+            onFormattingStateChanged: nil
+        )
+    }()
 
     public init(viewModel: DocEditorViewModel, onDelete: @escaping () -> Void) {
         self.viewModel = viewModel
@@ -25,24 +48,151 @@ public struct DocDetailView: View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    coverSection
-                    headerSection
-                    metadataRow
-                    tagBar
-                    actionRow
-                    Divider()
+                    if !isFocusMode {
+                        coverSection
+                        headerSection
+                        metadataRow
+                        tagBar
+                        actionRow
+                        Divider()
+                    }
                     editorSection
-                    Divider()
-                    linkedSection
+                    if !isFocusMode {
+                        Divider()
+                        linkedSection
+                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
             }
         }
         .background(.background)
-        .toolbar { detailToolbar }
+        .toolbar { editorToolbar }
         .sheet(isPresented: $showDeleteConfirm) { deleteSheet }
         .sheet(isPresented: $showLinkSearch) { linkSheet }
+        .alert("Restore unsaved changes?", isPresented: $viewModel.pendingRecovery) {
+            Button("Restore") {
+                Task { await viewModel.recoverFromBackup() }
+            }
+            Button("Discard", role: .destructive) {
+                viewModel.discardRecovery()
+            }
+        } message: {
+            Text("It looks like Tessera crashed during your last session. A more recent version of this document was found in the backup.")
+        }
+        .sheet(isPresented: $showVersionHistory) {
+            VersionHistorySheet(doc: viewModel.doc, store: viewModel.store)
+        }
+        .sheet(isPresented: $showLayoutInspector) {
+            LayoutInspectorView(
+                document: Binding(
+                    get: { viewModel.document },
+                    set: { newDoc in
+                        // Directly push the updated AST through the coordinator.
+                        editorCoordinator.binding?.wrappedValue = newDoc
+                    }
+                ),
+                onCommand: { command in
+                    editorCoordinator.handleViewCommand(command)
+                }
+            )
+        }
+        .sheet(isPresented: $showCommentsSidebar) {
+            CommentsSidebarView(
+                document: Binding(
+                    get: { viewModel.document },
+                    set: { newDoc in
+                        editorCoordinator.binding?.wrappedValue = newDoc
+                    }
+                ),
+                trackChangesEnabled: formattingState.isTrackChangesEnabled,
+                onInsertComment: {
+                    editorCoordinator.handleViewCommand(.insertComment)
+                },
+                onNavigateToComment: { threadID in
+                    // Navigate: select the anchor block of the comment thread.
+                    if let block = viewModel.document.blocks[threadID],
+                       let anchorID = UUID(uuidString: block.attributes["anchorBlockID"]?.stringValue ?? "") {
+                        editorCoordinator.selectBlock(id: anchorID)
+                    }
+                },
+                onAcceptChange: { changeID in
+                    editorCoordinator.acceptChange(id: changeID)
+                    updateCommentCounts()
+                },
+                onRejectChange: { changeID in
+                    editorCoordinator.rejectChange(id: changeID)
+                    updateCommentCounts()
+                },
+                onResolveComment: { threadID in
+                    resolveComment(id: threadID)
+                },
+                onDismiss: { showCommentsSidebar = false }
+            )
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            switch newPhase {
+            case .active:
+                // App became active — check for recovery backup.
+                viewModel.checkRecovery()
+            case .inactive, .background:
+                // App going to background — flush any pending save and write recovery file.
+                Task { await viewModel.flushBody() }
+                viewModel.saveRecoveryFile()
+            @unknown default:
+                break
+            }
+        }
+        .onAppear {
+            // Selection-change observer fires handleEditorCommand which updates
+            // formattingState directly; no additional wiring needed here.
+            editorCoordinator.onFormattingStateChanged = { newState in
+                self.formattingState = newState
+            }
+            // Initialize comment/change counts for the Review tab badges.
+            updateCommentCounts()
+        }
+    }
+
+    // MARK: - Toolbar
+
+    @ToolbarContentBuilder
+    private var editorToolbar: some ToolbarContent {
+        ToolbarItem(placement: .secondaryAction) {
+            TesseraEditorToolbar(
+                mode: .document,
+                formattingState: $formattingState,
+                onCommand: { command in
+                    handleEditorCommand(command)
+                },
+                isFocusModeActive: isFocusMode
+            )
+        }
+
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    isFocusMode.toggle()
+                }
+            } label: {
+                Label(
+                    isFocusMode ? "Exit Focus" : "Focus",
+                    systemImage: isFocusMode
+                        ? "arrow.up.right.and.arrow.down.left.rectangle"
+                        : "arrow.down.left.and.arrow.up.right.rectangle"
+                )
+            }
+            .help("Toggle focus mode")
+            .accessibilityLabel(isFocusMode ? "Exit Focus" : "Focus")
+        }
+
+        ToolbarItem(placement: .destructiveAction) {
+            Button(role: .destructive) { showDeleteConfirm = true } label: {
+                Label("Delete", systemImage: "trash")
+            }
+            .help("Hard-delete this document")
+            .accessibilityLabel("Delete document")
+        }
     }
 
     // MARK: - Cover
@@ -173,8 +323,16 @@ public struct DocDetailView: View {
     // MARK: - Editor
 
     private var editorSection: some View {
-        DocEditorView(viewModel: viewModel)
-            .frame(minHeight: 260)
+        DocEditorView(
+            viewModel: viewModel,
+            editorCoordinator: editorCoordinator,
+            formattingState: $formattingState,
+            isFocusMode: $isFocusMode,
+            onUnhandledCommand: { command in
+                handleEditorCommand(command)
+            }
+        )
+        .frame(minHeight: 260)
     }
 
     // MARK: - Linked entities
@@ -199,19 +357,6 @@ public struct DocDetailView: View {
                     }
                 }
             }
-        }
-    }
-
-    // MARK: - Toolbar
-
-    @ToolbarContentBuilder
-    private var detailToolbar: some ToolbarContent {
-        ToolbarItem(placement: .destructiveAction) {
-            Button(role: .destructive) { showDeleteConfirm = true } label: {
-                Label("Delete", systemImage: "trash")
-            }
-            .help("Hard-delete this document")
-            .accessibilityLabel("Delete document")
         }
     }
 
@@ -267,6 +412,109 @@ public struct DocDetailView: View {
     }
     private var trashBinding: Binding<Bool> {
         Binding(get: { viewModel.doc.isTrashed }, set: { _ in Task { await viewModel.toggleTrashed() } })
+    }
+
+    // MARK: - Editor command handling
+
+    private func handleEditorCommand(_ command: EditorCommand) {
+        switch command {
+        case .toggleLineNumbers:
+            formattingState.showLineNumbers.toggle()
+            editorCoordinator.handleViewCommand(command)
+        case .toggleRuler:
+            formattingState.showRuler.toggle()
+            editorCoordinator.handleViewCommand(command)
+        case .toggleGridlines:
+            formattingState.showGridlines.toggle()
+            editorCoordinator.handleViewCommand(command)
+        case .enterFocusMode:
+            withAnimation(.easeInOut(duration: 0.25)) {
+                isFocusMode.toggle()
+                editorCoordinator.updateFocusMode(isFocusMode)
+            }
+            editorCoordinator.handleViewCommand(command)
+        case .toggleBold:
+            formattingState.isBold.toggle()
+            editorCoordinator.handleViewCommand(command)
+        case .toggleItalic:
+            formattingState.isItalic.toggle()
+            editorCoordinator.handleViewCommand(command)
+        case .toggleUnderline:
+            formattingState.isUnderline.toggle()
+            editorCoordinator.handleViewCommand(command)
+        case .toggleStrikethrough:
+            formattingState.isStrikethrough.toggle()
+            editorCoordinator.handleViewCommand(command)
+        case .toggleCode:
+            formattingState.isCode.toggle()
+            editorCoordinator.handleViewCommand(command)
+        case .alignLeft:
+            formattingState.alignment = .leading
+            editorCoordinator.handleViewCommand(command)
+        case .alignCenter:
+            formattingState.alignment = .center
+            editorCoordinator.handleViewCommand(command)
+        case .alignRight:
+            formattingState.alignment = .trailing
+            editorCoordinator.handleViewCommand(command)
+        case .alignJustify:
+            formattingState.alignment = .justify
+            editorCoordinator.handleViewCommand(command)
+        case .showVersionHistory:
+            showVersionHistory = true
+        case .setMargins, .setOrientation, .setColumns, .setPageColor:
+            editorCoordinator.handleViewCommand(command)
+            showLayoutInspector = true
+        case .showWordCount:
+            // Word count is shown in the status bar; no action needed here.
+            break
+        // Phase 7: Comments & Track Changes
+        case .toggleTrackChanges:
+            formattingState.isTrackChangesEnabled.toggle()
+            editorCoordinator.handleViewCommand(command)
+        case .toggleCommentsPanel:
+            showCommentsSidebar.toggle()
+            formattingState.isCommentsPanelVisible = showCommentsSidebar
+            updateCommentCounts()
+        case .insertComment:
+            editorCoordinator.handleViewCommand(command)
+            if !showCommentsSidebar {
+                showCommentsSidebar = true
+                formattingState.isCommentsPanelVisible = true
+            }
+        case .acceptChange, .rejectChange:
+            editorCoordinator.handleViewCommand(command)
+            updateCommentCounts()
+        case .spellCheck:
+            editorCoordinator.handleViewCommand(command)
+        case .nextComment, .previousComment:
+            editorCoordinator.handleViewCommand(command)
+        // Phase 8: Find / Replace
+        case .showFindReplace, .findNext, .findPrevious, .replaceNext, .replaceAll:
+            editorCoordinator.handleViewCommand(command)
+        default:
+            editorCoordinator.handleViewCommand(command)
+        }
+        let ast = viewModel.document
+        Task { await viewModel.commitBody(ast) }
+    }
+
+    private func updateCommentCounts() {
+        let doc = viewModel.document
+        formattingState.commentCount = CommentStore.count(from: doc)
+        formattingState.pendingChangeCount = CommentStore.pendingChangeCount(from: doc)
+    }
+
+    private func resolveComment(id: UUID) {
+        guard var doc = editorCoordinator.binding?.wrappedValue else { return }
+        guard var block = doc.blocks[id], block.type == .comment else { return }
+        block.attributes["resolved"] = .bool(true)
+        doc.blocks[id] = block
+        editorCoordinator.binding?.wrappedValue = doc
+        updateCommentCounts()
+        Task {
+            await viewModel.commitBody(doc)
+        }
     }
 }
 
