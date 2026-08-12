@@ -147,3 +147,63 @@ struct ts_l4_spec_flag_result {
 ts_l4_spec_flag_result ts_l4_spec_flag(const ts_l4_spec_summary * summary,
                                        const float * per_layer_alpha,
                                        int64_t n_layers);
+
+// --- L4 domain-weighted prompt bank (v3.1 spec §7) ---
+//
+// Per-domain prompt bank replacing the data-free random-token probe
+// as the production L4. Each domain (factual / math / code /
+// structured / reasoning / conversational / adversarial) has its
+// own prompt set, its own matcher (exact / regex / JSON-validate /
+// semantic), and a configurable domain weight. The aggregate L4
+// verdict is the weighted pass rate (the spec's pass criterion:
+// weighted_pass_rate > 0.85).
+//
+// The C++ surface here is the AGGREGATION layer. The prompt
+// loading, BF16 / T640 forward orchestration, and per-domain
+// matchers live in tools/tessera/e2e_probe.py (Python). The C++
+// side consumes the per-domain scalars (one ts_l4_domain_metrics
+// per domain) and produces the ts_l4_domain_summary.
+//
+// Up to 7 domains (the spec's canonical set). n_domains is the
+// count of populated entries in per_domain; the rest of the
+// struct is zero.
+struct ts_l4_domain_metrics {
+    const char * name;        // "factual", "math", "code", etc.
+    float        ppl;         // mean per-token PPL on this domain
+    float        pass_rate;   // 0..1; fraction of prompts that
+                              //   matched the reference output
+    int64_t      n_prompts;   // number of prompts in the domain
+};
+
+struct ts_l4_domain_summary {
+    int64_t n_domains;                 // populated count in per_domain
+    float   weighted_ppl;             // sum(weight * ppl) / sum(weight)
+    float   weighted_pass_rate;       // sum(weight * pass_rate) / sum(weight)
+    int64_t total_prompts;            // sum of n_prompts across domains
+    // Worst domain (lowest pass_rate). name is a pointer into the
+    // caller's input array; do not free.
+    int     worst_domain_idx;         // -1 when n_domains == 0
+    float   worst_pass_rate;          // 0..1
+    bool    pass;                     // weighted_pass_rate > 0.85
+};
+
+// Aggregate per-domain metrics into a domain-weighted L4 summary.
+// per_domain: (n_domains,) caller-owned; domain_weights: (n_domains,)
+// caller-owned (uniform 1/n_domains when nullptr). n_domains <= 7.
+// pass_threshold: 0.85 (spec default; caller can override).
+// summary_out: populated. Returns 0 on success, -1 on invalid args
+// (n_domains out of range, null pointers, all weights zero).
+int ts_l4_domain_aggregate(const ts_l4_domain_metrics * per_domain,
+                            const float * domain_weights,
+                            int64_t n_domains,
+                            float pass_threshold,
+                            ts_l4_domain_summary * summary_out);
+
+// Default domain weights (uniform 1/n_domains). The spec recommends
+// weighting `code` and `reasoning` higher for production; this
+// returns the uniform default. Callers can override per-domain.
+// domain_names: (n_domains,) caller-owned; out_weights: (n_domains,)
+// caller-owned, populated. Returns 0 on success.
+int ts_l4_domain_default_weights(const char * const * domain_names,
+                                  int64_t n_domains,
+                                  float * out_weights);

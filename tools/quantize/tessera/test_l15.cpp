@@ -87,6 +87,16 @@ static bool write_synthetic_sidecar_f32() {
     int64_t outlier_count_total = 2;
     fwrite(&outlier_count_total, sizeof(outlier_count_total), 1, f);
 
+    // FP env block (v3.1 spec §2.3): 16 bytes, defaults to F32/RTN/IEEE/CPU.
+    uint32_t fp_accumulator_dtype = 0;
+    uint32_t rounding_mode        = 0;
+    uint32_t denormal_mode        = 0;
+    uint32_t backend_id           = 0;
+    fwrite(&fp_accumulator_dtype, sizeof(fp_accumulator_dtype), 1, f);
+    fwrite(&rounding_mode,        sizeof(rounding_mode),        1, f);
+    fwrite(&denormal_mode,        sizeof(denormal_mode),        1, f);
+    fwrite(&backend_id,           sizeof(backend_id),           1, f);
+
     int32_t row_outlier_counts[4] = { 1, 0, 1, 0 };
     fwrite(row_outlier_counts, sizeof(int32_t), 4, f);
 
@@ -182,6 +192,16 @@ static bool write_synthetic_sidecar_f16() {
     fwrite(&outlier_threshold, sizeof(outlier_threshold), 1, f);
     int64_t outlier_count_total = 2;
     fwrite(&outlier_count_total, sizeof(outlier_count_total), 1, f);
+
+    // FP env block (v3.1 spec §2.3): 16 bytes, defaults to F32/RTN/IEEE/CPU.
+    uint32_t fp_accumulator_dtype = 0;
+    uint32_t rounding_mode        = 0;
+    uint32_t denormal_mode        = 0;
+    uint32_t backend_id           = 0;
+    fwrite(&fp_accumulator_dtype, sizeof(fp_accumulator_dtype), 1, f);
+    fwrite(&rounding_mode,        sizeof(rounding_mode),        1, f);
+    fwrite(&denormal_mode,        sizeof(denormal_mode),        1, f);
+    fwrite(&backend_id,           sizeof(backend_id),           1, f);
 
     int32_t row_outlier_counts[4] = { 1, 0, 1, 0 };
     fwrite(row_outlier_counts, sizeof(int32_t), 4, f);
@@ -491,8 +511,12 @@ static int test_l1_f32_regression() {
     // "test_corpus", "test_hash". The hash is the bit-exact
     // identity of the on-disk file; it must NOT change between
     // runs of the same code.
+    //
+    // The hash was re-captured after PR #8 (v3.1 spec §2.3) added
+    // the 16-byte FP env block to the v3 header; the previous
+    // locked value matched the pre-PR-#8 40-byte header layout.
     static const char * k_locked_l1_hash =
-        "37eca8294bd8521a526c6af77e948dd52a6ce1ca176a6d5e184f0661e3049e61";
+        "ca32ae7781c02b40aaaf0f5e19e1cf87b4b7b84485d3ea6340b5c74288731ec9";
     check("l1 hash matches locked value", strcmp(hex, k_locked_l1_hash) == 0);
     if (strcmp(hex, k_locked_l1_hash) != 0) {
         std::printf("  l1 hash MISMATCH: got %s, want %s\n",

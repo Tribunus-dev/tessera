@@ -40,6 +40,8 @@ static void check_close(const char * name, float got, float want, float tol) {
 static const char * TEST_DIR = "/tmp/test_l1_fitness";
 
 // Write a v3 TDQT sidecar (same on-disk layout as the runtime hook).
+// Emits the full v3 header including the 16-byte FP env block
+// (spec §2.3, PR #8).
 static bool write_sidecar(const std::string & name, int64_t rows, int64_t cols,
                           const std::vector<float> & data) {
     const std::string path = std::string(TEST_DIR) + "/" + name + ".dequant.f32";
@@ -59,6 +61,16 @@ static bool write_sidecar(const std::string & name, int64_t rows, int64_t cols,
     fwrite(&outlier_threshold, sizeof(outlier_threshold), 1, f);
     int64_t outlier_count_total = 0;
     fwrite(&outlier_count_total, sizeof(outlier_count_total), 1, f);
+
+    // FP env block (v3.1 spec §2.3): 16 bytes, defaults to F32/RTN/IEEE/CPU.
+    uint32_t fp_accumulator_dtype = 0;
+    uint32_t rounding_mode        = 0;
+    uint32_t denormal_mode        = 0;
+    uint32_t backend_id           = 0;
+    fwrite(&fp_accumulator_dtype, sizeof(fp_accumulator_dtype), 1, f);
+    fwrite(&rounding_mode,        sizeof(rounding_mode),        1, f);
+    fwrite(&denormal_mode,        sizeof(denormal_mode),        1, f);
+    fwrite(&backend_id,           sizeof(backend_id),           1, f);
 
     // row_outlier_counts (int32 per row, zeroed)
     std::vector<int32_t> row_outlier_counts((size_t)rows, 0);

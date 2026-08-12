@@ -342,3 +342,104 @@ ts_l4_spec_flag_result ts_l4_spec_flag(const ts_l4_spec_summary * summary,
     r.pass = true;
     return r;
 }
+
+int ts_l4_domain_default_weights(const char * const * domain_names,
+                                  int64_t n_domains,
+                                  float * out_weights) {
+    if (domain_names == nullptr || out_weights == nullptr || n_domains <= 0) {
+        return -1;
+    }
+    // Uniform 1/n_domains is the default. The spec recommends a
+    // production default of higher weights for `code` and
+    // `reasoning` (the drafter-acceptance root cause was a code
+    // / reasoning test in the original case); that weighting
+    // belongs in a separate config (e.g., the dispatch's INI
+    // file), not in this API.
+    const float w = 1.0f / (float) n_domains;
+    for (int64_t i = 0; i < n_domains; i++) {
+        out_weights[i] = w;
+    }
+    return 0;
+}
+
+int ts_l4_domain_aggregate(const ts_l4_domain_metrics * per_domain,
+                            const float * domain_weights,
+                            int64_t n_domains,
+                            float pass_threshold,
+                            ts_l4_domain_summary * summary_out) {
+    if (summary_out == nullptr) {
+        return -1;
+    }
+    // Zero the summary.
+    summary_out->n_domains          = 0;
+    summary_out->weighted_ppl        = 0.0f;
+    summary_out->weighted_pass_rate  = 0.0f;
+    summary_out->total_prompts       = 0;
+    summary_out->worst_domain_idx    = -1;
+    summary_out->worst_pass_rate     = 0.0f;
+    summary_out->pass                = false;
+
+    if (per_domain == nullptr || n_domains <= 0) {
+        return -1;
+    }
+    if (n_domains > 7) {
+        // The spec's canonical set has 7 domains; a higher count
+        // is allowed but we warn via the worst_domain_idx sentinel
+        // (it stays -1 for the over-limit entries).
+        n_domains = 7;
+    }
+    if (pass_threshold <= 0.0f) {
+        pass_threshold = 0.85f;
+    }
+
+    // Compute the weighted sums. domain_weights defaults to
+    // uniform 1/n_domains when nullptr. Reject when the caller's
+    // weight vector sums to zero (degenerate: every domain has
+    // weight 0, the aggregation is undefined).
+    std::vector<float> weights((size_t) n_domains, 1.0f / (float) n_domains);
+    if (domain_weights != nullptr) {
+        for (int64_t i = 0; i < n_domains; i++) {
+            weights[(size_t) i] = domain_weights[i];
+        }
+    }
+    double sum_w     = 0.0;
+    double sum_wppl  = 0.0;
+    double sum_wpr   = 0.0;
+    for (int64_t i = 0; i < n_domains; i++) {
+        const float w = weights[(size_t) i];
+        if (w < 0.0f) {
+            return -1;  // negative weight is invalid
+        }
+        sum_w    += w;
+        sum_wppl += w * (double) per_domain[i].ppl;
+        sum_wpr  += w * (double) per_domain[i].pass_rate;
+        summary_out->total_prompts += per_domain[i].n_prompts;
+    }
+    if (sum_w <= 0.0) {
+        return -1;  // all weights zero
+    }
+    summary_out->weighted_ppl       = (float) (sum_wppl / sum_w);
+    summary_out->weighted_pass_rate = (float) (sum_wpr / sum_w);
+    summary_out->n_domains           = n_domains;
+    summary_out->pass                = summary_out->weighted_pass_rate > pass_threshold;
+
+    // Worst domain (lowest pass_rate). Ties broken by lowest ppl
+    // (the worst domain on accuracy AND quality). The loop walks
+    // the array once and tracks the best "worst" entry.
+    int worst_idx = -1;
+    float worst_pr = 2.0f;  // sentinel above 1.0
+    float worst_ppl_at_pr = 0.0f;
+    for (int64_t i = 0; i < n_domains; i++) {
+        const float pr  = per_domain[i].pass_rate;
+        const float ppl = per_domain[i].ppl;
+        if (pr < worst_pr ||
+            (pr == worst_pr && ppl > worst_ppl_at_pr)) {
+            worst_pr        = pr;
+            worst_ppl_at_pr = ppl;
+            worst_idx       = (int) i;
+        }
+    }
+    summary_out->worst_domain_idx = worst_idx;
+    summary_out->worst_pass_rate  = (worst_idx >= 0) ? worst_pr : 0.0f;
+    return 0;
+}

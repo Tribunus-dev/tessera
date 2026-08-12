@@ -52,7 +52,11 @@ static void check_close(const char * name, float got, float want, float tol) {
 static const char * TEST_DIR = "/tmp/test_l2l5";
 
 // Write a v3 TDQT sidecar with a caller-chosen suffix (matches the
-// on-disk layout of the runtime hook in common/tessera-debug).
+// on-disk layout of the runtime hook in common/tessera-debug). Emits
+// the full v3 header including the 16-byte FP env block (spec §2.3,
+// PR #8); a pre-PR-#8 reader that doesn't know about the FP env
+// would rewind 16 bytes and read the file at the legacy 40-byte
+// offset.
 static bool write_sidecar(const std::string & name, const char * suffix,
                           int64_t rows, int64_t cols,
                           const std::vector<float> & data) {
@@ -73,6 +77,18 @@ static bool write_sidecar(const std::string & name, const char * suffix,
     fwrite(&outlier_threshold, sizeof(outlier_threshold), 1, f);
     int64_t outlier_count_total = 0;
     fwrite(&outlier_count_total, sizeof(outlier_count_total), 1, f);
+
+    // FP env block (v3.1 spec §2.3): 16 bytes. Defaults match the
+    // v3 zero-init contract: F32 accumulator, RTN rounding, IEEE
+    // denormals, CPU backend.
+    uint32_t fp_accumulator_dtype = 0;   // F32
+    uint32_t rounding_mode        = 0;   // RTN
+    uint32_t denormal_mode        = 0;   // IEEE
+    uint32_t backend_id           = 0;   // CPU
+    fwrite(&fp_accumulator_dtype, sizeof(fp_accumulator_dtype), 1, f);
+    fwrite(&rounding_mode,        sizeof(rounding_mode),        1, f);
+    fwrite(&denormal_mode,        sizeof(denormal_mode),        1, f);
+    fwrite(&backend_id,           sizeof(backend_id),           1, f);
 
     std::vector<int32_t> row_outlier_counts((size_t)rows, 0);
     fwrite(row_outlier_counts.data(), sizeof(int32_t), (size_t)rows, f);
@@ -562,6 +578,133 @@ static void test_l2() {
         ts_l2_spectral_metrics s_0 = ts_l2_compute_spectral_metrics(
             empty.data(), 0, 0, 2, 0, 100, 42);
         check("spec 0x0: spectral_norm == 0", s_0.spectral_norm == 0.0f);
+    }
+
+    // --- L4 domain-weighted prompt bank (v3.1 spec §7) ---
+    {
+        // 7-domain fixture with the spec's canonical names. Each
+        // domain has a distinct pass rate and PPL; the worst is
+        // "adversarial" (pass_rate 0.55).
+        const int64_t n_domains = 7;
+        const char * names[7] = {
+            "factual", "math", "code", "structured",
+            "reasoning", "conversational", "adversarial"
+        };
+        ts_l4_domain_metrics per_domain[7] = {
+            { "factual",        12.3f, 0.96f,  50 },
+            { "math",           18.4f, 0.84f, 100 },
+            { "code",            9.1f, 0.72f, 100 },
+            { "structured",     11.2f, 0.88f, 100 },
+            { "reasoning",      22.6f, 0.60f, 100 },
+            { "conversational", 15.0f, 0.78f,  50 },
+            { "adversarial",    19.8f, 0.55f, 100 },
+        };
+
+        // Default uniform weights (1/7 each). The weighted pass
+        // rate is the mean of the seven pass rates: (0.96 + 0.84 +
+        // 0.72 + 0.88 + 0.60 + 0.78 + 0.55) / 7 = 5.33 / 7 = 0.761.
+        std::vector<float> weights((size_t) n_domains, 0.0f);
+        ts_l4_domain_default_weights(names, n_domains, weights.data());
+        for (int64_t i = 0; i < n_domains; i++) {
+            check_close("default weights are uniform",
+                        weights[(size_t) i], 1.0f / (float) n_domains, 1e-6f);
+        }
+
+        ts_l4_domain_summary summary = {};
+        const int rc = ts_l4_domain_aggregate(
+            per_domain, weights.data(), n_domains,
+            /*pass_threshold=*/0.85f, &summary);
+        check("domain_aggregate rc == 0", rc == 0);
+        check("domain_aggregate n_domains == 7", summary.n_domains == 7);
+        check_close("domain_aggregate weighted_pass_rate ~= 0.7614",
+                    summary.weighted_pass_rate, 0.7614285f, 1e-4f);
+        check("domain_aggregate pass == false (below 0.85 threshold)",
+              !summary.pass);
+        check("domain_aggregate total_prompts == 600",
+              summary.total_prompts == 600);
+        // Worst domain is "adversarial" (pass_rate 0.55).
+        check("domain_aggregate worst_domain_idx == 6 (adversarial)",
+              summary.worst_domain_idx == 6);
+        check_close("domain_aggregate worst_pass_rate == 0.55",
+                    summary.worst_pass_rate, 0.55f, 1e-6f);
+
+        // Higher weights on code + reasoning (the spec's
+        // production default). The weighted pass rate is
+        // skewed: (0.96 + 0.84 + 2*0.72 + 0.88 + 2*0.60 + 0.78 + 0.55) / (1+1+2+1+2+1+1)
+        //   = 6.65 / 9 = 0.7389.
+        // Below the 0.85 threshold -> NOT pass. The weight uplift
+        // on the two low-scoring domains (code 0.72, reasoning 0.60)
+        // pulls the aggregate below the uniform 0.7614 baseline.
+        std::vector<float> prod_weights = {
+            1.0f, 1.0f, 2.0f, 1.0f, 2.0f, 1.0f, 1.0f
+        };
+        ts_l4_domain_summary prod_summary = {};
+        const int prc = ts_l4_domain_aggregate(
+            per_domain, prod_weights.data(), n_domains,
+            /*pass_threshold=*/0.85f, &prod_summary);
+        check("prod rc == 0", prc == 0);
+        check_close("prod weighted_pass_rate ~= 0.7389",
+                    prod_summary.weighted_pass_rate, 0.7388889f, 1e-4f);
+        check("prod pass == false (uplift on low-scoring domains pulls aggregate below threshold)",
+              !prod_summary.pass);
+
+        // All-zero pass rates: weighted is 0, NOT pass.
+        ts_l4_domain_metrics zero_pr[7] = {};
+        for (int64_t i = 0; i < n_domains; i++) {
+            zero_pr[i] = per_domain[i];
+            zero_pr[i].pass_rate = 0.0f;
+        }
+        ts_l4_domain_summary zero_summary = {};
+        const int zrc = ts_l4_domain_aggregate(
+            zero_pr, weights.data(), n_domains, 0.85f, &zero_summary);
+        check("zero pass rates: rc == 0", zrc == 0);
+        check_close("zero pass rates: weighted_pass_rate == 0",
+                    zero_summary.weighted_pass_rate, 0.0f, 1e-9f);
+        check("zero pass rates: NOT pass", !zero_summary.pass);
+
+        // Single domain: aggregate is that domain's metrics.
+        ts_l4_domain_metrics single = { "math", 18.4f, 0.84f, 100 };
+        ts_l4_domain_summary single_summary = {};
+        const int src = ts_l4_domain_aggregate(
+            &single, nullptr, 1, 0.85f, &single_summary);
+        check("single domain: rc == 0", src == 0);
+        check_close("single domain: weighted_ppl == 18.4",
+                    single_summary.weighted_ppl, 18.4f, 1e-6f);
+        check_close("single domain: weighted_pass_rate == 0.84",
+                    single_summary.weighted_pass_rate, 0.84f, 1e-6f);
+        check("single domain: worst_domain_idx == 0",
+              single_summary.worst_domain_idx == 0);
+        check("single domain: NOT pass (0.84 < 0.85)", !single_summary.pass);
+
+        // All weights zero: invalid (returns -1).
+        std::vector<float> zero_w(7, 0.0f);
+        ts_l4_domain_summary invalid_summary = {};
+        const int irc = ts_l4_domain_aggregate(
+            per_domain, zero_w.data(), n_domains, 0.85f, &invalid_summary);
+        check("all-zero weights: rc == -1", irc == -1);
+
+        // Negative weight: invalid.
+        std::vector<float> neg_w(7, 1.0f);
+        neg_w[0] = -1.0f;
+        ts_l4_domain_summary neg_summary = {};
+        const int nrc = ts_l4_domain_aggregate(
+            per_domain, neg_w.data(), n_domains, 0.85f, &neg_summary);
+        check("negative weight: rc == -1", nrc == -1);
+
+        // Null per_domain: invalid.
+        ts_l4_domain_summary null_summary = {};
+        const int nprc = ts_l4_domain_aggregate(
+            nullptr, weights.data(), n_domains, 0.85f, &null_summary);
+        check("null per_domain: rc == -1", nprc == -1);
+
+        // Default weight function with null inputs: invalid.
+        std::vector<float> out_w(7, 0.0f);
+        check("default weights null names: rc == -1",
+              ts_l4_domain_default_weights(nullptr, 7, out_w.data()) == -1);
+        check("default weights null out: rc == -1",
+              ts_l4_domain_default_weights(names, 7, nullptr) == -1);
+        check("default weights n=0: rc == -1",
+              ts_l4_domain_default_weights(names, 0, out_w.data()) == -1);
     }
 
     // --- run + flagging ---

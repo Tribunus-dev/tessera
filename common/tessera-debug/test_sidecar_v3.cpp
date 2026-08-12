@@ -27,6 +27,17 @@ static int write_test_file(const char * path) {
     fwrite(&threshold, sizeof(threshold), 1, f);
     fwrite(&total,     sizeof(total),     1, f);
 
+    // FP env block (v3.1 spec §2.3): 16 bytes at offset 40.
+    // Default to F32/RTN/IEEE/CPU (the v3 zero-init contract).
+    const uint32_t fp_accumulator_dtype = 0;
+    const uint32_t rounding_mode        = 0;
+    const uint32_t denormal_mode        = 0;
+    const uint32_t backend_id           = 0;
+    fwrite(&fp_accumulator_dtype, sizeof(fp_accumulator_dtype), 1, f);
+    fwrite(&rounding_mode,        sizeof(rounding_mode),        1, f);
+    fwrite(&denormal_mode,        sizeof(denormal_mode),        1, f);
+    fwrite(&backend_id,           sizeof(backend_id),           1, f);
+
     const int32_t counts[4] = { 1, 0, 2, 0 };
     fwrite(counts, sizeof(int32_t), 4, f);
 

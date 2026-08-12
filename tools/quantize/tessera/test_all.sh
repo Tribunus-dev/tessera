@@ -203,9 +203,11 @@ compile_and_run l15         $T/test_l15.cpp         $T/tessera-l15.cpp $C/tesser
 compile_and_run l1_fitness  $T/test_l1_fitness.cpp  $T/tessera-l1-fitness.cpp $C/tessera-sidecar-v3.cpp -I $C
 
 # --- L1 tail-weighted kernel-direct t_l^2 (L6 v3.1, §11 of the spec) ---
-# Pure-math, no sidecar needed; covers lambda=0/negative/tau<0 and the
-# outlier-dominance case where the tail MSE swamps the Frobenius.
-compile_and_run l1_fitness_tail $T/test_l1_fitness_tail.cpp $T/tessera-l1-fitness.cpp -I $C
+# Pure-math on the t2 path, but ts_l1_load_sidecar (in
+# tessera-l1-fitness.cpp) is the v3 sidecar reader and pulls in
+# ts_sidecar_v3_read from common/tessera-debug. Link the sidecar
+# source so the test can run the l6-tail assertion path end-to-end.
+compile_and_run l1_fitness_tail $T/test_l1_fitness_tail.cpp $T/tessera-l1-fitness.cpp $C/tessera-sidecar-v3.cpp -I $C
 
 # L1.5 dispatch-time capture (v3.1, §3 of the spec) is built via
 # CMake (test-tessera-l15-capture target) because it needs ggml/gguf
@@ -213,8 +215,9 @@ compile_and_run l1_fitness_tail $T/test_l1_fitness_tail.cpp $T/tessera-l1-fitnes
 # tools/quantize/CMakeLists.txt.
 
 # --- L2-L5 runtime-aware pipeline (L2 diff + L3 coherence + L5 adaptive) ---
-# L2 needs vendor/nlohmann (JSON report); L3 needs the sidecar reader.
-compile_and_run l2l5        $T/test_l2l5.cpp        $T/tessera-l2-diff.cpp $T/tessera-l3-coherence.cpp $T/tessera-l5.cpp $T/tessera-ppl.cpp $C/tessera-sidecar-v3.cpp -I vendor -I $C
+# L2 needs vendor/nlohmann (JSON report); L3 needs the sidecar reader;
+# L2 spectral metrics need tessera-linalg for ts_linalg_svd_topk.
+compile_and_run l2l5        $T/test_l2l5.cpp        $T/tessera-l2-diff.cpp $T/tessera-l3-coherence.cpp $T/tessera-l5.cpp $T/tessera-ppl.cpp $T/tessera-linalg.cpp $C/tessera-sidecar-v3.cpp -I vendor -I $C -framework Accelerate
 
 # --- Needs vendor (nlohmann/json) ---
 compile_and_run policy      $T/test_policy.cpp      $T/tessera-policy.cpp -I vendor

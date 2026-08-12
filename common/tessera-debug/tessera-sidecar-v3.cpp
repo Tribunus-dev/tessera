@@ -194,20 +194,19 @@ int ts_sidecar_v3_read(const char * path, ts_sidecar_v3 * out,
 
     // FP environment block (v3 extension, spec §2.3). The 16-byte
     // block sits at offset 40. v3 files written before the extension
-    // have 16 bytes of zero here (the file's data block is shifted
-    // by 16 bytes vs. the pre-extension layout, but the v3 reader
-    // also reads the data block at the new offset so both layouts
-    // work). On a short read (legacy file), default the four FP
-    // fields to their zero-init values (the v3 zero-init contract:
-    // F32/RTN/IEEE/CPU).
+    // end at offset 40 (the data block is shifted by 16 bytes vs. the
+    // pre-extension layout, but the v3 reader falls back to the legacy
+    // 40-byte header layout on a short read). On a short read (legacy
+    // file), default the four FP fields to their zero-init values (the
+    // v3 zero-init contract: F32/RTN/IEEE/CPU) and rewind 16 bytes so
+    // the per-row strips are read at the legacy offset.
     if (fread(&h.fp_accumulator_dtype, sizeof(h.fp_accumulator_dtype), 1, f) != 1 ||
         fread(&h.rounding_mode,        sizeof(h.rounding_mode),        1, f) != 1 ||
         fread(&h.denormal_mode,        sizeof(h.denormal_mode),        1, f) != 1 ||
         fread(&h.backend_id,           sizeof(h.backend_id),           1, f) != 1) {
         // Short read: legacy file. The fields are already zero from
-        // the struct's default initializer; seek back so the data
-        // block is read at the legacy offset (40 bytes of header
-        // instead of 56).
+        // the struct's default initializer; rewind 16 bytes so the
+        // data block is read at the legacy 40-byte offset.
         h.fp_accumulator_dtype = 0;
         h.rounding_mode        = 0;
         h.denormal_mode        = 0;
@@ -215,7 +214,7 @@ int ts_sidecar_v3_read(const char * path, ts_sidecar_v3 * out,
         // The file pointer is now 16 bytes past the end of the
         // header. Rewind to the end of the legacy 40-byte header
         // so the per-row strips are read at the correct offset.
-        if (fseek(f, 0, SEEK_CUR) != 0) {
+        if (fseek(f, -16, SEEK_CUR) != 0) {
             // Best effort; the per-row read below will fail with
             // "truncated" if the seek was unsuccessful.
         }
