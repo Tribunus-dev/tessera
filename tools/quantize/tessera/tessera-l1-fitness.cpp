@@ -89,6 +89,58 @@ float ts_l1_blended_t2(float offline_t2, float kernel_direct_t2,
     return (1.0f - b) * offline_t2 + b * kernel_direct_t2;
 }
 
+float ts_l1_kernel_direct_t2_tail(const float * w_hat,
+                                  const float * w_original,
+                                  const float * kernel_dequant,
+                                  int64_t n,
+                                  float tau,
+                                  float lambda_tail) {
+    if (w_hat == nullptr || w_original == nullptr || kernel_dequant == nullptr || n <= 0) {
+        return 0.0f;
+    }
+    if (lambda_tail < 0.0f) {
+        lambda_tail = 0.0f;
+    }
+
+    // Pass 1: Frobenius term + outlier count. We accumulate in F64 for
+    // numerical stability on large tensors; the result is cast to F32
+    // at the end (matches ts_l1_kernel_direct_t2).
+    double num = 0.0;             // ||w_hat - dequant_kernel||_F^2
+    double den = 0.0;             // ||w_original||_F^2
+    int64_t n_tail = 0;            // count of |W_l[i]| > tau
+    for (int64_t i = 0; i < n; i++) {
+        const double d = (double)w_hat[i] - (double)kernel_dequant[i];
+        num += d * d;
+        den += (double)w_original[i] * (double)w_original[i];
+        if (fabs((double)w_original[i]) > (double)tau) {
+            n_tail++;
+        }
+    }
+    if (den == 0.0) {
+        return 0.0f;
+    }
+    const float frob = (float)(num / den);
+
+    // Pass 2: tail MSE (mean, not sum, so the result is invariant to
+    // the number of outliers). If there are no outliers, the tail term
+    // is 0 and the function reduces to the Frobenius. This is the
+    // principled default: when the weight has no outliers, the tail
+    // weighting has nothing to act on.
+    float tail_mse = 0.0f;
+    if (lambda_tail > 0.0f && n_tail > 0) {
+        double tail_sum = 0.0;
+        for (int64_t i = 0; i < n; i++) {
+            if (fabs((double)w_original[i]) > (double)tau) {
+                const double d = (double)w_hat[i] - (double)kernel_dequant[i];
+                tail_sum += d * d;
+            }
+        }
+        tail_mse = (float)(tail_sum / (double)n_tail);
+    }
+
+    return frob + lambda_tail * tail_mse;
+}
+
 // Offline proxy t_l^2 = ||W_hat - W||_F^2 / ||W||_F^2 (fallback when no
 // sidecar is available).
 static float ts_l1_offline_t2(const float * w_hat, const float * w_original,

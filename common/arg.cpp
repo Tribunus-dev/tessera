@@ -4868,6 +4868,33 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             tessera_params.kernel_fitness_blend = f;
         }
     ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_KERNEL_FITNESS}));
+    add_opt(common_arg(
+        {"--l6-tail-tau"}, "F",
+        "Tessera: outlier threshold for the L6 tail-weighted t_l^2 (default 6.0, "
+        "LLM.int8() precedent). Tail MSE is averaged over weights with |W_l[i]| > tau.",
+        [](common_params &, const std::string & value) {
+            float f = std::stof(value);
+            if (f < 0.0f) {
+                throw std::invalid_argument(
+                    string_format("error: --l6-tail-tau must be >= 0, got %f\n", f));
+            }
+            tessera_params.l6_tail_tau = f;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_KERNEL_FITNESS}));
+    add_opt(common_arg(
+        {"--l6-tail-weight"}, "F",
+        "Tessera: weight of the L6 tail MSE term (default 4.0, matches "
+        "per_tensor_calibrate.py:73 `combined` mode). Set 0 to disable tail weighting "
+        "and reproduce the shipped Frobenius behavior.",
+        [](common_params &, const std::string & value) {
+            float f = std::stof(value);
+            if (f < 0.0f) {
+                throw std::invalid_argument(
+                    string_format("error: --l6-tail-weight must be >= 0, got %f\n", f));
+            }
+            tessera_params.l6_tail_weight = f;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_KERNEL_FITNESS}));
 
     // ----- `l15` subcommand -----
     add_opt(common_arg(

@@ -48,6 +48,34 @@ float ts_l1_kernel_direct_t2(const float * w_hat,
                              const float * kernel_dequant,
                              int64_t n);
 
+// Tail-weighted kernel-direct t_l^2 (NEW, L6 v3.1).
+//
+// t_l^2_tail = ||W_hat - dequant_kernel||_F^2 / ||W||_F^2
+//            + lambda_tail * mean_{i: |W_l[i]| > tau} (W_hat[i] - dequant_kernel[i])^2
+//
+// The first term is the existing Frobenius (invariant to the number of
+// weights); the second term is the mean (not sum) MSE on the
+// outlier-tail weights (invariant to the number of outliers). The two
+// together are sensitive to both the bulk and the tail.
+//
+// The 6.0 threshold for the outlier cutoff is the LLM.int8() precedent
+// (Dettmers et al., arXiv:2208.07339); 0.1% of channels in transformer
+// attention/FFN weights exceed ~6.0 in absolute value, and those
+// channels dominate the quantization loss landscape. The default
+// lambda_tail = 4.0 matches the existing `combined` fitness mode in
+// tools/tessera/per_tensor_calibrate.py:73.
+//
+// The function does not modify its inputs. Returns 0 when
+// ||W||_F^2 == 0 (degenerate case) and when the array is empty.
+// lambda_tail < 0 is treated as 0 (no tail weighting; the function
+// reduces to ts_l1_kernel_direct_t2).
+float ts_l1_kernel_direct_t2_tail(const float * w_hat,
+                                  const float * w_original,
+                                  const float * kernel_dequant,
+                                  int64_t n,
+                                  float tau,
+                                  float lambda_tail);
+
 // Compute blended fitness: (1-blend)*offline_t2 + blend*kernel_direct_t2.
 // blend_factor is clamped to [0, 1].
 float ts_l1_blended_t2(float offline_t2, float kernel_direct_t2,

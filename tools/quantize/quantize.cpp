@@ -2084,6 +2084,8 @@ int llama_quantize(int argc, char ** argv) {
         tparams.kernel_fitness       = tp.kernel_fitness;
         tparams.kernel_fitness_dir   = tp.kernel_fitness_dir;
         tparams.kernel_fitness_blend = tp.kernel_fitness_blend;
+        tparams.l6_tail_tau          = tp.l6_tail_tau;
+        tparams.l6_tail_weight       = tp.l6_tail_weight;
         tparams.w4a4                 = tp.w4a4;
         tparams.w4a4_outlier_thresh  = tp.w4a4_outlier_thresh;
         tparams.run_acceptance       = tp.acceptance;

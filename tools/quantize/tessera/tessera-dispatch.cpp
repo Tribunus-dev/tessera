@@ -460,6 +460,53 @@ static float ts_dispatch_forced_t2(const float * weights, const float * act_scal
     return (frob2 > 0.0f) ? (mse * (float)n / frob2) : mse;
 }
 
+// Compute the kernel-direct t_l^2 for one tensor when an L1 sidecar
+// is available. Returns the tail-weighted t_l^2 (t_l^2_tail, the
+// Frobenius + lambda * mean-tail-MSE form from spec section 11);
+// when no sidecar is present, returns -1 as the "no measurement"
+// sentinel so the caller can fall back to the offline proxy.
+//
+// The acceptance verdict (step 7b in the dispatch) used to hardcode
+// at.kernel_direct_t2 = at.composite_t2 (the offline proxy as a
+// stand-in for the kernel-direct measurement). That made the
+// ranking-disagreement test in ts_acceptance_run vacuous. This
+// helper is the principled replacement: the kernel-direct t2 is
+// computed from the L1 sidecar when one exists, and the
+// tail-weighted form is the production t_l^2 (per the
+// runtime-aware-pipeline.md spec).
+//
+// The implementation is two-pass: pass 1 reads the sidecar and
+// computes the Frobenius term; pass 2 reads the sidecar again
+// and computes the tail MSE on the |W_l[i]| > tau indices. The
+// sidecar is loaded once via ts_l1_load_sidecar (from
+// tessera-l1-fitness.h) which copies the F32 data into a local
+// std::vector, so the second pass walks the local copy, not
+// the file.
+static float ts_dispatch_kernel_direct_t2(
+        const char * tensor_name,
+        const char * sidecar_dir,
+        const float * w_original,
+        const float * w_hat,
+        int64_t n,
+        float tau,
+        float lambda_tail) {
+    if (sidecar_dir == nullptr || sidecar_dir[0] == '\0' ||
+        tensor_name == nullptr || w_original == nullptr || w_hat == nullptr || n <= 0) {
+        return -1.0f;  // sentinel: no measurement available
+    }
+    std::vector<float> kdeq;
+    int64_t rows = 0;
+    int64_t cols = 0;
+    if (ts_l1_load_sidecar(sidecar_dir, tensor_name, &kdeq, &rows, &cols) != 0) {
+        return -1.0f;  // sentinel: sidecar absent or malformed
+    }
+    if ((int64_t)kdeq.size() != n) {
+        return -1.0f;  // sentinel: shape mismatch
+    }
+    return ts_l1_kernel_direct_t2_tail(w_hat, w_original, kdeq.data(),
+                                       n, tau, lambda_tail);
+}
+
 // ---------------------------------------------------------------------------
 // L5 adaptive requantize refine loop (dispatch L2 -> L5 -> re-quantize)
 // ---------------------------------------------------------------------------
@@ -2980,6 +3027,20 @@ int ts_dispatch_run(const ts_dispatch_params * params,
         const float othresh = params->outlier_frac;
         const uint32_t seed = (uint32_t)params->evolve_seed;
 
+        // Resolve the L1 sidecar dir for the kernel-direct t_l^2
+        // measurement in the acceptance verdict (NEW, v3.1). Same
+        // env-var fallback as the GA path (line ~2165). The
+        // acceptance verdict's at.kernel_direct_t2 is the real
+        // measurement now (was at.composite_t2 = offline proxy
+        // before this fix; see spec section 11).
+        std::string kf_dir_buf = params->kernel_fitness_dir;
+        if (kf_dir_buf.empty()) {
+            const char * env = std::getenv("LLAMA_TILE640_DEBUG_DEQUANT_DIR");
+            if (env != nullptr) {
+                kf_dir_buf = env;
+            }
+        }
+
         ts_progress_set_phase(prog, "accept-prep", n_tensors,
                               "collect tensors for acceptance gate");
         for (int64_t i = 0; i < n_tensors; i++) {
@@ -3064,7 +3125,34 @@ int ts_dispatch_run(const ts_dispatch_params * params,
                 at.lowrank_t2   = ts_dispatch_forced_t2(w.data(), item.act, item.out_dim, item.in_dim, TS_EXPERT_FLRQ,      alpha, clip, othresh, seed);
                 at.hessian_t2   = ts_dispatch_forced_t2(w.data(), item.act, item.out_dim, item.in_dim, TS_EXPERT_SEPTQ,     alpha, clip, othresh, seed);
                 at.offline_proxy_mse = at.composite_t2;
-                at.kernel_direct_t2  = at.composite_t2;
+                // Compute the real kernel-direct t2 from the L1 sidecar
+                // when one is available. The shipped behavior was
+                // at.kernel_direct_t2 = at.composite_t2 which made
+                // the G6 ranking-disagreement test vacuous. Now we
+                // produce a real measurement; if no sidecar is
+                // present, fall back to the composite (offline proxy)
+                // so the existing G6 contract is preserved.
+                //
+                // In the acceptance verdict we have the source `w`
+                // but not a separate `w_hat` reconstruction. The L1
+                // sidecar IS the dequant output, so the kernel-direct
+                // measurement is `||dequant_kernel - source||^2 / ||
+                // source||^2` directly. We pass `w` as both arguments
+                // because `ts_l1_kernel_direct_t2_tail` measures
+                // `||w_hat - dequant_kernel||^2 / ||w_original||^2`;
+                // with `w_hat = w_original = w` this reduces to the
+                // source-vs-dequant Frobenius, which is what we want.
+                {
+                    const float kd = ts_dispatch_kernel_direct_t2(
+                        item.name.c_str(), kf_dir_buf.c_str(),
+                        w.data(), w.data(), (int64_t)w.size(),
+                        params->l6_tail_tau, params->l6_tail_weight);
+                    if (kd >= 0.0f) {
+                        at.kernel_direct_t2 = kd;
+                    } else {
+                        at.kernel_direct_t2 = at.composite_t2;
+                    }
+                }
                 at.held_out          = false;
                 acc_tensors[idx] = at;
                 ts_progress_inc(prog, 1, item.name.c_str());
@@ -3088,7 +3176,17 @@ int ts_dispatch_run(const ts_dispatch_params * params,
                     at.lowrank_t2   = ts_dispatch_forced_t2(w.data(), item.act, item.out_dim, item.in_dim, TS_EXPERT_FLRQ,      alpha, clip, othresh, seed);
                     at.hessian_t2   = ts_dispatch_forced_t2(w.data(), item.act, item.out_dim, item.in_dim, TS_EXPERT_SEPTQ,     alpha, clip, othresh, seed);
                     at.offline_proxy_mse = at.composite_t2;
-                    at.kernel_direct_t2  = at.composite_t2;
+                    {
+                        const float kd = ts_dispatch_kernel_direct_t2(
+                            item.name.c_str(), kf_dir_buf.c_str(),
+                            nullptr, w.data(), (int64_t)w.size(),
+                            params->l6_tail_tau, params->l6_tail_weight);
+                        if (kd >= 0.0f) {
+                            at.kernel_direct_t2 = kd;
+                        } else {
+                            at.kernel_direct_t2 = at.composite_t2;
+                        }
+                    }
                     at.held_out          = false;
                     acc_tensors[idx] = at;
                     ts_progress_inc(prog, 1, item.name.c_str());

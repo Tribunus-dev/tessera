@@ -29,6 +29,13 @@ struct common_tessera_params {
     bool        kernel_fitness = false;
     std::string kernel_fitness_dir;
     float       kernel_fitness_blend = 1.0f;
+    // L6 tail-weighted t_l^2 (spec section 11). tail_tau is the outlier
+    // threshold; tail_weight multiplies the mean tail MSE. Default 6.0 / 4.0
+    // matches the LLM.int8() outlier precedent and per_tensor_calibrate.py's
+    // `combined` fitness mode respectively. Set tail_weight=0 to disable and
+    // reproduce the shipped Frobenius behavior.
+    float       l6_tail_tau    = 6.0f;
+    float       l6_tail_weight = 4.0f;
     bool        w4a4 = false;
     float       w4a4_outlier_thresh = 6.0f;
     bool        acceptance = true;

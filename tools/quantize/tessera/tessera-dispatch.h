@@ -151,6 +151,22 @@ struct ts_dispatch_params {
     std::string runtime_probe;            // orchestrator marker (the prompts file the orchestrator is using)
     std::string runtime_probe_bf16;       // path to the BF16 source model
     std::string runtime_probe_l2_out;     // path to the L2 JSONL report
+    // L6 tail-weighted kernel loss (NEW, v3.1, spec section 11). The
+    // t_l^2 fitness function adds a mean-MSE term on the outlier-tail
+    // weights (|W_l[i]| > l6_tail_tau) scaled by l6_tail_weight. This
+    // forces the GA to preserve the outlier codebook at the same time
+    // as the bulk. The 6.0 default is the LLM.int8() precedent
+    // (Dettmers et al., arXiv:2208.07339); the 4.0 weight matches
+    // per_tensor_calibrate.py:73's `combined` fitness mode. Set
+    // l6_tail_weight = 0 to disable tail weighting and reproduce the
+    // shipped Frobenius behavior (back-compat with the pre-v3.1
+    // ts_l1_kernel_direct_t2). Placed at the end of the struct so
+    // appending it doesn't shift the layout of fields that downstream
+    // test fixtures initialize via `ts_dispatch_params p = {};` and
+    // then set explicitly (the L5 dispatch test, the quantize DB e2e
+    // test).
+    float       l6_tail_tau     = 6.0f;  // outlier threshold
+    float       l6_tail_weight  = 4.0f;  // tail loss multiplier
 };
 
 // Result of the Tessera pipeline for one tensor.

@@ -532,6 +532,8 @@ static const std::vector<key_handler> k_kernel_fitness = {
     {"kernel-fitness",       SET_BOOL(kernel_fitness)},
     {"kernel-fitness-blend", SET_F_RANGE(kernel_fitness_blend, 0.0f, 1.0f, true)},
     {"kernel-fitness-dir",   SET_STR(kernel_fitness_dir)},
+    {"l6-tail-tau",          SET_F_POS(l6_tail_tau)},
+    {"l6-tail-weight",       SET_F_POS(l6_tail_weight)},
 };
 static const std::vector<key_handler> k_capability = {
     {"capability-eval", SET_STR(capability_eval)},
