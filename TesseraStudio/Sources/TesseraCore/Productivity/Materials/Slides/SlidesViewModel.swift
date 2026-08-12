@@ -316,9 +316,20 @@ public final class SlideDeckEditorViewModel: ObservableObject {
     @Published public var draftTag: String
     @Published public var isSaving: Bool = false
     @Published public private(set) var lastError: String?
+    /// Set when a newer recovery file exists than what was persisted.
+    @Published public var pendingRecovery: Bool = false
 
     public let store: SlideStore
     public let userID: UserID
+
+    private var saveDebounceTask: Task<Void, Never>?
+    private let debounceDelay: TimeInterval = 2.0
+
+    /// The file URL for the session recovery JSON.
+    private var recoveryFileURL: URL {
+        let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        return cacheDir.appendingPathComponent("slide-recovery-\(deck.id.uuidString).json")
+    }
 
     public init(deck: SlideDeck, store: SlideStore, userID: UserID) {
         self.deck = deck
@@ -330,9 +341,108 @@ public final class SlideDeckEditorViewModel: ObservableObject {
     }
 
     public func refresh(with deck: SlideDeck) {
+        saveDebounceTask?.cancel()
+        saveDebounceTask = nil
         self.deck = deck
         self.document = deck.body
         self.draftTitle = deck.title
+    }
+
+    // MARK: - Session recovery
+
+    /// Check for a session-recovery file. Returns true if a newer backup exists.
+    public func checkRecovery() {
+        let file = recoveryFileURL
+        guard FileManager.default.fileExists(atPath: file.path) else {
+            pendingRecovery = false
+            return
+        }
+        do {
+            let attrs = try FileManager.default.attributesOfItem(atPath: file.path)
+            guard let modDate = attrs[.modificationDate] as? Date else {
+                pendingRecovery = false
+                return
+            }
+            pendingRecovery = modDate > deck.updatedAt
+        } catch {
+            pendingRecovery = false
+        }
+    }
+
+    /// Restore from the session-recovery file.
+    public func recoverFromBackup() async {
+        let file = recoveryFileURL
+        guard FileManager.default.fileExists(atPath: file.path) else { return }
+        do {
+            let data = try Data(contentsOf: file)
+            let recovered = try SlideDeck.from(jsonData: data)
+            self.deck = recovered
+            self.document = recovered.body
+            self.draftTitle = recovered.title
+            pendingRecovery = false
+        } catch {
+            lastError = "Failed to restore backup: \(error)"
+        }
+    }
+
+    /// Discard the recovery file (user chose to keep the persisted version).
+    public func discardRecovery() {
+        try? FileManager.default.removeItem(at: recoveryFileURL)
+        pendingRecovery = false
+    }
+
+    /// Save a recovery snapshot for session-crash recovery.
+    public func saveRecoveryFile() {
+        do {
+            let data = try deck.jsonData()
+            try data.write(to: recoveryFileURL, options: .atomic)
+        } catch {
+            NSLog("SlideDeckEditorViewModel.saveRecoveryFile: \(error)")
+        }
+    }
+
+    /// Clear the recovery file after a successful persist.
+    public func clearRecoveryFile() {
+        try? FileManager.default.removeItem(at: recoveryFileURL)
+    }
+
+    // MARK: - Debounced body persist
+
+    /// Debounced persist. Cancels any in-flight save, then schedules a new one
+    /// after 2 seconds to coalesce rapid edits.
+    public func commitBody(_ ast: DocumentAST) async {
+        guard ast != deck.body else { return }
+        saveDebounceTask?.cancel()
+        saveDebounceTask = Task {
+            do {
+                try await Task.sleep(nanoseconds: UInt64(debounceDelay * 1_000_000_000))
+            } catch {
+                return
+            }
+            await persistBody(ast)
+        }
+    }
+
+    /// Force an immediate save (flushes the debounce). Called by scenePhase
+    /// change to background.
+    public func flushBody() async {
+        saveDebounceTask?.cancel()
+        saveDebounceTask = nil
+        await persistBody(document)
+    }
+
+    private func persistBody(_ ast: DocumentAST) async {
+        guard ast != deck.body else { return }
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            let updated = try await store.setBody(ast, for: deck.id)
+            self.deck = updated
+            self.document = updated.body
+            clearRecoveryFile()
+        } catch {
+            lastError = String(describing: error)
+        }
     }
 
     // MARK: - Slide view helpers
@@ -358,22 +468,40 @@ public final class SlideDeckEditorViewModel: ObservableObject {
         }
     }
 
-    // MARK: - Body (deck-wide AST)
+    public func setDocumentLocal(_ ast: DocumentAST) {
+        self.document = ast
+    }
 
-    public func commitBody(_ ast: DocumentAST) async {
-        guard ast != deck.body else { return }
-        isSaving = true; defer { isSaving = false }
+    // MARK: - Slide notes
+
+    /// Commit a new notes string for a specific slide.
+    public func commitSlideNotes(_ text: String, at slideIndex: Int) async {
+        guard slideIndex >= 0, slideIndex < deck.slideCount else { return }
+        isSaving = true
+        defer { isSaving = false }
         do {
-            let updated = try await store.setBody(ast, for: deck.id)
+            var updated = deck
+            let key = deck.body.rootChildren[slideIndex].uuidString
+            var meta = updated.slideMeta
+            meta[key] = (meta[key] ?? SlideMeta.default).copyWith(notes: text)
+            updated = SlideDeck(
+                id: updated.id,
+                title: updated.title,
+                body: updated.body,
+                slideMeta: meta,
+                isArchived: updated.isArchived,
+                isTrashed: updated.isTrashed,
+                isFavorite: updated.isFavorite,
+                tags: updated.tags,
+                linkedEntityIDs: updated.linkedEntityIDs,
+                createdAt: updated.createdAt,
+                updatedAt: Date()
+            )
+            _ = try await store.upsert(updated)
             self.deck = updated
-            self.document = updated.body
         } catch {
             lastError = String(describing: error)
         }
-    }
-
-    public func setDocumentLocal(_ ast: DocumentAST) {
-        self.document = ast
     }
 
     // MARK: - Slide AST (per-slide edit)

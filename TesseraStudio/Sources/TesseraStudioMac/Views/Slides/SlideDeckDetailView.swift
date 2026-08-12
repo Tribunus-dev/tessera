@@ -3,11 +3,15 @@ import TesseraCore
 
 // MARK: - SlideDeckDetailView
 
-/// The detail column for a single SlideDeck. Shows the deck header
-/// + metadata row + tag bar + action row + the horizontal thumbnail
-/// rail + the 16:9 slide canvas + speaker-notes editor + linked
-/// entities. The canvas is ``SlideCanvasView`` (read-only in v1);
-/// the deck-wide body can be edited via the embedded editor.
+/// The detail column for a single SlideDeck. Acts as the host:
+/// owns the ribbon state (`formattingState`, `editorCoordinator`,
+/// `isFocusMode`) and the window toolbar, and renders the child
+/// ``SlideDeckEditorView`` for the scrollable content.
+///
+/// **Architecture parity with DocDetailView.** The toolbar lives
+/// in the window toolbar (`.toolbar { editorToolbar }`) — it does
+/// not scroll with the content. The host owns the shared state and
+/// passes them to both the toolbar and the child editor.
 public struct SlideDeckDetailView: View {
 
     @ObservedObject public var viewModel: SlideDeckEditorViewModel
@@ -16,10 +20,24 @@ public struct SlideDeckDetailView: View {
     public let onInsertSlide: (SlideLayout) -> Void
     public let onDeleteSlide: (Int) -> Void
 
+    @Environment(\.scenePhase) private var scenePhase
+
+    @State private var formattingState: FormattingState = FormattingState()
+    @State private var isFocusMode: Bool = false
+    @State private var editorCoordinator: TesseraEditorView.Coordinator = {
+        TesseraEditorView.Coordinator(
+            mode: .document,
+            theme: .light,
+            onMutationCommitted: nil,
+            onViewCommand: nil,
+            onFormattingStateChanged: nil
+        )
+    }()
+
     @State private var showDeleteConfirm: Bool = false
     @State private var showLinkSearch: Bool = false
-    @State private var linkSearchQuery: String = ""
     @State private var showLayoutPicker: Bool = false
+    @State private var linkSearchQuery: String = ""
 
     public init(
         viewModel: SlideDeckEditorViewModel,
@@ -39,28 +57,102 @@ public struct SlideDeckDetailView: View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    headerSection
-                    metadataRow
-                    tagBar
-                    actionRow
-                    Divider()
-                    thumbnailRail
-                    slidesToolbar
-                    canvasSection
-                    notesSection
-                    Divider()
-                    linkedSection
+                    if !isFocusMode {
+                        headerSection
+                        metadataRow
+                        tagBar
+                        actionRow
+                        Divider()
+                        thumbnailRail
+                    }
+                    SlideDeckEditorView(
+                        viewModel: viewModel,
+                        editorCoordinator: editorCoordinator,
+                        formattingState: $formattingState,
+                        isFocusMode: $isFocusMode,
+                        selectedSlideIndex: $selectedSlideIndex,
+                        onInsertSlide: onInsertSlide,
+                        onDeleteSlide: onDeleteSlide
+                    )
+                    if !isFocusMode {
+                        Divider()
+                        linkedSection
+                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
             }
         }
         .background(.background)
-        .toolbar { detailToolbar }
+        .toolbar { editorToolbar }
         .sheet(isPresented: $showDeleteConfirm) { deleteSheet }
         .sheet(isPresented: $showLinkSearch) { linkSheet }
-        .onChange(of: viewModel.deck.slideCount) { _, count in
-            if selectedSlideIndex >= count { selectedSlideIndex = max(0, count - 1) }
+        .alert("Restore unsaved changes?", isPresented: $viewModel.pendingRecovery) {
+            Button("Restore") {
+                Task { await viewModel.recoverFromBackup() }
+            }
+            Button("Discard", role: .destructive) {
+                viewModel.discardRecovery()
+            }
+        } message: {
+            Text("It looks like Tessera crashed during your last session. A more recent version of this deck was found in the backup.")
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            switch newPhase {
+            case .active:
+                viewModel.checkRecovery()
+            case .inactive, .background:
+                Task { await viewModel.flushBody() }
+                viewModel.saveRecoveryFile()
+            @unknown default:
+                break
+            }
+        }
+        .onAppear {
+            editorCoordinator.onFormattingStateChanged = { newState in
+                self.formattingState = newState
+            }
+        }
+    }
+
+    // MARK: - Toolbar
+
+    @ToolbarContentBuilder
+    private var editorToolbar: some ToolbarContent {
+        ToolbarItem(placement: .secondaryAction) {
+            TesseraEditorToolbar(
+                mode: .document,
+                formattingState: $formattingState,
+                onCommand: { command in
+                    handleEditorCommand(command)
+                },
+                isFocusModeActive: isFocusMode
+            )
+        }
+
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    isFocusMode.toggle()
+                }
+            } label: {
+                Label(
+                    isFocusMode ? "Exit Focus" : "Focus",
+                    systemImage: isFocusMode
+                        ? "arrow.up.right.and.arrow.down.left.rectangle"
+                        : "arrow.down.left.and.arrow.up.right.rectangle"
+                )
+            }
+            .help("Toggle focus mode")
+            .accessibilityLabel(isFocusMode ? "Exit Focus" : "Focus")
+        }
+
+        ToolbarItem(placement: .destructiveAction) {
+            Button(role: .destructive) { showDeleteConfirm = true } label: {
+                Label("Delete Deck", systemImage: "trash")
+            }
+            .help("Delete this deck")
+            .accessibilityLabel("Delete deck")
         }
     }
 
@@ -193,132 +285,6 @@ public struct SlideDeckDetailView: View {
         }
     }
 
-    // MARK: - Slides formatting toolbar
-
-    /// A compact version of the ribbon, showing only text-formatting controls.
-    /// Mirrors the mini toolbar that PowerPoint shows on text selection.
-    private var slidesToolbar: some View {
-        HStack(spacing: 8) {
-            // Font family picker
-            Menu {
-                Button("System") { }
-                Button("Helvetica Neue") { }
-                Button("Georgia") { }
-                Button("Courier") { }
-            } label: {
-                Label("Font", systemImage: "textformat")
-                    .font(.system(size: 11))
-            }
-            .controlSize(.small)
-
-            Divider().frame(height: 16)
-
-            // Bold / Italic / Underline
-            MiniToggleButton(label: "B", weight: .bold) { }
-            MiniToggleButton(label: "I", italic: true) { }
-            MiniToggleButton(label: "U", underline: true) { }
-
-            Divider().frame(height: 16)
-
-            // Font size stepper
-            Stepper("18 pt", value: .constant(18), in: 8...144)
-                .labelsHidden()
-                .controlSize(.small)
-
-            Divider().frame(height: 16)
-
-            // Alignment
-            MiniToggleButton(icon: "text.alignleft") { }
-            MiniToggleButton(icon: "text.aligncenter") { }
-            MiniToggleButton(icon: "text.alignright") { }
-
-            Spacer()
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(Color(.controlBackgroundColor))
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(Color(.separatorColor)).frame(height: 1)
-        }
-    }
-
-    // MARK: - Canvas
-
-    @ViewBuilder
-    private var canvasSection: some View {
-        if let slide = viewModel.slide(at: selectedSlideIndex) {
-            SlideCanvasView(slide: slide, isSelected: true)
-                .frame(height: 220)
-                .overlay(alignment: .bottomTrailing) {
-                    HStack(spacing: 8) {
-                        Text(slide.layout.displayName)
-                            .font(.caption2).foregroundStyle(.secondary)
-                            .padding(.horizontal, 6).padding(.vertical, 3)
-                            .background(Capsule().fill(.quaternary))
-                        Menu {
-                            ForEach(SlideLayout.allCases, id: \.self) { layout in
-                                Button(layout.displayName) {
-                                    Task { await viewModel.setLayout(layout, at: selectedSlideIndex) }
-                                }
-                            }
-                        } label: {
-                            Image(systemName: "ellipsis.circle").font(.caption)
-                                .symbolRenderingMode(.hierarchical)
-                        }
-                        .menuStyle(.borderlessButton)
-                    }
-                    .padding(8)
-                }
-            HStack(spacing: 8) {
-                Button {
-                    selectedSlideIndex = max(0, selectedSlideIndex - 1)
-                } label: {
-                    Label("Prev", systemImage: "chevron.left")
-                }
-                .disabled(selectedSlideIndex == 0)
-                Spacer()
-                Text("Slide \(selectedSlideIndex + 1) of \(viewModel.deck.slideCount)")
-                    .font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Button {
-                    selectedSlideIndex = min(viewModel.deck.slideCount - 1, selectedSlideIndex + 1)
-                } label: {
-                    Label("Next", systemImage: "chevron.right")
-                }
-                .disabled(selectedSlideIndex >= viewModel.deck.slideCount - 1)
-            }
-            .controlSize(.small)
-        } else {
-            RoundedRectangle(cornerRadius: 10).fill(.quaternary)
-                .frame(height: 160)
-                .overlay { Text("No slide selected").foregroundStyle(.secondary) }
-        }
-    }
-
-    // MARK: - Speaker notes
-
-    private var notesSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("Speaker notes").font(.headline)
-                Spacer()
-                if let slide = viewModel.slide(at: selectedSlideIndex), !slide.notes.isEmpty {
-                    Text("\(slide.notes.count) chars").font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            if let slide = viewModel.slide(at: selectedSlideIndex) {
-                if slide.notes.isEmpty {
-                    Text("No speaker notes for this slide.")
-                        .font(.caption).foregroundStyle(.secondary)
-                } else {
-                    Text(slide.notes).font(.callout).foregroundStyle(.primary)
-                        .padding(8)
-                        .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary))
-                }
-            }
-        }
-    }
-
     // MARK: - Linked entities
 
     private var linkedSection: some View {
@@ -362,19 +328,6 @@ public struct SlideDeckDetailView: View {
             set: { _ in Task { await viewModel.toggleTrashed() } })
     }
 
-    // MARK: - Toolbar
-
-    @ToolbarContentBuilder
-    private var detailToolbar: some ToolbarContent {
-        ToolbarItem(placement: .destructiveAction) {
-            Button(role: .destructive) { showDeleteConfirm = true } label: {
-                Label("Delete Deck", systemImage: "trash")
-            }
-            .help("Delete this deck")
-            .accessibilityLabel("Delete deck")
-        }
-    }
-
     // MARK: - Sheets
 
     private var deleteSheet: some View {
@@ -415,39 +368,59 @@ public struct SlideDeckDetailView: View {
         .padding(20)
         .frame(width: 380)
     }
-}
 
+    // MARK: - Editor command handling
 
-
-// MARK: - MiniToggleButton
-
-/// Compact toggle button for the slides mini toolbar.
-private struct MiniToggleButton: View {
-    var label: String? = nil
-    var weight: Font.Weight = .regular
-    var italic: Bool = false
-    var underline: Bool = false
-    var icon: String? = nil
-    var isActive: Bool = false
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            if let icon {
-                Image(systemName: icon)
-                    .symbolRenderingMode(.hierarchical)
-                    .font(.system(size: 12))
-            } else if let label {
-                Text(label)
-                    .font(.system(size: 11, weight: weight))
-                    .italic(italic)
-                    .underline(underline)
+    private func handleEditorCommand(_ command: EditorCommand) {
+        switch command {
+        case .toggleLineNumbers:
+            formattingState.showLineNumbers.toggle()
+            editorCoordinator.handleViewCommand(command)
+        case .toggleRuler:
+            formattingState.showRuler.toggle()
+            editorCoordinator.handleViewCommand(command)
+        case .toggleGridlines:
+            formattingState.showGridlines.toggle()
+            editorCoordinator.handleViewCommand(command)
+        case .enterFocusMode:
+            withAnimation(.easeInOut(duration: 0.25)) {
+                isFocusMode.toggle()
+                editorCoordinator.updateFocusMode(isFocusMode)
             }
+            editorCoordinator.handleViewCommand(command)
+        case .toggleBold:
+            formattingState.isBold.toggle()
+            editorCoordinator.handleViewCommand(command)
+        case .toggleItalic:
+            formattingState.isItalic.toggle()
+            editorCoordinator.handleViewCommand(command)
+        case .toggleUnderline:
+            formattingState.isUnderline.toggle()
+            editorCoordinator.handleViewCommand(command)
+        case .toggleStrikethrough:
+            formattingState.isStrikethrough.toggle()
+            editorCoordinator.handleViewCommand(command)
+        case .toggleCode:
+            formattingState.isCode.toggle()
+            editorCoordinator.handleViewCommand(command)
+        case .alignLeft:
+            formattingState.alignment = .leading
+            editorCoordinator.handleViewCommand(command)
+        case .alignCenter:
+            formattingState.alignment = .center
+            editorCoordinator.handleViewCommand(command)
+        case .alignRight:
+            formattingState.alignment = .trailing
+            editorCoordinator.handleViewCommand(command)
+        case .alignJustify:
+            formattingState.alignment = .justify
+            editorCoordinator.handleViewCommand(command)
+        case .showWordCount:
+            break
+        default:
+            editorCoordinator.handleViewCommand(command)
         }
-        .buttonStyle(.plain)
-        .frame(minWidth: 24, minHeight: 22)
-        .padding(.horizontal, 4)
-        .background(isActive ? Color.accentColor.opacity(0.15) : Color.clear)
-        .cornerRadius(3)
+        let ast = viewModel.document
+        Task { await viewModel.commitBody(ast) }
     }
 }

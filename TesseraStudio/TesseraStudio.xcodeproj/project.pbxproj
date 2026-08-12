@@ -42,6 +42,8 @@
 		4EFBBCBA193E296F054E5385 /* WorkflowParameterPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40729A9531A2DFABE1EA961D /* WorkflowParameterPanelView.swift */; };
 		504CC16738EF99406D6B8529 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C144C7F04921903632D744E /* ContentView.swift */; };
 		53ADD3B3E8E95A5DC0E2A443 /* CodeEditorPaneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2091A24C706C5D452A7B757 /* CodeEditorPaneView.swift */; };
+		53AD1A2432BBAABB452A7B757 /* CodeDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2091C24C706C5D452A7B757 /* CodeDetailView.swift */; };
+		53AD1B2432BBAABB452A7B757 /* CodeEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2091D24C706C5D452A7B757 /* CodeEditorView.swift */; };
 		5585350E0FD8C152B358FB1B /* CodeOutlineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D7F20C6E3BCA609B32E9CAF /* CodeOutlineView.swift */; };
 		561C364154E0918D86AD8D30 /* LearningDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCD3045F308A4FC885C96939 /* LearningDashboardView.swift */; };
 		5628BD9FBDF5CB2C6FD2C20C /* SheetDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 657EA5B6BA559A1A7BAC2924 /* SheetDetailView.swift */; };
@@ -93,6 +95,7 @@
 		C711E5902DC14E6DFA5B6BB3 /* LearningTrainingSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD1FE0CD17FC666E463147E4 /* LearningTrainingSection.swift */; };
 		CA2FCD5D78AF4EDF4AAC29A0 /* WorkflowCanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE2F125CEF082F7FA8395246 /* WorkflowCanvasView.swift */; };
 		CB8154AFE489638DE1306F78 /* SlidesListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 397D4EE4BF5604D29241CD63 /* SlidesListView.swift */; };
+		F2B3C4D5E6F708192A3B4C5D /* SlideDeckEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A8B9C0D1E2F3A4B5C6D7E8F /* SlideDeckEditorView.swift */; };
 		CF99324F941F08AB6A4C0D92 /* FindReplaceBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE95DA4BB3C52CF9B1305C6A /* FindReplaceBar.swift */; };
 		D01F786A4933554C369191FD /* ReceiptDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D2779339C44AD29BDA9565D /* ReceiptDetailView.swift */; };
 		D3B43A51CB7885704B6C80CE /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9839F117CD5A6CC1C9C5F7DE /* SettingsView.swift */; };
@@ -138,6 +141,7 @@
 		14EDB5B9D3D1DA88AD22717B /* DataLayerHTTPClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataLayerHTTPClient.swift; sourceTree = "<group>"; };
 		1A2D4C992DB2F8E83DABAE66 /* LayoutInspectorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutInspectorView.swift; sourceTree = "<group>"; };
 		1DD3DBACCFF7C3215CDEA531 /* SlideDeckDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SlideDeckDetailView.swift; sourceTree = "<group>"; };
+		7A8B9C0D1E2F3A4B5C6D7E8F /* SlideDeckEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SlideDeckEditorView.swift; sourceTree = "<group>"; };
 		1F22948AED9597A94104B0C4 /* TesseraAppLifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TesseraAppLifecycle.swift; sourceTree = "<group>"; };
 		216F6401DAB58BEE359B2CCB /* CollabTraceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CollabTraceView.swift; sourceTree = "<group>"; };
 		29979CD7254D23AE700907F1 /* C2PAManifestSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = C2PAManifestSheet.swift; sourceTree = "<group>"; };
@@ -207,6 +211,8 @@
 		C14E4D50179882398D43AB42 /* TesseraStreamingDiffView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TesseraStreamingDiffView.swift; sourceTree = "<group>"; };
 		C1F5E1848AF537CACCB0C9A0 /* TesseraDiffOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TesseraDiffOverlayView.swift; sourceTree = "<group>"; };
 		C2091A24C706C5D452A7B757 /* CodeEditorPaneView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeEditorPaneView.swift; sourceTree = "<group>"; };
+		C2091C24C706C5D452A7B757 /* CodeDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeDetailView.swift; sourceTree = "<group>"; };
+		C2091D24C706C5D452A7B757 /* CodeEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeEditorView.swift; sourceTree = "<group>"; };
 		C26B5DE721258E7D9EB58901 /* SurfaceMetadataRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurfaceMetadataRow.swift; sourceTree = "<group>"; };
 		C8D12BDB57CC9643BF85280A /* SheetsListView_iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SheetsListView_iOS.swift; sourceTree = "<group>"; };
 		CC71AC3BD25D1A66CF96E26E /* EmailView_iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmailView_iOS.swift; sourceTree = "<group>"; };
@@ -412,6 +418,8 @@
 			isa = PBXGroup;
 			children = (
 				C2091A24C706C5D452A7B757 /* CodeEditorPaneView.swift */,
+				C2091C24C706C5D452A7B757 /* CodeDetailView.swift */,
+				C2091D24C706C5D452A7B757 /* CodeEditorView.swift */,
 				7771325795C1974253F62AE1 /* CodeFileTreeView.swift */,
 				E240EBBECAAF3655525172FB /* CodeGitPanelView.swift */,
 				4D7F20C6E3BCA609B32E9CAF /* CodeOutlineView.swift */,
@@ -558,6 +566,7 @@
 			children = (
 				9DC1311A2787B78FA0A8D903 /* SlideCanvasView.swift */,
 				1DD3DBACCFF7C3215CDEA531 /* SlideDeckDetailView.swift */,
+				7A8B9C0D1E2F3A4B5C6D7E8F /* SlideDeckEditorView.swift */,
 				397D4EE4BF5604D29241CD63 /* SlidesListView.swift */,
 			);
 			path = Slides;
@@ -872,6 +881,8 @@
 				624409B0B29A3A124FE5D850 /* CapacityView.swift in Sources */,
 				65434928C008DAD13CA3463D /* ChatFocusCoordinator.swift in Sources */,
 				53ADD3B3E8E95A5DC0E2A443 /* CodeEditorPaneView.swift in Sources */,
+				53AD1A2432BBAABB452A7B757 /* CodeDetailView.swift in Sources */,
+				53AD1B2432BBAABB452A7B757 /* CodeEditorView.swift in Sources */,
 				3DCC93048C6AD3FF8E98A7E2 /* CodeFileTreeView.swift in Sources */,
 				1ECF1B76977C4E6147167A46 /* CodeGitPanelView.swift in Sources */,
 				5585350E0FD8C152B358FB1B /* CodeOutlineView.swift in Sources */,
@@ -920,6 +931,7 @@
 				740EE592E11B002355354AD7 /* SidebarGroup.swift in Sources */,
 				AB44F7608471B3F237A53D70 /* SlideCanvasView.swift in Sources */,
 				93B56160504A7D186DDABD62 /* SlideDeckDetailView.swift in Sources */,
+				F2B3C4D5E6F708192A3B4C5D /* SlideDeckEditorView.swift in Sources */,
 				CB8154AFE489638DE1306F78 /* SlidesListView.swift in Sources */,
 				BE9D99F6F67D113BE3FB9D81 /* SurfaceFocusStatusBar.swift in Sources */,
 				B4FD3EAFCEDC950FD9B30F91 /* SurfaceLinkedEntityChip.swift in Sources */,

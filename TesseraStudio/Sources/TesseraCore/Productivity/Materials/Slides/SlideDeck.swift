@@ -341,6 +341,12 @@ public struct SlideDeck: Codable, Sendable, Identifiable, Hashable {
             for child in block.children { appendPlainText(blockID: child, ast: ast, into: &out) }
             if block.type != .toggle { break }
             return
+        case .comment, .trackInsertion, .trackDeletion:
+            // Phase 7: comments and track changes — skip from slide plain-text export.
+            break
+        @unknown default:
+            // Future block types: skip gracefully.
+            break
         }
         for child in block.children where block.type != .list && block.type != .table && block.type != .toggle {
             appendPlainText(blockID: child, ast: ast, into: &out)
@@ -407,6 +413,11 @@ public struct SlideMeta: Codable, Sendable, Hashable {
     }
 
     public static let `default` = SlideMeta(layout: .titleAndContent, notes: "")
+
+    /// Returns a copy with the notes field updated.
+    public func copyWith(notes newNotes: String) -> SlideMeta {
+        SlideMeta(layout: self.layout, notes: newNotes)
+    }
 }
 
 // MARK: - JSON helpers
