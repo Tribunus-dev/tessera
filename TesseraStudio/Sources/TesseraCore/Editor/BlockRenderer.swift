@@ -91,6 +91,13 @@ public struct BlockRenderer: Sendable {
             return renderToggle(block, mode: mode)
         case .equation:
             return renderEquation(block, mode: mode)
+        // Phase 7 additions
+        case .comment:
+            return renderComment(block, mode: mode)
+        case .trackInsertion:
+            return renderTrackInsertion(block, mode: mode)
+        case .trackDeletion:
+            return renderTrackDeletion(block, mode: mode)
         }
     }
 
@@ -179,23 +186,27 @@ public struct BlockRenderer: Sendable {
         let alt = block.attributes["alt"]?.stringValue ?? "image"
         #if canImport(AppKit)
         let attachment = NSTextAttachment()
-        if let url = URL(string: source),
-           let data = try? Data(contentsOf: url),
-           let image = NSImage(data: data) {
-            attachment.image = image
-        } else {
-            attachment.image = NSImage(systemSymbolName: "photo",
-                                       accessibilityDescription: alt)
+        // Placeholder shown immediately; ImageLoader fetches the real image
+        // off the main thread and updates attachment.image in place when ready.
+        attachment.image = NSImage(systemSymbolName: "photo",
+                                   accessibilityDescription: alt)
+        if let url = URL(string: source) {
+            ImageLoader.shared.load(for: block.id, source: source) { image in
+                if let img = image {
+                    attachment.image = img
+                }
+            }
         }
         #elseif canImport(UIKit)
         let attachment = NSTextAttachment()
-        if let url = URL(string: source),
-           let data = try? Data(contentsOf: url),
-           let image = UIImage(data: data) {
-            attachment.image = image
-        } else {
-            attachment.image = UIImage(systemName: "photo")
-                .symbolRenderingMode(.hierarchical)
+        attachment.image = UIImage(systemName: "photo")
+            .symbolRenderingMode(.hierarchical)
+        if let url = URL(string: source) {
+            ImageLoader.shared.load(for: block.id, source: source) { image in
+                if let img = image {
+                    attachment.image = img
+                }
+            }
         }
         #else
         // Non-platform: placeholder string. The build configuration
@@ -287,6 +298,40 @@ public struct BlockRenderer: Sendable {
                 .backgroundColor: PlatformColor.fromHex(theme.codeBackgroundColorHex) ?? .controlBackgroundColor,
             ]
         )
+    }
+
+    // MARK: - Phase 7 block renderers
+
+    private func renderComment(_ block: Block, mode: EditorMode) -> NSAttributedString {
+        // Comment blocks are rendered with a subtle inline marker.
+        // The sidebar (CommentsSidebarView) owns the full display.
+        let marker = "💬  "
+        let out = NSMutableAttributedString(string: marker)
+        out.append(renderInline(block.content, mode: mode))
+        let tint = PlatformColor.systemBlue.withAlphaComponent(0.08)
+        out.addAttribute(.backgroundColor, value: tint,
+                         range: NSRange(location: 0, length: out.length))
+        return out
+    }
+
+    private func renderTrackInsertion(_ block: Block, mode: EditorMode) -> NSAttributedString {
+        let base = renderInline(block.content, mode: mode)
+        let out = NSMutableAttributedString(attributedString: base)
+        out.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue,
+                         range: NSRange(location: 0, length: out.length))
+        out.addAttribute(.foregroundColor, value: PlatformColor.systemGreen,
+                         range: NSRange(location: 0, length: out.length))
+        return out
+    }
+
+    private func renderTrackDeletion(_ block: Block, mode: EditorMode) -> NSAttributedString {
+        let base = renderInline(block.content, mode: mode)
+        let out = NSMutableAttributedString(attributedString: base)
+        out.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue,
+                         range: NSRange(location: 0, length: out.length))
+        out.addAttribute(.foregroundColor, value: PlatformColor.systemRed,
+                         range: NSRange(location: 0, length: out.length))
+        return out
     }
 
     // MARK: - Inline run rendering

@@ -1491,3 +1491,42 @@ int ts_quantize_3d(const float * weights,
     }
     return 0;
 }
+
+// Tier 3 per-expert regime routing: each expert uses its own ts_quant_params_2d.
+// per_expert_params[e] may be nullptr → falls back to the unified params.
+// This is the MoE path that matches the SOTA DyMoE/DynaExq approach: classify
+// each expert individually (hot/cold from activation; kurtosis/eff_rank from weight
+// stats as the offline proxy) and assign precision accordingly.
+int ts_quantize_3d(const float * weights,
+                   const float * act_scales,
+                   const float * calib_X,
+                   const float * ref_output,
+                   const float * imatrix,
+                   int64_t n_experts, int64_t out_dim, int64_t in_dim,
+                   int64_t n_tokens,
+                   const ts_quant_params_2d * params,
+                   const ts_quant_params_2d * const * per_expert_params,
+                   std::vector<ts_quant_result_2d> * results) {
+    if (weights == nullptr || results == nullptr || n_experts <= 0) {
+        return 1;
+    }
+    results->clear();
+    results->resize((size_t)n_experts);
+
+    const int64_t stride = out_dim * in_dim;
+    for (int64_t ex = 0; ex < n_experts; ex++) {
+        // Use per-expert params when provided; fall back to the unified params.
+        const ts_quant_params_2d * effective_params =
+            (per_expert_params != nullptr && per_expert_params[ex] != nullptr)
+                ? per_expert_params[ex]
+                : params;
+        int rc = ts_quantize_2d(weights + ex * stride,
+                                act_scales, calib_X, ref_output, imatrix,
+                                out_dim, in_dim, n_tokens,
+                                effective_params, &(*results)[(size_t)ex]);
+        if (rc != 0) {
+            return rc;
+        }
+    }
+    return 0;
+}

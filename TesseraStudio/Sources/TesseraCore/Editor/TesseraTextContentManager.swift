@@ -52,7 +52,10 @@ public final class TesseraTextContentManagerData {
     }
 
     /// Replace the document. Rebuilds the element list.
+    /// Cancels any in-flight image loads for blocks no longer in the document.
     public func setDocument(_ document: DocumentAST) {
+        // Cancel stale image loads before replacing content.
+        ImageLoader.shared.cancelAllLoads()
         self.document = document
         self.elements = ElementBuilder(renderer: renderer, mode: mode).buildElements(for: document)
     }
@@ -82,6 +85,54 @@ public final class TesseraTextContentManagerData {
         self.document = workingDocument
         self.elements = ElementBuilder(renderer: renderer, mode: mode).buildElements(for: document)
         return pre
+    }
+
+    // MARK: - Phase 10 P0: targeted mutation
+
+    /// The set of block IDs directly affected by a list of mutations.
+    /// Used by the coordinator to compute which character ranges to replace
+    /// during a targeted flush, avoiding a full-document re-render.
+    public func affectedBlocks(from mutations: [Mutation]) -> Set<UUID> {
+        var ids = Set<UUID>()
+        for mutation in mutations {
+            switch mutation {
+            case .setBlockContent(let blockID, _),
+                 .setInlineAnnotation(let blockID, _, _, _),
+                 .replaceBlock(let blockID, _),
+                 .deleteBlock(blockID: let blockID),
+                 .moveBlock(blockID: let blockID, _, _),
+                 .setBlockAttribute(blockID: let blockID, _, _),
+                 .appendInlineRun(blockID: let blockID, _),
+                 .replaceInlineRun(blockID: let blockID, _, _),
+                 .deleteInlineRun(blockID: let blockID, _):
+                ids.insert(blockID)
+            case .insertBlockAfter(_, _, let block):
+                ids.insert(block.id)
+            case .insertBlocksAfter(_, _, let insertedBlocks):
+                for b in insertedBlocks { ids.insert(b.id) }
+            case .setDocumentTitle, .setDocumentMeta:
+                break
+            }
+        }
+        return ids
+    }
+
+    /// True when the mutations change the document's structural tree
+    /// (block order, nesting, or insertion/deletion). Targeted replace
+    /// falls back to full replace when this is true.
+    public func isStructuralChange(_ mutations: [Mutation]) -> Bool {
+        for mutation in mutations {
+            switch mutation {
+            case .deleteBlock,
+                 .insertBlockAfter,
+                 .insertBlocksAfter,
+                 .moveBlock:
+                return true
+            default:
+                break
+            }
+        }
+        return false
     }
 
     // MARK: - Queries
@@ -246,6 +297,44 @@ public final class TesseraTextContentStorage: NSTextContentStorage {
     public func replaceAllCharacters(with newString: NSAttributedString) {
         let range = NSRange(location: 0, length: _storedString.length)
         _storedString.replaceCharacters(in: range, with: newString)
+    }
+
+    // MARK: - Targeted batch replace (Phase 10 P0)
+
+    /// Replace specific character ranges in the storage with new attributed
+    /// strings, all inside one `performEditingTransaction` so TextKit 2 gets
+    /// a single batched notification instead of N individual invalidations.
+    ///
+    /// Each `(range, string)` pair describes one region to replace. The
+    /// caller is responsible for ensuring ranges are non-overlapping and
+    /// within the current document bounds. This is the key optimization for
+    /// Phase 10 P0: when the user types a character, only that block's
+    /// range is replaced — TextKit 2 keeps all cached `NSTextLayoutFragment`
+    /// objects for the rest of the document.
+    ///
+    /// - Parameter replacements: Non-overlapping `(NSRange, NSAttributedString)`
+    ///   pairs in ascending range order.
+    public func batchReplace(_ replacements: [(NSRange, NSAttributedString)]) {
+        guard !replacements.isEmpty else { return }
+        // Use beginEditing/endEditing for batching. These are NSTextStorage's
+        // batching API (calls processEditing at end) — equivalent to
+        // performEditingTransaction for our use case.
+        _storedString.beginEditing()
+        for (range, attributedString) in replacements {
+            _storedString.replaceCharacters(in: range, with: attributedString)
+        }
+        _storedString.endEditing()
+    }
+
+    /// Compute the character ranges in the current storage that correspond to
+    /// the given block IDs, using the cached element list. Returns nil for any
+    /// block ID not currently in the element list.
+    public func rangesForBlocks(_ blockIDs: Set<UUID>) -> [(UUID, NSRange)] {
+        data.elements.compactMap { element -> (UUID, NSRange)? in
+            guard blockIDs.contains(element.blockID) else { return nil }
+            let length = max(0, element.rangeEnd - element.rangeStart)
+            return (element.blockID, NSRange(location: element.rangeStart, length: length))
+        }
     }
 
     // MARK: - NSTextContentManagerDelegate
@@ -470,6 +559,14 @@ public final class TesseraTextContentManager: NSTextContentManager, NSTextConten
             return n
         }
         return nil
+    }
+
+    /// Build an `IntTextLocation` from a UTF-16 character offset.
+    /// Used by `TesseraSTTextView.computeVisibleElementRange` to convert a
+    /// pixel-space visible rect into a `NSTextLocation` for
+    /// `enumerateTextLayoutFragments(from:options:using:)`.
+    public func textLocation(forCharacterOffset offset: Int) -> NSTextLocation {
+        IntTextLocation(intValue: offset)
     }
 }
 #endif

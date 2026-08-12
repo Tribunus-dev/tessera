@@ -23,7 +23,7 @@ public protocol DiffProvider: AnyObject {
 
 /// The style/mode for AI rewrite operations.
 /// Mirrors the Apple Writing Tools preset tones.
-public enum RewriteMode: String, Sendable, CaseIterable {
+public enum RewriteMode: String, Sendable, CaseIterable, Codable {
     case friendly = "friendly"
     case professional = "professional"
     case concise = "concise"

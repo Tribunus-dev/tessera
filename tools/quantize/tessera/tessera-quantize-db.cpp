@@ -13,6 +13,7 @@
 
 #include "tessera-quantize-db.h"
 #include "tessera-db-buffer.h"
+#include "tessera-regime.h"
 
 // duckdb.hpp pulls in windows.h on Windows; the MIN/MAX macros there clash
 // with std::min/std::max. NOMINMAX keeps the standard library usable.
@@ -446,7 +447,54 @@ static const char * TS_QDB_SCHEMA_SQL =
     "CREATE INDEX IF NOT EXISTS idx_l5_outcome_model\n"
     "    ON l5_outcome(model_hash, family, plan_accepted);\n"
     "CREATE INDEX IF NOT EXISTS idx_l5_weights_model\n"
-    "    ON l5_weights(model_hash);\n";
+    "    ON l5_weights(model_hash);\n"
+    // ---- regime_thresholds: per-(model, family) learned kurtosis/eff_rank thresholds ----
+    // Produced by Tier 4 OLS fitting (ts_regime_fit_thresholds); consumed by Tier 2
+    // regime classification (ts_regime_classify) to override the static cascade.
+    // PRIMARY KEY (model_hash, model_role, family) so successive fits upsert cleanly.
+    "CREATE TABLE IF NOT EXISTS regime_thresholds (\n"
+    "    model_hash            TEXT NOT NULL,\n"
+    "    model_role            TEXT NOT NULL DEFAULT 'trunk',\n"
+    "    family                TEXT NOT NULL,\n"
+    "    kurt_heavy            DOUBLE NOT NULL DEFAULT 10.0,\n"
+    "    kurt_light            DOUBLE NOT NULL DEFAULT 5.0,\n"
+    "    er_compact            DOUBLE NOT NULL DEFAULT 0.15,\n"
+    "    er_sparse             DOUBLE NOT NULL DEFAULT 0.30,\n"
+    "    n_samples             INTEGER NOT NULL DEFAULT 0,\n"
+    "    r2_score              DOUBLE NOT NULL DEFAULT 0.0,\n"
+    "    threshold_source      TEXT NOT NULL DEFAULT 'builtin',\n"
+    "    updated_at            TIMESTAMP,\n"
+    "    PRIMARY KEY (model_hash, model_role, family)\n"
+    ");\n"
+    "CREATE INDEX IF NOT EXISTS idx_regime_thresholds_model\n"
+    "    ON regime_thresholds(model_hash);\n"
+    // ---- regime_routing: per-tensor regime routing decision for Tier 4 feedback ----
+    // Written by the C++ dispatch after step 7 quantization (tessera-dispatch.cpp).
+    // Read by the Python l5_outcome.py consumer which joins this with l4_plan_outcome
+    // to produce l5_outcome rows that include kurtosis/eff_rank/layer_position.
+    // PRIMARY KEY (model_hash, model_role, name) so successive requantize passes
+    // overwrite the prior routing decision (only the most recent regime matters).
+    "CREATE TABLE IF NOT EXISTS regime_routing (\n"
+    "    model_hash            TEXT NOT NULL,\n"
+    "    model_role            TEXT NOT NULL DEFAULT 'trunk',\n"
+    "    name                  TEXT NOT NULL,\n"
+    "    family                TEXT NOT NULL,\n"
+    "    layer_depth           INTEGER,\n"
+    "    kurtosis             DOUBLE,\n"
+    "    eff_rank             DOUBLE,\n"
+    "    layer_position        INTEGER,\n"
+    "    routed_expert         INTEGER,\n"
+    "    expert_name           TEXT,\n"
+    "    routing_confidence    DOUBLE,\n"
+    "    threshold_source      TEXT,\n"
+    "    routing_reason        TEXT,\n"
+    "    modality              INTEGER DEFAULT 0,\n"
+    "    default_tier          INTEGER,\n"
+    "    updated_at            TIMESTAMP,\n"
+    "    PRIMARY KEY (model_hash, model_role, name)\n"
+    ");\n"
+    "CREATE INDEX IF NOT EXISTS idx_regime_routing_model\n"
+    "    ON regime_routing(model_hash);\n";
 
 // Phase 16.7: per-component (model_role, name) covering index
 // statements. Kept as a separate constant from TS_QDB_SCHEMA_SQL
@@ -549,6 +597,11 @@ ts_tessera_db::~ts_tessera_db() {
     db.reset();
 }
 
+// Forward declaration: defined after ts_tessera_db_open so the migration
+// function is available to the open path without a header dependency.
+int ts_tessera_db_migrate_regime_thresholds(ts_tessera_db * db,
+                                             std::string * err);
+
 ts_tessera_db * ts_tessera_db_open(const std::string & path,
                                      std::string * err) {
     auto * wrap = new (std::nothrow) ts_tessera_db();
@@ -600,6 +653,13 @@ ts_tessera_db * ts_tessera_db_open(const std::string & path,
                 delete wrap;
                 return nullptr;
             }
+        }
+        // Tier 2 regime thresholds: extend l5_outcome with regime routing
+        // columns (kurtosis, eff_rank, layer_position) and ensure
+        // regime_thresholds table exists. Idempotent: no-op on re-open.
+        if (ts_tessera_db_migrate_regime_thresholds(wrap, err) != 0) {
+            delete wrap;
+            return nullptr;
         }
     } catch (const std::exception & e) {
         if (err) *err = std::string("duckdb open failed: ") + e.what();
@@ -1170,6 +1230,251 @@ int ts_tessera_db_l5_outcome_stats_for(ts_tessera_db * db,
             ? (double) out->n_accepted / (double) out->n_rows
             : 0.0;
     } catch (...) {
+        return 1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Tier 2 regime thresholds upsert: per-(model, family) learned kurtosis/eff_rank
+// ---------------------------------------------------------------------------
+
+int ts_tessera_db_upsert_regime_threshold(
+    ts_tessera_db * db,
+    const ts_tessera_db_regime_threshold & row,
+    std::string * err) {
+    if (db == nullptr || db->conn == nullptr) return 0;
+    const std::string role = row.model_role.empty()
+        ? std::string("trunk")
+        : row.model_role;
+    std::ostringstream q;
+    q << "INSERT INTO regime_thresholds (model_hash, model_role, family, "
+         "kurt_heavy, kurt_light, er_compact, er_sparse, "
+         "n_samples, r2_score, threshold_source, updated_at) VALUES ("
+      << "'" << sql_escape(row.model_hash) << "', "
+      << "'" << sql_escape(role) << "', "
+      << "'" << sql_escape(row.family) << "', "
+      << row.kurt_heavy << ", "
+      << row.kurt_light << ", "
+      << row.er_compact << ", "
+      << row.er_sparse << ", "
+      << row.n_samples << ", "
+      << row.r2_score << ", "
+      << "'" << sql_escape(row.threshold_source) << "', "
+      << ts_now_ts()
+      << ") ON CONFLICT (model_hash, model_role, family) DO UPDATE SET "
+         "kurt_heavy=excluded.kurt_heavy, "
+         "kurt_light=excluded.kurt_light, "
+         "er_compact=excluded.er_compact, "
+         "er_sparse=excluded.er_sparse, "
+         "n_samples=excluded.n_samples, "
+         "r2_score=excluded.r2_score, "
+         "threshold_source=excluded.threshold_source, "
+         "updated_at=excluded.updated_at";
+    try {
+        auto res = db->conn->Query(q.str());
+        if (res->HasError()) {
+            if (err) *err = "upsert_regime_threshold failed: " + res->GetError();
+            return 1;
+        }
+    } catch (const std::exception & e) {
+        if (err) *err = std::string("upsert_regime_threshold failed: ") + e.what();
+        return 1;
+    } catch (...) {
+        if (err) *err = "upsert_regime_threshold failed: unknown exception";
+        return 1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Tier 2 regime thresholds list reader: load learned priors for classification
+// ---------------------------------------------------------------------------
+//
+// Returns all regime_thresholds rows for a model. Empty `family` means "all".
+// Rows are ordered by n_samples DESC so the dispatch can prefer the most
+// data-informed fit per family. The caller is responsible for selecting the
+// best-fit entry when multiple exist (should not happen with a PRIMARY KEY,
+// but n_samples ordering disambiguates any duplicates from legacy rows).
+//
+// The C++ regime classifier gates on r2_score < 0.05: any row with poor fit
+// quality is treated as "no prior" and the static cascade is used instead.
+
+int ts_tessera_db_list_regime_thresholds(
+    ts_tessera_db * db,
+    const std::string & model_hash,
+    const std::string & model_role,
+    const std::string & family,
+    ts_tessera_db_regime_threshold_list * out,
+    std::string * err) {
+    if (out == nullptr) return 0;
+    out->entries.clear();
+    if (db == nullptr || db->conn == nullptr) return 0;
+    if (model_hash.empty()) return 0;
+    std::ostringstream q;
+    q << "SELECT model_hash, model_role, family, kurt_heavy, kurt_light, "
+         "er_compact, er_sparse, n_samples, r2_score, threshold_source "
+         "FROM regime_thresholds WHERE model_hash = '"
+      << sql_escape(model_hash) << "'";
+    if (!model_role.empty()) {
+        q << " AND model_role = '" << sql_escape(model_role) << "'";
+    }
+    if (!family.empty()) {
+        q << " AND family = '" << sql_escape(family) << "'";
+    }
+    q << " ORDER BY n_samples DESC";
+    try {
+        auto res = db->conn->Query(q.str());
+        if (res->HasError()) {
+            if (err) *err = "list_regime_thresholds failed: " + res->GetError();
+            return 1;
+        }
+        const idx_t n = res->RowCount();
+        out->entries.reserve((size_t)n);
+        for (idx_t r = 0; r < n; r++) {
+            ts_tessera_db_regime_threshold_list_entry e;
+            auto get_str = [&](idx_t col) {
+                auto v = res->GetValue(col, r);
+                return v.IsNull() ? std::string() : v.ToString();
+            };
+            auto get_f = [&](idx_t col) {
+                return (float)res->GetValue(col, r).GetValue<double>();
+            };
+            e.model_hash       = get_str(0);
+            e.model_role       = get_str(1);
+            e.family           = get_str(2);
+            e.kurt_heavy       = get_f(3);
+            e.kurt_light       = get_f(4);
+            e.er_compact       = get_f(5);
+            e.er_sparse        = get_f(6);
+            e.n_samples        = (int32_t)res->GetValue(7, r).GetValue<int64_t>();
+            e.r2_score         = get_f(8);
+            e.threshold_source = get_str(9);
+            out->entries.push_back(std::move(e));
+        }
+    } catch (const std::exception & ex) {
+        if (err) *err = std::string("list_regime_thresholds failed: ") + ex.what();
+        return 1;
+    } catch (...) {
+        if (err) *err = "list_regime_thresholds failed: unknown exception";
+        return 1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Tier 4 regime outcome logger: upsert regime routing fields into l5_outcome
+// ---------------------------------------------------------------------------
+//
+// Adds kurtosis, eff_rank, and layer_position to the l5_outcome row identified
+// by (model_hash, model_role, name, iteration, plan_id). The row must already
+// exist (written by the orchestrator's Python side before the C++ dispatch
+// re-quantizes and re-probes). On PRIMARY KEY conflict (row not yet written by
+// Python), this is a no-op: the regime fields will be added when Python writes
+// the row.
+//
+// This is called after each L5 forward-pass measurement so the Tier 4 OLS
+// fitter (ts_regime_fit_thresholds) has the regime descriptor data it needs
+// to compute kurtosis crossover points per family.
+
+int ts_tessera_db_append_regime_outcome(
+    ts_tessera_db * db,
+    const ts_tessera_db_l5_outcome_row & outcome,
+    const struct ts_regime_descriptor * desc,
+    std::string * err) {
+    if (db == nullptr || db->conn == nullptr) return 0;
+    if (desc == nullptr) return 0;  // nothing to add
+    const std::string role = outcome.model_role.empty()
+        ? std::string("trunk")
+        : outcome.model_role;
+    // Map ts_regime_position enum to integer: EDGE=2, NEAR_EDGE=1, MIDDLE=0
+    int layer_pos = 0;
+    if (desc->position == TS_POS_EDGE)      layer_pos = 2;
+    else if (desc->position == TS_POS_NEAR_EDGE) layer_pos = 1;
+    else                                       layer_pos = 0;
+
+    std::ostringstream q;
+    q << "UPDATE l5_outcome SET "
+         "kurtosis = " << desc->kurtosis << ", "
+         "eff_rank = " << desc->eff_rank << ", "
+         "layer_position = " << layer_pos << " "
+         "WHERE model_hash = '" << sql_escape(outcome.model_hash) << "' "
+         "AND model_role = '" << sql_escape(role) << "' "
+         "AND name = '" << sql_escape(outcome.name) << "' "
+         "AND iteration = " << outcome.iteration << " "
+         "AND plan_id = '" << sql_escape(outcome.plan_id) << "'";
+    try {
+        auto res = db->conn->Query(q.str());
+        if (res->HasError()) {
+            if (err) *err = "append_regime_outcome UPDATE failed: " + res->GetError();
+            return 1;
+        }
+    } catch (const std::exception & e) {
+        if (err) *err = std::string("append_regime_outcome failed: ") + e.what();
+        return 1;
+    } catch (...) {
+        if (err) *err = "append_regime_outcome failed: unknown exception";
+        return 1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Tier 4 regime routing: per-tensor regime routing decision from dispatch
+// ---------------------------------------------------------------------------
+//
+// Written by the C++ dispatch after each tensor's step-7 quantization.
+// PRIMARY KEY (model_hash, model_role, name) so successive requantize passes
+// overwrite the prior routing. Read by Python l5_outcome.py to join with
+// l4_plan_outcome for the Tier 4 OLS threshold refitting signal.
+int ts_tessera_db_upsert_regime_routing(
+    ts_tessera_db * db,
+    const ts_tessera_db_regime_routing_row & row,
+    std::string * err) {
+    if (db == nullptr || db->conn == nullptr) return 0;
+    const std::string role = row.model_role.empty()
+        ? std::string("trunk")
+        : row.model_role;
+    std::ostringstream q;
+    q << "INSERT INTO regime_routing (model_hash, model_role, name, family, "
+         "layer_depth, kurtosis, eff_rank, layer_position, routed_expert, "
+         "expert_name, routing_confidence, threshold_source, routing_reason, "
+         "modality, default_tier, updated_at) VALUES ("
+      << "'" << sql_escape(row.model_hash) << "', "
+      << "'" << sql_escape(role) << "', "
+      << "'" << sql_escape(row.name) << "', "
+      << "'" << sql_escape(row.family) << "', "
+      << row.layer_depth << ", "
+      << row.kurtosis << ", "
+      << row.eff_rank << ", "
+      << row.layer_position << ", "
+      << row.routed_expert << ", "
+      << "'" << sql_escape(row.expert_name) << "', "
+      << row.routing_confidence << ", "
+      << "'" << sql_escape(row.threshold_source) << "', "
+      << "'" << sql_escape(row.routing_reason) << "', "
+      << row.modality << ", "
+      << row.default_tier << ", "
+      << ts_now_ts()
+      << ") ON CONFLICT (model_hash, model_role, name) DO UPDATE SET "
+         "family=excluded.family, layer_depth=excluded.layer_depth, "
+         "kurtosis=excluded.kurtosis, eff_rank=excluded.eff_rank, "
+         "layer_position=excluded.layer_position, routed_expert=excluded.routed_expert, "
+         "expert_name=excluded.expert_name, routing_confidence=excluded.routing_confidence, "
+         "threshold_source=excluded.threshold_source, routing_reason=excluded.routing_reason, "
+         "modality=excluded.modality, default_tier=excluded.default_tier, "
+         "updated_at=excluded.updated_at";
+    try {
+        auto res = db->conn->Query(q.str());
+        if (res->HasError()) {
+            if (err) *err = "upsert_regime_routing failed: " + res->GetError();
+            return 1;
+        }
+    } catch (const std::exception & e) {
+        if (err) *err = std::string("upsert_regime_routing failed: ") + e.what();
+        return 1;
+    } catch (...) {
+        if (err) *err = "upsert_regime_routing failed: unknown exception";
         return 1;
     }
     return 0;
@@ -2062,6 +2367,140 @@ int ts_tessera_db_migrate_model_role(ts_tessera_db * db,
             // missing.
             if (err) *err = "migration sidecar write failed: " + sidecar_err;
         }
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Tier 2 regime thresholds migration: extend l5_outcome + create regime_thresholds
+// ---------------------------------------------------------------------------
+//
+// Adds regime routing columns to l5_outcome and ensures regime_thresholds exists.
+// This is a separate migration from the Phase 16 PK rebuild because it uses
+// ADD COLUMN IF NOT EXISTS (not a PK change).
+//
+// The regime routing columns on l5_outcome:
+//   - kurtosis          DOUBLE — regime descriptor kurtosis at time of routing
+//   - eff_rank          DOUBLE — regime descriptor eff_rank at time of routing
+//   - layer_position    INTEGER — TS_POS_MIDDLE(0)/NEAR_EDGE(1)/EDGE(2)
+//
+// regime_thresholds is created if not present (CREATE TABLE IF NOT EXISTS).
+// The migration is idempotent: if the columns exist, all ADD COLUMN statements
+// are no-ops; if the table exists, the CREATE is a no-op.
+int ts_tessera_db_migrate_regime_thresholds(ts_tessera_db * db,
+                                             std::string * err) {
+    if (db == nullptr || db->conn == nullptr) {
+        if (err) *err = "migrate_regime_thresholds: null db or conn";
+        return 1;
+    }
+    try {
+        // Extend l5_outcome with regime routing columns. ADD COLUMN IF NOT EXISTS
+        // is supported by DuckDB and is safe to re-run on an already-migrated DB.
+        const char * l5_alter_sqls[] = {
+            "ALTER TABLE l5_outcome ADD COLUMN IF NOT EXISTS kurtosis DOUBLE",
+            "ALTER TABLE l5_outcome ADD COLUMN IF NOT EXISTS eff_rank DOUBLE",
+            "ALTER TABLE l5_outcome ADD COLUMN IF NOT EXISTS layer_position INTEGER",
+        };
+        for (const char * sql : l5_alter_sqls) {
+            auto r = db->conn->Query(sql);
+            if (r->HasError()) {
+                // ADD COLUMN IF NOT EXISTS is non-fatal if the column exists.
+                // DuckDB returns an error for IF NOT EXISTS when the column is
+                // already present (it tries to add then catches the conflict).
+                // We treat the error as a no-op for the specific "duplicate" case.
+                std::string msg = r->GetError();
+                if (msg.find("duplicate") == std::string::npos &&
+                    msg.find("already exists") == std::string::npos) {
+                    if (err) *err = std::string(sql) + ": " + msg;
+                    return 1;
+                }
+            }
+        }
+        // regime_thresholds: CREATE TABLE IF NOT EXISTS handles the fresh-DB case.
+        // For an existing DB, the table creation is a no-op.
+        auto cr = db->conn->Query(
+            "CREATE TABLE IF NOT EXISTS regime_thresholds ("
+            "    model_hash            TEXT NOT NULL,"
+            "    model_role            TEXT NOT NULL DEFAULT 'trunk',"
+            "    family                TEXT NOT NULL,"
+            "    kurt_heavy            DOUBLE NOT NULL DEFAULT 10.0,"
+            "    kurt_light            DOUBLE NOT NULL DEFAULT 5.0,"
+            "    er_compact            DOUBLE NOT NULL DEFAULT 0.15,"
+            "    er_sparse             DOUBLE NOT NULL DEFAULT 0.30,"
+            "    n_samples             INTEGER NOT NULL DEFAULT 0,"
+            "    r2_score              DOUBLE NOT NULL DEFAULT 0.0,"
+            "    threshold_source      TEXT NOT NULL DEFAULT 'builtin',"
+            "    updated_at            TIMESTAMP,"
+            "    PRIMARY KEY (model_hash, model_role, family)"
+            ")");
+        if (cr->HasError()) {
+            // Already exists = no-op, check the error
+            std::string msg = cr->GetError();
+            if (msg.find("already exists") == std::string::npos &&
+                msg.find("duplicate") == std::string::npos) {
+                if (err) *err = "CREATE regime_thresholds: " + msg;
+                return 1;
+            }
+        }
+        // Add covering index on model_hash (forward-compat for regime_threshold queries)
+        auto ir = db->conn->Query(
+            "CREATE INDEX IF NOT EXISTS idx_regime_thresholds_model "
+            "ON regime_thresholds(model_hash)");
+        if (ir->HasError()) {
+            std::string msg = ir->GetError();
+            if (msg.find("already exists") == std::string::npos) {
+                if (err) *err = "CREATE INDEX regime_thresholds: " + msg;
+                return 1;
+            }
+        }
+        // regime_routing: per-tensor regime routing decision. Written by the C++
+        // dispatch after step 7 quantization. Read by the Python l5_outcome.py
+        // consumer which joins this with l4_plan_outcome to produce l5_outcome rows
+        // that include the kurtosis/eff_rank/layer_position needed for Tier 4 OLS.
+        auto crr = db->conn->Query(
+            "CREATE TABLE IF NOT EXISTS regime_routing ("
+            "    model_hash            TEXT NOT NULL,"
+            "    model_role            TEXT NOT NULL DEFAULT 'trunk',"
+            "    name                  TEXT NOT NULL,"
+            "    family                TEXT NOT NULL,"
+            "    layer_depth           INTEGER,"
+            "    kurtosis             DOUBLE,"
+            "    eff_rank             DOUBLE,"
+            "    layer_position        INTEGER,"
+            "    routed_expert         INTEGER,"
+            "    expert_name           TEXT,"
+            "    routing_confidence    DOUBLE,"
+            "    threshold_source      TEXT,"
+            "    routing_reason        TEXT,"
+            "    modality              INTEGER DEFAULT 0,"
+            "    default_tier          INTEGER,"
+            "    updated_at            TIMESTAMP,"
+            "    PRIMARY KEY (model_hash, model_role, name)"
+            ")");
+        if (crr->HasError()) {
+            std::string msg = crr->GetError();
+            if (msg.find("already exists") == std::string::npos &&
+                msg.find("duplicate") == std::string::npos) {
+                if (err) *err = "CREATE regime_routing: " + msg;
+                return 1;
+            }
+        }
+        auto irr = db->conn->Query(
+            "CREATE INDEX IF NOT EXISTS idx_regime_routing_model "
+            "ON regime_routing(model_hash)");
+        if (irr->HasError()) {
+            std::string msg = irr->GetError();
+            if (msg.find("already exists") == std::string::npos) {
+                if (err) *err = "CREATE INDEX regime_routing: " + msg;
+                return 1;
+            }
+        }
+    } catch (const std::exception & e) {
+        if (err) *err = std::string("migrate_regime_thresholds: ") + e.what();
+        return 1;
+    } catch (...) {
+        if (err) *err = "migrate_regime_thresholds: unknown exception";
+        return 1;
     }
     return 0;
 }

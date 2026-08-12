@@ -780,7 +780,7 @@ public final class TesseraSTTextView: STTextView {
     // MARK: - Writing Tools Coordinator (Phase 11 P3)
 
     /// The Writing Tools coordinator. Set up in setupWritingToolsCoordinator().
-    private var writingToolsCoordinator: TesseraWritingToolsCoordinator?
+    private var tesseraWritingToolsCoordinator: TesseraWritingToolsCoordinator?
 
     // MARK: - Phase 10 P2: Scroll-based image load management
 
@@ -1200,23 +1200,22 @@ public final class TesseraSTTextView: STTextView {
         // Ghost text interception (Phase 11 P0) — runs before existing shortcuts.
         if let manager = ghostTextManager {
             let mods = event.modifierFlags
-            let specialKey = event.specialKey
             let char = event.charactersIgnoringModifiers ?? ""
 
             // Tab → accept full suggestion
-            if specialKey == .tab && !mods.contains(.command) && !mods.contains(.option) {
+            if event.keyCode == 48 && !mods.contains(.command) && !mods.contains(.option) {  // NSEvent.SpecialKey.tab
                 manager.acceptFull()
                 return
             }
 
             // Cmd+→ → accept next word
-            if specialKey == .rightArrow && mods.contains(.command) && !mods.contains(.option) {
+            if event.keyCode == 124 && mods.contains(.command) && !mods.contains(.option) {  // NSEvent.SpecialKey.rightArrow
                 manager.acceptNextWord()
                 return
             }
 
             // Escape → dismiss
-            if specialKey == .escape {
+            if event.keyCode == 53 {  // NSEvent.SpecialKey.escape
                 manager.dismiss()
                 return
             }
@@ -2026,7 +2025,7 @@ public final class TesseraSTTextView: STTextView {
         coordinator.rewriteDelegate = self
         coordinator.writingToolsBehavior = .complete
         coordinator.activate()
-        self.writingToolsCoordinator = coordinator
+        self.tesseraWritingToolsCoordinator = coordinator
     }
 
     // MARK: - NSServicesMenuRequestor (Tier 2 Writing Tools shortcut)
@@ -2035,15 +2034,15 @@ public final class TesseraSTTextView: STTextView {
     /// Transform submenu items (Rewrite, Proofread, etc.) are active when text
     /// is selected. This is the Tier 2 shortcut — the full Tier 3 coordinator
     /// (setup above) handles the actual rewrite lifecycle.
-    public override func validRequestor(forSendType sendType: NSPasteboard.PasteboardType?, returnType: NSPasteboard.PasteboardType?) -> NSObject? {
+    public func validRequestor(forSendType sendType: NSPasteboard.PasteboardType?, returnType: NSPasteboard.PasteboardType?) -> NSObject? {
         if sendType == .string || returnType == .string {
             return self
         }
-        return super.validRequestor(forSendType: sendType, returnType: returnType)
+        return nil
     }
 
     /// Write the current selection to the pasteboard for the service.
-    public override func writeSelection(to pasteboard: NSPasteboard, types: [NSPasteboard.PasteboardType]) {
+    public func writeSelection(to pasteboard: NSPasteboard, types: [NSPasteboard.PasteboardType]) {
         guard types.contains(.string) else { return }
         let range = selectedRange()
         guard range.length > 0 else { return }
@@ -2084,7 +2083,7 @@ extension TesseraSTTextView: GhostTextManagerDelegate {
             return
         }
         storage.replaceCharacters(in: range, with: NSAttributedString())
-        setSelectedRange(NSRange(location: caretLocation, length: 0))
+        perform(Selector(("setSelectedRange:")), with: NSValue(range: NSRange(location: caretLocation, length: 0)))
     }
 
     public func ghostTextManager(
@@ -2097,7 +2096,7 @@ extension TesseraSTTextView: GhostTextManagerDelegate {
         }
         storage.replaceCharacters(in: range, with: committedText)
         let newCaret = range.location + committedText.length
-        setSelectedRange(NSRange(location: newCaret, length: 0))
+        perform(Selector(("setSelectedRange:")), with: NSValue(range: NSRange(location: newCaret, length: 0)))
     }
 
     public func ghostTextManager(
@@ -2115,10 +2114,10 @@ extension TesseraSTTextView: GhostTextManagerDelegate {
     }
 }
 
-// MARK: - TesseraWritingToolsCoordinator.TesseraWritingToolsRewriteDelegate
+// MARK: - TesseraWritingToolsRewriteDelegate conformance
 
 @available(macOS 15.2, *)
-extension TesseraSTTextView: TesseraWritingToolsCoordinator.TesseraWritingToolsRewriteDelegate {
+extension TesseraSTTextView: TesseraWritingToolsRewriteDelegate {
     public func tesseraWritingToolsCoordinator(
         _ coordinator: TesseraWritingToolsCoordinator,
         applyReplacement text: NSAttributedString,
@@ -2129,11 +2128,4 @@ extension TesseraSTTextView: TesseraWritingToolsCoordinator.TesseraWritingToolsR
         storage.replaceCharacters(in: documentRange, with: text)
     }
 }
-
-// MARK: - TesseraWritingToolsTextViewProtocol conformance
-
-/// TesseraSTTextView conforms to TesseraWritingToolsTextViewProtocol via
-/// inherited members: textContentManager (NSView) and selectedRange() (STTextView).
-@available(macOS 15.2, *)
-extension TesseraSTTextView: TesseraWritingToolsCoordinator.TesseraWritingToolsTextViewProtocol {}
 

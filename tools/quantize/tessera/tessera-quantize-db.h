@@ -548,6 +548,123 @@ struct ts_tessera_db_l5_outcome_row {
 int ts_tessera_db_test_insert_l5_outcome(ts_tessera_db * db,
                                           const ts_tessera_db_l5_outcome_row & row);
 
+// --- Regime thresholds: per-(model, family) learned kurtosis/eff_rank thresholds ----
+//
+// The regime classifier (tessera-regime.cpp) uses static kurtosis/eff_rank
+// thresholds (kurt_heavy=10, kurt_light=5, er_compact=0.15, er_sparse=0.30) as
+// fallback when no DuckDB prior exists. This table stores the learned variants
+// produced by ts_regime_fit_thresholds (Tier 4) so Tier 2 can override the
+// static cascade on subsequent runs of the same model.
+//
+// The thresholds are keyed on (model_hash, model_role, family). Primary key
+// conflict triggers an upsert so successive OLS fits overwrite prior thresholds
+// rather than accumulating rows.
+//
+// Fields r2_score and n_samples let the dispatch gate on fit quality:
+//   - r2_score < 0.05 → fit is noise; fall back to static cascade
+//   - n_samples < 8   → insufficient data; fall back to static cascade
+//
+// threshold_source records which algorithm produced the row:
+//   "ols_fit_v1" = ts_regime_fit_thresholds OLS on delta_mse vs kurtosis
+//   "builtin"    = static cascade (written by the dispatch when no prior exists)
+struct ts_tessera_db_regime_threshold {
+    std::string  model_hash;
+    std::string  model_role;    // Phase 16: "trunk" / "dflash" / "dspark" /
+                                // "mtp_nextn" / "shared_embd". Default "trunk".
+    std::string  family;        // "attn_q", "ffn_gate", etc.
+    float        kurt_heavy;    // kurtosis > kurt_heavy  -> DartQuant
+    float        kurt_light;    // kurtosis > kurt_light  -> CHAMPQ
+    float        er_compact;    // eff_rank < er_compact -> LRQ
+    float        er_sparse;     // eff_rank < er_sparse  -> FLRQ
+    int32_t      n_samples;     // l5_outcome rows that fed the OLS fit
+    float        r2_score;      // R² of the OLS; < 0.05 means noise
+    std::string  threshold_source;  // "ols_fit_v1" / "builtin" / ...
+};
+int ts_tessera_db_upsert_regime_threshold(ts_tessera_db * db,
+                                          const ts_tessera_db_regime_threshold & row,
+                                          std::string * err);
+
+// Load all regime thresholds for a model. Empty `family` means "all families";
+// non-empty filters to one family. Returns an empty list when no prior exists
+// (the caller falls back to the static cascade).
+//
+// Rows are returned in n_samples DESC order so the dispatch sees the most
+// data-informed thresholds first. The caller is responsible for selecting the
+// best-fit row per (family) when multiple rows exist (should not happen with
+// a PRIMARY KEY, but the n_samples ordering disambiguates any duplicates from
+// legacy / migration rows).
+struct ts_tessera_db_regime_threshold_list_entry {
+    std::string  model_hash;
+    std::string  model_role;
+    std::string  family;
+    float        kurt_heavy;
+    float        kurt_light;
+    float        er_compact;
+    float        er_sparse;
+    int32_t      n_samples;
+    float        r2_score;
+    std::string  threshold_source;
+};
+struct ts_tessera_db_regime_threshold_list {
+    std::vector<ts_tessera_db_regime_threshold_list_entry> entries;
+};
+int ts_tessera_db_list_regime_thresholds(ts_tessera_db * db,
+                                         const std::string & model_hash,
+                                         const std::string & model_role,
+                                         const std::string & family,
+                                         ts_tessera_db_regime_threshold_list * out,
+                                         std::string * err = nullptr);
+
+// Upsert a regime routing outcome into l5_outcome. Called by the dispatch
+// after each L5 forward-pass measurement. This populates the feedback signal
+// that ts_regime_fit_thresholds consumes for Tier 4 OLS threshold refitting.
+//
+// The regime routing fields (kurtosis, eff_rank, layer_position) are nullable
+// in the schema so a pre-existing l5_outcome row without them doesn't break
+// the PRIMARY KEY upsert (only the new columns get populated on conflict).
+//
+// Returns 0 on success, non-zero on error. Failures are non-fatal (logged
+// and continued); the dispatch never blocks on a DB write.
+int ts_tessera_db_append_regime_outcome(ts_tessera_db * db,
+                                         const ts_tessera_db_l5_outcome_row & outcome,
+                                         const struct ts_regime_descriptor * desc,
+                                         std::string * err);
+
+// ---------------------------------------------------------------------------
+// Tier 4 regime routing: per-tensor regime routing decision written by dispatch
+// ---------------------------------------------------------------------------
+//
+// Written by the C++ dispatch after each tensor's step-7 quantization.
+// PRIMARY KEY (model_hash, model_role, name) so successive requantize passes
+// overwrite the prior routing (only the most recent regime matters).
+// Read by the Python l5_outcome.py consumer which joins this with
+// l4_plan_outcome to produce l5_outcome rows with kurtosis/eff_rank needed
+// for Tier 4 OLS threshold refitting.
+//
+// For MoE 3D tensors, one row is written per expert (name = "blk.N.ffn_gate.weight.e")
+// so the OLS fitter sees per-expert routing signals.
+struct ts_tessera_db_regime_routing_row {
+    std::string  model_hash;
+    std::string  model_role;    // Phase 16: "trunk" / "dflash" / "dspark" / ...
+    std::string  name;          // tensor name (e.g. "blk.0.ffn_gate.weight" or "blk.0.ffn_gate.weight.0")
+    std::string  family;       // e.g. "ffn_gate" / "attn_q" / "routed_expert"
+    int32_t      layer_depth;   // block index, or 0 for non-block tensors
+    float        kurtosis;
+    float        eff_rank;
+    int          layer_position;  // 0=MIDDLE, 1=NEAR_EDGE, 2=EDGE
+    int          routed_expert;   // ts_expert_id as integer
+    std::string  expert_name;     // ts_expert_name() string
+    float        routing_confidence;
+    std::string  threshold_source; // "static" / "ols_fit_v1" / ...
+    std::string  routing_reason;  // human-readable routing reason
+    int          modality;        // ts_modality as integer
+    int          default_tier;    // TS_TIER_* enum as integer
+};
+// Returns 0 on success, non-zero on error. Failures are non-fatal (logged).
+int ts_tessera_db_upsert_regime_routing(ts_tessera_db * db,
+                                         const ts_tessera_db_regime_routing_row & row,
+                                         std::string * err);
+
 // --- helpers used by the dispatch ---
 
 // Extract the block index from a tensor name like "blk.12.ffn_gate.weight"

@@ -199,6 +199,13 @@ float ts_quantize_mse_streaming(const float * weights,
 
 // 3D (MoE expert) variant: flattens (n_experts x out_dim x in_dim) and
 // calls quantize_2d per expert. Results concatenated.
+//
+// Overload (1): unified params — all experts use the same ts_quant_params_2d.
+// Overload (2): per_expert_params != nullptr — expert e uses params[e].
+//                 This is the Tier 3 per-expert regime routing path. The caller
+//                 is responsible for allocating `per_expert_params` with at least
+//                 `n_experts` entries; when `per_expert_params[e]` is null the
+//                 unified `params` fallback is used for that expert.
 int ts_quantize_3d(const float * weights,
                    const float * act_scales,
                    const float * calib_X,
@@ -207,4 +214,14 @@ int ts_quantize_3d(const float * weights,
                    int64_t n_experts, int64_t out_dim, int64_t in_dim,
                    int64_t n_tokens,
                    const ts_quant_params_2d * params,
+                   std::vector<ts_quant_result_2d> * results);
+int ts_quantize_3d(const float * weights,
+                   const float * act_scales,
+                   const float * calib_X,
+                   const float * ref_output,
+                   const float * imatrix,
+                   int64_t n_experts, int64_t out_dim, int64_t in_dim,
+                   int64_t n_tokens,
+                   const ts_quant_params_2d * params,          // unified fallback
+                   const ts_quant_params_2d * const * per_expert_params,  // [n_experts]
                    std::vector<ts_quant_result_2d> * results);

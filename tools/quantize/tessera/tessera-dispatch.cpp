@@ -552,6 +552,12 @@ struct ts_dispatch_db {
     // Per-table write buffers. Both null when --quantize-db is unset.
     ts_db_buffer *   eval_buffer       = nullptr;
     ts_db_buffer *   l4_outcome_buffer = nullptr;
+    // Tier 2 regime thresholds: learned kurtosis/eff_rank cutoffs per family.
+    // Populated at open time from regime_thresholds DuckDB table.
+    // Keyed by family string ("attn_q", "ffn_gate", etc.); empty when
+    // no prior exists (the static cascade is used instead).
+    std::unordered_map<std::string, ts_regime_family_thresholds>
+        regime_threshold_map;
 };
 
 // Open the store and begin a run. Returns a heap-allocated ts_dispatch_db
@@ -633,6 +639,46 @@ static ts_dispatch_db * ts_dispatch_db_open(
                     first = false;
                 }
                 printf(")\n");
+            }
+        }
+    }
+    // Tier 2 regime thresholds: pre-load learned kurtosis/eff_rank cutoffs per
+    // family. The dispatch's ts_regime_classify calls look up thresholds from
+    // this map and pass them to ts_regime_classify so the regime cascade uses
+    // learned priors instead of static defaults. Empty when --tessera-db is
+    // unset or when no regime_thresholds rows exist for this model yet (the
+    // first run always uses the static cascade; subsequent runs benefit once
+    // the Tier 4 OLS fitter has produced priors).
+    if (!wrap->model_hash.empty()) {
+        ts_tessera_db_regime_threshold_list rt_list;
+        if (ts_tessera_db_list_regime_thresholds(wrap->db, wrap->model_hash,
+                                                  "trunk", "", &rt_list) == 0) {
+            for (auto & e : rt_list.entries) {
+                // Only use priors with meaningful fit quality (r2 > 0.05 = not noise)
+                if (e.r2_score < 0.05f || e.n_samples < 8) continue;
+                ts_regime_family_thresholds t;
+                t.model_hash  = e.model_hash;
+                t.model_role  = e.model_role;
+                t.family      = e.family;
+                t.kurt_heavy  = e.kurt_heavy;
+                t.kurt_light  = e.kurt_light;
+                t.er_compact  = e.er_compact;
+                t.er_sparse   = e.er_sparse;
+                t.n_samples   = e.n_samples;
+                t.valid       = true;
+                wrap->regime_threshold_map[e.family] = std::move(t);
+            }
+            if (verbose && !wrap->regime_threshold_map.empty()) {
+                printf("tessera-dispatch: regime thresholds loaded for %zu families: ",
+                       wrap->regime_threshold_map.size());
+                bool first = true;
+                for (const auto & kv : wrap->regime_threshold_map) {
+                    printf("%s%s(kurt_heavy=%.1f,n=%d)",
+                           first ? "" : ", ", kv.first.c_str(),
+                           kv.second.kurt_heavy, kv.second.n_samples);
+                    first = false;
+                }
+                printf("\n");
             }
         }
     }
@@ -2420,6 +2466,18 @@ int ts_dispatch_run(const ts_dispatch_params * params,
             name, weights.data(), out_dim, in_dim,
             imdata, imdata ? imdim : 0);
 
+        // Tier 2: look up learned per-family thresholds from DuckDB.
+        // db_wrap is null when --tessera-db is unset or open failed;
+        // the map is empty when no regime_thresholds rows exist for this model
+        // yet (the static cascade is used as fallback).
+        const ts_regime_family_thresholds * regime_thresholds = nullptr;
+        if (db_wrap != nullptr && !family.empty()) {
+            auto it = db_wrap->regime_threshold_map.find(family);
+            if (it != db_wrap->regime_threshold_map.end()) {
+                regime_thresholds = &it->second;
+            }
+        }
+
         // multimodal: resolve the operative modality, the per-modality AWQ
         // alpha, and the per-modality activation scales for this tensor.
         int   mm_mod        = desc.modality;
@@ -2457,7 +2515,7 @@ int ts_dispatch_run(const ts_dispatch_params * params,
             }
         }
 
-        ts_regime_routing routing = ts_regime_classify(&desc);
+        ts_regime_routing routing = ts_regime_classify(&desc, regime_thresholds);
 
         // per-tensor alpha: per-modality MM alpha > GA result > default
         float tensor_alpha;
@@ -2537,13 +2595,76 @@ int ts_dispatch_run(const ts_dispatch_params * params,
 
         if (n_dims == 3) {
             // MoE expert tensor: (n_experts x out_dim x in_dim)
+            // Tier 3: per-expert regime routing. Each expert is a dense sub-tensor
+            // with its own activation statistics; it deserves its own regime
+            // routing decision (DyMoE/DynaExq SOTA: hot experts need higher precision,
+            // cold experts can tolerate aggressive quantization). The routed expert for
+            // expert e may differ from expert f (one expert's gate may be DartQuant
+            // while its sibling is plain AWQ).
             const int64_t n_experts = ne[2];
+            const int64_t stride = out_dim * in_dim;
+
+            // Build per-expert params + store per-expert regime routing.
+            // Expert 0 uses the main-loop routing (already computed above).
+            // Experts 1..N compute per-slice regime from weight statistics.
+            // moe_routing[i] holds (expert_idx, routing) for expert i.
+            // Stored in a vector so the data survives past the regime loop scope.
+            std::vector<const ts_quant_params_2d *> expert_qparams;
+            expert_qparams.reserve((size_t)n_experts);
+            std::vector<std::pair<int64_t, ts_regime_routing>> moe_routing;
+            moe_routing.reserve((size_t)n_experts);
+            std::vector<ts_regime_descriptor> moe_descs;
+            moe_descs.reserve((size_t)n_experts);
+
+            // Expert 0: already routed above from the tensor-level descriptor
+            ts_quant_params_2d qp0 = tqp;  // copy (tqp is the shared loop copy)
+            expert_qparams.push_back(&qp0);
+            moe_routing.emplace_back(0, routing);  // main routing for expert 0
+            moe_descs.push_back(desc);
+
+            // Experts 1..N: per-slice regime from weight statistics
+            for (int64_t e = 1; e < n_experts; e++) {
+                const float * expert_w = weights.data() + e * stride;
+                // Per-expert regime descriptor: uses weight-column kurtosis/eff_rank
+                // as the activation proxy. This is the Tier 3 fallback when the
+                // imatrix does not have per-expert activation slices.
+                ts_regime_descriptor ed = ts_regime_compute_descriptor_for_expert(
+                    name, expert_w, out_dim, in_dim,
+                    (int32_t)e,          // expert_idx >= 0 → MoE path
+                    nullptr, 0,          // no per-expert imatrix data yet
+                    nullptr,             // no per-expert max_abs
+                    0,                   // n_layers_total: MoE per-expert routing uses
+                                          // weight stats (expert-level) not layer position
+                    regime_thresholds);
+                ts_regime_routing er = ts_regime_classify(&ed, regime_thresholds);
+                ts_expert_profile ep = ts_expert_default_profile(er.expert, ed.modality);
+                ts_quant_params_2d * eqp = new (std::nothrow) ts_quant_params_2d(tqp);
+                if (eqp) {
+                    eqp->alpha           = tqp.alpha * ep.alpha_scale;
+                    eqp->clip           = tqp.clip * ep.clip_scale;
+                    eqp->use_septq       = ep.use_septq;
+                    eqp->awq_grid        = ep.awq_grid;
+                    eqp->max_outliers   = ep.max_outliers;
+                    eqp->outlier_thresh = tqp.outlier_thresh * ep.outlier_thresh;
+                }
+                expert_qparams.push_back(eqp);
+                moe_routing.emplace_back(e, er);
+                moe_descs.push_back(ed);
+            }
 
             std::vector<ts_quant_result_2d> qresults;
+            // ts_quantize_3d overload (2): per-expert params.
+            // Pass &expert_qparams[0] as the array pointer (std::vector guarantees
+            // contiguous storage). nullptr fallback for expert e means ts_quantize_3d
+            // uses the unified tqp for that expert.
             int rc = ts_quantize_3d(weights.data(),
                                     act_scales, nullptr, nullptr, act_scales,
                                     n_experts, out_dim, in_dim, 0,
-                                    &tqp, &qresults);
+                                    &tqp, expert_qparams.data(), &qresults);
+            // free the heap-allocated per-expert params
+            for (int64_t e = 1; e < n_experts; e++) {
+                delete expert_qparams[(size_t)e];
+            }
             if (rc != 0) {
                 if (err_msg) {
                     *err_msg = "ts_quantize_3d failed for " + std::string(name);
@@ -2559,12 +2680,38 @@ int ts_dispatch_run(const ts_dispatch_params * params,
             moe_results.push_back(std::move(qresults));
             const std::vector<ts_quant_result_2d> & qr_keep = moe_results.back();
 
-            // write per-expert clusters
+            // write per-expert clusters + Tier 4 regime routing per expert
             for (int64_t e = 0; e < n_experts; e++) {
                 char exp_name[GGML_MAX_NAME];
                 snprintf(exp_name, sizeof(exp_name), "%s.%lld", name, (long long)e);
                 ts_gguf_write_tensor_cluster(out_ctx, out_ggml_ctx, exp_name, &qr_keep[(size_t)e], out_dim, in_dim);
                 total_mse += qr_keep[(size_t)e].mse;
+
+                // Tier 4: per-expert regime routing for DuckDB feedback loop.
+                // Uses moe_routing / moe_descs vectors populated during the regime
+                // loop above so the per-expert routing data stays in scope.
+                if (db_wrap != nullptr && db_wrap->db != nullptr && !db_wrap->model_hash.empty()) {
+                    const ts_regime_routing & er = moe_routing[(size_t)e].second;
+                    const ts_regime_descriptor & ed = moe_descs[(size_t)e];
+
+                    ts_tessera_db_regime_routing_row rr;
+                    rr.model_hash          = db_wrap->model_hash;
+                    rr.model_role          = params->model_role;
+                    rr.name                = exp_name;
+                    rr.family              = family;
+                    rr.layer_depth         = ts_tessera_db_layer_depth(name);
+                    rr.kurtosis            = ed.kurtosis;
+                    rr.eff_rank            = ed.eff_rank;
+                    rr.layer_position      = (int)ed.position;
+                    rr.routed_expert       = (int)er.expert;
+                    rr.expert_name         = ts_expert_name(er.expert);
+                    rr.routing_confidence  = er.confidence;
+                    rr.threshold_source    = er.threshold_source;
+                    rr.routing_reason      = er.reason;
+                    rr.modality            = (int)ed.modality;
+                    rr.default_tier        = (int)ed.default_tier;
+                    ts_tessera_db_upsert_regime_routing(db_wrap->db, rr, nullptr);
+                }
             }
 
             ts_dispatch_tensor_result tr;
@@ -2647,6 +2794,30 @@ int ts_dispatch_run(const ts_dispatch_params * params,
             tr.out_dim             = out_dim;
             tr.in_dim              = in_dim;
             fill_expert_meta(tr);
+
+            // Tier 4: write per-tensor regime routing for the DuckDB feedback loop.
+            // One row per tensor (non-MoE). Read by Python l5_outcome.py to join
+            // with l4_plan_outcome for Tier 4 OLS threshold refitting.
+            if (db_wrap != nullptr && db_wrap->db != nullptr && !db_wrap->model_hash.empty()) {
+                ts_tessera_db_regime_routing_row rr;
+                rr.model_hash         = db_wrap->model_hash;
+                rr.model_role         = params->model_role;
+                rr.name               = name;
+                rr.family             = family;
+                rr.layer_depth        = ts_tessera_db_layer_depth(name);
+                rr.kurtosis           = desc.kurtosis;
+                rr.eff_rank           = desc.eff_rank;
+                rr.layer_position     = (int)desc.position;
+                rr.routed_expert      = (int)routing.expert;
+                rr.expert_name        = ts_expert_name(routing.expert);
+                rr.routing_confidence = routing.confidence;
+                rr.threshold_source   = routing.threshold_source;
+                rr.routing_reason     = routing.reason;
+                rr.modality           = (int)desc.modality;
+                rr.default_tier       = (int)desc.default_tier;
+                ts_tessera_db_upsert_regime_routing(db_wrap->db, rr, nullptr);
+            }
+
             tr.packed              = ts_to_bytes_u32(qr.packed);
             tr.page_scales         = ts_to_bytes_u16(qr.page_scales);
             tr.lane_scales         = ts_to_bytes_i8(qr.lane_scales);
@@ -2849,7 +3020,16 @@ int ts_dispatch_run(const ts_dispatch_params * params,
                 }
                 ts_regime_descriptor desc = ts_regime_compute_descriptor(
                     name, w.data(), item.out_dim, item.in_dim, nullptr, 0);
-                ts_regime_routing routing = ts_regime_classify(&desc);
+                // Tier 2: look up learned thresholds (same pattern as the main loop)
+                const std::string fam = ts_regime_infer_family(name);
+                const ts_regime_family_thresholds * regime_thresholds = nullptr;
+                if (db_wrap != nullptr && !fam.empty()) {
+                    auto it = db_wrap->regime_threshold_map.find(fam);
+                    if (it != db_wrap->regime_threshold_map.end()) {
+                        regime_thresholds = &it->second;
+                    }
+                }
+                ts_regime_routing routing = ts_regime_classify(&desc, regime_thresholds);
                 item.routed_expert = routing.expert;
             }
 
