@@ -228,6 +228,8 @@ private struct ContactRow: View {
             Spacer()
         }
         .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(contact.displayName), \(contact.emails.first?.value ?? "")")
     }
 }
 
@@ -549,6 +551,7 @@ private struct VCardImportSheet: View {
                         pickedFile = url
                     }
                 }
+                .accessibilityLabel("Choose VCard file")
                 if let url = pickedFile {
                     Text(url.lastPathComponent)
                         .font(.caption)
@@ -570,6 +573,7 @@ private struct VCardImportSheet: View {
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(pickedFile == nil || isWorking)
+                .accessibilityLabel("Import selected VCard file")
             }
         }
         .padding()

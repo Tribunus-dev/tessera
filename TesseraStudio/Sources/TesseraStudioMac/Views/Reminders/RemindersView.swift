@@ -220,6 +220,8 @@ public struct RemindersView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
+            .accessibilityLabel("Open system settings")
+            .accessibilityHint("Opens macOS System Settings to the Notifications pane.")
         }
         .padding(8)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
@@ -268,6 +270,9 @@ private struct ReminderRow: View {
             Spacer()
         }
         .padding(.vertical, 2)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(reminder.title), \(reminder.priority.shortLabel)")
+        .accessibilityValue("\(rowIcon) \(timeDescription)")
     }
 
     private var rowIcon: String {

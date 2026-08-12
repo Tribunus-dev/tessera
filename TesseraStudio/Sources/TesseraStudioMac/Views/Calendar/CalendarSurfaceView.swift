@@ -86,6 +86,7 @@ public struct CalendarSurfaceView: View {
                 displayedComponents: .date
             )
             .datePickerStyle(.graphical)
+            .accessibilityLabel("Selected date")
 
             Picker("View", selection: Binding(
                 get: { model.viewMode },
@@ -101,6 +102,8 @@ public struct CalendarSurfaceView: View {
             Button("Today") { model.goToToday() }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
+                .accessibilityLabel("Go to today")
+                .accessibilityHint("Navigates to the current date.")
 
             Divider()
 
@@ -142,6 +145,7 @@ public struct CalendarSurfaceView: View {
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
+                            .accessibilityLabel("\(event.title), \(whenLabel(event))")
                         }
                     }
                 }
@@ -192,12 +196,15 @@ public struct CalendarSurfaceView: View {
             .onSubmit {
                 Task { await model.submitQuickAdd() }
             }
+            .accessibilityLabel("Quick-add event")
             Button("Add") {
                 Task { await model.submitQuickAdd() }
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
             .disabled(model.quickAddText.trimmingCharacters(in: .whitespaces).isEmpty)
+            .accessibilityLabel("Add event")
+            .accessibilityHint("Creates an event from the text above.")
         }
         .padding(8)
         .background(.bar)
