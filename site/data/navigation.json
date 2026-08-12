@@ -1,6 +1,7 @@
 {
   "primary": [
     { "label": "Studio", "path": "/studio/" },
+    { "label": "Engine", "path": "/engine/" },
     { "label": "How it works", "path": "/how-it-works/" },
     { "label": "How Tessera differs", "path": "/how-tessera-differs/" },
     { "label": "Concepts", "path": "/concepts/" },
@@ -13,6 +14,7 @@
   "secondary": [
     { "label": "Home", "path": "/", "from": "global" },
     { "label": "Tessera Studio", "path": "/studio/", "from": "global" },
+    { "label": "Engine", "path": "/engine/", "from": "global" },
     { "label": "How it works", "path": "/how-it-works/", "from": "global" },
     { "label": "How Tessera differs", "path": "/how-tessera-differs/", "from": "global" },
     { "label": "Concepts", "path": "/concepts/", "from": "global" },

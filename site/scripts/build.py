@@ -29,11 +29,22 @@ PAGES = [
         "route": "/",
         "out": SITE / "index.html",
         "src": PAGES_SRC / "home.html",
-        "title": "Tessera — Calibrate and quantize models with receipts the kernel agrees with.",
+        "title": "Tessera Studio — AI that works with you, not at you.",
         "canon": "https://tessera.tribunus.dev/",
-        "og_title": "Tessera — LLM calibration with runtime-verifiable fitness.",
-        "og_desc": "Calibrate and quantize models with receipts the kernel agrees with.",
+        "og_title": "Tessera Studio — AI that works with you, not at you.",
+        "og_desc": "A private desktop productivity app powered by the Tessera engine. Non-intrusive, actively proactive, fully on your machine. macOS + Linux developer preview Aug 21.",
         "og_url": "https://tessera.tribunus.dev/",
+        "has_secondary": True,
+    },
+    {
+        "route": "/engine/",
+        "out": SITE / "engine" / "index.html",
+        "src": PAGES_SRC / "engine.html",
+        "title": "Tessera — the engine",
+        "canon": "https://tessera.tribunus.dev/engine/",
+        "og_title": "Tessera — the engine",
+        "og_desc": "Calibrate and quantize models with receipts the kernel agrees with.",
+        "og_url": "https://tessera.tribunus.dev/engine/",
         "has_secondary": True,
     },
     {
@@ -183,7 +194,7 @@ def render_page(page: dict) -> str:
     robots = '<meta name="robots" content="noindex">\n' if page.get("noindex") else ""
     og_url_line = f'<meta property="og:url" content="{page["og_url"]}">\n' if page["og_url"] and page["route"] != "/404/" else ""
     # Editorial OG image — PNG for Twitter/X unfurl, SVG as fallback.
-    og_image = '<meta property="og:image" content="https://tessera.tribunus.dev/media/og-image.png">\n<meta property="og:image:width" content="1200">\n<meta property="og:image:height" content="630">\n<meta property="og:image:alt" content="Tessera — receipts the kernel agrees with">\n<meta property="og:image:type" content="image/png">\n'
+    og_image = '<meta property="og:image" content="https://tessera.tribunus.dev/media/og-image.png">\n<meta property="og:image:width" content="1200">\n<meta property="og:image:height" content="630">\n<meta property="og:image:alt" content="Tessera Studio — AI that works with you, not at you">\n<meta property="og:image:type" content="image/png">\n'
     twitter_image = '<meta name="twitter:image" content="https://tessera.tribunus.dev/media/og-image.png">\n'
     json_ld = (
         '<script type="application/ld+json">{"@context":"https://schema.org","@type":"Article",'
@@ -234,8 +245,8 @@ def render_page(page: dict) -> str:
         head = head.replace(
             '<meta name="twitter:card" content="summary">',
             '<meta name="twitter:card" content="summary">\n'
-            '<meta name="twitter:title" content="Tessera">\n'
-            '<meta name="twitter:description" content="Calibrate and quantize models with receipts the kernel agrees with.">',
+            '<meta name="twitter:title" content="Tessera Studio">\n'
+            '<meta name="twitter:description" content="AI that works with you, not at you. Private desktop productivity app powered by the Tessera engine. macOS + Linux dev preview Aug 21.">',
         )
 
     doc = (
