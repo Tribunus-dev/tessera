@@ -4,7 +4,7 @@
 
 void llama_model_granite::load_arch_hparams(llama_model_loader & ml) {
     ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps);
-    ml.get_key(LLM_KV_LOGIT_SCALE,                 hparams.f_logit_scale);
+    ml.get_key(LLM_KV_LOGIT_SCALE,                 hparams.f_logit_scale, /* required */ false);
     ml.get_key(LLM_KV_RESIDUAL_SCALE,              hparams.f_residual_scale, false);
     ml.get_key(LLM_KV_EMBEDDING_SCALE,             hparams.f_embedding_scale, false);
     ml.get_key(LLM_KV_ATTENTION_SCALE,             hparams.f_attention_scale, false);
@@ -184,8 +184,10 @@ llama_model_granite::graph::graph(
     // lm_head
     cur = build_lora_mm(model.output, cur, model.output_s);
 
-    // For Granite architectures - scale logits
-    cur = ggml_scale(ctx0, cur, 1.0f / hparams.f_logit_scale);
+    // For Granite architectures - scale logits (optional, skip if f_logit_scale == 0)
+    if (hparams.f_logit_scale) {
+        cur = ggml_scale(ctx0, cur, 1.0f / hparams.f_logit_scale);
+    }
     cb(cur, "result_output", -1);
     res->t_logits = cur;
 

@@ -1578,6 +1578,27 @@ struct llama_model_granite_hybrid : public llama_model_base {
 };
 
 
+struct llama_model_granite4vision : public llama_model_granite {
+    llama_model_granite4vision(const struct llama_model_params & params) : llama_model_granite(params) {}
+    // load_arch_hparams and load_arch_tensors inherited from llama_model_granite
+    std::unique_ptr<llm_graph_context> build_arch_graph(const llm_graph_params & params) const override;
+};
+
+
+struct llama_model_granite_docling : public llama_model_granite {
+    llama_model_granite_docling(const struct llama_model_params & params) : llama_model_granite(params) {}
+    // load_arch_hparams and load_arch_tensors inherited from llama_model_granite
+    std::unique_ptr<llm_graph_context> build_arch_graph(const llm_graph_params & params) const override;
+};
+
+
+struct llama_model_granite_speech_plus : public llama_model_granite {
+    llama_model_granite_speech_plus(const struct llama_model_params & params) : llama_model_granite(params) {}
+    // load_arch_hparams and load_arch_tensors inherited from llama_model_granite
+    std::unique_ptr<llm_graph_context> build_arch_graph(const llm_graph_params & params) const override;
+};
+
+
 struct llama_model_chameleon : public llama_model_base {
     llama_model_chameleon(const struct llama_model_params & params) : llama_model_base(params) {}
     void load_arch_hparams(llama_model_loader & ml) override;

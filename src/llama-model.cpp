@@ -298,6 +298,12 @@ static llama_model * llama_model_mapping(llm_arch arch, const llama_model_params
             return new llama_model_minicpm(params);
         case LLM_ARCH_GRANITE_HYBRID:
             return new llama_model_granite_hybrid(params);
+        case LLM_ARCH_GRANITE4VISION:
+            return new llama_model_granite4vision(params);
+        case LLM_ARCH_GRANITE_DOCLING:
+            return new llama_model_granite_docling(params);
+        case LLM_ARCH_GRANITE_SPEECH_PLUS:
+            return new llama_model_granite_speech_plus(params);
         case LLM_ARCH_CHAMELEON:
             return new llama_model_chameleon(params);
         case LLM_ARCH_WAVTOKENIZER_DEC:
@@ -1650,8 +1656,10 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
     // requests, while mtmd consumes the clip tensors from the same file later.
     // Do not require the language model alone to claim the sibling tensors.
     bool has_embedded_vision = false;
+    bool has_embedded_audio = false;
     ml.get_key("clip.has_vision_encoder", has_embedded_vision, false);
-    ml.done_getting_tensors(has_embedded_vision);
+    ml.get_key("clip.has_audio_encoder", has_embedded_audio, false);
+    ml.done_getting_tensors(has_embedded_vision || has_embedded_audio);
 
     // Tied NVFP4 output is valid when no separate LM-head scale tensors are present.
     // If sidecar scales exist, the output weight must be an actual output tensor.
@@ -2910,6 +2918,9 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
         case LLM_ARCH_GRANITE:
         case LLM_ARCH_GRANITE_MOE:
         case LLM_ARCH_GRANITE_HYBRID:
+        case LLM_ARCH_GRANITE4VISION:
+        case LLM_ARCH_GRANITE_DOCLING:
+        case LLM_ARCH_GRANITE_SPEECH_PLUS:
         case LLM_ARCH_CHAMELEON:
         case LLM_ARCH_BAILINGMOE:
         case LLM_ARCH_NEO_BERT:
