@@ -32,9 +32,14 @@ public final class ConfirmationPanel: NSObject, NSWindowDelegate {
     private let unlockDelaySeconds: TimeInterval = 5
     private let rateLimitWindow: TimeInterval = 30
     private let rateLimitCap = 3
+    private let tier: TesseraTier
 
-    public init(onResult: @escaping (Result) -> Void) {
+    public init(onResult: @escaping (Result) -> Void, tier: TesseraTier = .tier3) {
         self.onResult = onResult
+        // The panic-wipe confirmation is the strictest tier by definition;
+        // the caller can override (e.g. for a lower-stakes confirmation
+        // that reuses the same panel) but the default is the safe one.
+        self.tier = tier
     }
 
     public func present() {
@@ -43,6 +48,7 @@ public final class ConfirmationPanel: NSObject, NSWindowDelegate {
             return
         }
         let view = ConfirmationView(
+            tier: tier,
             expectedPhrase: confirmationPhrase,
             unlockDelaySeconds: unlockDelaySeconds,
             onSubmit: { [weak self] text in
@@ -131,6 +137,7 @@ private struct ConfirmationView: View {
         case wrongPhrase(failedAttempts: Int, cap: Int)
     }
 
+    let tier: TesseraTier
     let expectedPhrase: String
     let unlockDelaySeconds: TimeInterval
     let onSubmit: (String) -> SubmitResult
@@ -144,8 +151,12 @@ private struct ConfirmationView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Plead the Fifth")
-                .font(.headline)
+            HStack(alignment: .center, spacing: 8) {
+                Text("Plead the Fifth")
+                    .font(.headline)
+                Spacer()
+                TierChip(tier: tier)
+            }
             Text("Type the phrase below to confirm. Paste is disabled. The button unlocks after a short delay.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -268,6 +279,36 @@ private struct PasteBlockedTextField: NSViewRepresentable {
                 return false
             }
             return true
+        }
+    }
+}
+
+/// Tier chip surfaced on the confirmation panel. Compact pill showing
+/// the `TesseraTier` for the action the user is about to confirm.
+/// Color encodes severity (green = auto, blue = notify, orange =
+/// approval, red = multi-party). ASCII-only labels.
+private struct TierChip: View {
+    let tier: TesseraTier
+
+    var body: some View {
+        Text(tier.shortLabel)
+            .font(.caption.monospaced())
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(tierColor.opacity(0.18), in: Capsule())
+            .foregroundStyle(tierColor)
+            .overlay(
+                Capsule().stroke(tierColor.opacity(0.45), lineWidth: 0.5)
+            )
+            .accessibilityLabel(tier.displayName)
+    }
+
+    private var tierColor: Color {
+        switch tier {
+        case .tier0: return .green
+        case .tier1: return .blue
+        case .tier2: return .orange
+        case .tier3: return .red
         }
     }
 }
