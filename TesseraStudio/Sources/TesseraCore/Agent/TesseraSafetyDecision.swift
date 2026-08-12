@@ -105,4 +105,19 @@ public struct TesseraSafetyDecision: Sendable, Equatable {
         }
         return .askUser
     }
+
+    /// Risk tier for the decision's action risk, given an action class.
+    /// Pure; delegates to `TesseraTier.tier(for:risk:)` so the tier policy
+    /// has one auditable surface (the `TesseraTier` enum). The actual gate
+    /// is `check`; this is the surface label and audit-log metadata.
+    public func tier(forActionClass actionClass: String) -> TesseraTier {
+        TesseraTier.tier(for: actionClass, risk: actionRisk)
+    }
+
+    /// Risk tier from the risk axis only. Use when the action class is
+    /// unknown; the mapping assumes reversible (best case). Prefer
+    /// `tier(forActionClass:)` when the class is available.
+    public var riskOnlyTier: TesseraTier {
+        TesseraTier.tier(forRisk: actionRisk)
+    }
 }

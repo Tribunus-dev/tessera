@@ -9,14 +9,20 @@ import Observation
 public final class TelemetryMonitor {
     public private(set) var samples: [TelemetrySample] = []
     public private(set) var isRunning = false
+    /// Discrete events recorded from app code (review #1: time-to-first-message,
+    /// onboarding-first-goal-set). Kept as a rolling log so the drawer can
+    /// surface the most recent N alongside the sparklines.
+    public private(set) var events: [TelemetryEvent] = []
 
     private let bridge: any TesseraEngineBridge
     private let capacity: Int
+    private let eventCapacity: Int
     private var task: Task<Void, Never>?
 
-    public init(bridge: any TesseraEngineBridge, capacity: Int = 60) {
+    public init(bridge: any TesseraEngineBridge, capacity: Int = 60, eventCapacity: Int = 50) {
         self.bridge = bridge
         self.capacity = capacity
+        self.eventCapacity = eventCapacity
     }
 
     public var latest: TelemetrySample? { samples.last }
@@ -44,6 +50,17 @@ public final class TelemetryMonitor {
 
     public func reset() {
         samples = []
+        events = []
+    }
+
+    /// Record a discrete app event (e.g. "time_to_first_message" with
+    /// elapsed seconds). The drawer is free to surface the last N; nothing
+    /// else in the app reads this.
+    public func recordEvent(name: String, metadata: [String: String] = [:]) {
+        events.append(TelemetryEvent(name: name, timestamp: Date(), metadata: metadata))
+        if events.count > eventCapacity {
+            events.removeFirst(events.count - eventCapacity)
+        }
     }
 
     private func append(_ sample: TelemetrySample) {
@@ -51,6 +68,22 @@ public final class TelemetryMonitor {
         if samples.count > capacity {
             samples.removeFirst(samples.count - capacity)
         }
+    }
+}
+
+/// A discrete app event recorded on the ``TelemetryMonitor``. Used by the
+/// review #1 measurement architecture (time-to-first-message, onboarding
+/// first-goal-set).
+public struct TelemetryEvent: Identifiable, Equatable, Sendable {
+    public let id = UUID()
+    public let name: String
+    public let timestamp: Date
+    public let metadata: [String: String]
+
+    public init(name: String, timestamp: Date, metadata: [String: String] = [:]) {
+        self.name = name
+        self.timestamp = timestamp
+        self.metadata = metadata
     }
 }
 

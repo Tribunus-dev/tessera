@@ -88,6 +88,30 @@ public struct TesseraActionVerifier: ActionVerifying {
 
         return .medium
     }
+
+    // MARK: - Confidence band emission (Tian Pan 2026-04-12 split)
+
+    /// Map a rule-based risk classification to a categorical confidence band
+    /// for emission on `ToolResultPayload.confidenceBand`. The split is
+    /// inverse: low risk -> high confidence (the agent trusts the result of
+    /// a read); medium risk -> medium confidence (a mutation is plausible
+    /// but not certain); high risk -> low confidence (a destructive verb
+    /// is the case where the UI must surface the caveat chip). The
+    /// `.forbidden` case is exhaustive-typed; in practice the action is
+    /// rejected before execution so the band is never observed by the UI,
+    /// but the mapping is monotone (highest risk -> lowest confidence).
+    /// The agent loop is responsible for stamping the returned band onto
+    /// every `ToolResult` it emits; tools that have a finer-grained
+    /// uncertainty source (model logprobs, calibration detector output)
+    /// should overwrite this default.
+    public static func confidenceBand(for risk: TesseraActionRisk) -> ConfidenceBand {
+        switch risk {
+        case .low: return .high
+        case .medium: return .medium
+        case .high: return .low
+        case .forbidden: return .low
+        }
+    }
 }
 
 // MARK: - Action evidence (S1)

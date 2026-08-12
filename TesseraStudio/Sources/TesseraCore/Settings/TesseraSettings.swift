@@ -43,6 +43,14 @@ public enum TesseraSettingsKey {
     public static let skyUseStreaming = "tessera.settings.skyUseStreaming"
     // First-run
     public static let onboardingComplete = "tessera.settings.onboardingComplete"
+    // First goal typed on onboarding page 3. The chat controller seeds the
+    // first send with this string and clears it after consumption, so the
+    // value applies once and never bleeds into later sessions.
+    public static let firstGoal = "tessera.settings.firstGoal"
+    // Onboarding completion timestamp (Unix seconds, 0 == not completed).
+    // Used as the start of the time-to-first-message window in the review
+    // #1 measurement architecture.
+    public static let onboardingCompletedAt = "tessera.settings.onboardingCompletedAt"
     // Audience mode (studio-ux blueprint section 3.1). Simple / Standard / Studio.
     public static let audienceMode = "tessera.settings.audienceMode"
     // Learning (self-improving loop)
@@ -266,6 +274,7 @@ public enum TesseraSettings {
             TesseraSettingsKey.skyModelName: TesseraSettingsDefault.skyModelName,
             TesseraSettingsKey.skyUseStreaming: TesseraSettingsDefault.skyUseStreaming,
             TesseraSettingsKey.onboardingComplete: false,
+            TesseraSettingsKey.firstGoal: "",
             TesseraSettingsKey.audienceMode: AudienceMode.simple.rawValue,
             TesseraSettingsKey.learningEnabled: TesseraSettingsDefault.learningEnabled,
             TesseraSettingsKey.learningEscalationEnabled: TesseraSettingsDefault.learningEscalationEnabled,
@@ -322,6 +331,19 @@ public enum TesseraSettings {
 
     public static var modelDirectory: String {
         UserDefaults.standard.string(forKey: TesseraSettingsKey.modelDirectory) ?? TesseraSettingsDefault.modelDirectory
+    }
+
+    /// First goal the user typed on onboarding page 3. Empty when the
+    /// user skipped the card. The chat controller consumes this once and
+    /// clears it so it never seeds later sessions.
+    public static var firstGoal: String {
+        UserDefaults.standard.string(forKey: TesseraSettingsKey.firstGoal) ?? ""
+    }
+
+    /// Write/clear the first goal. Cleared by the chat controller after the
+    /// first send so the value applies exactly once.
+    public static func setFirstGoal(_ value: String) {
+        UserDefaults.standard.set(value, forKey: TesseraSettingsKey.firstGoal)
     }
 
     public static var threadCount: Int {

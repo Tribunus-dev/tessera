@@ -32,9 +32,27 @@ public final class ConfirmationPanel: NSObject, NSWindowDelegate {
     private let unlockDelaySeconds: TimeInterval = 5
     private let rateLimitWindow: TimeInterval = 30
     private let rateLimitCap = 3
+    private let tier: TesseraTier
+    /// 3D (review #4 follow-up, agent-ux-fatigue): the
+    /// audit-log toggle handler. The host wires this to
+    /// the `ActionAuditLogPanelPresenter`'s
+    /// `present() / dismiss()` so the confirmation
+    /// surface can toggle the side panel. Optional so
+    /// existing call sites that do not opt in still
+    /// compile.
+    private let onToggleAuditLog: (() -> Void)?
 
-    public init(onResult: @escaping (Result) -> Void) {
+    public init(
+        onResult: @escaping (Result) -> Void,
+        tier: TesseraTier = .tier3,
+        onToggleAuditLog: (() -> Void)? = nil
+    ) {
         self.onResult = onResult
+        // The panic-wipe confirmation is the strictest tier by definition;
+        // the caller can override (e.g. for a lower-stakes confirmation
+        // that reuses the same panel) but the default is the safe one.
+        self.tier = tier
+        self.onToggleAuditLog = onToggleAuditLog
     }
 
     public func present() {
@@ -43,6 +61,7 @@ public final class ConfirmationPanel: NSObject, NSWindowDelegate {
             return
         }
         let view = ConfirmationView(
+            tier: tier,
             expectedPhrase: confirmationPhrase,
             unlockDelaySeconds: unlockDelaySeconds,
             onSubmit: { [weak self] text in
@@ -50,11 +69,20 @@ public final class ConfirmationPanel: NSObject, NSWindowDelegate {
             },
             onCancel: { [weak self] in
                 self?.finish(.cancelled)
+            },
+            onToggleAuditLog: { [weak self] in
+                // 3D (review #4 follow-up, agent-ux-fatigue):
+                // forward the toggle to the host's audit-log
+                // presenter, when one is wired. The default
+                // (no presenter) is a no-op; existing callers
+                // that do not opt in still see the same
+                // confirmation surface.
+                self?.onToggleAuditLog?()
             }
         )
         let hosting = NSHostingController(rootView: view)
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 220),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 260),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -131,10 +159,21 @@ private struct ConfirmationView: View {
         case wrongPhrase(failedAttempts: Int, cap: Int)
     }
 
+    let tier: TesseraTier
     let expectedPhrase: String
     let unlockDelaySeconds: TimeInterval
     let onSubmit: (String) -> SubmitResult
     let onCancel: () -> Void
+    /// 3D (review #4 follow-up, agent-ux-fatigue): the
+    /// audit-log toggle. Called when the user taps the
+    /// "Audit log" button at the bottom of the panel.
+    /// The host wires this to the
+    /// ``ActionAuditLogPanelPresenter`` (or to a
+    /// binding on the host view that owns the
+    /// presenter). Default is a no-op so existing
+    /// call sites that do not opt in to the toggle
+    /// still compile and behave the same.
+    let onToggleAuditLog: () -> Void
 
     @State private var text: String = ""
     @State private var unlockAt: Date = Date()
@@ -144,8 +183,12 @@ private struct ConfirmationView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Plead the Fifth")
-                .font(.headline)
+            HStack(alignment: .center, spacing: 8) {
+                Text("Plead the Fifth")
+                    .font(.headline)
+                Spacer()
+                TierChip(tier: tier)
+            }
             Text("Type the phrase below to confirm. Paste is disabled. The button unlocks after a short delay.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -169,6 +212,23 @@ private struct ConfirmationView: View {
                 Button("Confirm") { submit() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(!canConfirm)
+            }
+            // 3D (review #4 follow-up, agent-ux-fatigue): toggle the
+            // Action Audit Log side panel from the confirmation
+            // surface. The toggle is intentionally a non-default
+            // button so the confirm flow is not crowded; the user
+            // pulls the audit log as a read surface, separate from
+            // the typed-phrase confirmation that fires the wipe.
+            HStack {
+                Button(action: onToggleAuditLog) {
+                    Label("Audit log", systemImage: "clock.arrow.circlepath")
+                        .labelStyle(.titleAndIcon)
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Toggle action audit log")
+                .accessibilityHint("Opens a side panel with the chronological list of every agent action + outcome.")
+                Spacer()
             }
         }
         .padding(20)
@@ -268,6 +328,36 @@ private struct PasteBlockedTextField: NSViewRepresentable {
                 return false
             }
             return true
+        }
+    }
+}
+
+/// Tier chip surfaced on the confirmation panel. Compact pill showing
+/// the `TesseraTier` for the action the user is about to confirm.
+/// Color encodes severity (green = auto, blue = notify, orange =
+/// approval, red = multi-party). ASCII-only labels.
+private struct TierChip: View {
+    let tier: TesseraTier
+
+    var body: some View {
+        Text(tier.shortLabel)
+            .font(.caption.monospaced())
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(tierColor.opacity(0.18), in: Capsule())
+            .foregroundStyle(tierColor)
+            .overlay(
+                Capsule().stroke(tierColor.opacity(0.45), lineWidth: 0.5)
+            )
+            .accessibilityLabel(tier.displayName)
+    }
+
+    private var tierColor: Color {
+        switch tier {
+        case .tier0: return .green
+        case .tier1: return .blue
+        case .tier2: return .orange
+        case .tier3: return .red
         }
     }
 }

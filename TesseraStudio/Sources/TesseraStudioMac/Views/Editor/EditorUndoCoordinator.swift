@@ -17,13 +17,24 @@ import TesseraCore
 /// undo manager's `undoActionName` (which is the
 /// `Receipt.summary` for the most recent receipt) and
 /// displays it in the menu. The menu shows the receipt's
-/// summary as the action name — exactly what the
+/// summary as the action name - exactly what the
 /// spec's §9 "menu shows summary" requirement calls for.
 ///
 /// **Per-window instance.** One `EditorUndoCoordinator`
 /// per document window. The coordinator holds the
 /// `ReceiptUndoManager` for the document and routes
 /// undo/redo through the data layer's persistence path.
+///
+/// **Time-limited undo (review #5 follow-up, item 2C).** The
+/// legacy `AppKitUndoManagerBridge.levelsOfUndo = 100` cap
+/// limited depth, not time; users lost the affordance around
+/// the 30-second mark and the undo lived forever. The
+/// coordinator now holds a ``TimeLimitedUndoPolicy`` (default
+/// 90 seconds) and the bridge consults it on every `canUndo`
+/// read. Lazy expiry: the clock is sampled at access time, not
+/// on a timer. The receipt chain is unchanged - the budget
+/// hides expired entries from the user but the audit trail
+/// keeps them.
 @MainActor
 public final class EditorUndoCoordinator: NSObject {
     public let documentID: UUID
@@ -35,17 +46,23 @@ public final class EditorUndoCoordinator: NSObject {
     /// `DocumentStore.apply(mutation:to:actor:)` is the
     /// canonical entry point.
     public var onApplyMutation: ((Mutation) async throws -> Void)?
+    /// Time-based cap on undo. The bridge reads the top
+    /// receipt's `timestamp` and compares it against this
+    /// policy on every `canUndo` read.
+    public var undoPolicy: TimeLimitedUndoPolicy
 
     public init(
         documentID: UUID,
         userID: UUID,
         undoManager: ReceiptUndoManager,
-        textView: NSTextView? = nil
+        textView: NSTextView? = nil,
+        undoPolicy: TimeLimitedUndoPolicy = .default
     ) {
         self.documentID = documentID
         self.userID = userID
         self.undoManager = undoManager
         self.textView = textView
+        self.undoPolicy = undoPolicy
         super.init()
     }
 
@@ -74,6 +91,18 @@ public final class EditorUndoCoordinator: NSObject {
     public func makeUndoManager() -> UndoManager {
         AppKitUndoManagerBridge(coordinator: self)
     }
+
+    /// Current budget derived from the top undo entry. The
+    /// SwiftUI view reads this to render the visible "Undo
+    /// available for Ns" affordance. When the undo stack is
+    /// empty, returns ``TimeLimitedUndoBudget/empty``.
+    public func currentUndoBudget() -> TimeLimitedUndoBudget {
+        let top = undoManager.snapshotUndoStack().last
+        return TimeLimitedUndoBudget(
+            registeredAt: top?.timestamp,
+            policy: undoPolicy
+        )
+    }
 }
 
 // MARK: - AppKitUndoManagerBridge
@@ -82,13 +111,21 @@ public final class EditorUndoCoordinator: NSObject {
 /// `undo()`/`redo()` calls to the `EditorUndoCoordinator`,
 /// which in turn drives the `ReceiptUndoManager`. The
 /// bridge exists so the macOS Edit menu's standard undo
-/// behavior ("Cmd-Z" → "Undo Insert Paragraph") calls
+/// behavior ("Cmd-Z" -> "Undo Insert Paragraph") calls
 /// the receipt-aware code path.
 ///
 /// **`undoActionName`.** The bridge returns the top
 /// receipt's `summary` so the menu shows the receipt's
 /// human-readable description (per spec §9 "menu shows
 /// summary").
+///
+/// **Time-limited undo (item 2C).** The legacy
+/// `levelsOfUndo = 100` cap (which limited *depth*, not
+/// *time*) is replaced with ``TimeLimitedUndoPolicy``. The
+/// bridge's `canUndo` is now the conjunction of the undo
+/// stack being non-empty AND the top entry's age being
+/// within the policy cap. Lazy: the clock is sampled at
+/// access time, not on a timer.
 @MainActor
 public final class AppKitUndoManagerBridge: UndoManager {
     private let coordinator: EditorUndoCoordinator
@@ -99,7 +136,11 @@ public final class AppKitUndoManagerBridge: UndoManager {
         // Group undo events so a burst of related edits
         // is one undo unit.
         self.groupsByEvent = false
-        self.levelsOfUndo = 100
+        // The depth cap (levelsOfUndo = 100) is replaced
+        // by the time-based cap on the coordinator's
+        // `undoPolicy`. The bridge consults it on every
+        // `canUndo` read; the depth is bounded only by
+        // the audit chain's own persistence policy.
     }
 
     public override var undoActionName: String {
@@ -116,13 +157,30 @@ public final class AppKitUndoManagerBridge: UndoManager {
         return "Redo \(top.summary)"
     }
 
-    public override var canUndo: Bool { coordinator.undoManager.canUndo }
+    /// `canUndo` is the conjunction of:
+    ///   1. The undo stack being non-empty (managed by
+    ///      ``ReceiptUndoManager``), AND
+    ///   2. The top entry's age being within the policy
+    ///      cap (managed by ``TimeLimitedUndoPolicy``).
+    ///
+    /// The receipt chain is preserved across expiry: an
+    /// expired entry is hidden from the Cmd-Z affordance
+    /// but still lives in the audit chain and the receipts
+    /// drawer.
+    public override var canUndo: Bool {
+        guard coordinator.undoManager.canUndo else { return false }
+        return coordinator.currentUndoBudget().isAvailable
+    }
+
     public override var canRedo: Bool { coordinator.undoManager.canRedo }
 
     public override func undo() {
-        // The platform's default `undo()` calls
-        // `endUndoGrouping` and dispatches the undo; we
-        // forward to the receipt-aware code path.
+        // Guard against a race: a stale `canUndo` read
+        // could let Cmd-Z through on an entry that just
+        // expired. Re-check at dispatch time. The
+        // receipt-aware path is the one that mutates the
+        // audit chain, so the cap is the last gate.
+        guard canUndo else { return }
         let document = coordinator.textView?.textContentStorage?.attributedString
         Task { @MainActor in
             await self.runUndo(document: document)
@@ -193,3 +251,70 @@ public final class AppKitUndoManagerBridge: UndoManager {
         }
     }
 }
+
+// MARK: - TimeLimitedUndoChip
+
+#if canImport(SwiftUI)
+import SwiftUI
+
+/// Visible "Undo available for Ns" affordance for the editor
+/// (review #5 follow-up, item 2C). The chip is the first-class
+/// surface the skill calls for: "the undo availability must be a
+/// first-class element in the UI, not buried in the audit log."
+///
+/// **Smooth animation, not 1 Hz text.** The chip reads
+/// ``TimeLimitedUndoBudget/remainingSeconds`` and
+/// ``TimeLimitedUndoBudget/progress(at:)`` continuously; SwiftUI's
+/// `TimelineView(.animation)` drives the body and `.animation(
+/// .linear)` interpolates the value. No `Timer`, no `Text` that
+/// re-renders at 1 Hz.
+///
+/// **Hide on empty / hide on expired.** The chip is a no-op
+/// when the budget is empty (no undo entry) or expired. The
+/// `opacity(0)` path is cheaper than conditional rendering and
+/// keeps the layout stable.
+public struct TimeLimitedUndoChip: View {
+    let coordinator: EditorUndoCoordinator
+
+    public init(coordinator: EditorUndoCoordinator) {
+        self.coordinator = coordinator
+    }
+
+    public var body: some View {
+        TimelineView(.animation(minimumInterval: 0.1, paused: false)) { context in
+            let budget = coordinator.currentUndoBudget()
+            let visible = budget.registeredAt != nil && !budget.isExpired
+            chipBody(budget: budget, now: context.date)
+                .opacity(visible ? 1 : 0)
+                .animation(.easeInOut(duration: 0.2), value: visible)
+        }
+        .accessibilityLabel("Undo available for limited time")
+    }
+
+    @ViewBuilder
+    private func chipBody(budget: TimeLimitedUndoBudget, now: Date) -> some View {
+        HStack(spacing: 6) {
+            Text("Undo available for")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+            Text(budget.remainingLabel(at: now))
+                .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                .foregroundStyle(.primary)
+                .contentTransition(.numericText())
+                .animation(.linear(duration: 0.2), value: budget.remainingSeconds(at: now))
+            // Continuous progress bar: 0..1, the budget
+            // reports a clamped fraction. The view shrinks
+            // smoothly as time passes; no 1 Hz tick.
+            ProgressView(value: budget.progress(at: now))
+                .progressViewStyle(.linear)
+                .frame(width: 48, height: 4)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .fill(Color.secondary.opacity(0.08))
+        )
+    }
+}
+#endif

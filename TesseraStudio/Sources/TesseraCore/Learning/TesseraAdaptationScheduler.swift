@@ -24,6 +24,16 @@ public struct TesseraAdaptationScheduler: TesseraAdaptationScheduling {
 
     private let store: TesseraLearningStore
 
+    /// Terminal hook for each ``runAdaptation`` call (success OR
+    /// failure, every return path). The review named this the
+    /// paradox-7 fix: when the scheduler self-cancels an update
+    /// the user is told, not left wondering (review #3 of the
+    /// agent-ux-fatigue audit). The UI layer wires this to the
+    /// shared ``TesseraNotificationBudget`` so silent collapse
+    /// surfaces through the same cap as the workflow/training
+    /// pings.
+    public var onFinished: (@Sendable (TesseraLearningReceipt) -> Void)?
+
     public init() {
         self.store = TesseraLearningStore()
     }
@@ -41,28 +51,28 @@ public struct TesseraAdaptationScheduler: TesseraAdaptationScheduling {
     public func runAdaptation(dryRun: Bool) async throws -> TesseraLearningReceipt {
         // Gate 1: idle adaptation must be enabled.
         guard TesseraSettings.learningIdleAdaptation else {
-            return decisionReceipt(
+            return finish(decisionReceipt(
                 "Idle adaptation is disabled (learning.idleAdaptation=false); no step taken.",
                 record: nil, dryRun: dryRun, signalCount: signalCount()
-            )
+            ))
         }
 
         // Gate 2: power, when required.
         if TesseraSettings.learningOnPowerOnly && !isOnPower() {
-            return decisionReceipt(
+            return finish(decisionReceipt(
                 "On-power gate: not on power (learning.onPowerOnly=true); no step taken.",
                 record: nil, dryRun: dryRun, signalCount: signalCount()
-            )
+            ))
         }
 
         // Gather the multi-axis capability input. Without a scored eval on
         // record we cannot derive a score honestly, so we stop rather than
         // fabricate one.
         guard let eval = TesseraCapabilityEvalStore().latest() else {
-            return decisionReceipt(
+            return finish(decisionReceipt(
                 "No capability eval on record; run `evaluate` with capability_eval=true and scored results first. No step taken.",
                 record: nil, dryRun: dryRun, signalCount: signalCount()
-            )
+            ))
         }
 
         let epsilon = TesseraSettings.learningGuardEpsilon
@@ -79,10 +89,10 @@ public struct TesseraAdaptationScheduler: TesseraAdaptationScheduling {
                 note: "harness binary not found at \(binary); no training performed"
             )
             try? appendRecord(record)
-            return decisionReceipt(
+            return finish(decisionReceipt(
                 "Adaptation harness unavailable (\(binary) not found); no training performed.",
                 record: record, dryRun: dryRun, signalCount: signalCount()
-            )
+            ))
         }
 
         // Serialize the eval (instances format) + baseline and shell out. The
@@ -107,10 +117,10 @@ public struct TesseraAdaptationScheduler: TesseraAdaptationScheduling {
                 note: "could not stage eval for the harness"
             )
             try? appendRecord(record)
-            return decisionReceipt(
+            return finish(decisionReceipt(
                 "Could not stage the eval for the adaptation harness; no training performed.",
                 record: record, dryRun: dryRun, signalCount: signalCount()
-            )
+            ))
         }
 
         var arguments = [
@@ -132,10 +142,10 @@ public struct TesseraAdaptationScheduler: TesseraAdaptationScheduling {
                 note: "harness process unavailable (\(error.localizedDescription))"
             )
             try? appendRecord(record)
-            return decisionReceipt(
+            return finish(decisionReceipt(
                 "Adaptation harness unavailable (\(error.localizedDescription)); no training performed.",
                 record: record, dryRun: dryRun, signalCount: signalCount()
-            )
+            ))
         }
 
         // Exit codes (quantize.cpp): 0 = guard passed, 1 = guard FAILED /
@@ -177,7 +187,16 @@ public struct TesseraAdaptationScheduler: TesseraAdaptationScheduling {
         }
 
         try? appendRecord(record)
-        return decisionReceipt(summary, record: record, dryRun: dryRun, signalCount: signalCount())
+        return finish(decisionReceipt(summary, record: record, dryRun: dryRun, signalCount: signalCount()))
+    }
+
+    /// Notify the onFinished hook (when set) and return the receipt
+    /// unchanged. Every ``runAdaptation`` return path goes through this
+    /// so the silent-collapse failure mode (review #3 paradox-7 fix)
+    /// cannot slip past the budget.
+    private func finish(_ receipt: TesseraLearningReceipt) -> TesseraLearningReceipt {
+        onFinished?(receipt)
+        return receipt
     }
 
     // MARK: - Power gate

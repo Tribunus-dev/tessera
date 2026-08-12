@@ -14,6 +14,15 @@ public final class TesseraAssessmentScheduler: @unchecked Sendable {
     private let lock = NSLock()
     private var task: Task<Void, Never>?
 
+    /// Terminal hook for each ``sweep`` call. The review named this
+    /// the paradox-7 fix: when the scheduler flags degraded teachers
+    /// the user is told via the shared ``TesseraNotificationBudget``,
+    /// not left wondering (review #3 of the agent-ux-fatigue audit).
+    /// The hook fires on every sweep, success or failure; the
+    /// `outcome` string is the sweep summary so the budget can
+    /// decide whether the cap allows the post.
+    public var onFinished: (@Sendable (_ assessments: [TesseraTeacherAssessment], _ degradedCount: Int, _ outcome: String) -> Void)?
+
     public init(assessor: any TesseraTeacherAssessing = TesseraLearningCenter.shared.assessor) {
         self.assessor = assessor
     }
@@ -62,6 +71,11 @@ public final class TesseraAssessmentScheduler: @unchecked Sendable {
         if TesseraLearningCenter.shared.autonomy.trainApprover(denialWeight: 5.0) {
             print("[tessera.assessment] approver network retrained; calibration guard passed")
         }
+
+        // Review #3 of the agent-ux-fatigue audit: surface the
+        // sweep result so the silent-accumulation failure mode
+        // (paradox 7) cannot hide.
+        onFinished?(assessments, degraded.count, degraded.isEmpty ? "ok" : "degraded")
 
         return assessments
     }

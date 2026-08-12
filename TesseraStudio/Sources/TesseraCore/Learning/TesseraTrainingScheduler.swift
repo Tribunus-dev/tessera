@@ -62,6 +62,25 @@ public final class TesseraTrainingScheduler: @unchecked Sendable {
         return record
     }
 
+    /// Whether the given training outcome is postable via the
+    /// shared ``TesseraNotificationBudget`` in the current
+    /// dev-mode state. Review #3 of the agent-ux-fatigue audit
+    /// drops `.dryRun` from the postable set (the skill "anti-
+    /// pattern: a notification that is not actionable in 15-30
+    /// minutes"); the dev-mode flag is the test-friendly escape
+    /// hatch. The onFinished hook fires for all outcomes so the
+    /// dashboard still receives the honest state; the budget is
+    /// the gate that drops .dryRun unless devMode is on.
+    public func isOutcomePostable(
+        _ outcome: TesseraTrainingOrchestrator.TrainingOutcome
+    ) async -> Bool {
+        let devModeOn = await TesseraNotificationBudget.shared.isDevMode()
+        if TesseraNotificationBudget.devModeOnlyOutcomes.contains(outcome.rawValue) {
+            return devModeOn
+        }
+        return true
+    }
+
     // MARK: - Power gate
 
     /// Same power gate as TesseraAdaptationScheduler (design 4.5): AC or UPS

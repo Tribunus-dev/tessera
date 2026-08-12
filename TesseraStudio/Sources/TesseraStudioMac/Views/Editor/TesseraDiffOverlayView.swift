@@ -49,29 +49,55 @@ public enum DiffOverlayState: Sendable {
 /// - Original text: normal styling
 /// - Streaming rewrite: green for additions, red strikethrough for deletions
 /// - Accept / Reject / Edit controls at the bottom
+/// - An audit-log HEAD chip (review #5, agent-ux-fatigue) between
+///   the diff and the controls when `auditLogHead` is supplied and
+///   the state is `.diffComplete` or `.editable`. The chip is
+///   suppressed on `.streaming` (the audit is incomplete) and
+///   when the head's `mutations` is empty.
 @MainActor
 public struct TesseraDiffOverlayView: View {
     @Binding public var state: DiffOverlayState
     public let mode: RewriteMode
     public let onAccept: () -> Void
     public let onReject: () -> Void
+    /// The audit-log HEAD chip. When `nil` the chip is hidden
+    /// entirely. When non-nil, the chip's own `shouldRender(for:)`
+    /// still gates by state and mutations-empty so the view does
+    /// not have to duplicate the rule.
+    public let auditLogHead: AuditLogHead?
+    /// Tap on the receipt-id portion of the chip. The default is
+    /// a no-op so existing call sites that do not opt in to the
+    /// chip behave the same as before.
+    public let onTapReceipt: (UUID) -> Void
 
     public init(
         state: Binding<DiffOverlayState>,
         mode: RewriteMode,
         onAccept: @escaping () -> Void,
-        onReject: @escaping () -> Void
+        onReject: @escaping () -> Void,
+        auditLogHead: AuditLogHead? = nil,
+        onTapReceipt: @escaping (UUID) -> Void = { _ in }
     ) {
         self._state = state
         self.mode = mode
         self.onAccept = onAccept
         self.onReject = onReject
+        self.auditLogHead = auditLogHead
+        self.onTapReceipt = onTapReceipt
     }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             diffTextView
                 .frame(minHeight: 60)
+
+            // The chip lives in its own row between the diff
+            // and the controls. Its render gate is owned by
+            // `AuditLogHead.shouldRender(for:)`; this view
+            // only needs to decide whether to emit the row.
+            if let head = auditLogHead, head.shouldRender(for: chipRenderState) {
+                AuditLogHeadChip(head: head, onTapReceipt: onTapReceipt)
+            }
 
             controlBar
         }
@@ -83,6 +109,19 @@ public struct TesseraDiffOverlayView: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(Color.accentColor.opacity(0.3), lineWidth: 1)
         )
+    }
+
+    /// Translate `DiffOverlayState` into the chip's render state.
+    /// The chip lives in `TesseraCore` and does not know about
+    /// the overlay's full state (which carries NSRange, segments,
+    /// and the partial-text payload it does not need).
+    private var chipRenderState: AuditLogRenderState {
+        switch state {
+        case .idle:                  return .idle
+        case .streaming:             return .streaming
+        case .diffComplete:          return .diffComplete
+        case .editable:              return .editable
+        }
     }
 
     @ViewBuilder

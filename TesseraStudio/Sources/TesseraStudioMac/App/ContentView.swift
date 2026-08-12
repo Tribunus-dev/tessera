@@ -28,6 +28,12 @@ struct ContentView: View {
     @State private var chatFocus = ChatFocusCoordinator()
     @State private var chatDockVisible = true
     @State private var showHistory = false
+    // Progress Feed (review #2, agent-ux-fatigue): the chat-dock
+    // progress feed is pull-to-open. The binding is the single
+    // pull surface; nothing on the controller flips it. The
+    // toolbar item below is the only trigger; the feed never
+    // auto-presents and the dock never pushes it.
+    @State private var progressFeedPresented = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var telemetryMonitor = TelemetryMonitor(
         bridge: TesseraEngineBridgeFactory.makeInferenceBridge()
@@ -78,6 +84,23 @@ struct ContentView: View {
         .sheet(item: $exportItem) { item in
             ExportView(item: item)
         }
+        // Progress Feed sheet (review #2): the only pull surface
+        // for the agent activity feed. The sheet is bound to
+        // `progressFeedPresented`; the controller never flips it.
+        // The host (this view) is the only authority; the chat
+        // thread is untouched and the receipts drawer is not
+        // auto-opened. The keyboard shortcut is on the toolbar
+        // trigger; the sheet itself does not capture Escape to
+        // close, so a runaway Escape press cannot dismiss the
+        // chat (the chat is in a different sheet scope if the
+        // user has one open).
+        .sheet(isPresented: $progressFeedPresented) {
+            ChatProgressFeed(
+                controller: chatController,
+                isPresented: $progressFeedPresented
+            )
+            .frame(minWidth: 420, minHeight: 360)
+        }
         .sheet(isPresented: Binding(
             get: { !onboardingComplete },
             set: { onboardingComplete = !$0 }
@@ -110,6 +133,14 @@ struct ContentView: View {
         // is NOT looking at the result (see WorkflowRunNotifier).
         .onChange(of: selection, initial: true) { _, newValue in
             workflowEditor.workflowsSurfaceVisible = (newValue == .workflows)
+        }
+        // Wire the telemetry monitor into the chat controller so the
+        // first send emits the time-to-first-message event (review #1
+        // measurement architecture). Done once on appear; the monitor
+        // is owned by the window so per-window timing is correct.
+        .onAppear {
+            chatController.telemetryMonitor = telemetryMonitor
+            chatController.recordOnboardingCompletion()
         }
     }
 
@@ -158,6 +189,23 @@ struct ContentView: View {
                 .accessibilityHint("Double tap to show or hide the Tessy and Sky chat dock")
                 .keyboardShortcut("\\", modifiers: .command)
             }
+            // Progress Feed trigger (review #2): the only pull
+            // surface for the agent activity feed. The toolbar is
+            // its home so the user always knows where to find it;
+            // nothing on the controller opens the feed. The
+            // keyboard shortcut mirrors the dock toggle so a
+            // keyboard-first user can pull the feed without the
+            // toolbar. `ChatProgressFeedTrigger` is itself a
+            // Button, so the toolbar item is the trigger.
+            ToolbarItem(placement: .primaryAction) {
+                ChatProgressFeedTrigger(
+                    controller: chatController,
+                    isPresented: $progressFeedPresented
+                )
+                .help("Show the agent's activity feed (pull surface)")
+                .accessibilityLabel("Agent activity feed")
+                .accessibilityHint("Pulls up the agent's routing, tool calls, approvals, hold queue, and team-up handoffs.")
+            }
         }
     }
 
@@ -172,7 +220,7 @@ struct ContentView: View {
         // inside the detail column. The controller is window-lived so the
         // transcript persists across destination switches.
         .inspector(isPresented: $chatDockVisible) {
-            UnifiedChatDock(controller: chatController)
+            UnifiedChatDock(controller: chatController, starterContext: DestinationStarterPrompts.Context(selection))
                 .inspectorColumnWidth(min: 320, ideal: 360, max: 480)
         }
     }
@@ -289,5 +337,29 @@ struct ContentView: View {
             .replacingOccurrences(of: " ", with: "-")
             .filter { $0.isLetter || $0.isNumber || $0 == "-" }
         return cleaned.isEmpty ? "conversation" : String(cleaned.prefix(48))
+    }
+}
+
+/// Map the macOS-only sidebar `Destination` to the platform-independent
+/// ``DestinationStarterPrompts.Context``. The mapping lives here, not in
+/// ``TesseraCore``, because `Destination` is a macOS-shell concern.
+extension DestinationStarterPrompts.Context {
+    init(_ destination: Destination?) {
+        switch destination {
+        case .workflows:    self = .workflows
+        case .tasks:        self = .tasks
+        case .calendar:     self = .calendar
+        case .notes:        self = .notes
+        case .code:         self = .code
+        case .docs:         self = .docs
+        case .sheets:       self = .sheets
+        case .slides:       self = .slides
+        case .email:        self = .email
+        case .contacts:     self = .contacts
+        case .reminders:    self = .reminders
+        case .collab:       self = .collab
+        case .intelligence: self = .intelligence
+        case .none:         self = .neutral
+        }
     }
 }

@@ -25,16 +25,45 @@ public struct ToolCallRecord: Codable, Sendable, Identifiable {
     }
 }
 
+/// Categorical agent confidence in a tool result. The Tian Pan 2026-04-12
+/// trust-calibration split: the UI must distinguish "the agent was uncertain
+/// and said so" from "the agent was confident and was wrong". Categorical
+/// bands are more robust to model miscalibration than numeric percentages
+/// (research: some LLMs exhibit expected calibration error of 0.726 with
+/// 23% accuracy; see agent-ux-fatigue pattern-catalog.md "Confidence
+/// Signal"). UI consumer: any surface that displays a `ToolResultPayload`
+/// should render `.low` as a visible caveat chip.
+public enum ConfidenceBand: String, Codable, Sendable, CaseIterable {
+    case low
+    case medium
+    case high
+}
+
 /// Codable payload for a tool result stored in SwiftData.
+///
+/// `confidenceBand` is the categorical counterpart to the binary
+/// `success` flag. A `.low` band with `success: true` is a "I did it but
+/// I am not sure this is right" signal; `nil` means the tool produced
+/// no uncertainty (deterministic reads, executor returns, or the agent
+/// has not yet wired a per-tool confidence source). The field is set on
+/// every emission: a non-nil band is a positive claim about the agent's
+/// confidence, `nil` is the documented "no uncertainty available" path.
 public struct ToolResultPayload: Codable, Sendable {
     public let success: Bool
     public let output: String
     public let error: String?
+    public let confidenceBand: ConfidenceBand?
 
-    public init(success: Bool, output: String, error: String? = nil) {
+    public init(
+        success: Bool,
+        output: String,
+        error: String? = nil,
+        confidenceBand: ConfidenceBand? = nil
+    ) {
         self.success = success
         self.output = output
         self.error = error
+        self.confidenceBand = confidenceBand
     }
 }
 

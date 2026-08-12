@@ -230,6 +230,18 @@ public actor CovertTriggerMonitor {
         // 'covert_trigger_fired' + timestamp)".
         let ts = ISO8601DateFormatter().string(from: Date())
         logger.notice("covert_trigger_fired ts=\(ts, privacy: .public)")
+        // Surface the event to the shared notification budget
+        // (review #3 of the agent-ux-fatigue audit). The wipe
+        // itself runs unconditionally; the budget only records
+        // the audit entry when the per-UTC-day cap allows it.
+        // The threat-model contract (no visible UI change) is
+        // preserved: tryPost neither pings the user nor alters
+        // the silent path.
+        _ = await TesseraNotificationBudget.shared.tryPost(
+            category: .covert,
+            title: "Covert trigger fired",
+            body: "covert_trigger_fired"
+        )
         if let callback = onFire {
             await callback()
         }
