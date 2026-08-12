@@ -1613,22 +1613,51 @@ struct llama_model_params common_model_params_to_llama(common_params & params) {
             if (ov.pattern != nullptr) { has_real_overrides = true; break; }
         }
         if (!has_real_overrides) {
+            // Detect Metal from the registered backends, not params.devices. On Apple
+            // Silicon, params.devices is empty when the user passes no --device flag,
+            // so the old params.devices loop never found Metal and the IOSurface
+            // override was never injected. ts_pool_will_engage() already does it
+            // correctly via ggml_backend_dev_count(); mirror that approach here.
             bool has_metal = false;
             ggml_backend_buffer_type_t mtl_buft = nullptr;
-            for (auto * d : params.devices) {
-                if (!d) continue;
-                const char * name = ggml_backend_dev_name(d);
-                if (name && std::strncmp(name, "MTL", 3) == 0) {
-                    has_metal = true;
-                    auto * buft = ggml_backend_dev_buffer_type(d);
-                    if (buft && !ggml_backend_buft_is_host(buft)) {
-                        mtl_buft = buft;
+            if (!params.devices.empty()) {
+                // Explicit --device args: use the user's device list.
+                for (auto * d : params.devices) {
+                    if (!d) continue;
+                    const char * name = ggml_backend_dev_name(d);
+                    if (name && std::strncmp(name, "MTL", 3) == 0) {
+                        has_metal = true;
+                        auto * buft = ggml_backend_dev_buffer_type(d);
+                        if (buft && !ggml_backend_buft_is_host(buft)) {
+                            mtl_buft = buft;
+                        }
+                        break;
                     }
-                    break;
+                    if (ggml_backend_dev_type(d) == GGML_BACKEND_DEVICE_TYPE_GPU ||
+                        ggml_backend_dev_type(d) == GGML_BACKEND_DEVICE_TYPE_IGPU) {
+                        has_metal = true;
+                    }
                 }
-                if (ggml_backend_dev_type(d) == GGML_BACKEND_DEVICE_TYPE_GPU ||
-                    ggml_backend_dev_type(d) == GGML_BACKEND_DEVICE_TYPE_IGPU) {
-                    has_metal = true;
+            } else {
+                // No explicit --device: enumerate all registered backends.
+                // This is the Apple Silicon default path and the one that was broken.
+                const size_t ndev = ggml_backend_dev_count();
+                for (size_t i = 0; i < ndev; ++i) {
+                    ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+                    if (!dev) continue;
+                    const char * name = ggml_backend_dev_name(dev);
+                    if (name && std::strncmp(name, "MTL", 3) == 0) {
+                        has_metal = true;
+                        auto * buft = ggml_backend_dev_buffer_type(dev);
+                        if (buft && !ggml_backend_buft_is_host(buft)) {
+                            mtl_buft = buft;
+                        }
+                        break;
+                    }
+                    if (ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_GPU ||
+                        ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_IGPU) {
+                        has_metal = true;
+                    }
                 }
             }
             // Slice 4.2a: when both Metal and ANE are available, route FFN to
@@ -1659,17 +1688,34 @@ struct llama_model_params common_model_params_to_llama(common_params & params) {
                 // The arg parser already padded tensor_buft_overrides to
                 // ntbo = 4096 with nullptr terminators. Reuse the leading
                 // slots so the existing terminator stays at the back.
-                const size_t need = 3;
+                static std::list<std::string> s_heterog_patterns;
+                // Route FFN weight tensors to the IOSurface pool. Explicitly lists the
+                // known FFN weight suffixes so ffn_gate_inp and ffn_norm are never
+                // accidentally matched by a greedy "ffn_.*" pattern. Covers dense,
+                // shared, MoE expert, and per-expert scale/in_scale variants across
+                // all model families (Qwen, DeepSeek, Gemma, Cohere, etc.). The pool's
+                // is_sensitive_moe_tensor() guards the router tensors that must stay
+                // resident (exp_probs_b, ffn_gate_tid2eid).
+                const char * ffn_suffixes[] = {
+                    "ffn_gate\\b", "ffn_up\\b", "ffn_down\\b",
+                    "ffn_gate_exps\\b", "ffn_up_exps\\b", "ffn_down_exps\\b",
+                    "ffn_gate_in_s\\b", "ffn_up_in_s\\b", "ffn_down_in_s\\b",
+                    "ffn_gate_exps_s\\b", "ffn_up_exps_s\\b", "ffn_down_exps_s\\b",
+                    "ffn_gate_exps_in_s\\b", "ffn_up_exps_in_s\\b", "ffn_down_exps_in_s\\b",
+                    "ffn_gate_shexp\\b",
+                };
+                const size_t n_suffixes = sizeof(ffn_suffixes)/sizeof(ffn_suffixes[0]);
+                const size_t need = n_suffixes + 1; // +1 for experts namespace
                 if (params.tensor_buft_overrides.size() < need + 1) {
                     params.tensor_buft_overrides.resize(need + 1, {nullptr, nullptr});
                 }
-                static std::list<std::string> s_heterog_patterns;
-                s_heterog_patterns.push_back("blk\\.[0-9]+\\.ffn_gate.*");
-                params.tensor_buft_overrides[0] = {s_heterog_patterns.back().c_str(), ffn_buft};
-                s_heterog_patterns.push_back("blk\\.[0-9]+\\.ffn_up.*");
-                params.tensor_buft_overrides[1] = {s_heterog_patterns.back().c_str(), ffn_buft};
-                s_heterog_patterns.push_back("blk\\.[0-9]+\\.ffn_down.*");
-                params.tensor_buft_overrides[2] = {s_heterog_patterns.back().c_str(), ffn_buft};
+                for (size_t i = 0; i < n_suffixes; ++i) {
+                    s_heterog_patterns.push_back("blk\\.[0-9]+\\." + std::string(ffn_suffixes[i]) + "\\..*");
+                    params.tensor_buft_overrides[i] = {s_heterog_patterns.back().c_str(), ffn_buft};
+                }
+                // Catch experts.* namespace (any future model that names FFN tensors here).
+                s_heterog_patterns.push_back("blk\\.[0-9]+\\.experts\\..*");
+                params.tensor_buft_overrides[n_suffixes] = {s_heterog_patterns.back().c_str(), ffn_buft};
                 // terminator already at back from padding; if we grew the
                 // vector above, the new last entry is also a terminator.
                 GGML_ASSERT(params.tensor_buft_overrides.back().pattern == nullptr);

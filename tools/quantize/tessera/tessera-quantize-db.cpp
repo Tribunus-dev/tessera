@@ -254,6 +254,33 @@ static const char * TS_QDB_SCHEMA_SQL =
     "    updated_at         TIMESTAMP,\n"
     "    PRIMARY KEY (model_hash, model_role, name)\n"
     ");\n"
+    // ---- imatrix_accum_state: crash-resumable intermediate accumulation (additive) ----
+    // Written by the imatrix tool at each save point (convergence stop, periodic
+    // save, normal exit). Stores the running accumulators so that on resume the
+    // in-memory Stats struct can be reseeded without recomputing prior chunks.
+    // accum_sum is the running sum of squared activations (stored in m_stats.values);
+    // accum_count is the total element count (sum of m_stats.counts).
+    // accum_sum_abs is the running sum of absolute activations (stored in
+    // m_stats.abs_values). mean_abs is derivable from accum_sum_abs / accum_count
+    // and stored explicitly so queries don't need the math.
+    // rms is sqrt(accum_sum / accum_count) stored explicitly for the same reason.
+    // DOUBLE precision for accum_sum/accum_sum_abs handles large models/datasets
+    // where F32 accumulators would overflow; chunks_seen is the resumption offset.
+    "CREATE TABLE IF NOT EXISTS imatrix_accum_state (\n"
+    "    model_hash         TEXT NOT NULL,\n"
+    "    model_role         TEXT NOT NULL DEFAULT 'trunk',\n"
+    "    tensor_name        TEXT NOT NULL,\n"
+    "    chunks_seen        BIGINT NOT NULL DEFAULT 0,\n"
+    "    accum_sum          DOUBLE NOT NULL DEFAULT 0.0,\n"
+    "    accum_count        BIGINT NOT NULL DEFAULT 0,\n"
+    "    accum_sum_abs      DOUBLE NOT NULL DEFAULT 0.0,\n"
+    "    rms                DOUBLE,\n"
+    "    mean_abs           DOUBLE,\n"
+    "    updated_at         TEXT,\n"
+    "    PRIMARY KEY (model_hash, model_role, tensor_name)\n"
+    ");\n"
+    "CREATE INDEX IF NOT EXISTS idx_accum_state_model\n"
+    "    ON imatrix_accum_state(model_hash, model_role);\n"
     // ---- per-tensor summary mirrors of the four analytical outputs ----
     // These are the per-tensor summary of the typed-NDJSON outputs the
     // Python calibration / analytics pipeline writes
@@ -494,7 +521,30 @@ static const char * TS_QDB_SCHEMA_SQL =
     "    PRIMARY KEY (model_hash, model_role, name)\n"
     ");\n"
     "CREATE INDEX IF NOT EXISTS idx_regime_routing_model\n"
-    "    ON regime_routing(model_hash);\n";
+    "    ON regime_routing(model_hash);\n"
+    // ---- l5_search_state: gen-boundary checkpoint for L5 joint search (additive) ----
+    // Written by ts_l5_joint_search() at the end of each completed generation.
+    // Allows the search to resume from the last complete generation on restart,
+    // seeded with the top-K population from that generation. The run_id groups
+    // all generations of one L5 search session; model_hash ties it to the model.
+    // top_k JSON: array of top-K policy objects with their metrics.
+    // gen_candidates JSON: full population of the generation (for diagnostics).
+    // Added together with imatrix_accum_state in Phase imatrix-crash-safe; both
+    // live in the same DuckDB artifact.
+    "CREATE TABLE IF NOT EXISTS l5_search_state (\n"
+    "    run_id             TEXT NOT NULL,\n"
+    "    model_hash         TEXT NOT NULL,\n"
+    "    generation         INTEGER NOT NULL DEFAULT 0,\n"
+    "    top_k              TEXT,\n"
+    "    best_policy        TEXT,\n"
+    "    best_metric        DOUBLE,\n"
+    "    and_gate_pass      BOOLEAN,\n"
+    "    gen_candidates     TEXT,\n"
+    "    updated_at         TEXT,\n"
+    "    PRIMARY KEY (run_id)\n"
+    ");\n"
+    "CREATE INDEX IF NOT EXISTS idx_l5_search_gen\n"
+    "    ON l5_search_state(model_hash, generation DESC);\n";
 
 // Phase 16.7: per-component (model_role, name) covering index
 // statements. Kept as a separate constant from TS_QDB_SCHEMA_SQL
@@ -2567,6 +2617,106 @@ int ts_tessera_db_test_insert_l5_outcome(
         auto res = db->conn->Query(q.str());
         if (res->HasError()) return 1;
     } catch (...) {
+        return 1;
+    }
+    return 0;
+}
+
+// --- L5 joint search gen-boundary checkpoint ---
+
+int ts_tessera_db_write_l5_gen_checkpoint(
+        ts_tessera_db * db,
+        const ts_l5_joint_gen_checkpoint & ckpt,
+        std::string * err) {
+    if (db == nullptr || db->conn == nullptr) return 0;
+
+    // Build top_k JSON: array of pre-serialized policy+metric JSON strings.
+    std::string top_k_json = "[";
+    for (size_t i = 0; i < ckpt.top_k_json.size(); ++i) {
+        if (i > 0) top_k_json += ",";
+        top_k_json += ckpt.top_k_json[i];
+    }
+    top_k_json += "]";
+
+    // Build gen_candidates JSON.
+    std::string candidates_json = "[";
+    for (size_t i = 0; i < ckpt.candidates_json.size(); ++i) {
+        if (i > 0) candidates_json += ",";
+        candidates_json += ckpt.candidates_json[i];
+    }
+    candidates_json += "]";
+
+    std::ostringstream q;
+    q << "INSERT OR REPLACE INTO l5_search_state "
+         "(run_id, model_hash, generation, top_k, best_policy, best_metric, and_gate_pass, gen_candidates, updated_at) "
+         "VALUES ("
+         "'" << sql_escape(ckpt.run_id) << "', "
+         "'" << sql_escape(ckpt.model_hash) << "', "
+         << ckpt.generation << ", "
+         "'" << sql_escape(top_k_json) << "', "
+         "'" << sql_escape(ckpt.best_policy_json) << "', "
+         << ckpt.best_metric << ", "
+         << (ckpt.and_gate_pass ? "TRUE" : "FALSE") << ", "
+         "'" << sql_escape(candidates_json) << "', "
+         << ts_now_ts() << ")";
+
+    try {
+        auto res = db->conn->Query(q.str());
+        if (res->HasError()) {
+            if (err) *err = "write_l5_gen_checkpoint: " + res->GetError();
+            return 1;
+        }
+    } catch (const std::exception & e) {
+        if (err) *err = "write_l5_gen_checkpoint exception: " + std::string(e.what());
+        return 1;
+    } catch (...) {
+        if (err) *err = "write_l5_gen_checkpoint unknown exception";
+        return 1;
+    }
+    return 0;
+}
+
+int ts_tessera_db_read_l5_gen_checkpoint(
+        ts_tessera_db * db,
+        const std::string & run_id,
+        ts_l5_joint_gen_checkpoint * out,
+        std::string * err) {
+    if (db == nullptr || db->conn == nullptr) return 0;
+    if (!out) return 1;
+
+    std::ostringstream q;
+    q << "SELECT generation, top_k, best_policy, best_metric, and_gate_pass, gen_candidates "
+         "FROM l5_search_state WHERE run_id = '" << sql_escape(run_id)
+      << "' ORDER BY generation DESC LIMIT 1";
+
+    try {
+        auto res = db->conn->Query(q.str());
+        if (res->HasError()) {
+            if (err) *err = "read_l5_gen_checkpoint: " + res->GetError();
+            return 1;
+        }
+        if (res->RowCount() == 0) return 1;  // no checkpoint found
+        out->run_id = run_id;
+        out->generation = (int32_t) res->GetValue(0, 0).GetValue<int64_t>();
+        auto tk = res->GetValue(1, 0);
+        out->top_k_json.clear();
+        if (!tk.IsNull()) {
+            out->top_k_json.push_back(tk.ToString());  // full JSON array as one string
+        }
+        auto bp = res->GetValue(2, 0);
+        out->best_policy_json = bp.IsNull() ? std::string() : bp.ToString();
+        out->best_metric = res->GetValue(3, 0).GetValue<float>();
+        out->and_gate_pass = res->GetValue(4, 0).GetValue<bool>();
+        auto gc = res->GetValue(5, 0);
+        out->candidates_json.clear();
+        if (!gc.IsNull()) {
+            out->candidates_json.push_back(gc.ToString());  // full JSON array as one string
+        }
+    } catch (const std::exception & e) {
+        if (err) *err = "read_l5_gen_checkpoint exception: " + std::string(e.what());
+        return 1;
+    } catch (...) {
+        if (err) *err = "read_l5_gen_checkpoint unknown exception";
         return 1;
     }
     return 0;

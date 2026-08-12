@@ -46,6 +46,7 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #if defined(__APPLE__)
@@ -2125,6 +2126,7 @@ int llama_quantize(int argc, char ** argv) {
         tparams.l5_scorer                    = tp.l5_scorer;
         tparams.tessera_db_path              = tp.tessera_db;
         tparams.force_requantize             = tp.force_requantize;
+        tparams.verbose                     = tp.verbose;
         tparams.runtime_probe                = tp.runtime_probe;
         tparams.runtime_probe_bf16           = tp.runtime_probe_bf16;
         tparams.runtime_probe_l2_out         = tp.runtime_probe_l2_out;
@@ -2277,6 +2279,49 @@ int llama_tessera_main(int argc, char ** argv) {
         }
         default:
             break;
+    }
+
+    // --phase dispatch: imatrix and l5-joint run as standalone phases,
+    // bypassing the quantize path entirely. They carry their own DuckDB
+    // wiring (imatrix_accum_state / l5_search_state) and exit when done.
+    if (tp.phase == "imatrix") {
+        // Find llama-imatrix next to this binary (argv[0] = ./llama-tessera or ...).
+        std::string self = argv[0];
+        size_t slash = self.rfind('/');
+        std::string dir = slash == std::string::npos ? "." : self.substr(0, slash);
+        std::string imatrix_bin = dir + "/llama-imatrix";
+
+        // Forward all argv, stripping --phase and its value.
+        std::vector<char *> args;
+        args.reserve((size_t)argc + 1);
+        args.push_back(const_cast<char *>(imatrix_bin.c_str()));
+        for (int i = 1; i < argc; i++) {
+            if (strcmp(argv[i], "--phase") == 0) {
+                i++; // skip value
+                continue;
+            }
+            args.push_back(argv[i]);
+        }
+        args.push_back(nullptr);
+
+        pid_t pid = fork();
+        if (pid < 0) {
+            fprintf(stderr, "tessera: fork failed for --phase imatrix\n");
+            return 1;
+        }
+        if (pid == 0) {
+            execvp(imatrix_bin.c_str(), args.data());
+            fprintf(stderr, "tessera: failed to exec %s (is llama-imatrix built?)\n", imatrix_bin.c_str());
+            _exit(127);
+        }
+        int status = 0;
+        waitpid(pid, &status, 0);
+        return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+    }
+    if (tp.phase == "l5-joint") {
+        fprintf(stderr, "tessera: --phase l5-joint is not yet wired as an inline phase.\n"
+                        "Use the dedicated L5 pipeline orchestration (see docs/run-book.md).\n");
+        return 1;
     }
 
     // Tuning subcommands that just set flags on tessera_params and fall

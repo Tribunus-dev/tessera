@@ -224,7 +224,9 @@ int ts_l5_joint_search(
         ts_l5_drafter_forward_fn drafter_forwards[TS_L5_MODEL_COUNT],
         ts_l5_talker_forward_fn talker_forward,
         const ts_l5_joint_params * params,
-        ts_l5_joint_search_result * result) {
+        ts_l5_joint_search_result * result,
+        ts_l5_gen_callback gen_callback,
+        void * gen_callback_ctx) {
     if (!harness || !trunk_forward || !drafter_forwards || !talker_forward
             || !params || !result) {
         return -1;
@@ -379,6 +381,11 @@ int ts_l5_joint_search(
         result->generations.push_back(gr);
         result->n_generations_run = gen + 1;
 
+        // Gen-boundary callback: enables DuckDB checkpoint persistence.
+        if (gen_callback) {
+            gen_callback(gen, &gr, gen_callback_ctx);
+        }
+
         if (!gr.top_k.empty()) {
             prev_topk_ppl = gr.top_k[0].joint_ppl;
             prev_topk_valid = true;
@@ -430,6 +437,147 @@ int ts_l5_joint_search(
             ? ts_l5_joint_search_result::Status::CONVERGED
             : ts_l5_joint_search_result::Status::BEST_EFFORT;
     return 0;
+}
+
+// ---------------------------------------------------------------------------
+// ts_l5_joint_search_with_checkpoint: DuckDB persistence at gen boundaries
+// ---------------------------------------------------------------------------
+
+// Forward-declare the checkpoint write function from the DB module.
+extern int ts_tessera_db_write_l5_gen_checkpoint(
+        ts_tessera_db * db,
+        const ts_l5_joint_gen_checkpoint & ckpt,
+        std::string * err);
+
+// Escape a string for embedding in a JSON string literal.
+static void ts_l5_json_escape(std::string * out, const std::string & s) {
+    for (char c : s) {
+        if (c == '"')  { *out += "\\\""; }
+        else if (c == '\\') { *out += "\\\\"; }
+        else if (c == '\n') { *out += "\\n"; }
+        else if (c == '\r') { *out += "\\r"; }
+        else if (c == '\t') { *out += "\\t"; }
+        else { *out += c; }
+    }
+}
+
+// Serialize one ts_l5_joint_policy to a compact JSON string.
+static std::string ts_l5_policy_to_json(const ts_l5_joint_policy * p) {
+    if (!p) return "{}";
+    std::string s = "{\"models_active\":[";
+    for (int m = 0; m < TS_L5_MODEL_COUNT; ++m) {
+        if (m > 0) s += ",";
+        s += p->models_active[m] ? "true" : "false";
+    }
+    s += "],\"families\":[";
+    bool first_fam = true;
+    for (int m = 0; m < TS_L5_MODEL_COUNT; ++m) {
+        for (int f = 0; f < TS_L5_FAMILY_COUNT; ++f) {
+            if (!first_fam) s += ",";
+            first_fam = false;
+            const auto & fp = p->families[m][f];
+            const char * ol = "per_row";
+            if (fp.outlier_layout == TS_L5_OUTLIER_PER_BLOCK) ol = "per_block";
+            else if (fp.outlier_layout == TS_L5_OUTLIER_PER_TENSOR) ol = "per_tensor";
+            s += "{\"ol\":\"" + std::string(ol) + "\",\"a\":" + std::to_string(fp.algorithm_id)
+               + ",\"alpha\":" + std::to_string(fp.alpha)
+               + ",\"clip\":" + std::to_string(fp.clip) + "}";
+        }
+    }
+    s += "]}";
+    return s;
+}
+
+// Serialize one ts_l5_ppl_joint_result to JSON.
+static std::string ts_l5_measure_to_json(const ts_l5_ppl_joint_result * m) {
+    if (!m) return "{}";
+    std::string s = "{\"per_model\":[";
+    for (int i = 0; i < TS_L5_MODEL_COUNT; ++i) {
+        if (i > 0) s += ",";
+        const auto & pm = m->per_model[i];
+        s += "{\"fp\":" + std::to_string(pm.ppl_fp)
+           + ",\"q\":" + std::to_string(pm.ppl_quant)
+           + ",\"d\":" + std::to_string(pm.delta)
+           + ",\"p\":" + std::string(pm.pass ? "true" : "false") + "}";
+    }
+    s += "],\"all_pass\":" + std::string(m->all_pass ? "true" : "false")
+       + ",\"n_tokens\":" + std::to_string((long long)m->n_tokens_used) + "}";
+    return s;
+}
+
+// Serialize one ts_l5_joint_topk_entry to JSON.
+static std::string ts_l5_topk_entry_to_json(const ts_l5_joint_topk_entry * e) {
+    if (!e) return "{}";
+    return "{\"policy\":" + ts_l5_policy_to_json(&e->policy)
+         + ",\"measure\":" + ts_l5_measure_to_json(&e->measure)
+         + ",\"joint_ppl\":" + std::to_string(e->joint_ppl)
+         + ",\"max_delta\":" + std::to_string(e->max_per_model_delta) + "}";
+}
+
+// Checkpoint context passed as gen_callback_ctx.
+struct ts_l5_ckpt_ctx {
+    ts_tessera_db * db;
+    std::string run_id;
+    std::string model_hash;
+};
+
+// Called after each generation completes: writes the DuckDB checkpoint.
+static void ts_l5_gen_checkpoint_cb(
+        int32_t generation,
+        const ts_l5_joint_gen_result * gr,
+        void * ctx) {
+    auto * c = static_cast<ts_l5_ckpt_ctx *>(ctx);
+    if (!c || !c->db || !gr) return;
+
+    ts_l5_joint_gen_checkpoint ckpt;
+    ckpt.run_id = c->run_id;
+    ckpt.model_hash = c->model_hash;
+    ckpt.generation = generation;
+    ckpt.and_gate_pass = gr->and_gate_passed;
+
+    // top_k_json: one JSON string per entry
+    ckpt.top_k_json.reserve(gr->top_k.size());
+    for (const auto & e : gr->top_k) {
+        ckpt.top_k_json.push_back(ts_l5_topk_entry_to_json(&e));
+    }
+
+    // best_policy: top_k[0].policy
+    if (!gr->top_k.empty()) {
+        ckpt.best_policy_json = ts_l5_policy_to_json(&gr->top_k[0].policy);
+        ckpt.best_metric = gr->top_k[0].joint_ppl;
+    }
+
+    // gen_candidates: all_entries
+    ckpt.candidates_json.reserve(gr->all_entries.size());
+    for (const auto & e : gr->all_entries) {
+        ckpt.candidates_json.push_back(ts_l5_topk_entry_to_json(&e));
+    }
+
+    std::string err;
+    ts_tessera_db_write_l5_gen_checkpoint(c->db, ckpt, &err);
+    // best-effort: DB errors are non-fatal for the search
+}
+
+int ts_l5_joint_search_with_checkpoint(
+        const ts_l5_ppl_harness * harness,
+        ts_l5_trunk_forward_fn  trunk_forward,
+        ts_l5_drafter_forward_fn drafter_forwards[TS_L5_MODEL_COUNT],
+        ts_l5_talker_forward_fn talker_forward,
+        const ts_l5_joint_params * params,
+        ts_l5_joint_search_result * result,
+        ts_tessera_db * db) {
+    if (!db) {
+        return ts_l5_joint_search(harness, trunk_forward, drafter_forwards,
+                                   talker_forward, params, result,
+                                   nullptr, nullptr);
+    }
+    ts_l5_ckpt_ctx ctx;
+    ctx.db = db;
+    ctx.run_id = params->run_id;
+    ctx.model_hash = params->model_hash;
+    return ts_l5_joint_search(harness, trunk_forward, drafter_forwards,
+                               talker_forward, params, result,
+                               ts_l5_gen_checkpoint_cb, &ctx);
 }
 
 // ---------------------------------------------------------------------------

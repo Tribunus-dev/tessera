@@ -6,14 +6,41 @@
 
 static int test_family_inference() {
     struct { const char * name; const char * expected; } cases[] = {
-        { "blk.5.attn_q.weight",      "attn_q"    },
-        { "blk.0.ffn_down.weight",    "ffn_down"   },
-        { "blk.12.attn_k.weight",     "attn_k"     },
-        { "blk.3.attn_v.weight",      "attn_v"     },
-        { "blk.7.attn_output.weight", "attn_out"   },
-        { "blk.1.ffn_gate.weight",    "ffn_gate"   },
-        { "blk.2.ffn_up.weight",      "ffn_up"     },
-        { "token_embd.weight",        "unknown"    },
+        // Standard dense transformer families
+        { "blk.5.attn_q.weight",       "attn_q"      },
+        { "blk.0.ffn_down.weight",     "ffn_down"    },
+        { "blk.12.attn_k.weight",      "attn_k"      },
+        { "blk.3.attn_v.weight",       "attn_v"      },
+        { "blk.7.attn_output.weight",   "attn_out"    },
+        { "blk.1.ffn_gate.weight",     "ffn_gate"    },
+        { "blk.2.ffn_up.weight",       "ffn_up"      },
+        // Granite Hybrid SSM layers (heavy projections — qualifies for DartQuant / CHAMP-Q)
+        { "blk.5.ssm_in.weight",       "ssm_in"      },
+        { "blk.5.ssm_out.weight",      "ssm_out"     },
+        // Granite Hybrid SSM layers (conv / norm — AWQ is fine)
+        { "blk.5.ssm_conv1d.weight",   "ssm_conv"    },
+        { "blk.5.ssm_conv1d_q.weight",  "ssm_conv"    },
+        { "blk.5.ssm_conv1d_k.weight",  "ssm_conv"    },
+        { "blk.5.ssm_norm.weight",     "ssm_norm"    },
+        // Granite Hybrid SSM layers (small {1,N} state — falls through to unknown)
+        { "blk.5.ssm_dt.weight",        "unknown"     },
+        { "blk.5.ssm_a.weight",         "unknown"     },
+        { "blk.5.ssm_d.weight",         "unknown"     },
+        { "blk.5.ssm_x.weight",         "unknown"     },
+        // Granite MoE router (sparse top-K gate, avoids "unknown" bucket)
+        { "blk.5.ffn_gate_inp.weight",  "ffn_gate_inp" },
+        // Granite MoE shared expert FFN (runs every token, treated as dense FFN)
+        { "blk.5.ffn_gate_shexp.weight","ffn_gate"    },
+        { "blk.5.ffn_up_shexp.weight",  "ffn_up"      },
+        { "blk.5.ffn_down_shexp.weight","ffn_down"    },
+        // Granite MoE routed expert FFNs (G3 fix: sparsity-aware regime —
+        // distinguished from dense FFN so the Q4-middle/DartQuant-edge
+        // cascade applies; tessera-moe-calibration-design.md §3.3)
+        { "blk.5.ffn_gate_exps.weight", "routed_expert" },
+        { "blk.5.ffn_up_exps.weight",    "routed_expert" },
+        { "blk.5.ffn_down_exps.weight",  "routed_expert" },
+        // Non-layer tensors
+        { "token_embd.weight",          "unknown"     },
     };
     for (const auto & c : cases) {
         std::string got = ts_regime_infer_family(c.name);
@@ -40,6 +67,71 @@ static int test_route_high_kurtosis_down() {
         return 1;
     }
     printf("PASS route: high kurtosis + ffn_down -> DARTQUANT (%s)\n", r.reason.c_str());
+    return 0;
+}
+
+static int test_route_ssm_projection() {
+    // SSM projections (ssm_in, ssm_out) are heavy matmuls analogous to attention
+    // projections. High kurtosis should fire DartQuant, same as attn_q / ffn_down.
+    ts_regime_descriptor desc = {};
+    desc.tensor_name = "blk.5.ssm_out.weight";
+    desc.family      = "ssm_out";
+    desc.kurtosis    = 12.0f;
+    desc.eff_rank    = 0.6f;
+
+    ts_regime_routing r = ts_regime_classify(&desc);
+    if (r.expert != TS_EXPERT_DARTQUANT) {
+        printf("FAIL route: kurtosis=12 + ssm_out -> expert %d, expected DARTQUANT\n", r.expert);
+        return 1;
+    }
+    printf("PASS route: high kurtosis + ssm_out -> DARTQUANT (%s)\n", r.reason.c_str());
+
+    // SSM conv / norm: well-conditioned, should fall to AWQ at normal kurtosis
+    ts_regime_descriptor desc_conv = {};
+    desc_conv.tensor_name = "blk.5.ssm_conv1d.weight";
+    desc_conv.family      = "ssm_conv";
+    desc_conv.kurtosis    = 2.5f;
+    desc_conv.eff_rank    = 0.8f;
+
+    ts_regime_routing r_conv = ts_regime_classify(&desc_conv);
+    if (r_conv.expert != TS_EXPERT_AWQ) {
+        printf("FAIL route: ssm_conv -> expert %d, expected AWQ\n", r_conv.expert);
+        return 1;
+    }
+    printf("PASS route: ssm_conv (well-conditioned) -> AWQ (%s)\n", r_conv.reason.c_str());
+    return 0;
+}
+
+static int test_route_moe_router() {
+    // MoE router (ffn_gate_inp): sparse top-K gate. Falls through to
+    // kurtosis cascade. At normal kurtosis / eff_rank it should default to AWQ.
+    ts_regime_descriptor desc = {};
+    desc.tensor_name = "blk.5.ffn_gate_inp.weight";
+    desc.family      = "ffn_gate_inp";
+    desc.kurtosis    = 2.5f;
+    desc.eff_rank    = 0.6f;
+
+    ts_regime_routing r = ts_regime_classify(&desc);
+    if (r.expert != TS_EXPERT_AWQ) {
+        printf("FAIL route: ffn_gate_inp -> expert %d, expected AWQ\n", r.expert);
+        return 1;
+    }
+    printf("PASS route: ffn_gate_inp (normal) -> AWQ (%s)\n", r.reason.c_str());
+
+    // Shared expert FFN (shexp): runs every token, treated as dense FFN.
+    // Heavy tails should still fire DartQuant / CHAMP-Q.
+    ts_regime_descriptor desc_shexp = {};
+    desc_shexp.tensor_name = "blk.5.ffn_up_shexp.weight";
+    desc_shexp.family      = "ffn_up";
+    desc_shexp.kurtosis    = 8.0f;
+    desc_shexp.eff_rank    = 0.5f;
+
+    ts_regime_routing r_shexp = ts_regime_classify(&desc_shexp);
+    if (r_shexp.expert != TS_EXPERT_CHAMPQ) {
+        printf("FAIL route: ffn_up_shexp (kurtosis=8) -> expert %d, expected CHAMPQ\n", r_shexp.expert);
+        return 1;
+    }
+    printf("PASS route: ffn_up_shexp (heavy tails) -> CHAMPQ (%s)\n", r_shexp.reason.c_str());
     return 0;
 }
 
@@ -110,7 +202,9 @@ static int test_route_all_summary() {
     descs[4].kurtosis    = 3.5f;
     descs[4].eff_rank    = 0.5f;
 
-    std::vector<ts_regime_routing> routings = ts_regime_route_all(descs, 5);
+    // route_all takes an explicit thresholds ptr (no default in the
+    // merged header); nullptr exercises the builtin cascade.
+    std::vector<ts_regime_routing> routings = ts_regime_route_all(descs, 5, nullptr);
     if ((int64_t)routings.size() != 5) {
         printf("FAIL route_all: got %zu routings, expected 5\n", routings.size());
         return 1;
@@ -243,6 +337,8 @@ int main() {
     int failures = 0;
     failures += test_family_inference();
     failures += test_route_high_kurtosis_down();
+    failures += test_route_ssm_projection();
+    failures += test_route_moe_router();
     failures += test_route_low_eff_rank();
     failures += test_route_normal();
     failures += test_route_all_summary();

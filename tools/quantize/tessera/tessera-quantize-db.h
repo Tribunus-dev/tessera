@@ -676,3 +676,46 @@ int32_t ts_tessera_db_layer_depth(const std::string & name);
 // unique enough for warm-start keying and runs in milliseconds. Returns an
 // empty string on failure (the dispatch treats empty hash as "no warm-start").
 std::string ts_tessera_db_hash_gguf(const std::string & path);
+
+// --- L5 joint search gen-boundary checkpoint ---
+//
+// Writes one row per generation to the l5_search_state DuckDB table.
+// ts_l5_joint_search() calls write at the end of each completed generation.
+// The read function returns the highest-generation row for a run_id, enabling
+// crash-resumable L5 search: on restart, the search resumes from gen+1
+// seeded with the top-K from the last checkpoint.
+//
+// ts_l5_joint_topk_entry and ts_l5_joint_policy are defined in
+// common/tessera-ppl-harness.h (included transitively). The gen_checkpoint
+// struct mirrors the l5_search_state table columns.
+
+struct ts_l5_joint_gen_checkpoint {
+    std::string run_id;
+    std::string model_hash;
+    int32_t     generation = 0;
+    // top_k: compact representation of top-K entries (policy + metric).
+    // Serialized as JSON array via DuckDB json_object().
+    std::vector<std::string> top_k_json;
+    std::string best_policy_json;
+    float       best_metric = 0.0f;
+    bool        and_gate_pass = false;
+    // gen_candidates: full population of the generation (for diagnostics).
+    std::vector<std::string> candidates_json;
+};
+
+// Write one generation checkpoint. Uses INSERT OR REPLACE so the row is
+// always the latest generation (PK = run_id). Returns 0 on success.
+int ts_tessera_db_write_l5_gen_checkpoint(
+        ts_tessera_db * db,
+        const ts_l5_joint_gen_checkpoint & ckpt,
+        std::string * err);
+
+// Read the latest (highest generation) checkpoint for a run_id.
+// Returns 0 and fills *out when a row exists; returns 1 when no
+// checkpoint is found (first run). The top_k_json and candidates_json
+// fields are raw JSON strings; the caller deserializes them.
+int ts_tessera_db_read_l5_gen_checkpoint(
+        ts_tessera_db * db,
+        const std::string & run_id,
+        ts_l5_joint_gen_checkpoint * out,
+        std::string * err);

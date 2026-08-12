@@ -40,6 +40,98 @@
 
 #include "imatrix-safeguards.h"
 
+// Phase imatrix-crash-safe: DuckDB persistence for crash-resumable imatrix runs.
+// ts_db_buffer batches writes and drains on SIGINT; ts_tessera_db drives the
+// imatrix_accum_state table. g_imatrix_db is opened in main() after
+// common_params_parse when --tessera-db is given; g_imatrix_buf is the
+// per-table write buffer for imatrix_accum_state. The flusher thread
+// (imatrix_flusher_thread) drains g_imatrix_buf at flush_interval and also
+// handles SIGINT (g_sigint_requested) by forcing a final flush + DuckDB
+// CHECKPOINT before exit.
+#include "../quantize/tessera/tessera-quantize-db.h"
+#include "../quantize/tessera/tessera-db-buffer.h"
+#include "../../common/tessera-args.h"
+
+// duckdb.hpp for duckdb::Exception used in resume_from_db(). Placed after
+// the tessera headers so the NOMINMAX guard (from tessera-quantize-db.cpp)
+// is not needed here — duckdb.hpp is not included directly in this file.
+#include <duckdb.hpp>
+
+// Global DuckDB handles for the imatrix tool. Owned by main(), open after
+// common_params_parse when --tessera-db is given. The imatrix collector
+// writes imatrix_accum_state rows via g_imatrix_buf; the flusher thread
+// (imatrix_flusher_thread) drains the buffer at flush_interval and handles
+// SIGINT.
+static ts_tessera_db * g_imatrix_db = nullptr;
+static ts_db_buffer  * g_imatrix_buf = nullptr;
+
+// SIGINT flag. The flusher thread checks this at the top of each wake cycle;
+// on SIGINT it forces a buffer drain + DuckDB CHECKPOINT before returning.
+static volatile sig_atomic_t g_sigint_requested = 0;
+
+// SIGINT handler. Calls ts_db_buffer_close (drains pending rows with
+// sync-on-exit) and DuckDB CHECKPOINT, then exits cleanly.
+static void imatrix_on_sigint(int) {
+    g_sigint_requested = 1;
+}
+
+// Flusher thread body. Runs for the lifetime of the imatrix run. Checks
+// g_sigint_requested at each wake cycle; on SIGINT forces a flush + CHECKPOINT.
+static void imatrix_flusher_thread(void) {
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::seconds(5));
+        if (g_sigint_requested) {
+            // Drain the buffer with sync-on-exit before exiting.
+            if (g_imatrix_buf) {
+                ts_db_buffer_flush_now(g_imatrix_buf);
+                ts_db_buffer_close(&g_imatrix_buf);
+            }
+            // CHECKPOINT synchronizes the WAL so all rows are durable.
+            if (g_imatrix_db) {
+                auto * conn = g_imatrix_db->conn.get();
+                if (conn) {
+                    try { conn->Query("CHECKPOINT;"); } catch (...) {}
+                }
+            }
+            return;
+        }
+        // Normal periodic flush (not on exit path, so durable=false).
+        if (g_imatrix_buf) {
+            ts_db_buffer_flush_now(g_imatrix_buf);
+        }
+    }
+}
+
+// Helper: convert observer scope enum to a DuckDB model_role string.
+// The mapping mirrors common_imatrix_scope_prefix but returns a role
+// suitable for the imatrix_accum_state.model_role column (empty = trunk).
+static const char * scope_to_model_role(int scope) {
+    switch (scope) {
+        case LLAMA_OBSERVER_SCOPE_VERIFIER: return "trunk";
+        case LLAMA_OBSERVER_SCOPE_MTP:      return "dft.mtp";
+        case LLAMA_OBSERVER_SCOPE_DFLASH:   return "dft.dflash";
+        case LLAMA_OBSERVER_SCOPE_DSPARK:   return "dft.dspark";
+        case LLAMA_OBSERVER_SCOPE_TALKER:   return "dft.talker";
+        default:                             return "trunk";
+    }
+}
+
+// Format current UTC time as a DuckDB TIMESTAMP literal 'YYYY-MM-DD HH:MM:SS'.
+// Mirrors ts_now_ts() in tessera-quantize-db.cpp but defined here since
+// that function is file-static there.
+static std::string imatrix_now_ts() {
+    std::time_t now = std::time(nullptr);
+    std::tm tm{};
+#ifdef _WIN32
+    gmtime_s(&tm, &now);
+#else
+    gmtime_r(&now, &tm);
+#endif
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm);
+    return std::string("'") + buf + "'";
+}
+
 #if defined(__APPLE__) && defined(GGML_USE_ANE)
 #include "../../src/llama-weight-stream.h"
 #include "ggml-backend.h"
@@ -115,6 +207,9 @@ public:
     // llama_set_imatrix_observer_scope on the same context so the filter and
     // the bucketing agree.
     void set_observer_scope(int scope) { m_observer_scope = scope; }
+    // Phase imatrix-crash-safe: set the model hash after the model is loaded.
+    // Used by write_accum_state_to_db() to populate the model_hash column.
+    void set_model_hash(const std::string & hash) { m_model_hash = hash; }
 
     // Stats are bucketed by (scope, name) so a verifier context and a drafter
     // context sharing one collector land in separate ledgers without any name
@@ -164,8 +259,23 @@ public:
     static bool observer_filter(const char * tensor_name, void * user_data);
     void save_imatrix_legacy(int32_t ncall = -1) const;
     void save_imatrix(int32_t n_chunk = -1) const;
+    // Phase imatrix-crash-safe: write imatrix_accum_state rows to DuckDB via
+    // the global g_imatrix_buf. Called from save_imatrix() at every save point
+    // (convergence stop, periodic save, normal exit). Computes accum_sum and
+    // accum_count from the in-memory Stats struct. rms and mean_abs are
+    // derived quantities stored explicitly for query convenience.
+    // Writes are best-effort: a failed append logs and continues.
+    void write_accum_state_to_db(int32_t checkpoint_chunk) const;
+    // Phase imatrix-crash-safe: resume from a DuckDB checkpoint. Reads
+    // imatrix_accum_state rows for m_model_hash and seeds the in-memory
+    // m_stats map with stored accumulators so the run picks up where it
+    // left off. Returns the chunk index to resume from (0 = no checkpoint).
+    int32_t resume_from_db(ts_tessera_db * db);
     bool load_imatrix(const char * file_name);
     const std::unordered_map<stats_key, Stats, stats_key_hash> & get_mstats() const { return m_stats; }
+    // Phase imatrix-crash-safe: set after model load so write_accum_state_to_db
+    // can populate the model_hash column in imatrix_accum_state.
+    std::string m_model_hash;
 private:
     static constexpr size_t k_observer_slots = 4;
     struct graph_observer_snapshot {
@@ -1400,6 +1510,147 @@ void IMatrixCollector::save_imatrix(int32_t n_chunk) const {
     save_transfer_ledger(
         fname,
         n_chunk > 0 ? n_chunk : m_last_chunk);
+
+    // Phase imatrix-crash-safe: also persist imatrix_accum_state to DuckDB so
+    // the run can resume from this checkpoint on restart.
+    const int32_t ckpt = n_chunk > 0 ? n_chunk : m_last_chunk;
+    write_accum_state_to_db(ckpt);
+
+    // Flush and close the buffer so the DuckDB connection is clean at exit.
+    // The flusher thread will wake up on close, see the closed flag, and exit.
+    // DuckDB's destructor flushes the WAL on connection close, so all pending
+    // rows are durable after this call.
+    if (g_imatrix_buf) {
+        ts_db_buffer_flush_now(g_imatrix_buf);
+        ts_db_buffer_close(&g_imatrix_buf);
+    }
+}
+
+void IMatrixCollector::write_accum_state_to_db(int32_t checkpoint_chunk) const {
+    if (g_imatrix_buf == nullptr) {
+        LOG_INF("%s: g_imatrix_buf is null (DB not open?)\n", __func__);
+        return;
+    }
+    if (m_model_hash.empty()) {
+        LOG_INF("%s: m_model_hash is empty\n", __func__);
+        return;
+    }
+    if (m_stats.empty()) {
+        LOG_INF("%s: m_stats is empty — no observer tensors captured (normal for weight-pool models)\n", __func__);
+        return;
+    }
+    LOG_INF("%s: writing %zu tensors to DuckDB\n", __func__, m_stats.size());
+    for (const auto & kv : m_stats) {
+        const Stats & stat = kv.second;
+        // accum_sum: running sum of squared activations (F32 m_stats.values)
+        double accum_sum = 0.0;
+        double accum_sum_abs = 0.0;
+        int64_t accum_count = 0;
+        for (size_t i = 0; i < stat.values.size(); ++i) {
+            accum_sum += (double)stat.values[i];
+            if (i < stat.abs_values.size()) {
+                accum_sum_abs += (double)stat.abs_values[i];
+            }
+        }
+        for (int64_t c : stat.counts) {
+            accum_count += c;
+        }
+        double rms = accum_count > 0 ? std::sqrt(accum_sum / (double)accum_count) : 0.0;
+        double mean_abs = accum_count > 0 ? (accum_sum_abs / (double)accum_count) : 0.0;
+
+        const char * role = scope_to_model_role(kv.first.scope);
+        std::vector<std::string> row = {
+            ts_db_sql_escape(m_model_hash),
+            std::string(role),
+            ts_db_sql_escape(kv.first.name),
+            std::to_string(checkpoint_chunk),
+            std::to_string(accum_sum),
+            std::to_string(accum_count),
+            std::to_string(accum_sum_abs),
+            std::to_string(rms),
+            std::to_string(mean_abs),
+            imatrix_now_ts(),
+        };
+        ts_db_buffer_append(g_imatrix_buf, row);
+    }
+}
+
+int32_t IMatrixCollector::resume_from_db(ts_tessera_db * db) {
+    if (db == nullptr || m_model_hash.empty()) {
+        return 0;
+    }
+    auto * conn = db->conn.get();
+    if (!conn) {
+        return 0;
+    }
+    int32_t max_chunk = 0;
+    try {
+        const std::string q =
+            "SELECT tensor_name, model_role, chunks_seen, accum_sum, "
+            "accum_count, accum_sum_abs FROM imatrix_accum_state "
+            "WHERE model_hash = '" + ts_db_sql_escape(m_model_hash) + "'";
+        auto res = conn->Query(q);
+        if (res->HasError()) {
+            LOG_WRN("%s: resume_from_db query error: %s\n",
+                    __func__, res->GetError().c_str());
+            return 0;
+        }
+        const idx_t nrows = res->RowCount();
+        if (nrows == 0) {
+            return 0;
+        }
+        for (idx_t r = 0; r < nrows; ++r) {
+            const std::string tensor_name = res->GetValue(0, r).GetValue<std::string>();
+            const std::string model_role  = res->GetValue(1, r).GetValue<std::string>();
+            const int64_t chunks_seen     = res->GetValue(2, r).GetValue<int64_t>();
+            const double accum_sum        = res->GetValue(3, r).GetValue<double>();
+            const int64_t accum_count     = res->GetValue(4, r).GetValue<int64_t>();
+            const double accum_sum_abs    = res->GetValue(5, r).GetValue<double>();
+            if (chunks_seen > max_chunk) {
+                max_chunk = (int32_t)chunks_seen;
+            }
+            // Derive the scope from model_role string.
+            int scope = LLAMA_OBSERVER_SCOPE_VERIFIER;
+            if (model_role == "dft.dflash") {
+                scope = LLAMA_OBSERVER_SCOPE_DFLASH;
+            } else if (model_role == "dft.dspark") {
+                scope = LLAMA_OBSERVER_SCOPE_DSPARK;
+            } else if (model_role == "dft.mtp") {
+                scope = LLAMA_OBSERVER_SCOPE_MTP;
+            } else if (model_role == "dft.talker") {
+                scope = LLAMA_OBSERVER_SCOPE_TALKER;
+            }
+            stats_key key{scope, tensor_name};
+            auto it = m_stats.find(key);
+            if (it == m_stats.end()) {
+                // Tensor not yet observed in this run (model loaded fresh).
+                // Seed the bucket with the stored accumulators so subsequent
+                // observers accumulate on top.
+                Stats s;
+                if (accum_count > 0) {
+                    s.values.resize(1, (float)accum_sum);
+                    s.abs_values.resize(1, (float)accum_sum_abs);
+                    s.counts.resize(1, accum_count);
+                }
+                m_stats[key] = std::move(s);
+            } else {
+                // Tensor already observed (loaded from --in-file imatrix).
+                // Log and continue with the in-memory state.
+                LOG_WRN("%s: resume_from_db: tensor '%s' (scope=%d) already in "
+                        "m_stats from --in-file; using in-memory state\n",
+                        __func__, tensor_name.c_str(), scope);
+            }
+        }
+        if (max_chunk > 0) {
+            LOG_INF("%s: resume_from_db: seeded %zu tensors from chunk %d "
+                    "checkpoint, model_hash=%s\n",
+                    __func__, m_stats.size(), max_chunk, m_model_hash.c_str());
+        }
+    } catch (const std::exception & e) {
+        LOG_WRN("%s: resume_from_db failed: %s\n",
+                __func__, e.what());
+    }
+    return max_chunk;
 }
 
 void IMatrixCollector::save_transfer_ledger(
@@ -1835,7 +2086,31 @@ static bool compute_imatrix(llama_context * ctx, const common_params & params, c
 
     const auto t_loop_start = std::chrono::steady_clock::now();
 
-    for (int i = 0; i < n_chunk; i += n_seq) {
+    // Phase imatrix-crash-safe: resume from DuckDB checkpoint if one exists.
+    // Call resume_from_db to seed m_stats from stored accumulators and return
+    // the chunk offset to resume from. Only attempt if m_stats is currently
+    // empty (no --in-file override) and the DB is open.
+    int resume_start_i = 0;
+    if (g_imatrix_db != nullptr && g_collector.get_mstats().empty()) {
+        const int32_t resume_chunk = g_collector.resume_from_db(g_imatrix_db);
+        if (resume_chunk > 0) {
+            // Convert chunk index to the i-loop offset (n_seq chunks per batch).
+            resume_start_i = (resume_chunk / n_seq) * n_seq;
+            if (resume_start_i >= n_chunk) {
+                LOG_WRN("%s: DuckDB checkpoint chunk=%d >= n_chunk=%d; "
+                        "restarting from scratch\n",
+                        __func__, resume_chunk, n_chunk);
+                resume_start_i = 0;
+            } else {
+                LOG_INF("%s: DuckDB checkpoint at chunk %d; resuming from i=%d "
+                        "(%d/%d chunks)\n",
+                        __func__, resume_chunk, resume_start_i,
+                        resume_start_i / n_seq, n_chunk);
+            }
+        }
+    }
+
+    for (int i = resume_start_i; i < n_chunk; i += n_seq) {
         const int start =     i * n_ctx;
         const int end   = start + n_ctx;
         hb_chunk.store(i, std::memory_order_relaxed);
@@ -1972,6 +2247,32 @@ static bool compute_imatrix(llama_context * ctx, const common_params & params, c
                 break;
             }
         }
+        // Phase imatrix-crash-safe: ETA + chunk-count progress bar.
+        // Prints every 10 chunks to avoid terminal spam.
+        if (chunks_processed % 10 == 0 && chunks_processed > 0) {
+            const double elapsed_total =
+                std::chrono::duration<double>(
+                    std::chrono::steady_clock::now() - t_loop_start).count();
+            const double rate = elapsed_total > 0
+                ? (double)chunks_processed / elapsed_total : 0.0;
+            const int total_est = n_chunk;
+            const int remaining = total_est - chunks_processed;
+            const int eta_sec = rate > 0 ? (int)(remaining / rate) : 0;
+            const double pct = (double)chunks_processed / (double)total_est * 100.0;
+            if (eta_sec >= 60*60) {
+                LOG_INF("imatrix: chunk %d/%d (%.1f%%), rate=%.1f ch/s, ETA=%dh %02dm\n",
+                        chunks_processed, total_est, pct, rate,
+                        eta_sec / 3600, (eta_sec % 3600) / 60);
+            } else if (eta_sec >= 60) {
+                LOG_INF("imatrix: chunk %d/%d (%.1f%%), rate=%.1f ch/s, ETA=%dm %02ds\n",
+                        chunks_processed, total_est, pct, rate,
+                        eta_sec / 60, eta_sec % 60);
+            } else {
+                LOG_INF("imatrix: chunk %d/%d (%.1f%%), rate=%.1f ch/s, ETA=%ds\n",
+                        chunks_processed, total_est, pct, rate, eta_sec);
+            }
+        }
+
         if (params.n_out_freq > 0 &&
             chunks_processed % params.n_out_freq == 0) {
             if (!g_collector.flush_graph_observers()) {
@@ -2394,7 +2695,13 @@ static enum llama_observer_scope scope_from_model_arch(const struct llama_model 
     return LLAMA_OBSERVER_SCOPE_VERIFIER;
 }
 
+int imatrix_main(int argc, char ** argv);
+
 int main(int argc, char ** argv) {
+    return imatrix_main(argc, argv);
+}
+
+int imatrix_main(int argc, char ** argv) {
     std::setlocale(LC_NUMERIC, "C");
 
     common_params params;
@@ -2408,6 +2715,39 @@ int main(int argc, char ** argv) {
 
     if (!common_params_parse(argc, argv, params, LLAMA_EXAMPLE_IMATRIX, print_usage)) {
         return 1;
+    }
+
+    // Phase imatrix-crash-safe: open DuckDB when --tessera-db is given.
+    // The buffer is opened on the imatrix_accum_state table. The flusher
+    // thread is started below (after model load, to avoid spawning a thread
+    // before confirming the run can proceed). Writes are best-effort: a
+    // corrupt DB or flush failure never blocks the imatrix pass.
+    const common_tessera_params & tp = common_get_tessera_params();
+    if (!tp.tessera_db.empty()) {
+        std::string db_err;
+        g_imatrix_db = ts_tessera_db_open(tp.tessera_db, &db_err);
+        if (g_imatrix_db == nullptr) {
+            LOG_ERR("%s: --tessera-db open failed: %s (continuing without DB)\n",
+                    __func__, db_err.c_str());
+        } else {
+            static const std::vector<std::string> kAccumCols = {
+                "model_hash", "model_role", "tensor_name",
+                "chunks_seen", "accum_sum", "accum_count", "accum_sum_abs",
+                "rms", "mean_abs", "updated_at"
+            };
+            g_imatrix_buf = ts_db_buffer_open(
+                g_imatrix_db, "imatrix_accum_state", kAccumCols,
+                65536, std::chrono::seconds(5), false);
+            if (g_imatrix_buf == nullptr) {
+                LOG_WRN("%s: ts_db_buffer_open for imatrix_accum_state failed "
+                        "(continuing without DB writes)\n", __func__);
+                delete g_imatrix_db;
+                g_imatrix_db = nullptr;
+            } else {
+                LOG_INF("%s: --tessera-db=%s, imatrix_accum_state buffer ready\n",
+                        __func__, tp.tessera_db.c_str());
+            }
+        }
     }
 
     // set_params before show_statistics so load_imatrix has valid n_ctx/n_parallel
@@ -2487,11 +2827,17 @@ int main(int argc, char ** argv) {
     //    lives in the binary so it cannot be skipped by accident. On
     //    unknown platforms (Windows, BSD) physmem_bytes() returns 0 and
     //    the precheck is a no-op (we cannot make a safe decision without
-    //    a probe). Skipped when the 2-slot IOSurface weight pool will
-    //    engage: with the pool active the resident footprint is ~2 layers,
-    //    not the full model, so the model_size/physmem ratio is overly
-    //    conservative. Probes hardware capability here (model is not yet
-    //    loaded), matching the eligibility logic in common_model_params_to_llama.
+    //    a probe). When the 2-slot IOSurface weight pool engages, the
+    //    check is skipped because resident footprint is ~2 IOSurface slots
+    //    (FFN weights only), not the full model: the gguf_file/physmem
+    //    ratio is irrelevant. Probes hardware capability here (model is
+    //    not yet loaded), matching the eligibility logic in
+    //    common_model_params_to_llama.
+    //
+    //    The IOSurface pool and imatrix are fully compatible: IOSurface
+    //    tensors have is_host=true, their get_tensor is a direct memcpy
+    //    from the locked IOSurface mapping, and observers fire normally
+    //    after each compute. Calibration with the pool is first-class.
     const bool pool_will_engage = ts_pool_will_engage();
     if (pool_will_engage) {
         LOG_INF("%s: weight pool eligible, skipping memory precheck "
@@ -2556,6 +2902,27 @@ int main(int argc, char ** argv) {
                 __func__, params.max_minutes);
     }
 
+    // 4. SIGINT: drain the DuckDB write buffer and CHECKPOINT before exiting.
+    //    The flusher thread (started after model init below) checks the
+    //    g_sigint_requested flag at each wake cycle and forces a sync-on-exit
+    //    flush + CHECKPOINT before returning. The atomic .tmp + rename in
+    //    save_imatrix keeps the GGUF checkpoint intact; the buffer flush
+    //    ensures imatrix_accum_state rows are durable.
+    //    NOTE: SIGKILL bypasses all signal handlers and destructors — a
+    //    SIGKILL mid-run loses up to one flush interval (5s) of rows.
+    {
+        struct sigaction sa_int = {};
+        sa_int.sa_handler = imatrix_on_sigint;
+        sa_int.sa_flags   = SA_RESTART;
+        sigemptyset(&sa_int.sa_mask);
+        sigaction(SIGINT, &sa_int, nullptr);
+        sigaction(SIGTERM, &sa_int, nullptr);
+        if (g_imatrix_buf) {
+            LOG_INF("%s: SIGINT/SIGTERM will drain imatrix_accum_state buffer "
+                    "and CHECKPOINT before exit\n", __func__);
+        }
+    }
+
     // ---- end safeguards ------------------------------------------------
 
     llama_backend_init();
@@ -2575,6 +2942,35 @@ int main(int argc, char ** argv) {
         LOG_ERR("%s : failed to init\n", __func__);
         return 1;
     }
+
+    // Phase imatrix-crash-safe: record the model hash for DuckDB imatrix_accum_state.
+    // Uses ts_tessera_db_hash_gguf (SHA256 of head + tail, 1 MB each) — the same
+    // fingerprint used by the quantize dispatch, so both tools key into the same
+    // imatrix_accum_state rows for the same GGUF file.
+    {
+        const std::string model_hash = ts_tessera_db_hash_gguf(params.model.path);
+        if (model_hash.empty()) {
+            LOG_WRN("%s: ts_tessera_db_hash_gguf(%s) returned empty; "
+                    "DuckDB imatrix_accum_state will not be keyed to this model. "
+                    "Pass --tessera-db with a valid GGUF to enable crash-resumability.\n",
+                    __func__, params.model.path.c_str());
+        } else {
+            g_collector.set_model_hash(model_hash);
+            LOG_INF("%s: model_hash=%s\n", __func__, model_hash.c_str());
+        }
+    }
+
+    // Phase imatrix-crash-safe: start the DuckDB flusher thread now that the
+    // run has confirmed it can proceed. Spawning before model load would create
+    // a thread that races against the no-DB path (params parse failure exits
+    // without needing cleanup). The thread checks g_sigint_requested at each
+    // 5s wake cycle and exits when set; it is joined implicitly at exit().
+    if (g_imatrix_buf) {
+        std::thread flusher(imatrix_flusher_thread);
+        flusher.detach();
+        LOG_INF("%s: DuckDB flusher thread started\n", __func__);
+    }
+
     // The main context collects into the scope matching its role. A trunk
     // model is VERIFIER; the TTS talker (a standalone calibration target with
     // no drafter) is TALKER, so its ledger doesn't collide with the trunk's

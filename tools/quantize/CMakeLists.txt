@@ -353,6 +353,19 @@ if(LLAMA_TOOLS_INSTALL)
     install(TARGETS ${TARGET} RUNTIME)
 endif()
 
+# gen-joint-calib: generate the L5 joint calibration JSONL for the
+# --l5-calibration flag. Produces one record per line with text prompts
+# and talker_targets (v1 synthetic schema; v3 wires the real
+# text-to-audio mapping). 256 records by default.
+set(TARGET gen-joint-calib)
+add_executable(${TARGET} tessera/gen_joint_calib.cpp)
+target_link_libraries(${TARGET} PRIVATE llama-common ${CMAKE_THREAD_LIBS_INIT})
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
+if(LLAMA_TOOLS_INSTALL)
+    install(TARGETS ${TARGET} RUNTIME)
+endif()
+
 # calibrate_regime_router: regime router calibration runner.
 # Sweeps (family, shape_bucket) for a given shape set, picks
 # the accel vs scalar winner per cell, and emits
@@ -581,6 +594,26 @@ if(LLAMA_BUILD_TESTS)
     target_compile_features(${TARGET} PRIVATE cxx_std_17)
     add_test(NAME ${TARGET} COMMAND ${TARGET})
 
+    # Regime router: family inference + kurtosis/eff_rank cascade.
+    # Covers: standard attn/FFN, Granite Hybrid SSM (ssm_in/out/conv/norm),
+    # Granite MoE routing (ffn_gate_inp), MoE shared expert FFN (shexp),
+    # MoE routed expert FFN (exps), modality detection (v./a. prefixes).
+    set(TARGET test-tessera-regime)
+    add_executable(${TARGET} tessera/test_regime.cpp)
+    target_link_libraries(${TARGET} PRIVATE llama-quantize-impl)
+    target_compile_features(${TARGET} PRIVATE cxx_std_17)
+    add_test(NAME ${TARGET} COMMAND ${TARGET})
+
+    # L5 joint PPL harness + search loop: 3 cases (target-only 18/18,
+    # full 5-model 12/12, strict 8/8) on synthetic all-zero-logits
+    # models. Exercises: AND-gate, coarse-to-fine, adaptive slippery,
+    # strict pass, metric dispatch (MAX/SUM/MEAN). All-zero logits
+    # give exact PPL = vocab_size for a clean correctness baseline.
+    set(TARGET test-tessera-l5-joint)
+    add_executable(${TARGET} tessera/test_l5_joint.cpp)
+    target_link_libraries(${TARGET} PRIVATE llama-quantize-impl)
+    target_compile_features(${TARGET} PRIVATE cxx_std_17)
+    add_test(NAME ${TARGET} COMMAND ${TARGET})
     # Phase 3.5 HIGGS structural proxy C++ test suite: family
     # classification, structural alpha, uniform fallback,
     # measurement-function swap, byte-equivalence with the

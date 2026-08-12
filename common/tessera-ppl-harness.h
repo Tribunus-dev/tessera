@@ -130,6 +130,11 @@ struct ts_l5_joint_params {
     uint32_t rng_seed      = 0x5EED5u; // search RNG seed (deterministic by default)
     ts_l5_joint_metric metric = ts_l5_joint_metric::MAX; // default MAX so drafters get full optimization
     bool   verbose         = false;
+    // Checkpoint keys. Set by the caller before passing params to ts_l5_joint_search.
+    // run_id groups all generations of one L5 search session.
+    // model_hash ties the checkpoint to the specific model+quantization.
+    std::string run_id;
+    std::string model_hash;
 };
 
 // --- Harness: the joint forward pass + per-model PPL extraction ---

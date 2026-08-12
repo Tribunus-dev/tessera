@@ -123,6 +123,15 @@ struct ts_l5_joint_strict_result {
 // pointers-to-arrays here for the search-loop signature.
 typedef ts_l5_drafter_forward_fn ts_l5_drafter_fns_t[TS_L5_MODEL_COUNT];
 
+// --- Callback: called after each completed generation ---
+//
+// Allows the caller to persist checkpoints at gen boundaries. The search
+// calls on_gen_done(generation, &gr) after pushing each generation result.
+// Pass nullptr to disable (the default - no callback, no overhead).
+typedef void (*ts_l5_gen_callback)(int32_t generation,
+                                   const struct ts_l5_joint_gen_result * gr,
+                                   void * ctx);
+
 // --- Main search entry point ---
 //
 // Runs the joint search loop. Starts from the coarse grid (gen 0),
@@ -134,6 +143,10 @@ typedef ts_l5_drafter_forward_fn ts_l5_drafter_fns_t[TS_L5_MODEL_COUNT];
 // target is active; the search is effectively a 7D optimization over
 // the target's 7-family policy.
 //
+// When gen_callback is non-null, it is called after each completed
+// generation (before the termination check), enabling gen-boundary
+// checkpointing without duplicating the generation loop.
+//
 // Returns 0 on success, -1 on invalid args.
 int ts_l5_joint_search(
         const ts_l5_ppl_harness * harness,
@@ -141,7 +154,33 @@ int ts_l5_joint_search(
         ts_l5_drafter_forward_fn drafter_forwards[TS_L5_MODEL_COUNT],
         ts_l5_talker_forward_fn talker_forward,
         const ts_l5_joint_params * params,
-        ts_l5_joint_search_result * result);
+        ts_l5_joint_search_result * result,
+        ts_l5_gen_callback gen_callback = nullptr,
+        void * gen_callback_ctx = nullptr);
+
+// --- Checkpoint-wrapped search (production: with DuckDB persistence) ---
+//
+// Wraps ts_l5_joint_search. At the end of each completed generation,
+// serializes the gen_result to JSON and writes a checkpoint to the
+// DuckDB l5_search_state table via ts_tessera_db_write_l5_gen_checkpoint.
+// Requires params->run_id and params->model_hash to be set.
+//
+// The db pointer must be a ts_tessera_db* opened with ts_tessera_db_open.
+// On db==nullptr, delegates to ts_l5_joint_search (no checkpoint).
+// ts_tessera_db and ts_l5_joint_gen_checkpoint are defined in
+// tools/quantize/tessera/tessera-quantize-db.h. This include is
+// safe: tessera-quantize-db.h only includes standard headers and has
+// no dependency on tessera-l5-joint.h.
+#include "../tools/quantize/tessera/tessera-quantize-db.h"
+
+int ts_l5_joint_search_with_checkpoint(
+        const ts_l5_ppl_harness * harness,
+        ts_l5_trunk_forward_fn  trunk_forward,
+        ts_l5_drafter_forward_fn drafter_forwards[TS_L5_MODEL_COUNT],
+        ts_l5_talker_forward_fn talker_forward,
+        const ts_l5_joint_params * params,
+        ts_l5_joint_search_result * result,
+        struct ts_tessera_db * db);
 
 // --- Helper: compute the joint PPL metric ---
 //

@@ -162,6 +162,12 @@ AGENTS.local.md
 /TesseraStudio/artifacts/
 /build-ffi/
 
+# Build-time LibreOffice headless bundle. Built by
+# scripts/setup-libreoffice-vendor.sh (run once before release packaging).
+# Copied into the .pkg by packaging/build-and-notarize.sh.
+# The stripped ~350MB bundle is NOT checked in.
+TesseraStudio/artifacts/LibreOffice-Headless/
+
 # Tessera calibration corpus payloads. The build-calibration-corpus.py
 # --real path downloads Wikitext-103 / COCO val2014 / LibriSpeech into
 # data/calibration/ (text, vision/ images, audio/ FLACs). The builder

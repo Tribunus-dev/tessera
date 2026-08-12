@@ -455,7 +455,7 @@ if (APPLE)
     llama_build(test-ane-mtl-shared-event.mm)
     if (TARGET test-ane-mtl-shared-event)
         target_link_libraries(test-ane-mtl-shared-event PRIVATE
-                              ggml ggml-base
+                              ggml ggml-base ggml-mtl-shared-events
                               "-framework Foundation"
                               "-framework Metal")
     endif()
@@ -465,7 +465,7 @@ if (APPLE)
     llama_build(test-ane-metal-dispatch.mm)
     if (TARGET test-ane-metal-dispatch)
         target_link_libraries(test-ane-metal-dispatch PRIVATE
-                              ggml ggml-base
+                              ggml ggml-base ggml-mtl-shared-events
                               "-framework Foundation"
                               "-framework Metal"
                               "-framework IOSurface")
@@ -547,7 +547,7 @@ if (APPLE)
     if (TARGET test-ane-slot-event)
         target_link_libraries(test-ane-slot-event PRIVATE
                               llama-common
-                              ggml ggml-base
+                              ggml ggml-base ggml-mtl-shared-events
                               "-framework Foundation"
                               "-framework Metal")
     endif()
@@ -596,15 +596,23 @@ if (APPLE)
     # DFlash bundle is deferred until a bundle with manifest
     # sidecar is available. .mm because ane-state-layout.h
     # imports Foundation.
-    llama_build_and_test(test-ane-drafter-shape.mm)
+    llama_build(test-ane-drafter-shape.mm)
     if (TARGET test-ane-drafter-shape)
         target_link_libraries(test-ane-drafter-shape PRIVATE
                               llama-common
                               "-framework Foundation")
+        # The test requires the gemma4 prefill bundle as its ARG.
+        # When the bundle is missing, skip registration (same
+        # pattern as test-ane-pinned-slot-dispatch above).
         if (EXISTS "/Volumes/Julian T7/models/gemma4-ane-prefill-flat-slab.gguf")
+            add_test(
+                NAME test-ane-drafter-shape
+                COMMAND test-ane-drafter-shape
+                    /Volumes/Julian\ T7/models/gemma4-ane-prefill-flat-slab.gguf
+            )
             set_tests_properties(test-ane-drafter-shape PROPERTIES
+                LABELS "ane"
                 ENVIRONMENT "TESSERA_ANE_STATE_LAYOUT_MANIFEST=/Volumes/Julian T7/models/gemma4-ane-prefill-bundle/prefill-bundle.ane_state.v1.json"
-                ARGS "/Volumes/Julian T7/models/gemma4-ane-prefill-flat-slab.gguf"
             )
         endif()
     endif()

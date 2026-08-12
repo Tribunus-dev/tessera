@@ -51,21 +51,23 @@ static float ts_regime_eff_rank(const float * data, int64_t n) {
     return std::expf(entropy);
 }
 
-// Linear-time p-th percentile using the selection algorithm (introselect).
-// The caller passes a pointer; this function makes a local copy so nth_element's
-// in-place mutation doesn't bleed back to the caller's data. p is in [0, 1].
+// Linear-interpolated p-th percentile (np.percentile semantics).
+// On small samples the interpolation makes a tail outlier register,
+// where floor-nearest-rank would hide it (p99 of {1,1,1,1,1,1,1,10}
+// is 9.37 here, not 1.0). The caller passes a pointer; this function
+// copies so the sort never mutates the caller's data. p is in [0, 1].
 static float ts_regime_percentile(const float * data, int64_t n, float p) {
     if (n <= 0) return 0.0f;
     if (n == 1) return data[0];
     if (p <= 0.0f) return data[0];
     if (p >= 1.0f) return data[n - 1];
-    int64_t k = (int64_t)(p * (float)(n - 1));
-    if (k < 0) k = 0;
-    if (k >= n) k = n - 1;
-    // Copy: nth_element mutates in-place; we don't want to affect the caller's data.
-    std::vector<float> tmp(data, data + n);
-    std::nth_element(tmp.begin(), tmp.begin() + k, tmp.end());
-    return tmp[(size_t)k];
+    std::vector<float> sorted(data, data + n);
+    std::sort(sorted.begin(), sorted.end());
+    float idx = p * (float)(n - 1);
+    int64_t lo = (int64_t)idx;
+    int64_t hi = std::min(lo + 1, n - 1);
+    float frac = idx - (float)lo;
+    return sorted[(size_t)lo] * (1.0f - frac) + sorted[(size_t)hi] * frac;
 }
 
 // ---------------------------------------------------------------------------
@@ -86,39 +88,45 @@ static const struct ts_family_pattern {
     const char * fragment;
     const char * family;
 } ts_family_patterns[] = {
-    // ---- Nemotron-3.5-Lightning (NEMOTRON_H_MOE) ----
-    // SSM / Mamba-2 layers: "ssm" family — sequential state-space, distinct from dense FFN
-    { "ssm_in",      "ssm"     },
-    { "ssm_x",       "ssm"     },
-    { "ssm_conv1d",  "ssm"     },
-    { "ssm_dt",      "ssm"     },
-    { "ssm_a",       "ssm"     },
-    { "ssm_d",       "ssm"     },
-    { "ssm_norm",    "ssm"     },
-    { "ssm_out",     "ssm"     },
-    { "ssm_b_norm",  "ssm"     },
-    { "ssm_c_norm",  "ssm"     },
+    // ---- Granite Hybrid SSM (heavy projections, attention-like) ----
+    // ssm_in / ssm_out are full matmuls (qualify for DartQuant / CHAMP-Q);
+    // ssm_conv is a 1D conv and ssm_norm is well-conditioned (AWQ is fine).
+    // The small {1,N} state tensors (ssm_a/d/dt/x) are intentionally absent
+    // so they fall through to "unknown" instead of a heavy regime.
+    { "ssm_in",       "ssm_in"    },
+    { "ssm_out",      "ssm_out"   },
+    { "ssm_conv",     "ssm_conv"  },
+    { "ssm_norm",     "ssm_norm"  },
+    // Nemotron-3.5-Lightning SSM (NEMOTRON_H_MOE): b/c norm projections map
+    // to the well-conditioned bucket under the same granular scheme.
+    { "ssm_b_norm",   "ssm_norm"  },
+    { "ssm_c_norm",   "ssm_norm"  },
     // LatentMoE gate projection: separate from routed_expert, smaller intermediate dim
     { "ffn_latent_up",   "moe_gate" },
     { "ffn_latent_down", "moe_gate" },
     // MoE routed expert variants: map to "routed_expert" (sparsity-aware regime)
-    { "ffn_gate_exps",   "routed_expert" },
-    { "ffn_up_exps",     "routed_expert" },
-    { "ffn_down_exps",   "routed_expert" },
-    { "ffn_gate_exps_s",    "routed_expert" },
-    { "ffn_up_exps_s",      "routed_expert" },
-    { "ffn_down_exps_s",    "routed_expert" },
+    // G3 fix (tessera-moe-calibration-design.md §3.3): routed expert tensors
+    // are distinguished from dense FFN so the sparsity-aware cascade
+    // (Q4 middle, DartQuant edge) applies. Longest fragments first.
     { "ffn_gate_exps_in_s", "routed_expert" },
     { "ffn_up_exps_in_s",   "routed_expert" },
     { "ffn_down_exps_in_s", "routed_expert" },
+    { "ffn_gate_exps_s",    "routed_expert" },
+    { "ffn_up_exps_s",      "routed_expert" },
+    { "ffn_down_exps_s",    "routed_expert" },
+    { "ffn_gate_exps",   "routed_expert" },
+    { "ffn_up_exps",     "routed_expert" },
+    { "ffn_down_exps",   "routed_expert" },
+    // MoE sparse router gate (binary top-K, distinct from FFN projections)
+    { "ffn_gate_inp",  "ffn_gate_inp" },
     // MoE shared expert: stays in the base family so the "always DartQuant + Q8"
     // rule fires unconditionally (APEX: kurtosis ~13 for shared, ~3.41 for routed)
-    { "ffn_gate_shexp",  "ffn_gate"  },
-    { "ffn_up_shexp",    "ffn_up"    },
-    { "ffn_down_shexp",  "ffn_down"  },
     { "ffn_gate_shexp_s",   "ffn_gate"  },
     { "ffn_up_shexp_s",     "ffn_up"    },
     { "ffn_down_shexp_s",   "ffn_down"  },
+    { "ffn_gate_shexp",  "ffn_gate"  },
+    { "ffn_up_shexp",    "ffn_up"    },
+    { "ffn_down_shexp",  "ffn_down"  },
     // Standard dense FFN
     { "ffn_gate",    "ffn_gate"  },
     { "ffn_up",      "ffn_up"    },

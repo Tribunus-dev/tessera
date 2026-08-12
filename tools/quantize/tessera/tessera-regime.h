@@ -96,12 +96,15 @@ static inline ts_regime_precision_tier ts_regime_default_tier(
 
 struct ts_regime_descriptor {
     std::string tensor_name;
-    std::string family;          // "attn_q", "attn_k", "attn_v", "attn_out",
-                                 // "ffn_gate", "ffn_up", "ffn_down"
-    float       kurtosis;        // activation kurtosis from imatrix
-    float       eff_rank;         // effective rank (spectral entropy)
-    float       mean_magnitude;  // mean |activation|
-    float       p99;             // 99th percentile
+    std::string family;         // "attn_q", "attn_k", "attn_v", "attn_out",
+                                // "ffn_gate", "ffn_up", "ffn_down",
+                                // "ssm_in", "ssm_out", "ssm_conv", "ssm_norm",
+                                // "ffn_gate_inp", "routed_expert", "moe_gate",
+                                // "unknown"
+    float       kurtosis;       // activation kurtosis from imatrix
+    float       eff_rank;       // effective rank (spectral entropy)
+    float       mean_magnitude; // mean |activation|
+    float       p99;            // 99th percentile
     int64_t     out_dim;
     int64_t     in_dim;
     int32_t     modality;        // 0=text, 1=image, 2=audio (default 0)

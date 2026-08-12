@@ -165,6 +165,11 @@ struct common_tessera_params {
     // tick to that path for the Studio UI to tail.
     std::string progress_file;
     bool        progress_force_terminal = false;
+    // --phase imatrix|quantize|l5-joint: selects the Tessera pipeline phase.
+    // imatrix  = run imatrix calibration only, produce imatrix.gguf.
+    // l5-joint = run L5 joint requantization search only.
+    // quantize = normal tessera quantization (default).
+    std::string phase = "quantize";
     // Unified tessera.duckdb store. When tessera_db is non-empty, the
     // dispatch opens (or creates) a DuckDB file at that path and records one
     // row per run / tensor / GA-result / L4 plan outcome, plus bulk-logs
@@ -207,6 +212,8 @@ struct common_tessera_params {
     // docs/tessera-ane-pump.md for the schema and the
     // tests/test-ane-phase-profile-emit.cpp smoke test.
     std::string ane_profile_out;
+    // Verbose dispatch output (L5 joint progress, tensor-level MSE, etc.).
+    bool verbose = false;
 };
 
 const common_tessera_params & common_get_tessera_params();
