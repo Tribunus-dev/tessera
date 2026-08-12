@@ -161,10 +161,23 @@ public struct TesseraEditorView: NSViewRepresentable {
     }
 
     public func updateNSView(_ nsView: NSView, context: Context) {
-        guard let contentManager = context.coordinator.contentManager,
-              contentManager.data.document.rootChildren != document.rootChildren else {
+        guard let contentManager = context.coordinator.contentManager else { return }
+
+        // Phase 10 P0: Skip re-sync if the binding update was triggered by our own
+        // coalescer flush. The flush already mutated contentManager.data and did a
+        // targeted replace — the text view is already in sync. Comparing rootChildren
+        // handles external changes (chat panel, undo, etc.); the flush counter
+        // handles the flush-triggered case where rootChildren also happens to differ.
+        let fromOurFlush = context.coordinator.lastFlushCount > 0
+        let documentsMatch = contentManager.data.document.rootChildren == document.rootChildren
+
+        if fromOurFlush && documentsMatch {
+            // Our flush updated contentManager.data; the binding update is redundant
+            // from the text view's perspective. Skip the full replaceContent call
+            // and the SwiftUI layout diffing it triggers.
             return
         }
+
         contentManager.data.setDocument(document)
         if let textView = (nsView as? NSScrollView)?.documentView as? TesseraSTTextView {
             textView.replaceContent(with: contentManager.data.fullAttributedString())
@@ -195,6 +208,11 @@ public struct TesseraEditorView: NSViewRepresentable {
         public var findCoordinator: FindReplaceCoordinator?
         private var flushObserver: NSObjectProtocol?
         private var selectionObserver: NSObjectProtocol?
+        /// Monotonically increasing counter incremented each time the coalescer
+        /// flushes. updateNSView reads it to know whether the SwiftUI binding
+        /// update was triggered by a flush (skip re-sync) vs. an external change
+        /// (do the full sync). Written on the main thread only.
+        fileprivate var lastFlushCount: Int = 0
 
         private let onMutationCommitted: (([Mutation], ChatQueueItem) -> Void)?
         public let onViewCommand: ((EditorCommand) -> Void)?
@@ -601,13 +619,71 @@ public struct TesseraEditorView: NSViewRepresentable {
         }
 
         private func handleFlushedBurst(_ burst: EditorCoalescer.CoalescedBurst) {
-            guard let binding = binding else { return }
+            guard let binding = binding,
+                  let contentManager = contentManager else { return }
             var working = binding.wrappedValue
             var engine = MutationEngine()
             do {
                 for mutation in burst.mutations {
                     _ = try engine.apply(mutation, to: &working)
                 }
+
+                // Phase 10 P0: targeted replace.
+                // Structural mutations (insert/delete/move) change element offsets —
+                // fall back to full SwiftUI sync. Content-only mutations keep the
+                // same element offsets — do a targeted batch replace so TextKit 2
+                // keeps all cached NSTextLayoutFragment objects for unchanged blocks.
+                let structural = contentManager.data.isStructuralChange(burst.mutations)
+                if structural {
+                    // Structural: full sync via binding update.
+                    lastFlushCount += 1
+                    binding.wrappedValue = working
+                    onMutationCommitted?(burst.mutations, burst.queueItem)
+                    return
+                }
+
+                let affected = contentManager.data.affectedBlocks(from: burst.mutations)
+                guard !affected.isEmpty,
+                      let storage = contentManager as? TesseraTextContentStorage else {
+                    lastFlushCount += 1
+                    binding.wrappedValue = working
+                    onMutationCommitted?(burst.mutations, burst.queueItem)
+                    return
+                }
+
+                // Get ranges from the CURRENT element list (pre-mutation).
+                // applyMutations rebuilds the element list; the old ranges are still
+                // valid for the replaced block's character range.
+                let oldRanges = storage.rangesForBlocks(affected)
+
+                // Apply mutations to the data layer.
+                _ = try contentManager.data.applyMutations(burst.mutations)
+
+                // Re-render only the affected blocks.
+                let newDoc = contentManager.data.document
+                let renderer = contentManager.data.renderer
+                let mode = contentManager.data.mode
+                var replacements: [(NSRange, NSAttributedString)] = []
+                for (blockID, oldRange) in oldRanges {
+                    guard let block = newDoc.blocks[blockID] else { continue }
+                    let rendered = renderer.render(block, in: mode)
+                    replacements.append((oldRange, rendered))
+                }
+
+                if !replacements.isEmpty {
+                    storage.batchReplace(replacements)
+                    // Invalidate layout so TextKit 2 re-lays out the changed blocks.
+                    // Using the full document range (same pattern as existing
+                    // rebuildTextStorage) is safe and avoids the complexity of
+                    // targeted invalidation with TextKit 2's NSTextRange API.
+                    if let tv = textView {
+                        tv.textLayoutManager.invalidateLayout(for: tv.textLayoutManager.documentRange)
+                    }
+                }
+
+                // Sync the binding so other views see the change. The flush counter
+                // lets updateNSView skip the redundant re-sync.
+                lastFlushCount += 1
                 binding.wrappedValue = working
                 onMutationCommitted?(burst.mutations, burst.queueItem)
             } catch {
@@ -705,6 +781,152 @@ public final class TesseraSTTextView: STTextView {
 
     /// The Writing Tools coordinator. Set up in setupWritingToolsCoordinator().
     private var writingToolsCoordinator: TesseraWritingToolsCoordinator?
+
+    // MARK: - Phase 10 P2: Scroll-based image load management
+
+    /// Tracks the last visible text range so we can detect scroll direction
+    /// and cancel prefetch loads for blocks that scrolled out of view.
+    private var lastVisibleElementRange: Range<Int>?
+
+    /// KVO observer token for the clip view's bounds change. Stored strongly
+    /// so it fires for the lifetime of this text view; removed in deinit.
+    private var clipViewObserver: NSObjectProtocol?
+
+    /// Set up observation of the scroll view's clip view bounds changes.
+    /// Called once from init. Phase 10 P2: cancels loads for blocks that
+    /// scroll out of the visible area and prefetches upcoming image blocks.
+    private func setupScrollObservation() {
+        guard let clipView = enclosingScrollView?.contentView else { return }
+        clipViewObserver = NotificationCenter.default.addObserver(
+            forName: NSView.boundsDidChangeNotification,
+            object: clipView,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleScrollBoundsChange()
+        }
+    }
+
+    /// Called on every clip-view bounds change (scroll / resize). Cancels
+    /// image loads for blocks that scrolled far outside the visible area
+    /// and prefetches images for upcoming blocks.
+    private func handleScrollBoundsChange() {
+        guard let contentManager = textContentManager as? TesseraTextContentManager else { return }
+        let elements = contentManager.data.elements
+
+        // Estimate how many elements are visible from the clip view's visible rect.
+        // TextKit 2 uses noncontiguous layout — only the visible area + overscroll
+        // is laid out at any time. We use the visible rect height divided by the
+        // average element height to approximate the visible element count.
+        guard let clipView = enclosingScrollView?.contentView else { return }
+        let visibleRect = clipView.documentVisibleRect
+        let totalElements = max(1, elements.count)
+        let avgElementHeight = max(1, self.frame.height / CGFloat(totalElements))
+        let visibleElementCount = max(1, Int(ceil(visibleRect.height / avgElementHeight)))
+
+        // Approximate the current visible element range by converting the visible rect
+        // to a character offset range via the text layout manager.
+        // We enumerate text fragments in the visible rect and map their character
+        // ranges to element indices.
+        let approxRange = computeVisibleElementRange(visibleRect: visibleRect)
+
+        // Cancel loads for blocks that scrolled out of the keep-alive zone
+        // (±1 viewport around the last known visible range).
+        if let lastRange = lastVisibleElementRange, let current = approxRange {
+            let keepAliveTop = current.lowerBound - visibleElementCount
+            let keepAliveBottom = current.upperBound + visibleElementCount
+            for idx in lastRange {
+                if idx < keepAliveTop || idx >= keepAliveBottom {
+                    if idx < elements.count {
+                        ImageLoader.shared.cancel(for: elements[idx].blockID)
+                    }
+                }
+            }
+        }
+        lastVisibleElementRange = approxRange
+
+        // Prefetch image blocks in the upcoming viewport.
+        guard let visibleRange = approxRange else { return }
+        let prefetchEnd = min(visibleRange.upperBound + visibleElementCount, elements.count)
+        var prefetchSources: [(UUID, String)] = []
+        for idx in visibleRange.upperBound..<prefetchEnd {
+            let blockID = elements[idx].blockID
+            if let block = contentManager.data.document.blocks[blockID],
+               block.type == .image,
+               let source = block.attributes["source"]?.stringValue,
+               !source.isEmpty {
+                prefetchSources.append((blockID, source))
+            }
+        }
+        if !prefetchSources.isEmpty {
+            ImageLoader.shared.prefetch(sources: prefetchSources)
+        }
+    }
+
+    /// Returns an approximate element index range for the visible document rect.
+    /// Uses TextKit 2's `enumerateTextLayoutFragments(in:options:using:)` to get
+    /// the character range of visible text fragments, then binary-searches the
+    /// element list to map character offsets to element indices.
+    private func computeVisibleElementRange(visibleRect: NSRect) -> Range<Int>? {
+        guard let tcm = textContentManager as? TesseraTextContentManager else { return nil }
+        let elements = tcm.data.elements
+        guard !elements.isEmpty else { return nil }
+
+        var minCharOffset = Int.max
+        var maxCharOffset = 0
+
+        // Find the first element that could be in the visible area (rough Y-based
+        // pre-filter) and convert its character offset to an NSTextLocation so we can
+        // call enumerateTextLayoutFragments(from:options:using:). We then check
+        // each fragment's bounding rect against visibleRect to skip truly invisible
+        // ones. Starting from element 0 is safe even for tall documents — the layout
+        // manager will traverse only the visible region; the per-fragment bounding-rect
+        // guard below ensures we don't over-count.
+        let startOffset = elements[0].rangeStart
+        let startLocation = tcm.textLocation(forCharacterOffset: startOffset)
+        textLayoutManager.enumerateTextLayoutFragments(
+            from: startLocation,
+            options: [.ensuresLayout]
+        ) { fragment in
+            // fragment.rangeInElement is an NSTextRange with (location, length) typed as
+            // any NSTextLocation existentials. Cast to IntTextLocation (our concrete type)
+            // to extract the integer offsets. Guard with "flatMap" pattern: if either
+            // end of the range isn't our concrete type, skip the fragment (this should
+            // never happen in the editor since TesseraTextContentStorage only creates
+            // IntTextLocation-based ranges).
+            guard let startIntLoc = fragment.rangeInElement.location as? IntTextLocation,
+                  let endIntLoc = fragment.rangeInElement.length as? IntTextLocation else {
+                return true  // keep enumerating
+            }
+            let startLoc = startIntLoc.intValue
+            let endLoc = endIntLoc.intValue
+            minCharOffset = min(minCharOffset, startLoc)
+            maxCharOffset = max(maxCharOffset, endLoc)
+            return true
+        }
+
+        if minCharOffset == Int.max { return 0..<0 }
+
+        // Binary search to map character offsets to element indices.
+        func elementIndex(ofOffset offset: Int) -> Int {
+            var lo = 0, hi = elements.count - 1
+            while lo <= hi {
+                let mid = (lo + hi) / 2
+                if offset < elements[mid].rangeStart {
+                    hi = mid - 1
+                } else if offset >= elements[mid].rangeEnd {
+                    lo = mid + 1
+                } else {
+                    return mid
+                }
+            }
+            return max(0, min(lo, elements.count - 1))
+        }
+
+        let topIdx = elementIndex(ofOffset: minCharOffset)
+        let bottomIdx = elementIndex(ofOffset: maxCharOffset)
+        return topIdx..<(bottomIdx + 1)
+    }
+
     /// Controls whether the gutter shows line numbers.
     /// Mirrors STTextView.showsLineNumbers; wrapping it here keeps the
     /// @MainActor boundary inside this class so the Coordinator
@@ -765,6 +987,9 @@ public final class TesseraSTTextView: STTextView {
         self.textLayoutManager = textLayoutManager
         // Set the actual attributed content (didSet only sets self.text = String).
         self.replaceContent(with: initialAttributedString)
+        // Phase 10 P2: observe scroll to cancel prefetch loads for blocks that
+        // scroll out of the visible area, and prefetch upcoming image blocks.
+        setupScrollObservation()
         // Phase 11 P3: Wire up Writing Tools coordinator after storage is set.
         setupWritingToolsCoordinator()
         // Phase 11 P0: Wire up ghost text manager after storage is set.
@@ -773,6 +998,12 @@ public final class TesseraSTTextView: STTextView {
 
     public required init?(coder: NSCoder) {
         fatalError("TesseraSTTextView requires init(frame:contentStorage:initialAttributedString:)")
+    }
+
+    deinit {
+        if let observer = clipViewObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
     }
 
     /// Replace the text view's entire content with a new attributed
