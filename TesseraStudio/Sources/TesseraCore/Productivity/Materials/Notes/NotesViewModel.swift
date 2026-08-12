@@ -280,6 +280,18 @@ public final class NotesViewModel: ObservableObject {
 /// updates the binding, which we then push to the store via
 /// `commitBody`.
 ///
+/// **Auto-save.** `commitBody` is debounced by 2 seconds: rapid
+/// edits coalesce into a single save. The debounce is cancelled
+/// when the editor is torn down.
+///
+/// **Session recovery.** When the app moves to the background
+/// (scenePhase change), `saveRecoveryFile()` writes the current
+/// AST to a JSON file in the app's cache directory. On the next
+/// launch of this note, `checkRecovery()` compares the recovery
+/// file's timestamp with the persisted note's `updatedAt`; if the
+/// recovery is newer, `pendingRecovery` is set and the view can
+/// prompt the user to restore.
+///
 /// **Title / pin / archive / tags / links.** These are
 /// note-level concerns (not block-level), so they bypass the
 /// editor and call the store directly. The view shows the
@@ -294,9 +306,21 @@ public final class NoteEditorViewModel: ObservableObject {
     @Published public var draftTag: String
     @Published public var isSaving: Bool = false
     @Published public private(set) var lastError: String?
+    /// Set when a newer recovery file exists than what was persisted.
+    /// The view prompts the user; set `recoverFromBackup` to restore it.
+    @Published public var pendingRecovery: Bool = false
 
     public let store: NoteStore
     public let userID: UserID
+
+    private var saveDebounceTask: Task<Void, Never>?
+    private let debounceDelay: TimeInterval = 2.0
+
+    /// The file URL for the session recovery JSON.
+    private var recoveryFileURL: URL {
+        let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        return cacheDir.appendingPathComponent("note-recovery-\(note.id.uuidString).json")
+    }
 
     public init(note: Note, store: NoteStore, userID: UserID) {
         self.note = note
@@ -307,10 +331,72 @@ public final class NoteEditorViewModel: ObservableObject {
         self.userID = userID
     }
 
+    // MARK: - Session recovery
+
+    /// Check for a session-recovery file on init. Returns true if
+    /// a newer backup exists than the persisted note.
+    public func checkRecovery() {
+        let file = recoveryFileURL
+        guard FileManager.default.fileExists(atPath: file.path) else {
+            pendingRecovery = false
+            return
+        }
+        do {
+            let attrs = try FileManager.default.attributesOfItem(atPath: file.path)
+            guard let modDate = attrs[.modificationDate] as? Date else {
+                pendingRecovery = false
+                return
+            }
+            pendingRecovery = modDate > note.updatedAt
+        } catch {
+            pendingRecovery = false
+        }
+    }
+
+    /// Restore from the session-recovery file. Sets `pendingRecovery = false`.
+    public func recoverFromBackup() async {
+        let file = recoveryFileURL
+        guard FileManager.default.fileExists(atPath: file.path) else { return }
+        do {
+            let data = try Data(contentsOf: file)
+            let recoveredNote = try Note.from(jsonData: data)
+            self.document = recoveredNote.body
+            self.note = recoveredNote
+            self.draftTitle = recoveredNote.title
+            pendingRecovery = false
+        } catch {
+            lastError = "Failed to restore backup: \(error)"
+        }
+    }
+
+    /// Discard the recovery file (user chose to keep the persisted version).
+    public func discardRecovery() {
+        try? FileManager.default.removeItem(at: recoveryFileURL)
+        pendingRecovery = false
+    }
+
+    /// Save a recovery snapshot for session-crash recovery.
+    public func saveRecoveryFile() {
+        do {
+            let data = try note.jsonData()
+            try data.write(to: recoveryFileURL, options: .atomic)
+        } catch {
+            // Non-fatal: recovery is best-effort.
+            NSLog("NoteEditorViewModel.saveRecoveryFile: \(error)")
+        }
+    }
+
+    /// Clear the recovery file after a successful persist.
+    public func clearRecoveryFile() {
+        try? FileManager.default.removeItem(at: recoveryFileURL)
+    }
+
     /// Replace the local copy with a fresh `Note` (e.g. after
     /// a store-level refresh). The drafts reset to the new
-    /// note's values.
+    /// note's values. Any pending debounced save is cancelled.
     public func refresh(with note: Note) {
+        saveDebounceTask?.cancel()
+        saveDebounceTask = nil
         self.note = note
         self.document = note.body
         self.draftTitle = note.title
@@ -336,16 +422,42 @@ public final class NoteEditorViewModel: ObservableObject {
 
     // MARK: - Body
 
-    /// Persist the body AST. Called by the editor's
-    /// `onMutationCommitted` callback after a coalesced edit
-    /// burst. The store emits a `note_body_changed` receipt.
+    /// Debounced persist. Cancels any in-flight save, then schedules a
+    /// new one after `debounceDelay` seconds. This coalesces rapid
+    /// edits (e.g. a paste of 100 lines) into a single network round-trip.
     public func commitBody(_ ast: DocumentAST) async {
+        // If the AST is identical to what's already saved, skip.
+        guard ast != note.body else { return }
+        // Cancel any pending save.
+        saveDebounceTask?.cancel()
+        // Schedule a new save with debounce.
+        saveDebounceTask = Task {
+            do {
+                try await Task.sleep(nanoseconds: UInt64(debounceDelay * 1_000_000_000))
+            } catch {
+                // Task was cancelled — discard this save.
+                return
+            }
+            await persistBody(ast)
+        }
+    }
+
+    /// Force an immediate save (flushes the debounce). Called by
+    /// scenePhase change to background.
+    public func flushBody() async {
+        saveDebounceTask?.cancel()
+        saveDebounceTask = nil
+        await persistBody(document)
+    }
+
+    private func persistBody(_ ast: DocumentAST) async {
         guard ast != note.body else { return }
         isSaving = true
         defer { isSaving = false }
         do {
             let updated = try await store.setBody(ast, for: note.id)
             self.note = updated
+            clearRecoveryFile()
         } catch {
             lastError = String(describing: error)
         }

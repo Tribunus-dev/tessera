@@ -13,12 +13,14 @@
 		0874CDA0174B7E7ED65F2F2E /* DataLayerHTTPClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14EDB5B9D3D1DA88AD22717B /* DataLayerHTTPClient.swift */; };
 		09715BBB8CC72BF943809C1E /* RemindersView_iOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11C09646BE43FE7B1E9F3B09 /* RemindersView_iOS.swift */; };
 		0AEF0419384C58CCA51D78EF /* DocDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 842915B31E328119CB4C0F77 /* DocDetailView.swift */; };
+		0DF919DBDFD2451F83952133 /* TesseraStreamingDiffView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C14E4D50179882398D43AB42 /* TesseraStreamingDiffView.swift */; };
 		0E4099EC4C4ABCC1B639FACA /* tessera.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 12E04ED6FBF1FCC3CA154CC7 /* tessera.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		132CBB1F35A58B42545162AA /* ProductivityBootstraps.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA6FEBA48E8F3A85052651FE /* ProductivityBootstraps.swift */; };
 		14C27896D0C272FE7AC9BB68 /* LayoutInspectorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2D4C992DB2F8E83DABAE66 /* LayoutInspectorView.swift */; };
 		14E5A74A80E7C2805E812FA3 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 543C41C3EF0C82A41F740F1E /* ContentView.swift */; };
 		157325803FA3DEEE5603020C /* DocsListView_iOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46702FBBBC194F492A8B10B8 /* DocsListView_iOS.swift */; };
 		19AD6CB2D3A3E0AA418EB428 /* DocsListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B33FF80343A789A2962B268F /* DocsListView.swift */; };
+		1D13BA5CDB1110C295A7939B /* NoteDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E437E2315885A039C1F9484 /* NoteDetailView.swift */; };
 		1ECF1B76977C4E6147167A46 /* CodeGitPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E240EBBECAAF3655525172FB /* CodeGitPanelView.swift */; };
 		211E8D7885F8945BBA5F36DA /* CodeSearchPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72CE72715512FA8F90D7B870 /* CodeSearchPanelView.swift */; };
 		25AED8BD9EF741A54E8BAC3E /* RemindersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BE3EF723DE6781BC525F93C /* RemindersView.swift */; };
@@ -57,8 +59,11 @@
 		71B24AAF1C0BC834C013683B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6F4F9123B7EFA1C68054E8F5 /* Assets.xcassets */; };
 		740EE592E11B002355354AD7 /* SidebarGroup.swift in Sources */ = {isa = PBXBuildFile; fileRef = E932494A7CA1A35EDCC39292 /* SidebarGroup.swift */; };
 		7427247EF6B19D353B6E10A5 /* TesseraEditorToolbar.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF21813F28DD00AAEC067404 /* TesseraEditorToolbar.swift */; };
+		76764118370A1CCDE56F3F81 /* SurfaceTagBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3124F34AFA6B60D42C236A01 /* SurfaceTagBar.swift */; };
 		7CC34E39B8273779D76EBCB9 /* EmailSurfaceBootstrap.swift in Sources */ = {isa = PBXBuildFile; fileRef = E895606B76E5A9C2C7310304 /* EmailSurfaceBootstrap.swift */; };
+		7D87B945866931FE21EB64AF /* SurfaceMetadataRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = C26B5DE721258E7D9EB58901 /* SurfaceMetadataRow.swift */; };
 		7F44BF2A0ABEA00E653CD50D /* WorkflowMenuActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD514C99769025121FCA45B2 /* WorkflowMenuActions.swift */; };
+		7FF967A0024F27216648DABC /* NoteEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEE0392D3E0C5B1E3E044716 /* NoteEditorView.swift */; };
 		82124DEA763FD7F2D39FD9AA /* SheetsListView_iOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8D12BDB57CC9643BF85280A /* SheetsListView_iOS.swift */; };
 		8715DC3A1DEAC8852D31FCE5 /* IntelligenceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC552F75F4E9BA2663586670 /* IntelligenceView.swift */; };
 		9062010338171FA15B703C64 /* tessera.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 12E04ED6FBF1FCC3CA154CC7 /* tessera.xcframework */; };
@@ -73,13 +78,15 @@
 		ACA69BEBB04769F1DD146753 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 515D71CE71265C64C3BC538B /* SettingsView.swift */; };
 		B01CB1767E74CF9EBCF90BA1 /* WorkflowNodeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75205220F8E12273F58FC23E /* WorkflowNodeView.swift */; };
 		B1620CCA35EB2EBE91250C84 /* ReminderDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D056BEF0F0280716907AEDF8 /* ReminderDetailView.swift */; };
+		B4FD3EAFCEDC950FD9B30F91 /* SurfaceLinkedEntityChip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6281FE0DBAFFD779BEAEBB33 /* SurfaceLinkedEntityChip.swift */; };
 		B66B18CC9826697606EFF4FB /* NotesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE6E407552D4B5DAE0AE37F1 /* NotesView.swift */; };
 		B915FD1E2EB2C90CB1B5BE0A /* TesseraEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D187A89CC07AF025A5D5277B /* TesseraEditorView.swift */; };
 		BC2CD741B23C890CCB9BE4E5 /* ImportExportAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E001BDE6DC34F90E55D0C83E /* ImportExportAPI.swift */; };
+		BE9D99F6F67D113BE3FB9D81 /* SurfaceFocusStatusBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EB0C1818914833E171C0CD7 /* SurfaceFocusStatusBar.swift */; };
 		C2AD2D3977218ABD48292B3C /* CodeSurfaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AAA5BEEED6B2F93155F3F2E /* CodeSurfaceView.swift */; };
 		C2F23C7A9E4846FD2C647C79 /* EmailSurfaceBootstrap_iOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F148583EC8B91D154A61999 /* EmailSurfaceBootstrap_iOS.swift */; };
-		C2F5DA41114BF47A13A79D89 /* NoteEditorColumn.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8F87F7E38784649EE148AE2 /* NoteEditorColumn.swift */; };
 		C32D556DEA54086C990DF2C3 /* PleadTheFifthNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF926E12EF9F972E62F3F018 /* PleadTheFifthNotifications.swift */; };
+		C367ECBEF86E3002571A43B5 /* TesseraDiffOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1F5E1848AF537CACCB0C9A0 /* TesseraDiffOverlayView.swift */; };
 		C3D8AD06E1139EF043616C21 /* TesseraTableEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DED61298DFE5CE08DBE9FAC /* TesseraTableEditorView.swift */; };
 		C558678BB263AFCCE060DEB0 /* CalendarSurfaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0984E4B20FCB1D5AF3AE604A /* CalendarSurfaceView.swift */; };
 		C6A0E1FAE820404A123D0873 /* DualAgentChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86DE7A76E8E25029310D3EBD /* DualAgentChatView.swift */; };
@@ -97,6 +104,7 @@
 		DC5CE32462F1725DD56C4A99 /* DocEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBB399B96779A479223863EB /* DocEditorView.swift */; };
 		DE12AD035A9DEF1AA463F79F /* WorkflowDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F27831D331D02ACFE0F58B1 /* WorkflowDocument.swift */; };
 		DE4F5E0C15001E320370F1C4 /* GraphWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 915190C136322A37F95920F2 /* GraphWindowView.swift */; };
+		E4CE576B240FB806035A8499 /* CalendarEventNotesEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9208707E241489B4FCEDA7D5 /* CalendarEventNotesEditorView.swift */; };
 		E53B61AC254B6296FF5FA2BF /* CommentsSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5618D64A1D7DFE93F3EDCE2 /* CommentsSidebarView.swift */; };
 		EB996E0C1F8D39F72796CCF2 /* SlideDeckDetailView_iOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC7476784ED651664E8C645A /* SlideDeckDetailView_iOS.swift */; };
 		EC971CF761A0B5A7236ED2F1 /* C2PAManifestSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29979CD7254D23AE700907F1 /* C2PAManifestSheet.swift */; };
@@ -134,6 +142,7 @@
 		216F6401DAB58BEE359B2CCB /* CollabTraceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CollabTraceView.swift; sourceTree = "<group>"; };
 		29979CD7254D23AE700907F1 /* C2PAManifestSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = C2PAManifestSheet.swift; sourceTree = "<group>"; };
 		2C144C7F04921903632D744E /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		3124F34AFA6B60D42C236A01 /* SurfaceTagBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurfaceTagBar.swift; sourceTree = "<group>"; };
 		316B1F35DA4CD36202D54554 /* ProvidersSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProvidersSettingsView.swift; sourceTree = "<group>"; };
 		34E0577C17154654B8E97367 /* EmailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmailView.swift; sourceTree = "<group>"; };
 		3917A41E9C7063CEEF6F3C6A /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
@@ -146,16 +155,19 @@
 		46702FBBBC194F492A8B10B8 /* DocsListView_iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocsListView_iOS.swift; sourceTree = "<group>"; };
 		4BE3EF723DE6781BC525F93C /* RemindersView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemindersView.swift; sourceTree = "<group>"; };
 		4D7F20C6E3BCA609B32E9CAF /* CodeOutlineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeOutlineView.swift; sourceTree = "<group>"; };
+		4EB0C1818914833E171C0CD7 /* SurfaceFocusStatusBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurfaceFocusStatusBar.swift; sourceTree = "<group>"; };
 		515D71CE71265C64C3BC538B /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		543C41C3EF0C82A41F740F1E /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		55B00FB4A80A894E7D327A58 /* TesseraStudioiOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = TesseraStudioiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		563E0793B448A3FB525AD2CF /* SlidesListView_iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SlidesListView_iOS.swift; sourceTree = "<group>"; };
 		5D2779339C44AD29BDA9565D /* ReceiptDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceiptDetailView.swift; sourceTree = "<group>"; };
 		5E0E95004AE80B971031F915 /* DocDetailView_iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocDetailView_iOS.swift; sourceTree = "<group>"; };
+		6281FE0DBAFFD779BEAEBB33 /* SurfaceLinkedEntityChip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurfaceLinkedEntityChip.swift; sourceTree = "<group>"; };
 		657EA5B6BA559A1A7BAC2924 /* SheetDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SheetDetailView.swift; sourceTree = "<group>"; };
 		66BB674348D21932683F6247 /* ChatPanelView_iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatPanelView_iOS.swift; sourceTree = "<group>"; };
 		6AAA5BEEED6B2F93155F3F2E /* CodeSurfaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeSurfaceView.swift; sourceTree = "<group>"; };
 		6E33EB0CB8E4B73019CA2705 /* EditorUndoCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorUndoCoordinator.swift; sourceTree = "<group>"; };
+		6E437E2315885A039C1F9484 /* NoteDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteDetailView.swift; sourceTree = "<group>"; };
 		6F27831D331D02ACFE0F58B1 /* WorkflowDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkflowDocument.swift; sourceTree = "<group>"; };
 		6F4F9123B7EFA1C68054E8F5 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		7100FC20391F32F2472FE2EE /* TasksView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TasksView.swift; sourceTree = "<group>"; };
@@ -171,6 +183,7 @@
 		8DA8704740CE20941B0DC2C7 /* ReceiptsDrawerSheet_iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceiptsDrawerSheet_iOS.swift; sourceTree = "<group>"; };
 		9075FB059F1B04D32002C2F2 /* TesseraStudioMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TesseraStudioMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		915190C136322A37F95920F2 /* GraphWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GraphWindowView.swift; sourceTree = "<group>"; };
+		9208707E241489B4FCEDA7D5 /* CalendarEventNotesEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventNotesEditorView.swift; sourceTree = "<group>"; };
 		92B9CE3C72E91BD745B3A6BF /* TesseraStudio */ = {isa = PBXFileReference; lastKnownFileType = folder; name = TesseraStudio; path = .; sourceTree = SOURCE_ROOT; };
 		9839F117CD5A6CC1C9C5F7DE /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		98B83D56898985B53E820304 /* ReceiptsDrawerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceiptsDrawerView.swift; sourceTree = "<group>"; };
@@ -191,7 +204,10 @@
 		BD682BDCE20C7FD88D897AD4 /* TasksView_iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TasksView_iOS.swift; sourceTree = "<group>"; };
 		BF9F199C740DC441D8D701F4 /* TrainingNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrainingNotifier.swift; sourceTree = "<group>"; };
 		C025D895BA586EFA9AAF143D /* FlowLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlowLayout.swift; sourceTree = "<group>"; };
+		C14E4D50179882398D43AB42 /* TesseraStreamingDiffView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TesseraStreamingDiffView.swift; sourceTree = "<group>"; };
+		C1F5E1848AF537CACCB0C9A0 /* TesseraDiffOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TesseraDiffOverlayView.swift; sourceTree = "<group>"; };
 		C2091A24C706C5D452A7B757 /* CodeEditorPaneView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeEditorPaneView.swift; sourceTree = "<group>"; };
+		C26B5DE721258E7D9EB58901 /* SurfaceMetadataRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurfaceMetadataRow.swift; sourceTree = "<group>"; };
 		C8D12BDB57CC9643BF85280A /* SheetsListView_iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SheetsListView_iOS.swift; sourceTree = "<group>"; };
 		CC71AC3BD25D1A66CF96E26E /* EmailView_iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmailView_iOS.swift; sourceTree = "<group>"; };
 		CD1FE0CD17FC666E463147E4 /* LearningTrainingSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LearningTrainingSection.swift; sourceTree = "<group>"; };
@@ -213,8 +229,8 @@
 		E932494A7CA1A35EDCC39292 /* SidebarGroup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarGroup.swift; sourceTree = "<group>"; };
 		EB6F5CE81928CC153B21A988 /* AdvancedSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdvancedSection.swift; sourceTree = "<group>"; };
 		EE2F125CEF082F7FA8395246 /* WorkflowCanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkflowCanvasView.swift; sourceTree = "<group>"; };
+		EEE0392D3E0C5B1E3E044716 /* NoteEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteEditorView.swift; sourceTree = "<group>"; };
 		F2818AD765987E1F81495096 /* PleadTheFifthComposition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PleadTheFifthComposition.swift; sourceTree = "<group>"; };
-		F8F87F7E38784649EE148AE2 /* NoteEditorColumn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteEditorColumn.swift; sourceTree = "<group>"; };
 		FA00029C227E04B1E2D61C2B /* ConfirmationPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfirmationPanel.swift; sourceTree = "<group>"; };
 		FA8FE18A5EA86D5E3A938DFD /* ContactsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactsView.swift; sourceTree = "<group>"; };
 		FCD3045F308A4FC885C96939 /* LearningDashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LearningDashboardView.swift; sourceTree = "<group>"; };
@@ -280,6 +296,7 @@
 		1139FC2D4F2DC9BD2B85B37F /* Calendar */ = {
 			isa = PBXGroup;
 			children = (
+				9208707E241489B4FCEDA7D5 /* CalendarEventNotesEditorView.swift */,
 				0984E4B20FCB1D5AF3AE604A /* CalendarSurfaceView.swift */,
 			);
 			path = Calendar;
@@ -306,7 +323,8 @@
 			isa = PBXGroup;
 			children = (
 				C025D895BA586EFA9AAF143D /* FlowLayout.swift */,
-				F8F87F7E38784649EE148AE2 /* NoteEditorColumn.swift */,
+				6E437E2315885A039C1F9484 /* NoteDetailView.swift */,
+				EEE0392D3E0C5B1E3E044716 /* NoteEditorView.swift */,
 				CE6E407552D4B5DAE0AE37F1 /* NotesView.swift */,
 			);
 			path = Notes;
@@ -447,6 +465,17 @@
 			path = ChatPanel;
 			sourceTree = "<group>";
 		};
+		6CB02D06631794D5862D8650 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				4EB0C1818914833E171C0CD7 /* SurfaceFocusStatusBar.swift */,
+				6281FE0DBAFFD779BEAEBB33 /* SurfaceLinkedEntityChip.swift */,
+				C26B5DE721258E7D9EB58901 /* SurfaceMetadataRow.swift */,
+				3124F34AFA6B60D42C236A01 /* SurfaceTagBar.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
 		745E3547FC94EDD0E3B2D50A /* Intelligence */ = {
 			isa = PBXGroup;
 			children = (
@@ -489,8 +518,10 @@
 				6E33EB0CB8E4B73019CA2705 /* EditorUndoCoordinator.swift */,
 				FE95DA4BB3C52CF9B1305C6A /* FindReplaceBar.swift */,
 				1A2D4C992DB2F8E83DABAE66 /* LayoutInspectorView.swift */,
+				C1F5E1848AF537CACCB0C9A0 /* TesseraDiffOverlayView.swift */,
 				FF21813F28DD00AAEC067404 /* TesseraEditorToolbar.swift */,
 				D187A89CC07AF025A5D5277B /* TesseraEditorView.swift */,
+				C14E4D50179882398D43AB42 /* TesseraStreamingDiffView.swift */,
 				7DED61298DFE5CE08DBE9FAC /* TesseraTableEditorView.swift */,
 			);
 			path = Editor;
@@ -671,6 +702,7 @@
 				02ED7A58E4944098FCFAED7E /* Providers */,
 				5E0B2937DD1AE11596850911 /* Receipts */,
 				F0DE72BA322FAB05AD82C9DD /* Reminders */,
+				6CB02D06631794D5862D8650 /* Shared */,
 				FD1965EA6FEA005DBAAE65BE /* Sheets */,
 				9898BB9EE81B0FD7B7CD2AFA /* Slides */,
 				BB6115158FBBABCF20F14EEE /* Tasks */,
@@ -835,6 +867,7 @@
 				A5B4155DBBAC1CB7796C79F9 /* AdvancedSection.swift in Sources */,
 				323FCE2E1440BA1A88AFF9AE /* AgentCursorOverlay.swift in Sources */,
 				EC971CF761A0B5A7236ED2F1 /* C2PAManifestSheet.swift in Sources */,
+				E4CE576B240FB806035A8499 /* CalendarEventNotesEditorView.swift in Sources */,
 				C558678BB263AFCCE060DEB0 /* CalendarSurfaceView.swift in Sources */,
 				624409B0B29A3A124FE5D850 /* CapacityView.swift in Sources */,
 				65434928C008DAD13CA3463D /* ChatFocusCoordinator.swift in Sources */,
@@ -865,7 +898,8 @@
 				14C27896D0C272FE7AC9BB68 /* LayoutInspectorView.swift in Sources */,
 				561C364154E0918D86AD8D30 /* LearningDashboardView.swift in Sources */,
 				C711E5902DC14E6DFA5B6BB3 /* LearningTrainingSection.swift in Sources */,
-				C2F5DA41114BF47A13A79D89 /* NoteEditorColumn.swift in Sources */,
+				1D13BA5CDB1110C295A7939B /* NoteDetailView.swift in Sources */,
+				7FF967A0024F27216648DABC /* NoteEditorView.swift in Sources */,
 				B66B18CC9826697606EFF4FB /* NotesView.swift in Sources */,
 				FB81106ACE826E45521007FD /* PleadTheFifthComposition.swift in Sources */,
 				60B8A75274EB25AF1F9C553A /* PleadTheFifthMenuItem.swift in Sources */,
@@ -887,10 +921,16 @@
 				AB44F7608471B3F237A53D70 /* SlideCanvasView.swift in Sources */,
 				93B56160504A7D186DDABD62 /* SlideDeckDetailView.swift in Sources */,
 				CB8154AFE489638DE1306F78 /* SlidesListView.swift in Sources */,
+				BE9D99F6F67D113BE3FB9D81 /* SurfaceFocusStatusBar.swift in Sources */,
+				B4FD3EAFCEDC950FD9B30F91 /* SurfaceLinkedEntityChip.swift in Sources */,
+				7D87B945866931FE21EB64AF /* SurfaceMetadataRow.swift in Sources */,
+				76764118370A1CCDE56F3F81 /* SurfaceTagBar.swift in Sources */,
 				4D6C59FF7920D79CAA97C95D /* TasksView.swift in Sources */,
 				95922A925983CE37AF7583E1 /* TesseraAppLifecycle.swift in Sources */,
+				C367ECBEF86E3002571A43B5 /* TesseraDiffOverlayView.swift in Sources */,
 				7427247EF6B19D353B6E10A5 /* TesseraEditorToolbar.swift in Sources */,
 				B915FD1E2EB2C90CB1B5BE0A /* TesseraEditorView.swift in Sources */,
+				0DF919DBDFD2451F83952133 /* TesseraStreamingDiffView.swift in Sources */,
 				47AD6881245204EF1A0C514C /* TesseraStudioMacApp.swift in Sources */,
 				C3D8AD06E1139EF043616C21 /* TesseraTableEditorView.swift in Sources */,
 				03FCDB138C2861BDF31C6D0D /* TrainingNotifier.swift in Sources */,

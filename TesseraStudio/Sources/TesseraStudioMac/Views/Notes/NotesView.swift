@@ -63,13 +63,6 @@ public struct NotesView: View {
             publishFocus(id: new)
         }
         .onDisappear { chatFocus?.clear() }
-        .onExitCommand {
-            // Escape: exit focus mode first, then close
-            // the editor (Apple's standard escape ladder).
-            if viewModel.isFocusMode {
-                viewModel.exitFocusMode()
-            }
-        }
     }
 
     /// Push the focused note's document context to the chat dock so Tessy +
@@ -258,9 +251,8 @@ public struct NotesView: View {
     @ViewBuilder
     private var detailColumn: some View {
         if let editor = viewModel.editor {
-            NoteEditorColumn(
+            NoteDetailView(
                 viewModel: editor,
-                isFocusMode: $viewModel.isFocusMode,
                 onDelete: { Task { await viewModel.deleteSelected() } }
             )
             .id(editor.note.id)  // Rebuild on note change
@@ -285,19 +277,6 @@ public struct NotesView: View {
             }
             .help("Reload notes")
             .accessibilityLabel("Reload notes")
-        }
-        ToolbarItem(placement: .primaryAction) {
-            Button {
-                viewModel.toggleFocusMode()
-            } label: {
-                Label(
-                    viewModel.isFocusMode ? "Exit Focus" : "Focus",
-                    systemImage: viewModel.isFocusMode ? "arrow.up.right.and.arrow.down.left.rectangle" : "arrow.down.left.and.arrow.up.right.rectangle"
-                )
-            }
-            .help("Toggle focus mode (Cmd-\\)")
-            .accessibilityLabel(viewModel.isFocusMode ? "Exit Focus" : "Focus")
-            .keyboardShortcut("\\", modifiers: .command)
         }
     }
 

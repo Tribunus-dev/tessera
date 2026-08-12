@@ -254,7 +254,7 @@ public struct NoteDetailView: View {
             } else {
                 FlowLayout(spacing: 6) {
                     ForEach(viewModel.note.linkedEntityIDs, id: \.self) { id in
-                        SurfaceLinkedEntityChip(id: id)
+                        LinkedEntityChip(id: id)
                     }
                 }
             }
@@ -383,5 +383,28 @@ public struct NoteDetailView: View {
         }
         let ast = viewModel.document
         Task { await viewModel.commitBody(ast) }
+    }
+}
+
+// MARK: - LinkedEntityChip
+
+/// A small chip showing a linked entity's UUID in a
+/// compact form. v1 is a placeholder — v2 will resolve
+/// the UUID to the entity's display label via the data
+/// layer.
+private struct LinkedEntityChip: View {
+    let id: UUID
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "link")
+                .symbolRenderingMode(.hierarchical)
+            Text(String(id.uuidString.prefix(8)) + "…")
+        }
+        .font(.caption)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(.quaternary, in: Capsule())
+        .foregroundStyle(.secondary)
     }
 }
