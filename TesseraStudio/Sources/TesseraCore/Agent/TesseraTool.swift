@@ -142,12 +142,23 @@ public struct ToolResult: Sendable {
     public let output: String
     public let data: [String: JSONValue]?
     public let error: String?
+    /// Categorical agent confidence in the result. The producer sets this
+    /// (tool author or the verifier); the default of `nil` means the tool
+    /// has no uncertainty source. See `ToolResultPayload.confidenceBand`.
+    public let confidenceBand: ConfidenceBand?
 
-    public init(success: Bool, output: String, data: [String: JSONValue]? = nil, error: String? = nil) {
+    public init(
+        success: Bool,
+        output: String,
+        data: [String: JSONValue]? = nil,
+        error: String? = nil,
+        confidenceBand: ConfidenceBand? = nil
+    ) {
         self.success = success
         self.output = output
         self.data = data
         self.error = error
+        self.confidenceBand = confidenceBand
     }
 
     public static func ok(_ output: String, data: [String: JSONValue]? = nil) -> ToolResult {
@@ -159,7 +170,7 @@ public struct ToolResult: Sendable {
     }
 
     public var payload: ToolResultPayload {
-        ToolResultPayload(success: success, output: output, error: error)
+        ToolResultPayload(success: success, output: output, error: error, confidenceBand: confidenceBand)
     }
 }
 
