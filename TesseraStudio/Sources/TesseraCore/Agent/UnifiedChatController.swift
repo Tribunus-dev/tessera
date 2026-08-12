@@ -135,6 +135,31 @@ public final class UnifiedChatController {
     /// compute the time-to-first-message event in the same instant.
     private var firstMessageSentAt: Date?
 
+    // MARK: - Live state (chat-dock Progress Feed, review #2)
+
+    /// Bounded buffer of recent agent-loop events for the chat-dock
+    /// Progress Feed (review #2 of the agent-ux-fatigue audit). The
+    /// feed is a parallel surface to the chat transcript; the
+    /// controller's job is to capture the four state types at the
+    /// existing seam points (routing, tool calls, approval gates,
+    /// collab trace, hold queue) without re-modelling the data.
+    ///
+    /// **Pull, not push.** Nothing on the controller opens a sheet,
+    /// posts a notification, or otherwise auto-surfaces the feed.
+    /// The feed view reads this buffer only when the user pulls.
+    ///
+    /// **Latency budget.** With @Observable + SwiftUI re-rendering,
+    /// the surface update is one observation tick. The P95 budget
+    /// from the implementation plan (<500ms) is asserted by
+    /// `ChatProgressFeedTests.testSurfaceUpdateLatency` against this
+    /// buffer.
+    public private(set) var liveState: [LiveStateEntry] = []
+
+    /// Hard cap on the buffer. The feed is a glance, not a journal;
+    /// older entries fall off the end. Matches the
+    /// `fieldCap` discipline on the audit-log HEAD chip (item 1C).
+    public static let liveStateCap: Int = 50
+
     // MARK: - Send
 
     /// Pending prompts held while `holdMode.isPaused`. Drained in FIFO order
@@ -163,6 +188,12 @@ public final class UnifiedChatController {
         if holdMode.isPaused {
             pendingPrompts.append(trimmed)
             statusPill = "Held - \(pendingPrompts.count) queued"
+            // Progress Feed (review #2): record the queue-append
+            // transition so the feed shows the new queued count
+            // immediately. The user gets the queue length without
+            // opening the dock; the dock's own status pill stays the
+            // primary signal.
+            recordHoldQueueSnapshot()
             return
         }
 
@@ -208,6 +239,16 @@ public final class UnifiedChatController {
         if decision.isTeamUp {
             appendCollabTraceTeanUp(prompt: routed)
         }
+        // Progress Feed (review #2): capture the routing decision as a
+        // live-state entry so the user can see which assistant the
+        // router picked. The summary is the routed prompt, truncated
+        // to a glance-friendly 80 chars; the chip uses the same
+        // `<field>: <value>` vocabulary as the audit-log HEAD chip.
+        appendLiveState(.routing(LiveRoutingEntry(
+            useTessy: decision.useTessy,
+            useSky: decision.useSky,
+            promptSummary: String(routed.prefix(80))
+        )))
 
         // First-goal seed (review #1 onboarding): prepend the typed goal as
         // a one-shot system-prompt section. Captured synchronously so the
@@ -253,11 +294,16 @@ public final class UnifiedChatController {
     public func holdYourHorses() {
         holdMode = .hold
         statusPill = pendingPrompts.isEmpty ? "Held" : "Held - \(pendingPrompts.count) queued"
+        // Progress Feed (review #2): capture the hold transition so
+        // the feed shows the user the queue length at the moment of
+        // the pause, not the next time they pull.
+        recordHoldQueueSnapshot()
     }
 
     /// Resume: clear the pause and drain queued prompts.
     public func resumeFromHold() {
         holdMode = .running
+        recordHoldQueueSnapshot()
         guard !isRunning, !pendingPrompts.isEmpty else {
             statusPill = ""
             return
@@ -381,6 +427,34 @@ public final class UnifiedChatController {
         guard let id = streamingRowsByPersona[persona],
               let idx = rows.firstIndex(where: { $0.id == id }) else { return }
         rows[idx].toolCalls.append(ToolCallRecord(toolName: name, arguments: arguments, result: nil))
+        // Progress Feed (review #2): capture the tool call as a
+        // live-state entry. The arguments are flattened to a short
+        // key=value string (first three args) so the chip stays
+        // glance-friendly; the full args live on the row above the
+        // feed for users who pull into the transcript.
+        let argsSummary = Self.summarizeToolArguments(arguments, maxKeys: 3)
+        appendLiveState(.toolCall(LiveToolCallEntry(
+            persona: persona,
+            toolName: name,
+            argumentsSummary: argsSummary
+        )))
+    }
+
+    /// Render up to `maxKeys` of a tool-call args dict as a short
+    /// `k=v, k=v` string. Sends the empty string when the dict is
+    /// empty. Values are stringified via ``JSONValue.shortDescription``
+    /// so nested objects and arrays collapse to counts and do not
+    /// blow up the chip.
+    private static func summarizeToolArguments(
+        _ args: [String: JSONValue],
+        maxKeys: Int
+    ) -> String {
+        guard !args.isEmpty else { return "" }
+        let keys = args.keys.sorted().prefix(maxKeys)
+        return keys.map { key -> String in
+            let value = args[key]?.shortDescription ?? ""
+            return "\(key)=\(value)"
+        }.joined(separator: ", ")
     }
 
     private func finalizeRow(persona: AgentPersona) {
@@ -477,7 +551,96 @@ public final class UnifiedChatController {
     private func appendCollabTraceTeanUp(prompt: String) {
         collabTrace.append(CollabTraceEntry(from: .tessy, text: "Got a complex task that touches personal context - I'll keep the sensitive parts local and ask Sky to help with the reasoning: \(prompt)"))
         collabTrace.append(CollabTraceEntry(from: .sky, text: "Standing by - I'll reason over the abstracted task; the raw personal context stays on device."))
+        // Progress Feed (review #2): mirror each collab-trace row as a
+        // live-state entry so the user can pull the feed and see the
+        // Tessy <-> Sky handoff at a glance. The pair entries are
+        // appended in order so the feed reads in the same
+        // narrative order as the controller's collabTrace.
+        if let tessyEntry = collabTrace.dropLast().last {
+            appendLiveState(.collabHandoff(LiveCollabHandoffEntry(
+                from: tessyEntry.from,
+                to: .sky,
+                text: tessyEntry.text
+            )))
+        }
+        if let skyEntry = collabTrace.last {
+            appendLiveState(.collabHandoff(LiveCollabHandoffEntry(
+                from: skyEntry.from,
+                to: .tessy,
+                text: skyEntry.text
+            )))
+        }
     }
 
     public func clearCollabTrace() { collabTrace.removeAll() }
+
+    // MARK: - Live state capture (Progress Feed, review #2)
+
+    /// Append a single ``LiveStateEntry`` to ``liveState`` with the
+    /// buffer cap applied. Public so the test target can drive the
+    /// surface directly without going through the chat graph; in
+    /// production the capture points in `runTurn`, `appendToolCall`,
+    /// `appendCollabTraceTeanUp`, `holdYourHorses`, `resumeFromHold`,
+    /// and `recordPendingApproval` are the only call sites.
+    public func appendLiveState(_ entry: LiveStateEntry) {
+        liveState.append(entry)
+        if liveState.count > Self.liveStateCap {
+            liveState.removeFirst(liveState.count - Self.liveStateCap)
+        }
+    }
+
+    /// Clear the live-state buffer. Wired to a future "clear feed"
+    /// affordance; for now it is the test surface and the escape
+    /// hatch the operator can call when the feed gets noisy.
+    public func clearLiveState() {
+        liveState.removeAll()
+    }
+
+    /// Record an approval gate that the chat graph has surfaced for
+    /// the user. Future wiring (item 3C, inline-stop) calls this from
+    /// the graph's interrupt handler so the feed sees the same
+    /// approval the dock's ``ApprovalSheet`` will render. For the
+    /// 2A scope the test target uses this method to inject a
+    /// pending-approval entry and assert the feed renders it.
+    public func recordPendingApproval(_ approval: PendingApprovalUnion) {
+        // Only one approval can be pending at a time per
+        // ``UnifiedChatController``'s public surface; subsequent
+        // calls overwrite. The previous entry is preserved in the
+        // buffer (the feed's job is the history, not the current
+        // state).
+        pendingApproval = approval
+        let toolName = approval.toolName
+        let actionClass = TesseraActionClass.classify(
+            PendingAction(toolName: toolName, arguments: approval.arguments)
+        )
+        // Default risk to medium when the verifier is unavailable;
+        // the verifier is the load-bearing source per the
+        // TesseraActionVerifier fail-closed contract, but it is not
+        // called on the chat-thread path (it gates document mutations
+        // in the editor). medium is the safe default that maps to
+        // tier1 in the worst case and tier2 with a destructive verb.
+        let risk = (try? TesseraActionVerifier.ruleBasedRisk(
+            for: PendingAction(toolName: toolName, arguments: approval.arguments)
+        )) ?? .medium
+        let irreversible = TesseraActionClass.isIrreversible(actionClass, risk: risk)
+        let tier = TesseraTier.tier(for: actionClass, risk: risk)
+        let reason = irreversible ? "irreversible" : "reversible"
+        appendLiveState(.approvalPending(LiveApprovalPendingEntry(
+            toolName: toolName,
+            tierLabel: tier.shortLabel,
+            riskLabel: risk.rawValue,
+            reason: reason
+        )))
+    }
+
+    /// Record the current hold-queue snapshot. Called from
+    /// ``holdYourHorses``, ``resumeFromHold``, and the queueing path
+    /// in ``send`` so the feed reflects every state transition
+    /// without polling.
+    private func recordHoldQueueSnapshot() {
+        appendLiveState(.holdQueue(LiveHoldQueueEntry(
+            mode: holdMode,
+            queuedCount: pendingPrompts.count
+        )))
+    }
 }
