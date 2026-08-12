@@ -1,5 +1,7 @@
 #include "tessera-l5.h"
 
+#include "tessera-septq.h"  // ts_septq_build_hessian, ts_septq_banded_cholesky
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -409,20 +411,35 @@ int ts_l5_adaptive_requant(const ts_l2_report * report,
 
 // --- Hessian sensitivity scoring (v3.1 spec §9) ---
 //
-// Per-tensor OBQ criterion:
+// Per-tensor OBQ criterion (Frantar & Alistarh 2022,
+// arXiv:2208.11580):
 //   omega_ij = (w_ij - quant(w_ij))^2 / [H^{-1}]_ii
 //   sensitivity[T] = mean over (i, j) of omega_ij
 //
-// where [H^{-1}]_ii = L_ii^2 for a lower-triangular Cholesky factor
-// L of H^{-1} (only the diagonal L_ii contributes to the i-th
-// diagonal of L L^T when L is lower triangular).
+// where [H^{-1}]_ii is the i-th diagonal of H^{-1} (H is the
+// calibration Hessian = 2 X X^T for the imatrix corpus X).
+//
+// For a lower-triangular Cholesky factor L of H^{-1} (L L^T =
+// H^{-1}), [H^{-1}]_ii = ||L[i, :]||^2 (the squared 2-norm of
+// row i of L), NOT just L[i, i]^2. The "L_ii^2 approximation"
+// from the spec is only valid when L is diagonal (i.e., the
+// activations are uncorrelated, H is diagonal). For a real
+// imatrix corpus with correlated activations, the off-diagonal
+// entries of L are non-negligible and the per-row squared 2-norm
+// is the right quantity. The OBQ paper (Frantar 2022, eq. 3)
+// uses the full [H^{-1}]_ii.
+//
+// In v1 the scorer takes H_inv_diag (the precomputed diagonal of
+// H^{-1}) directly via ts_l5_second_order_info. The v2 paths
+// (Nystrom, streaming) can populate H_inv_diag from the
+// approximation; the interface is the same.
 //
 // The scorer is O(n_tensors * in_dim * out_dim) per tensor; the
-// Cholesky factor itself is computed once per in_dim and shared
+// diagonal of H^{-1} is computed once per in_dim and shared
 // across all tensors with the same in_dim. For the v1 (in-core)
-// path the scorer reads the diagonal of L_in_core (a row-major
-// (in_dim, in_dim) buffer), squares each entry, and divides the
-// per-row (w - quant)^2 sum by that squared diagonal.
+// path the Cholesky pipeline (ts_l5_hessian_factorize /
+// ts_l5_hessian_factorize_inverse) produces H_inv_diag from the
+// imatrix corpus.
 //
 // The NYSTROM and STREAMING sources return an empty map in v1; the
 // v2 swap is an internal change with no caller updates (per the
@@ -454,7 +471,7 @@ ts_score_map ts_l5_hessian_sensitivity(
         // scorers use for missing-data tensors).
         return out;
     }
-    if (soi->L_in_core == nullptr) {
+    if (soi->H_inv_diag == nullptr) {
         return out;
     }
 
@@ -462,8 +479,8 @@ ts_score_map ts_l5_hessian_sensitivity(
     // block in the concatenated arrays, then for each row i in the
     // tensor's in_dim:
     //   1. compute sum_j (w_ij - quant(w_ij))^2  -- call it err_i
-    //   2. read L_ii (diagonal of the Cholesky factor at offset i*in_dim + i)
-    //   3. omega_i = err_i / (L_ii * L_ii)
+    //   2. read H_inv_diag[i] (the OBQ denominator)
+    //   3. omega_i = err_i / H_inv_diag[i]
     // sensitivity[T] = mean over i of omega_i
     std::vector<float> sensitivities;
     sensitivities.reserve((size_t) n_tensors);
@@ -498,21 +515,18 @@ ts_score_map ts_l5_hessian_sensitivity(
                 const float d = row_w[j] - row_wq[j];
                 err_i += (double) d * (double) d;
             }
-            // L_ii = L_in_core[i * in_dim + i]  (row-major diagonal)
-            const float L_ii = soi->L_in_core[i * soi->in_dim + i];
-            const float L_ii_sq = L_ii * L_ii;
-            if (L_ii_sq <= 0.0f) {
-                // Degenerate Hessian diagonal: a non-positive
-                // L_ii^2 means the Cholesky factor is invalid (or
-                // the matrix is singular). Treat as a guard band:
-                // skip the row (the contribution to mean is zero)
-                // rather than dividing by zero.
+            // H_inv_diag[i] is the OBQ denominator. Non-positive
+            // means the Hessian is singular at row i (shouldn't
+            // happen with the ridge added in ts_septq_build_hessian);
+            // skip the row in that case to avoid division by zero.
+            const float H_inv_ii = soi->H_inv_diag[i];
+            if (H_inv_ii <= 0.0f) {
                 continue;
             }
-            sum_omega += err_i / (double) L_ii_sq;
+            sum_omega += err_i / (double) H_inv_ii;
         }
-        // mean over i; if all rows were skipped (L_ii_sq <= 0 for
-        // every i), the sensitivity is zero.
+        // mean over i; if all rows were skipped (H_inv_diag <= 0
+        // for every i), the sensitivity is zero.
         const double mean_omega = (in_dim > 0) ? (sum_omega / (double) in_dim) : 0.0;
         sensitivities.push_back((float) mean_omega);
         offset += n_elem;
@@ -535,12 +549,127 @@ ts_score_map ts_l5_hessian_sensitivity(
         }
     } else {
         // All-zero sensitivities (every tensor's quantization error
-        // is zero, or every L_ii is degenerate). Return the raw
-        // zeros; the caller can decide whether to skip the scorer
-        // or zero-weight it in the combine().
+        // is zero, or every H_inv_diag entry is degenerate). Return
+        // the raw zeros; the caller can decide whether to skip the
+        // scorer or zero-weight it in the combine().
         for (int64_t t = 0; t < n_tensors; t++) {
             out[tensor_names[t]] = 0.0f;
         }
     }
     return out;
+}
+
+// --- Hessian factorization (v3.1 spec §9) ---
+//
+// Build the calibration Hessian H from the imatrix corpus and
+// factorize it. The pipeline is H = X^T X / n + ridge, then
+// L_forward = chol(H) (lower triangular). For the OBQ criterion
+// (per the Hessian scorer above) the caller additionally needs
+// L_inv = inv(L_forward) and H_inv_diag = ||L_inv[i, :]||^2 --
+// see ts_l5_hessian_factorize_inverse below.
+//
+// The Cholesky itself is delegated to the SEPTQ module
+// (ts_septq_banded_cholesky with bandwidth = in_dim, which
+// degenerates to a full Cholesky) for code reuse: the SEPTQ
+// banded path is the one exercised in production for SEPTQ, and
+// the L5 scorer doesn't benefit from the banded restriction.
+
+int ts_l5_hessian_factorize(int64_t in_dim,
+                            const float * X, int64_t n_samples,
+                            float ridge_fraction,
+                            float * L_out,
+                            float * H_scratch) {
+    if (in_dim <= 0 || X == nullptr || n_samples <= 0 || L_out == nullptr ||
+        H_scratch == nullptr) {
+        return -1;
+    }
+    if (ridge_fraction < 0.0f) {
+        ridge_fraction = 0.0f;
+    }
+    // H = X^T X / n + ridge (SEPTQ convention; the 1/n scaling is
+    // irrelevant for the OBQ criterion because the per-tensor
+    // sensitivity is normalized to peak=1.0 in the scorer).
+    ts_septq_build_hessian(in_dim, /*act_scales=*/nullptr, X, n_samples,
+                           ridge_fraction, H_scratch);
+    // L_forward = chol(H) lower triangular; bandwidth = in_dim is
+    // the "full Cholesky" degenerate case.
+    ts_septq_banded_cholesky(H_scratch, in_dim, in_dim, L_out);
+    return 0;
+}
+
+int ts_l5_hessian_factorize_inverse(int64_t in_dim,
+                                    const float * X, int64_t n_samples,
+                                    float ridge_fraction,
+                                    float * H_inv_diag_out,
+                                    float * L_forward,
+                                    float * H_scratch) {
+    if (in_dim <= 0 || X == nullptr || n_samples <= 0 ||
+        H_inv_diag_out == nullptr || H_scratch == nullptr) {
+        return -1;
+    }
+    if (ridge_fraction < 0.0f) {
+        ridge_fraction = 0.0f;
+    }
+
+    // Working buffer for the forward Cholesky. When the caller
+    // passes a non-null L_forward, we use it directly (in-place
+    // inverse overwrites L_forward with L_inv; the caller should
+    // copy first if they need to preserve L_forward). When the
+    // caller passes nullptr, we use a local buffer sized for the
+    // Cholesky output.
+    std::vector<float> L_local;
+    float * L = nullptr;
+    if (L_forward != nullptr) {
+        L = L_forward;
+    } else {
+        L_local.assign((size_t)(in_dim * in_dim), 0.0f);
+        L = L_local.data();
+    }
+    if (ts_l5_hessian_factorize(in_dim, X, n_samples, ridge_fraction,
+                                L, H_scratch) != 0) {
+        return -1;
+    }
+
+    // In-place triangular inverse: L_inv[i, j] such that
+    //   L @ L_inv = I  (column by column)
+    // For each column j:
+    //   L_inv[j, j] = 1 / L[j, j]
+    //   L_inv[i, j] = -sum_{k=j}^{i-1} L[i, k] * L_inv[k, j] / L[i, i]
+    // The squared 2-norm of row i of L_inv is the OBQ denominator.
+    for (int64_t j = 0; j < in_dim; j++) {
+        const float L_jj = L[(size_t)(j * in_dim + j)];
+        if (L_jj <= 0.0f) {
+            return -1;  // degenerate
+        }
+        std::vector<float> col_inv((size_t) in_dim, 0.0f);
+        col_inv[(size_t) j] = 1.0f / L_jj;
+        for (int64_t i = j + 1; i < in_dim; i++) {
+            double acc = 0.0;
+            for (int64_t k = j; k < i; k++) {
+                acc -= (double) L[(size_t)(i * in_dim + k)] *
+                       (double) col_inv[(size_t) k];
+            }
+            const float L_ii = L[(size_t)(i * in_dim + i)];
+            if (L_ii <= 0.0f) {
+                return -1;  // degenerate
+            }
+            col_inv[(size_t) i] = (float)(acc / (double) L_ii);
+        }
+        for (int64_t i = j; i < in_dim; i++) {
+            L[(size_t)(i * in_dim + j)] = col_inv[(size_t) i];
+        }
+    }
+    // H_inv_diag[i] = sum_k L_inv[i, k]^2 (squared 2-norm of row i).
+    // NOT just L_inv[i, i]^2 (the spec's L_ii^2 approximation is
+    // only valid when the activations are uncorrelated, i.e., H
+    // is diagonal).
+    for (int64_t i = 0; i < in_dim; i++) {
+        double row_sq = 0.0;
+        for (int64_t k = 0; k <= i; k++) {
+            const float v = L[(size_t)(i * in_dim + k)];
+            row_sq += (double) v * (double) v;
+        }
+        H_inv_diag_out[i] = (float) row_sq;
+    }
+    return 0;
 }

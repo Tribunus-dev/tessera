@@ -143,7 +143,7 @@ int ts_l5_orchestrate_step(const ts_score_map * sensitivity,
 // Cholesky block size. Used as the DuckDB cache key suffix so stale
 // cache entries invalidate silently rather than producing wrong
 // scores (spec §13 risk 2).
-#define TS_L5_HESSIAN_SCORER_VERSION 1
+#define TS_L5_HESSIAN_SCORER_VERSION 2
 
 // Source of the second-order info (spec §9.3).
 enum ts_l5_soi_source {
@@ -156,14 +156,35 @@ enum ts_l5_soi_source {
 // v2+ (streaming) paths share a single dispatch through
 // ts_l5_hessian_sensitivity; exactly one of the source-specific
 // fields is populated per `source` value.
+//
+// IMPORTANT (OBQ criterion -- spec §9.3): the per-weight
+// sensitivity is omega_ij = (w_ij - quant(w_ij))^2 / [H^{-1}]_ii,
+// where [H^{-1}]_ii is the i-th diagonal of H^{-1} (H is the
+// calibration Hessian). For a lower-triangular Cholesky factor L
+// of H^{-1} (L L^T = H^{-1}), [H^{-1}]_ii = ||L[i, :]||^2 (the
+// squared 2-norm of row i of L) -- NOT just L[i, i]^2. The
+// spec's "L_ii^2 approximation" is only valid when the
+// activations are uncorrelated (H is diagonal). For a real
+// imatrix corpus the off-diagonals of L are non-negligible and
+// the per-row squared 2-norm is the right quantity.
 struct ts_l5_second_order_info {
     ts_l5_soi_source source;
     int64_t          in_dim;
 
-    // IN_CORE: lower-triangular Cholesky factor of (1/2) * H, stored
-    // as a flat (in_dim, in_dim) row-major buffer. Only the diagonal
-    // L_ii is consumed (since [H^{-1}]_ii = L_ii^2 for a lower
-    // triangular factor). Caller-owned; not freed by the scorer.
+    // IN_CORE: the diagonal of H^{-1} (size in_dim). The scorer
+    // reads H_inv_diag[i] as the per-weight denominator. Caller-
+    // owned; the in-core Cholesky pipeline (ts_l5_hessian_factorize
+    // / ts_l5_hessian_factorize_inverse) populates this from the
+    // imatrix corpus. For correlated activations, H_inv_diag[i] is
+    // materially larger than the L_ii^2 approximation.
+    const float * H_inv_diag;
+
+    // IN_CORE (optional, for v2 paths that need the full factor
+    // rather than just the diagonal, e.g., Nystrom sketching):
+    // lower-triangular Cholesky factor of H^{-1}, stored as a
+    // flat (in_dim, in_dim) row-major buffer. The scorer does NOT
+    // read this directly in v1; the v2 Nystrom path will. Set to
+    // nullptr if not available.
     const float * L_in_core;
 
     // NYSTROM: rank-k approximation. nystrom_U is (in_dim, nystrom_k)
@@ -190,6 +211,9 @@ struct ts_l5_second_order_info {
 // this is the "weight-only diagnostic" mode used to validate the
 // formula on a known tensor.
 //
+// The per-tensor sensitivity is the mean over (i, j) of
+//   omega_ij = (w_ij - quant(w_ij))^2 / H_inv_diag[i]
+// where H_inv_diag[i] = [H^{-1}]_ii is the OBQ denominator.
 // Returns a map tensor_name -> sensitivity normalized to [0, 1]
 // (peak tensor = 1.0). Returns an empty map on n_tensors <= 0 or
 // any null required pointer. NYSTROM and STREAMING sources return
@@ -202,6 +226,61 @@ ts_score_map ts_l5_hessian_sensitivity(
     const ts_l5_second_order_info * soi,
     const char ** tensor_names,
     int64_t n_tensors);
+
+// Compute the calibration Hessian H = X^T X / n + ridge from an
+// imatrix corpus X (n_samples rows, in_dim columns, row-major) and
+// factorize it as H = L_forward L_forward^T (L_forward lower-
+// triangular). This is the v1 in-core path's first stage. The
+// output is the FORWARD Cholesky factor of H; callers that need
+// the OBQ denominator (the diagonal of H^{-1}) should call
+// ts_l5_hessian_factorize_inverse below, which also produces
+// H_inv_diag (the diagonal of H^{-1}, i.e., [H^{-1}]_ii).
+//
+// L_out and H_scratch must have room for in_dim * in_dim floats.
+// n_samples must be > 0. Returns 0 on success, -1 on null
+// pointers or invalid dims.
+int ts_l5_hessian_factorize(int64_t in_dim,
+                            const float * X, int64_t n_samples,
+                            float ridge_fraction,
+                            float * L_out,
+                            float * H_scratch);
+
+// Compute the diagonal of H^{-1} (the OBQ denominator) and the
+// forward Cholesky factor of H from an imatrix corpus. This is
+// the v1 in-core pipeline:
+//   1. H = X^T X / n + ridge                (ts_septq_build_hessian)
+//   2. L_forward = chol(H) lower-triangular (ts_septq_banded_cholesky
+//                                            with bandwidth in_dim)
+//   3. L_inv = inv(L_forward) lower-triangular (in-place
+//                                               forward-substitution
+//                                               per column of L_inv)
+//   4. H_inv_diag[i] = ||L_inv[i, :]||^2   (squared 2-norm of row i)
+//
+// The squared 2-norm of L_inv[i, :] is the correct formula for
+// [H^{-1}]_ii (= sum_k L_inv[i, k]^2), NOT just L_inv[i, i]^2.
+// The "L_ii^2 approximation" is valid only when L_inv is diagonal
+// (i.e., H is diagonal, i.e., activations are uncorrelated). For
+// a real imatrix corpus with correlated activations, the
+// per-row squared 2-norm is the right quantity (per the OBQ
+// paper, Frantar & Alistarh 2022, eq. 3).
+//
+// H_inv_diag_out must have room for in_dim floats.
+// L_forward and H_scratch must have room for in_dim * in_dim
+// floats (L_forward is the Cholesky of H, useful for diagnostics
+// and for the v2 Nystrom path that consumes L directly). Pass
+// nullptr for L_forward if not needed.
+// n_samples must be > 0. Returns 0 on success, -1 on null
+// pointers, invalid dims, or a non-positive pivot (degenerate
+// Hessian -- the diagonal clamp in ts_septq_full_cholesky
+// produces a finite L but a non-PD inverse, in which case the
+// function returns -1 so the caller can skip the scorer for
+// this in_dim).
+int ts_l5_hessian_factorize_inverse(int64_t in_dim,
+                                    const float * X, int64_t n_samples,
+                                    float ridge_fraction,
+                                    float * H_inv_diag_out,
+                                    float * L_forward,
+                                    float * H_scratch);
 
 struct ts_l5_adaptive_params {
     float alpha_scale;    // base alpha multiplier (< 1 tightens), default 0.5
