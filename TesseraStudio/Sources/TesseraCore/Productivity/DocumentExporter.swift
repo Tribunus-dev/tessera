@@ -278,6 +278,10 @@ public final class DocumentExporter: Sendable {
         case .equation:
             let latex = block.attributes["latex"]?.stringValue ?? ""
             return "<p><code>$\(escapeHTML(latex))$</code></p>"
+
+        case .comment, .trackInsertion, .trackDeletion:
+            // Review-only / collaboration blocks; not rendered to export HTML.
+            return ""
         }
     }
 

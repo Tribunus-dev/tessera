@@ -83,6 +83,14 @@ public final class UnifiedChatController {
             graph: ChatGraphBuilder.build(),
             checkpointer: resolvedCheckpointer
         )
+        // First-goal seed (review #1 onboarding): the user typed a sentence
+        // on onboarding page 3; we read it here so the very first send can
+        // seed the system prompt. Consumed + cleared on the first send so
+        // the value applies once and never bleeds into later sessions.
+        let storedGoal = UserDefaults.standard.string(forKey: TesseraSettingsKey.firstGoal) ?? ""
+        self.firstGoal = storedGoal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : storedGoal
+        let completedRaw = UserDefaults.standard.double(forKey: TesseraSettingsKey.onboardingCompletedAt)
+        self.onboardingCompletedAt = completedRaw > 0 ? Date(timeIntervalSince1970: completedRaw) : nil
     }
 
     // MARK: - Document context (queue-frontier seam)
@@ -105,6 +113,28 @@ public final class UnifiedChatController {
         documentContext = context
     }
 
+    // MARK: - First goal (onboarding seed)
+
+    /// First goal typed on the onboarding "Meet the Agent" card. Read from
+    /// ``TesseraSettings.firstGoal`` on init; consumed by the first send
+    /// (used as a system-prompt seed) and then cleared so the value never
+    /// bleeds into later sessions.
+    public private(set) var firstGoal: String?
+
+    /// Time the user completed onboarding. Read from UserDefaults on init
+    /// (``TesseraSettingsKey.onboardingCompletedAt``) and used as the start
+    /// of the time-to-first-message measurement. nil before completion.
+    public private(set) var onboardingCompletedAt: Date?
+
+    /// Optional telemetry sink for the review #1 measurement architecture
+    /// (time-to-first-message, first-goal-consumed events). Set by the
+    /// host view so the controller can emit without knowing the drawer.
+    public weak var telemetryMonitor: TelemetryMonitor?
+
+    /// When the first message is sent, this records its timestamp. Used to
+    /// compute the time-to-first-message event in the same instant.
+    private var firstMessageSentAt: Date?
+
     // MARK: - Send
 
     /// Pending prompts held while `holdMode.isPaused`. Drained in FIFO order
@@ -118,6 +148,16 @@ public final class UnifiedChatController {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !isRunning else { return }
 
+        // Record the time-to-first-message event exactly once (review #1
+        // measurement architecture). `onboardingCompletedAt` is the start
+        // of the window; this is the end. Stored as event metadata so the
+        // drawer can surface both the elapsed seconds and the raw stamps.
+        if firstMessageSentAt == nil {
+            let now = Date()
+            firstMessageSentAt = now
+            emitTimeToFirstMessageEvent(now: now)
+        }
+
         rows.append(UnifiedChatRow(role: .user, content: trimmed, queueState: holdMode.isPaused ? .pending : .inProgress))
 
         if holdMode.isPaused {
@@ -129,6 +169,37 @@ public final class UnifiedChatController {
         runTurn(trimmed)
     }
 
+    /// Emit the review #1 time-to-first-message event. The elapsed seconds
+    /// between onboarding completion and the first send is the primary
+    /// measurement. When `onboardingCompletedAt` is missing (the user
+    /// skipped the onboarding sheet or installed a build with the field
+    /// not yet written) the event still fires with elapsed=nil so the
+    /// missing-data rate is itself a measurable signal.
+    private func emitTimeToFirstMessageEvent(now: Date) {
+        var metadata: [String: String] = [:]
+        if let completed = onboardingCompletedAt {
+            let elapsed = now.timeIntervalSince(completed)
+            metadata["elapsed_seconds"] = String(format: "%.3f", elapsed)
+            metadata["onboarding_completed_at"] = String(format: "%.3f", completed.timeIntervalSince1970)
+        } else {
+            metadata["onboarding_completed_at"] = ""
+        }
+        metadata["first_message_at"] = String(format: "%.3f", now.timeIntervalSince1970)
+        telemetryMonitor?.recordEvent(name: "time_to_first_message", metadata: metadata)
+    }
+
+    /// Persist the onboarding completion timestamp. Called by
+    /// ``OnboardingView`` on finish so the time-to-first-message window
+    /// has a start. Idempotent: a later call does not reset the original
+    /// timestamp (the user finished onboarding once; subsequent toggles
+    /// of the flag are not a re-completion).
+    public func recordOnboardingCompletion(at date: Date = Date()) {
+        let key = TesseraSettingsKey.onboardingCompletedAt
+        if UserDefaults.standard.double(forKey: key) > 0 { return }
+        UserDefaults.standard.set(date.timeIntervalSince1970, forKey: key)
+        onboardingCompletedAt = date
+    }
+
     private func runTurn(_ trimmed: String) {
         isRunning = true
         updateStatus(for: trimmed)
@@ -138,18 +209,31 @@ public final class UnifiedChatController {
             appendCollabTraceTeanUp(prompt: routed)
         }
 
+        // First-goal seed (review #1 onboarding): prepend the typed goal as
+        // a one-shot system-prompt section. Captured synchronously so the
+        // Task below sees the same value even if the user types a new
+        // message before this turn finishes.
+        let goalSeed = self.firstGoal
+        if goalSeed != nil {
+            self.firstGoal = nil
+            UserDefaults.standard.set("", forKey: TesseraSettingsKey.firstGoal)
+        }
+
         Task { @MainActor [weak self] in
             guard let self else { return }
             // When a document is focused, augment the prompt with its context
             // section so the agents reason over the live document. This is the
             // queue-frontier augmentation point; full receipt-linking via
             // markApplied lands when the document-focus signal is wired through.
-            let prompt: String
+            var prompt = routed
+            if let goal = goalSeed, !goal.isEmpty {
+                prompt = "User's first goal: \(goal)\n\n\(prompt)"
+            }
             if let ctx = self.documentContext {
                 let section = await ctx.promptSection()
-                prompt = section.isEmpty ? routed : "\(section)\n\n\(routed)"
-            } else {
-                prompt = routed
+                if !section.isEmpty {
+                    prompt = "\(section)\n\n\(prompt)"
+                }
             }
             await self.runGraph(userMessage: trimmed, decision: decision, prompt: prompt)
             self.isRunning = false

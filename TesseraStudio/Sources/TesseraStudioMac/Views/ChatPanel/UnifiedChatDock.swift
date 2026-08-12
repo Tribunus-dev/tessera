@@ -7,6 +7,10 @@ import TesseraCore
 /// ~360px inspector column.
 struct UnifiedChatDock: View {
     @Bindable var controller: UnifiedChatController
+    /// Starter-prompt context. `nil` falls back to the neutral set. The
+    /// caller (macOS ContentView) maps the current sidebar ``Destination``
+    /// to a ``DestinationStarterPrompts.Context`` before passing it in.
+    var starterContext: DestinationStarterPrompts.Context = .neutral
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var inputText = ""
 
@@ -89,12 +93,13 @@ struct UnifiedChatDock: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     if controller.rows.isEmpty {
-                        ContentUnavailableView(
-                            "Ask Tessy or Sky",
-                            systemImage: "bubble.left.and.bubble.right",
-                            description: Text("One input, two assistants. Tessy runs locally; Sky runs in the cloud. The router picks who answers - or force one with @tessy / @sky / @both.")
-                        )
-                        .padding(.top, 24)
+                        // Review #1 onboarding: replace the "ask me anything"
+                        // placeholder with a destination-aware starter list.
+                        // Tapping a starter fills the input and sends via the
+                        // existing send() path; no new plumbing.
+                        starterPrompts
+                    } else {
+                        whatsNextHint
                     }
                     ForEach(controller.rows) { row in
                         ChatBubbleView(
@@ -116,6 +121,45 @@ struct UnifiedChatDock: View {
                 scrollToBottom(proxy)
             }
         }
+    }
+
+    private var starterPrompts: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Image(systemName: "bubble.left.and.bubble.right")
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(.secondary)
+                Text("Tessy + Sky")
+                    .font(.caption.bold())
+                Text("One input, two assistants.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            DestinationStarterPromptsList(context: starterContext) { prompt in
+                sendStarter(prompt)
+            }
+        }
+        .padding(.top, 8)
+    }
+
+    private var whatsNextHint: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "sparkles")
+                .symbolRenderingMode(.hierarchical)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(DestinationStarterPrompts.whatsNextLine)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.top, 4)
+    }
+
+    private func sendStarter(_ prompt: String) {
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !controller.isRunning else { return }
+        inputText = ""
+        controller.send(trimmed)
     }
 
     private func scrollToBottom(_ proxy: ScrollViewProxy) {

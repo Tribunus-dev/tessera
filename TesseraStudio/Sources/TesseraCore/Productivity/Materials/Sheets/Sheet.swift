@@ -298,7 +298,7 @@ public struct Sheet: Codable, Sendable, Identifiable, Hashable {
             for child in block.children {
                 appendPlainText(blockID: child, ast: ast, into: &out)
             }
-        case .toggle, .image, .divider, .equation:
+        case .toggle, .image, .divider, .equation, .comment, .trackInsertion, .trackDeletion:
             break
         }
         for child in block.children where block.type != .list && block.type != .table {

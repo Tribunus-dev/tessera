@@ -17,6 +17,11 @@ struct ContentView: View {
     @State private var telemetryExpanded = false
     @State private var showHistory = false
     @State private var exportItem: ExportItem?
+    // Review #1 onboarding: the iOS chat tab now has its own controller so
+    // it can run the destination-aware starter prompts and seed the first
+    // send with the onboarding firstGoal. The full iOS chat surface is
+    // still WIP; the starter prompts are the entry point for now.
+    @State private var chatController = UnifiedChatController()
     // Email surface state (Phase 5). Same
     // lazy-bootstrap pattern as the macOS
     // ``EmailSurfaceBootstrap``; the
@@ -36,11 +41,11 @@ struct ContentView: View {
                 VStack(spacing: 0) {
                     // Part D: UnifiedChatSurface hosting the StateGraph-backed
                     // UnifiedChatController (shared with the macOS dock).
-                    ContentUnavailableView(
-                        "Tessy + Sky",
-                        systemImage: "bubble.left.and.bubble.right",
-                        description: Text("The unified chat lands here.")
-                    )
+                    // Review #1 onboarding: replaced the "lands here" placeholder
+                    // with a destination-aware starter list. Tapping a prompt
+                    // routes through chatController; the full transcript view
+                    // ships in a follow-up.
+                    iOSChatPlaceholder
                     TelemetryDrawer(monitor: telemetryMonitor, isExpanded: $telemetryExpanded)
                 }
                 .toolbar {

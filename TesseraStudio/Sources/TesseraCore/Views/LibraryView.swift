@@ -60,13 +60,55 @@ public struct LibraryView: View {
         .onAppear { scanModels() }
         .overlay {
             if filteredModels.isEmpty {
-                ContentUnavailableView(
-                    "No Models",
-                    systemImage: "cube.transparent",
-                    description: Text("Scan a directory or add models to get started.")
-                )
+                // Review #1 onboarding: the empty library is the same
+                // anti-pattern as the empty chat (passive caption, no
+                // entry point). The fix is a guided affordance that names
+                // the next action and surfaces the user's first goal so
+                // the onboarding sentence has somewhere to land even
+                // before any model loads. The chat tab is still the
+                // primary destination-aware starter surface; this just
+                // gives the library the same shape.
+                libraryEmptyState
             }
         }
+    }
+
+    private var libraryEmptyState: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "cube.transparent")
+                .symbolRenderingMode(.hierarchical)
+                .font(.largeTitle)
+                .foregroundStyle(.secondary)
+            Text("No models yet")
+                .font(.headline)
+            Text("Drag a .gguf here, or scan a directory to begin.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button {
+                scanModels()
+            } label: {
+                Label("Scan now", systemImage: "arrow.clockwise")
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.regular)
+            if !TesseraSettings.firstGoal.isEmpty {
+                Divider()
+                    .frame(maxWidth: 240)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: "sparkles")
+                        .symbolRenderingMode(.hierarchical)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("First goal: \(TesseraSettings.firstGoal)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.leading)
+                }
+                .frame(maxWidth: 280, alignment: .leading)
+            }
+        }
+        .padding(24)
     }
 
     private func scanModels() {

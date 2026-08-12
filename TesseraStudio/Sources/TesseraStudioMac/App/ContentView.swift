@@ -111,6 +111,14 @@ struct ContentView: View {
         .onChange(of: selection, initial: true) { _, newValue in
             workflowEditor.workflowsSurfaceVisible = (newValue == .workflows)
         }
+        // Wire the telemetry monitor into the chat controller so the
+        // first send emits the time-to-first-message event (review #1
+        // measurement architecture). Done once on appear; the monitor
+        // is owned by the window so per-window timing is correct.
+        .onAppear {
+            chatController.telemetryMonitor = telemetryMonitor
+            chatController.recordOnboardingCompletion()
+        }
     }
 
     /// Current sidebar destination. Falls back to Workflows on first
@@ -172,7 +180,7 @@ struct ContentView: View {
         // inside the detail column. The controller is window-lived so the
         // transcript persists across destination switches.
         .inspector(isPresented: $chatDockVisible) {
-            UnifiedChatDock(controller: chatController)
+            UnifiedChatDock(controller: chatController, starterContext: DestinationStarterPrompts.Context(selection))
                 .inspectorColumnWidth(min: 320, ideal: 360, max: 480)
         }
     }
@@ -289,5 +297,29 @@ struct ContentView: View {
             .replacingOccurrences(of: " ", with: "-")
             .filter { $0.isLetter || $0.isNumber || $0 == "-" }
         return cleaned.isEmpty ? "conversation" : String(cleaned.prefix(48))
+    }
+}
+
+/// Map the macOS-only sidebar `Destination` to the platform-independent
+/// ``DestinationStarterPrompts.Context``. The mapping lives here, not in
+/// ``TesseraCore``, because `Destination` is a macOS-shell concern.
+extension DestinationStarterPrompts.Context {
+    init(_ destination: Destination?) {
+        switch destination {
+        case .workflows:    self = .workflows
+        case .tasks:        self = .tasks
+        case .calendar:     self = .calendar
+        case .notes:        self = .notes
+        case .code:         self = .code
+        case .docs:         self = .docs
+        case .sheets:       self = .sheets
+        case .slides:       self = .slides
+        case .email:        self = .email
+        case .contacts:     self = .contacts
+        case .reminders:    self = .reminders
+        case .collab:       self = .collab
+        case .intelligence: self = .intelligence
+        case .none:         self = .neutral
+        }
     }
 }

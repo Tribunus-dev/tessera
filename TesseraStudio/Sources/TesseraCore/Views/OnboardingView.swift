@@ -10,6 +10,10 @@ public struct OnboardingView: View {
     @AppStorage(TesseraSettingsKey.modelDirectory) private var modelDirectory = TesseraSettingsDefault.modelDirectory
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var page = 0
+    /// Drafted first goal typed on page 3. Persisted to
+    /// ``TesseraSettingsKey.firstGoal`` on submit so the chat controller
+    /// can seed the first send.
+    @State private var firstGoalDraft: String = ""
 
     public var onComplete: () -> Void
 
@@ -121,6 +125,12 @@ public struct OnboardingView: View {
     #endif
 
     private var agentPage: some View {
+        // Review #1 onboarding: page 3 is no longer a 4-row approval legend
+        // (an education-as-text surface that did not feed the agent). It is
+        // a single typed-sentence "firstGoal" card that seeds the chat on
+        // the user's first send. The typed goal is persisted to
+        // ``TesseraSettingsKey.firstGoal``; the controller reads it on the
+        // first send and clears it.
         VStack(spacing: 16) {
             Image(systemName: "bubble.left.and.text.bubble.right")
                 .symbolRenderingMode(.hierarchical)
@@ -128,17 +138,28 @@ public struct OnboardingView: View {
                 .foregroundStyle(.green)
             Text("Meet the Agent")
                 .font(.largeTitle.bold())
-            Text("The agent loop calls tools on your behalf. You control how much autonomy it gets.")
+            Text("Type one sentence about the first thing you want Tessy or Sky to do. The chat will pre-load it for you.")
                 .font(.title3)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
+                .padding(.horizontal, 8)
             VStack(alignment: .leading, spacing: 8) {
-                approvalRow(.auto, "Run without asking.")
-                approvalRow(.notify, "Run, then notify you.")
-                approvalRow(.prompt, "Ask before running.")
-                approvalRow(.denied, "Never run.")
+                Text("Your first goal")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextField(
+                    "e.g. Triage my email into 3 priority buckets.",
+                    text: $firstGoalDraft,
+                    axis: .vertical
+                )
+                .textFieldStyle(.roundedBorder)
+                .lineLimit(1...3)
+                .frame(maxWidth: 420)
+                Text("Optional. The chat still works if you skip - this just gives the agent a head start.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: 420, alignment: .leading)
             }
-            .padding(.top, 8)
         }
     }
 
@@ -152,16 +173,6 @@ public struct OnboardingView: View {
                 Text(title).font(.headline)
                 Text(detail).font(.caption).foregroundStyle(.secondary)
             }
-        }
-    }
-
-    private func approvalRow(_ level: ApprovalLevel, _ detail: String) -> some View {
-        HStack(spacing: 12) {
-            Text(level.rawValue.uppercased())
-                .font(.caption.bold().monospaced())
-                .frame(width: 72, alignment: .leading)
-                .foregroundStyle(.green)
-            Text(detail).font(.subheadline)
         }
     }
 
@@ -205,6 +216,18 @@ public struct OnboardingView: View {
     }
 
     private func finish() {
+        // Review #1 onboarding: persist the typed first goal (or clear it
+        // when the user skipped the field) so the chat controller can seed
+        // the first send. Empty / whitespace is treated as "no seed".
+        let trimmed = firstGoalDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        TesseraSettings.setFirstGoal(trimmed)
+        // Always record the completion timestamp on the way out so the
+        // time-to-first-message window has a start. The controller
+        // is idempotent: a later re-completion does not overwrite.
+        UserDefaults.standard.set(
+            Date().timeIntervalSince1970,
+            forKey: TesseraSettingsKey.onboardingCompletedAt
+        )
         onboardingComplete = true
         onComplete()
     }
