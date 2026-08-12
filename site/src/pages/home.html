@@ -1,9 +1,9 @@
 <main class="page-body" id="top">
 
 <section class="hero hero-home">
-<span class="hero-eyebrow">Observatory v1 · bootstrap</span>
+<span class="hero-eyebrow">Observatory v1 · refresh</span>
 <h1 class="hero-headline">Calibrate and quantize models with receipts the kernel agrees with.</h1>
-<p class="hero-byline">Julian Torres — 2026-08-05 — 5 min — Observatory v1</p>
+<p class="hero-byline">Julian Torres — 2026-08-12 — 5 min — Observatory v1</p>
 <p class="hero-blurb">Most quantization pipelines produce bit-exact artifacts and bit-divergent runtime behavior. The calibrator optimizes a proxy. The kernel dispatches a different code path. The user sees a green benchmark and a hallucinated answer. Tessera closes the gap: the fitness is measured against the actual kernel dequant output, the policy is shipped with the artifact, and every release is auditable end-to-end.</p>
 <div class="hero-cta">
 <a class="hero-cta-primary" href="/start/#download">Download</a>
@@ -75,6 +75,11 @@ The benchmark reports a green number; the user observes something else.
 <tr><th>Tool</th><th>Purpose</th><th>Stage</th></tr>
 </thead>
 <tbody>
+<tr>
+<td><code>l1-l6 spine</code></td>
+<td>Six-layer runtime-aware telemetry (v3.1): FP16 reference capture, activation differentials, KL attribution, Hessian sensitivity, tail-weighted loss.</td>
+<td>Measurement</td>
+</tr>
 <tr>
 <td><code>per_tensor_calibrate</code></td>
 <td>Per-tensor importance statistics on a calibration corpus.</td>
@@ -170,7 +175,7 @@ The benchmark reports a green number; the user observes something else.
 </div>
 <figure class="figure-editorial">
 <img src="/media/studio-graph.svg" alt="Tessera Studio graph: four composable nodes — per_tensor calibrate, awq-evolve GA, quantize writer, harness receipt" width="720" height="160" loading="lazy">
-<figcaption><strong>Fig. 2 —</strong> Studio is the same pipeline as a graph. Each stage is a node; the graph is the artifact. Phase 1 + 2 (workflow model + SwiftUI editor) are qualifying; the agent loop is next.</figcaption>
+<figcaption><strong>Fig. 2 —</strong> Studio is the same pipeline as a graph. Each stage is a node; the graph is the artifact. Phase 1 + 2 (workflow model + SwiftUI editor) are shipped; the agent loop — approval tiers, audit log, time-limited undo — has landed in the ux-fatigue waves.</figcaption>
 </figure>
 </div>
 </section>

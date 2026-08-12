@@ -14,6 +14,7 @@
 <div class="status-group">
 <h3 class="status-group-title"><span class="state-badge state-badge--released">Released</span> — in the box</h3>
 <ul class="status-group-list">
+<li><code>l1-l6 spine</code> — The six-layer runtime-aware measurement loop (v3.1 spec): trigger-gated row capture with a true FP16 reference (L1/L1.5), activation-space differential with spectral norm + effective rank (L2), KL divergence with four-forward attribution (L3), domain-weighted prompt bank with per-layer flag telemetry (L4), Hessian sensitivity scorer with Cholesky + dispatch (L5), tail-weighted quant loss with acceptance verdict (L6).</li>
 <li><code>per_tensor_calibrate</code> — Offline Frobenius; multimodal extension in qualifying.</li>
 <li><code>awq-evolve</code> — Island GA; fitness against the kernel dequant output.</li>
 <li><code>llama-quantize --tessera-mode</code> — End-to-end pipeline; opt back to stock with <code>--tessera-mode=off</code>.</li>
@@ -21,6 +22,10 @@
 <li><code>unified_calibrate</code> — Co-calibrate trunk + drafters (DFlash, DSPark, MTP) in one pass.</li>
 <li><code>embedding_budget</code> — Size-envelope producer for shared embedding tensors.</li>
 <li><code>tessera-ab-harness</code> — Per-tensor t_l² against the kernel dequant output.</li>
+<li><code>tessera-dpace</code> — Adaptive per-position D-PACE loss (weights replace the fixed exponential decay) + DFlash block dataset emission from <code>spec_calib.v2</code>.</li>
+<li>Granite T640 family — <code>granite-4.1-30b</code>, <code>guardian-4.1-8b</code>, <code>granite-4.0-h-small</code> are first-class T640 targets; <code>granite4vision</code> (text / vision / video), <code>granite-docling</code>, <code>granite-speech-plus</code>, and the modern-bert embeddings convert and load through the singular GGUF pipeline.</li>
+<li>Nemotron 3.5 — Full BF16 conversion (per-expert FFN + MTP blocks); readback-validated, 6,343 tensors, shapes and dtypes checked against the source.</li>
+<li>Tessera Studio agent loop — Approval tiers, notification budget, time-limited undo, action audit log, chat dock, citation chips with inline hard-stop (ux-fatigue waves 1A–3D).</li>
 </ul>
 </div>
 <div class="status-group">
@@ -28,7 +33,7 @@
 <ul class="status-group-list">
 <li><code>multimodal_calibrate</code> — v1 forward-pass is synthetic; C++ mtmd capture wired.</li>
 <li><code>clip-capture</code> — True batching, dead-node detection, audio decode wired.</li>
-<li><code>Tessera Studio</code> — macOS / iOS agent app; Phase 1 + 2 complete (workflow data model + graph editor).</li>
+<li><code>tessera-train-dflash</code> — The drafter training driver; the DFlash drafter is feature-conditioned (it consumes trunk hidden states), so the token block dataset is necessary but not sufficient — the offline feature-capture pipeline is the next link.</li>
 </ul>
 </div>
 </div>
@@ -41,9 +46,9 @@
 <div class="chapter-body">
 <ul>
 <li>Real C++ multimodal capture (clip-capture v2 is the production-readiness line; the synthetic v1 path is being removed as the real path lands).</li>
-<li>Tessera Studio agent loop wire-up — the Phase 1 data model and the Phase 2 graph editor are merged; the learning loop and the run-progress orchestration are next.</li>
-<li>L1 kernel-dequant measurement for the calibrator's fitness — the L1 path is now the default; legacy offline measurement stays as an opt-in env var.</li>
+<li>Drafter training drivers — the LK / autoregressive path is native C++; the DFlash / block-parallel path needs the offline feature-capture pipeline before the weighted-CE training graph can fuse.</li>
 <li>Regime router (per family + shape, dynamic dispatch to the v2 quant functions) — replacing the static thresholds with a learned policy.</li>
+<li>Linux GTK4 Studio port — embedded Postgres, data contracts, OpenVINO default, OAuth2 surfaces; the port-gap analysis is closed and the build surface is being absorbed.</li>
 </ul>
 </div>
 </section>
@@ -53,9 +58,9 @@
 <h2 class="chapter-title">What is on the list.</h2>
 <div class="chapter-body">
 <ul>
-<li>Auto-build calibration corpus from the user's own usage (privacy-preserving; CC BY 4.0 license, scrubber-first).</li>
-<li>Self-improving drafter training (Qwen-class trunk + DFlash + DSpark, regime-routed; the MVP is the multi-dimensional behavioral eval + capability archive).</li>
-<li>Hardware-backend reach beyond Apple Silicon (Tessera is macOS / iOS first; the pipeline is backend-agnostic but the runtime is Apple-targeted today).</li>
+<li>Auto-build calibration corpus from the user's own usage (privacy-preserving; CC BY 4.0 license, scrubber-first; context windows capped at ≤50k tokens per the context-rot finding).</li>
+<li>Self-improving drafter training end to end (Qwen-class trunk + DFlash + DSpark, regime-routed; the MVP is the multi-dimensional behavioral eval + capability archive).</li>
+<li>Hardware-backend reach beyond Apple Silicon (Tessera is macOS / iOS first; the pipeline is backend-agnostic, the Linux Studio port is in progress, and the runtime stays Apple-targeted today).</li>
 </ul>
 </div>
 </section>

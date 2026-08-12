@@ -65,4 +65,55 @@
 </div>
 </section>
 
+<section class="chapter" id="august-wave">
+<div class="chapter-eyebrow">The August wave · 2026-08-06 → 08-12</div>
+<h2 class="chapter-title">What changed since bootstrap.</h2>
+<div class="chapter-body">
+<p>The waves below landed on <code>main</code> after the bootstrap backfill. The L1–L6 spine is the headline: the measurement loop from the v3.1 spec is now implemented in C++, and the fitness chain runs from the row-capture triggers through the Hessian scorer to the tail-weighted quant loss.</p>
+<table>
+<thead>
+<tr><th>Wave</th><th>User-visible change</th><th>State</th><th>Receipt</th></tr>
+</thead>
+<tbody>
+<tr>
+<td>L1–L6 telemetry spine (v3.1 spec)</td>
+<td>The six-layer runtime-aware measurement loop lands in C++: trigger-gated row capture with a true FP16 reference (L1/L1.5), activation-space differential with spectral norm + effective rank (L2), KL divergence with four-forward attribution (L3), domain-weighted prompt bank with per-layer flag telemetry (L4), Hessian sensitivity scorer with Cholesky + Phase D dispatch (L5), tail-weighted quant loss with acceptance verdict (L6). The FP environment block rides in the v3 sidecar.</td>
+<td><span class="state-badge state-badge--released">Released</span></td>
+<td><a href="https://github.com/Tribunus-dev/tessera">Repository</a> · <a href="/evidence/">Evidence</a></td>
+</tr>
+<tr>
+<td>Granite T640 family support</td>
+<td><code>granite-4.1-30b</code>, <code>guardian-4.1-8b</code>, and <code>granite-4.0-h-small</code> are first-class T640 targets; <code>granite4vision</code> (text / vision / video), <code>granite-docling</code> (SigLIP + Idefics3 QFormer), <code>granite-speech-plus</code> (audio feature concat), and the modern-bert embeddings convert and load through the singular GGUF pipeline.</td>
+<td><span class="state-badge state-badge--released">Released</span></td>
+<td><a href="https://github.com/Tribunus-dev/tessera">Repository</a></td>
+</tr>
+<tr>
+<td>Nemotron 3.5 conversion</td>
+<td>Full BF16 conversion with per-expert FFN paths and MTP blocks. Readback-validated: 6,343 tensors on disk, shapes and dtypes checked against the source model — not just the file size.</td>
+<td><span class="state-badge state-badge--released">Released</span></td>
+<td><a href="https://github.com/Tribunus-dev/tessera">Repository</a></td>
+</tr>
+<tr>
+<td>D-PACE loss + DFlash block dataset</td>
+<td>Adaptive per-position D-PACE weights (the product of the per-step acceptance probabilities) replace the fixed exponential decay; <code>--tessera-dpace</code> selects the loss. The DFlash block dataset — target tokens, acceptance probabilities, baked smoothed + normalized weights — emits from <code>spec_calib.v2</code>. The drafter training driver is next: the DFlash drafter is feature-conditioned, so the block dataset is necessary but not sufficient — the offline feature-capture pipeline is the missing link.</td>
+<td><span class="state-badge state-badge--qualifying">Qualifying</span></td>
+<td><a href="/evidence/">Evidence</a> · <a href="https://github.com/Tribunus-dev/tessera">Repository</a></td>
+</tr>
+<tr>
+<td>Studio HIG pass, Phases 11–13</td>
+<td>Streaming pipeline, ghost text, and the diff overlay land (Phase 11); Sheets, Docs, Notes, and Code surfaces split into host/child detail + editor views (Phase 12); the Phase 13 review files 60+ must-fix findings and the Tier 1–3 fix waves land in the same batch.</td>
+<td><span class="state-badge state-badge--released">Released</span></td>
+<td><a href="https://github.com/Tribunus-dev/tessera">Repository</a></td>
+</tr>
+<tr>
+<td>Studio agent-loop hardening (ux-fatigue waves 1A–3D)</td>
+<td>Approval tiers with a tiered approval sheet, a notification budget actor with <code>onFinished</code> hooks, time-limited undo, audit-log HEAD chip + side panel, chat dock progress feed, <code>ReceiptsCoordinator</code> on <code>AsyncStream</code>, citation chips with inline hard-stop, and a research brief grounding the fatigue model.</td>
+<td><span class="state-badge state-badge--released">Released</span></td>
+<td><a href="https://github.com/Tribunus-dev/tessera">Repository</a></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+
 </main>

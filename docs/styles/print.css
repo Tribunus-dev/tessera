@@ -1,0 +1,8 @@
+@media print {
+  .site-header, .secondary-nav, .theme-toggle, .toc { display: none !important; }
+  body { background: #fff !important; color: #000 !important; }
+  a { color: #000 !important; text-decoration: underline !important; }
+  .receipt, .terminal, .figure-frame, .figure-editorial { border: 1px solid #000 !important; break-inside: avoid; }
+  .state-badge { border: 1px solid #000 !important; background: transparent !important; }
+  pre, code { background: transparent !important; border: 1px solid #ccc !important; }
+}

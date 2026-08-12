@@ -208,7 +208,7 @@ def render_page(page: dict) -> str:
         f'<link rel="canonical" href="{page["canon"]}">\n'
         '<link rel="icon" type="image/svg+xml" href="/favicon.svg">\n'
         '<meta name="generator" content="tessera-docs-ssg">\n'
-        '<meta name="build-id" content="bootstrap-001">\n'
+        '<meta name="build-id" content="bootstrap-002">\n'
         f"{robots}"
         f'<meta property="og:title" content="{page["og_title"]}">\n'
         f'<meta property="og:description" content="{page["og_desc"]}">\n'

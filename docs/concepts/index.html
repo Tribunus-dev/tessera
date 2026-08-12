@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en" data-theme="dark" data-ent="root" data-has="theme">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Concepts - The ML vocabulary, with concise analogies.</title>
+<meta name="description" content="A glossary of the ML concepts Tessera uses. Each concept has a plain-language definition, a concise analogy, and a link to the full technical explanation on the architecture page.">
+<link rel="canonical" href="https://tessera.tribunus.dev/concepts/">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta name="generator" content="tessera-docs-ssg">
+<meta name="build-id" content="regen-002">
+<meta property="og:title" content="Concepts - The ML vocabulary, with concise analogies.">
+<meta property="og:description" content="A glossary of the ML concepts Tessera uses. Plain language, concise analogies, links to the technical depth.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://tessera.tribunus.dev/concepts/">
+<meta property="og:image" content="https://tessera.tribunus.dev/og-image.svg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Concepts - The ML vocabulary, with concise analogies.">
+<meta name="twitter:description" content="A glossary of the ML concepts Tessera uses. Plain language, concise analogies, links to the technical depth.">
+<meta name="twitter:image" content="https://tessera.tribunus.dev/og-image.svg">
+<link rel="stylesheet" href="/styles/site.css">
+<script>
+(function(){try{
+  var k='tessera-theme';
+  var v=null;
+  try{v=localStorage.getItem(k);}catch(e){}
+  if(v!=='dark'&&v!=='light'){
+    try{
+      if(window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches){v='light';}
+      else{v='dark';}
+    }catch(e){v='dark';}
+  }
+  document.documentElement.setAttribute('data-theme',v);
+  try{document.documentElement.style.colorScheme=v;}catch(e){}
+}catch(e){}})();
+</script>
+<script type="module" src="/scripts/boot.js"></script>
+</head>
+<body>
+<a href="#top" class="skip-link">Skip to main content</a>
+<header class="site-header" data-ent="site-header" data-has="measure">
+<a class="brand" href="/"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tessera</span></a>
+<nav class="site-nav" aria-label="Primary navigation">
+<a class="site-nav-link" href="/studio/">Studio</a>
+<a class="site-nav-link" href="/how-it-works/">How it works</a>
+<a class="site-nav-link" href="/how-tessera-differs/">How Tessera differs</a>
+<a class="site-nav-link" href="/concepts/" aria-current="page">Concepts</a>
+<a class="site-nav-link" href="/start/">Start</a>
+<a class="site-nav-link" href="/architecture/">Architecture</a>
+<a class="site-nav-link" href="/evidence/">Evidence</a>
+<a class="site-nav-link" href="/changelog/">Changelog</a>
+<a class="site-nav-link" rel="external" target="_blank" href="https://github.com/Tribunus-dev/tessera">GitHub</a>
+</nav>
+<button type="button" class="theme-toggle" aria-label="Toggle dark and light theme" data-theme-toggle><span class="theme-toggle-icon" aria-hidden="true"></span><span class="theme-toggle-label">Dark</span></button>
+</header>
+<aside class="standalone-anchor" aria-label="Page context">
+<span class="standalone-anchor-mark">Tessera</span>
+<p class="standalone-anchor-body">You are on <strong>Concepts</strong>, the glossary. <a href="/">Back to home</a> · <a href="/studio/">Studio</a> · <a href="/architecture/">Architecture</a></p>
+</aside>
+<main class="page-body" id="top">
+
+<header class="page-header">
+<span class="page-header-eyebrow">Glossary</span>
+<h1 class="page-header-headline">The ML vocabulary. With concise analogies.</h1>
+<p class="page-header-blurb">A reference for the terms that appear across the Tessera site. Each concept has a plain-language definition, a short analogy, and a link to the full technical depth on the <a href="/architecture/">architecture page</a>. Read top-to-bottom, or jump to a concept.</p>
+</header>
+
+<nav class="chapter chapter-eyebrow" aria-label="Concept index" style="border: 1px solid var(--color-rule); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); background: var(--color-surface-1); margin-bottom: var(--space-5);">
+<div style="font-family: var(--font-mono); font-size: var(--font-size-xs); letter-spacing: var(--letter-spacing-wide); text-transform: uppercase; color: var(--color-fg-subtle); margin-bottom: var(--space-2);">Jump to</div>
+<div style="display: flex; flex-wrap: wrap; gap: var(--space-2); font-size: var(--font-size-sm);">
+<a href="#concept-quantization">Quantization</a> · <a href="#concept-memory-wall">Memory wall</a> · <a href="#concept-kernel-fidelity-loop">Kernel-fidelity loop</a> · <a href="#concept-quantization-on-transport">Quantization-on-transport</a> · <a href="#concept-heterogeneous-dynamic-execution">Heterogeneous dynamic execution</a> · <a href="#concept-hybrid-drafters">Hybrid drafters</a> · <a href="#concept-ane">Apple Neural Engine</a> · <a href="#concept-multi-modal">Multi-modal</a> · <a href="#concept-receipt">Signed receipt</a>
+</div>
+</nav>
+
+<section class="chapter" id="concept-quantization">
+<div class="chapter-eyebrow">Concept · 01</div>
+<h2 class="chapter-title">Quantization</h2>
+<p class="chapter-body"><strong>Definition.</strong> Making a model smaller by reducing the precision of its numbers. A 16-bit weight takes two bytes; an 8-bit weight takes one; a 4-bit weight takes half of one. The model fits in less memory, loads faster, runs faster — and the question is how much accuracy you give up.</p>
+<p class="chapter-body"><strong>Analogy.</strong> Like compressing a high-resolution photo. The file gets smaller, and at some point you stop noticing the difference. The trick is choosing which details to drop so the eye does not catch them.</p>
+<p class="chapter-aside">See <a href="/architecture/#quantization">the full treatment on the architecture page</a>.</p>
+</section>
+
+<section class="chapter" id="concept-memory-wall">
+<div class="chapter-eyebrow">Concept · 02</div>
+<h2 class="chapter-title">Memory wall</h2>
+<p class="chapter-body"><strong>Definition.</strong> In modern ML inference, the bottleneck is usually memory bandwidth — moving weights from memory into the compute units — not the compute itself. The "memory wall" is when the cost of data movement dominates the cost of actual computation.</p>
+<p class="chapter-body"><strong>Analogy.</strong> Imagine a kitchen where the chef can cook a dish in 30 seconds, but it takes 5 minutes to bring the ingredients from the pantry. The bottleneck is not cooking — it is fetching. The memory wall is when the cook spends all their time waiting for ingredients, not cooking. Tessera's quantization-on-transport is like packing the ingredients into a smaller bag at the pantry door, so the cook carries less per trip.</p>
+<p class="chapter-aside">See <a href="/architecture/#memory-wall">the dedicated section on the architecture page</a>, with the diagrams.</p>
+</section>
+
+<section class="chapter" id="concept-kernel-fidelity-loop">
+<div class="chapter-eyebrow">Concept · 03</div>
+<h2 class="chapter-title">Kernel-fidelity loop</h2>
+<p class="chapter-body"><strong>Definition.</strong> A calibration system that grades candidate quantization recipes against the output of the actual dequant kernel that will run in production, not against an offline proxy. The kernel that grades is the kernel that runs, so the artifact is shaped to match the kernel that signed off on it.</p>
+<p class="chapter-body"><strong>Analogy.</strong> Imagine grading student essays. The traditional way is to give the essay to a substitute teacher and trust their judgment. The kernel-fidelity loop is giving the essay to the actual teacher who will be using the grade. The grade reflects the teacher's standards, not someone else's. So when the teacher reads the essay later, the grade holds.</p>
+<p class="chapter-aside">See <a href="/architecture/#kernel-fidelity">the full treatment on the architecture page</a>.</p>
+</section>
+
+<section class="chapter" id="concept-quantization-on-transport">
+<div class="chapter-eyebrow">Concept · 04</div>
+<h2 class="chapter-title">Quantization-on-transport</h2>
+<p class="chapter-body"><strong>Definition.</strong> Performing quantization as data moves between compute stages, using idle compute during transport, instead of as a one-time pre-processing step. Because the calibration kernel and the runtime kernel are the same, the quantization is kernel-aware and effectively lossless for the model's purposes.</p>
+<p class="chapter-body"><strong>Analogy.</strong> Like packing a suitcase while walking to the airport. Instead of packing at home and carrying the whole suitcase, you pack as you walk, using time you would otherwise spend idle. The end result is the same, but you never carry the full weight.</p>
+<p class="chapter-aside">See <a href="/architecture/#quantization-on-transport">the full treatment on the architecture page</a>.</p>
+</section>
+
+<section class="chapter" id="concept-heterogeneous-dynamic-execution">
+<div class="chapter-eyebrow">Concept · 05</div>
+<h2 class="chapter-title">Heterogeneous dynamic execution</h2>
+<p class="chapter-body"><strong>Definition.</strong> Dispatching work across multiple compute engines — CPU, GPU, and ANE on Apple Silicon — based on what each operation needs. The dispatch is <em>dynamic</em> (decided at runtime, not at compile time) and <em>heterogeneous</em> (the engines are different kinds of hardware with different strengths).</p>
+<p class="chapter-body"><strong>Analogy.</strong> A construction site with different crews: the electricians do wiring, the plumbers do pipes, the carpenters do framing. A good foreman sends the right crew for the right job as conditions change. A bad foreman sends everyone to do everything. Tessera is the foreman.</p>
+<p class="chapter-aside">See <a href="/architecture/#dispatch">the dispatch policy on the architecture page</a>.</p>
+</section>
+
+<section class="chapter" id="concept-hybrid-drafters">
+<div class="chapter-eyebrow">Concept · 06</div>
+<h2 class="chapter-title">Hybrid drafters</h2>
+<p class="chapter-body"><strong>Definition.</strong> Small, fast models that propose tokens for a larger model to verify. The drafter writes quickly, with errors; the verifier checks each token and accepts or rejects. Acceptance rate determines how much faster the system is than the verifier alone. The "hybrid" part: Tessera runs both a self-attention drafter and a Markov head, and combines their proposals.</p>
+<p class="chapter-body"><strong>Analogy.</strong> Like a court stenographer. The stenographer writes down words as the speaker talks — fast, but with errors. The judge (the verifier) checks each word and corrects as needed. The stenographer gets faster over time as they learn the speaker's patterns.</p>
+<p class="chapter-aside">See <a href="/architecture/#drafters">the architecture page</a> for the dispatch table.</p>
+</section>
+
+<section class="chapter" id="concept-ane">
+<div class="chapter-eyebrow">Concept · 07</div>
+<h2 class="chapter-title">Apple Neural Engine (ANE)</h2>
+<p class="chapter-body"><strong>Definition.</strong> Apple's matrix-math accelerator, separate from the GPU and CPU. The ANE is not as flexible as the GPU, but it is much faster for the specific operations it is good at — and uses much less power. Tessera uses the ANE for the verifier's prefill on long prompts; the drafter and the generation steps stay on the GPU.</p>
+<p class="chapter-body"><strong>Analogy.</strong> A specialized tool in a workshop. A general drill can do most things; a precision drill press does one thing much better. The ANE is the drill press. The engine chooses the right tool for each step.</p>
+</section>
+
+<section class="chapter" id="concept-multi-modal">
+<div class="chapter-eyebrow">Concept · 08</div>
+<h2 class="chapter-title">Multi-modal</h2>
+<p class="chapter-body"><strong>Definition.</strong> Handling multiple types of input — text, vision, audio, and speech — in the same model. Tessera's base model (Gemma 4 12B unified) is a single transformer that ingests all four; the speech-to-speech layer is Qwen 3 TTS, which speaks the model's outputs back to you. Each modality has its own calibration regime; the model carries per-modality activation scales so the same kernel can dequant the right way for each.</p>
+<p class="chapter-body"><strong>Analogy.</strong> Most recipes are optimized for one type of cuisine. Multi-modal is like designing a kitchen that is equally good at Italian, Japanese, and Mexican — different tools for different dishes, but all sharing the same workspace.</p>
+</section>
+
+<section class="chapter" id="concept-receipt">
+<div class="chapter-eyebrow">Concept · 09</div>
+<h2 class="chapter-title">Signed receipt</h2>
+<p class="chapter-body"><strong>Definition.</strong> A structured, signed record attached to every Tessera artifact. The receipt carries the upstream model SHA, the calibration corpus snapshot fingerprint, the per-tensor policy, the eval results, and a cryptographic signature over all of it. Anyone with the receipt can verify what the model is, where it came from, and what it was tested against.</p>
+<p class="chapter-body"><strong>Analogy.</strong> Like a notarized document. The notary records what was used, what was done, and what the result was, and signs it. Anyone can verify the document is real and has not been tampered with. The notary's seal does not tell you the document is <em>good</em>, but it tells you the document is <em>real</em>, and the contents are what they claim to be.</p>
+<p class="chapter-aside">See <a href="/evidence/">the evidence page</a> for the schema and the live receipts.</p>
+</section>
+
+<section class="chapter">
+<p class="chapter-aside">The long tail of technical terms — AWQ, MAP-Elites, importance matrix, regime routing, per-tensor GA, IOSurface, CoreML — lives on the <a href="/architecture/">architecture page</a>. Each section there links back to the concept card if the reader needs the analogy first.</p>
+</section>
+
+<section class="chapter" id="next-step">
+<div class="chapter-eyebrow">Where to go next</div>
+<h2 class="chapter-title">Pick the question that brought you here.</h2>
+<div class="chapter-grid chapter-grid-3">
+<a class="next-step-card" href="/architecture/">
+<span class="next-step-card-eyebrow">Want the full architecture?</span>
+<h3 class="next-step-card-title">Architecture</h3>
+<p class="next-step-card-body">The kernel-fidelity loop, the dispatch policy, the memory wall, the per-tensor GA.</p>
+</a>
+<a class="next-step-card" href="/start/">
+<span class="next-step-card-eyebrow">Ready to install?</span>
+<h3 class="next-step-card-title">Start</h3>
+<p class="next-step-card-body">Build, run, and load your first model.</p>
+</a>
+<a class="next-step-card" href="/how-tessera-differs/">
+<span class="next-step-card-eyebrow">Comparing to other projects?</span>
+<h3 class="next-step-card-title">How Tessera differs</h3>
+<p class="next-step-card-body">vs llama.cpp, MLX, and vLLM. The four axes, the technical depth.</p>
+</a>
+</div>
+</section>
+
+</main>
+<aside class="secondary-nav">
+<ul class="secondary-nav-list">
+<li class="secondary-nav-label">Navigate</li>
+<li><a href="/">Home</a></li>
+<li><a href="/studio/">Studio</a></li>
+<li><a href="/how-it-works/">How it works</a></li>
+<li><a href="/how-tessera-differs/">How Tessera differs</a></li>
+<li><a href="/concepts/" aria-current="page">Concepts</a></li>
+<li><a href="/start/">Start</a></li>
+<li><a href="/architecture/">Architecture</a></li>
+<li><a href="/evidence/">Evidence</a></li>
+<li><a href="/changelog/">Changelog</a></li>
+<li><a href="/colophon/">Colophon</a></li>
+</ul>
+</aside>
+<footer class="site-footer">
+<div class="site-footer-inner">
+<p>Tessera is independently developed by <strong>Julian Torres</strong>. Source-available under the Tessera Research and Education License 1.0; trained models under CC BY-NC-SA 4.0. <a href="/colophon/">Colophon</a> · <a rel="external" target="_blank" href="https://github.com/Tribunus-dev/tessera">Repository</a> · <a href="mailto:julian@tribunus.dev">Commercial</a></p>
+<p><a href="https://tessera.tribunus.dev">tessera.tribunus.dev</a></p>
+</div>
+</footer>
+</body>
+</html>

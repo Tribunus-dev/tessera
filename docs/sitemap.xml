@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://tessera.tribunus.dev/</loc><priority>1.0</priority></url>
+  <url><loc>https://tessera.tribunus.dev/start/</loc><priority>0.9</priority></url>
+  <url><loc>https://tessera.tribunus.dev/architecture/</loc><priority>0.9</priority></url>
+  <url><loc>https://tessera.tribunus.dev/evidence/</loc><priority>0.8</priority></url>
+  <url><loc>https://tessera.tribunus.dev/status/</loc><priority>0.6</priority></url>
+  <url><loc>https://tessera.tribunus.dev/changelog/</loc><priority>0.5</priority></url>
+  <url><loc>https://tessera.tribunus.dev/colophon/</loc><priority>0.4</priority></url>
+</urlset>

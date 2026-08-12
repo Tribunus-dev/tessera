@@ -1,0 +1,146 @@
+/* Tessera Observatory v1 — editorial prose.
+ *
+ * Long-form reading surface. Measure is 62-66ch (max-prose 42rem),
+ * line height 1.72, hanging punctuation. Monospace stays for data;
+ * serif display stays for argument headlines. This file is the
+ * reading rhythm, not the instrument panel.
+ */
+
+.prose {
+  max-width: var(--max-prose);
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-prose);
+  color: var(--color-fg);
+}
+
+.prose > * + * { margin-top: var(--space-4); }
+.prose p { line-height: var(--line-height-prose); }
+
+/* Lede — first paragraph after the headline, 1.2rem, muted */
+.prose .lede {
+  font-size: 1.2rem;
+  line-height: var(--line-height-loose);
+  color: var(--color-fg-muted);
+}
+
+/* Pull quote — editorial, not decorative card. Serif, left rule, no background. */
+.pullquote {
+  margin: var(--space-6) 0;
+  padding: var(--space-4) 0 var(--space-4) var(--space-5);
+  border-left: 2px solid var(--color-accent);
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  line-height: 1.35;
+  letter-spacing: -0.015em;
+  color: var(--color-fg);
+  hanging-punctuation: first;
+}
+.pullquote cite {
+  display: block;
+  margin-top: var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  font-style: normal;
+  color: var(--color-fg-subtle);
+}
+
+/* Marginalia — sits in gutter at desktop, stacks at mobile */
+.marginalia {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+  color: var(--color-fg-subtle);
+  border-left: 1px solid var(--color-rule);
+  padding-left: var(--space-3);
+  margin: var(--space-4) 0;
+}
+@media (min-width: 1100px) {
+  .marginalia {
+    float: right;
+    width: 14rem;
+    margin-right: -16rem;
+    margin-top: 0.2em;
+  }
+}
+
+/* Editorial figure variant — no card shadow, thin rule, caption in mono */
+.figure-editorial {
+  margin: var(--space-6) 0;
+  max-width: var(--max-prose-wide);
+}
+.figure-editorial img,
+.figure-editorial svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.figure-editorial figcaption {
+  margin-top: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-rule);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+  color: var(--color-fg-subtle);
+}
+.figure-editorial figcaption strong { color: var(--color-fg-muted); font-weight: 500; }
+
+/* TOC — editorial navigation. Mono, left rule, sticky at desktop */
+.toc {
+  margin: var(--space-5) 0;
+  padding: var(--space-4) var(--space-4) var(--space-4) var(--space-5);
+  border-left: 1px solid var(--color-rule);
+  max-width: var(--max-prose);
+}
+.toc-title {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  color: var(--color-fg-subtle);
+  margin-bottom: var(--space-2);
+}
+.toc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: var(--font-size-sm);
+  line-height: 1.7;
+}
+.toc-list a { color: var(--color-fg-muted); }
+.toc-list a:hover { color: var(--color-fg); }
+@media (min-width: 1024px) {
+  .toc {
+    position: sticky;
+    top: calc(var(--space-7) + 2rem);
+  }
+}
+.prose-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-6);
+}
+@media (min-width: 900px) {
+  .prose-grid {
+    grid-template-columns: 1fr 14rem;
+    gap: var(--space-6);
+  }
+}
+.chapter.prose {
+  max-width: var(--max-prose);
+  margin-left: auto;
+  margin-right: auto;
+}
+.chapter.prose .chapter-body { max-width: none; }
+
+/* Editorial hr — subtle, not a panel divider */
+.prose hr {
+  border: 0;
+  border-top: 1px solid var(--color-rule);
+  margin: var(--space-7) 0;
+  max-width: 8rem;
+}

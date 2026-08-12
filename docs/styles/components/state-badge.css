@@ -1,0 +1,93 @@
+/* Tessera Observatory v1 -- state badge.
+ *
+ * Status is communicated in three forms at once: text, shape, and color.
+ * The shape variation is what makes the state visible to a color-blind
+ * visitor, a screen reader (via the text label), and a printed page.
+ * Color is reinforcement; text + shape are the primary signal.
+ */
+
+.state-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0.2em 0.55em 0.2em 0.4em;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  line-height: 1.4;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.state-badge::before {
+  content: "";
+  flex-shrink: 0;
+  width: 0.6rem;
+  height: 0.6rem;
+  border: 1.5px solid currentColor;
+  background: transparent;
+}
+
+/* Planned / Unreleased -- hollow circle (pending) */
+.state-badge--planned,
+.state-badge--unreleased {
+  color: var(--color-state-planned);
+  background: var(--color-state-planned-bg);
+  border-color: rgba(108, 108, 132, 0.22);
+}
+.state-badge--planned::before,
+.state-badge--unreleased::before {
+  border-radius: 50%;
+  background: transparent;
+}
+
+/* Implemented / Released -- filled square (done, cyan) */
+.state-badge--implemented,
+.state-badge--released {
+  color: var(--color-state-implemented);
+  background: var(--color-state-implemented-bg);
+  border-color: rgba(106, 212, 255, 0.28);
+}
+.state-badge--implemented::before,
+.state-badge--released::before {
+  border-radius: 1px;
+  background: currentColor;
+}
+
+/* Qualifying -- diamond (in-progress, magenta) */
+.state-badge--qualifying {
+  color: var(--color-state-qualifying);
+  background: var(--color-state-qualifying-bg);
+  border-color: rgba(197, 106, 212, 0.28);
+}
+.state-badge--qualifying::before {
+  border-radius: 1px;
+  transform: rotate(45deg) scale(0.85);
+  background: currentColor;
+  width: 0.5rem;
+  height: 0.5rem;
+}
+
+/* Validated -- filled circle with check semantics (verified, green) */
+.state-badge--validated {
+  color: var(--color-state-validated);
+  background: var(--color-state-validated-bg);
+  border-color: rgba(95, 217, 122, 0.28);
+}
+.state-badge--validated::before {
+  border-radius: 50%;
+  background: currentColor;
+}
+
+@media print {
+  .state-badge {
+    border: 1px solid currentColor !important;
+    background: transparent !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}

@@ -33,8 +33,8 @@
 <tbody>
 <tr><td>Source</td><td>Hand-authored partials in <code>site/src/</code> (see <code>site/src/partials/</code> and <code>site/src/pages/</code>); <code>site/*.html</code> is the generated output checked in for deploy readability.</td></tr>
 <tr><td>Build</td><td>Assembler <code>site/scripts/build.py</code> (stdlib Python, no deps). Run <code>python3 site/scripts/build.py</code> to regenerate; <code>--check</code> verifies no drift in CI. The future <code>tessera-docs-ssg</code> binary will replace this assembler when typed content moves beyond hand-authored pages.</td></tr>
-<tr><td>Hosting</td><td>GitHub Pages, custom domain <code>tessera.tribunus.dev</code> via the <code>CNAME</code> file in <code>site/</code>.</td></tr>
-<tr><td>Deploy</td><td>GitHub Actions, <code>actions/deploy-pages@v4</code> with a <code>Build site</code> step (<code>python3 site/scripts/build.py</code>) before <code>upload-pages-artifact</code>, triggered on push to <code>main</code> when files under <code>site/**</code> change.</td></tr>
+<tr><td>Hosting</td><td>GitHub Pages (legacy), custom domain <code>tessera.tribunus.dev</code> via the <code>CNAME</code> file at <code>docs/CNAME</code>, served from the <code>/docs</code> directory on <code>main</code>.</td></tr>
+<tr><td>Deploy</td><td>Push to <code>main</code> — the built site is published into <code>docs/</code> and GitHub Pages rebuilds. The earlier Actions workflow (<code>deploy.yml</code>, <code>actions/deploy-pages</code>) was retired when the Pages source moved to <code>main /docs</code>.</td></tr>
 <tr><td>Theme</td><td>Dark by default, light opt-in via a header button, FOUC-free inline init, <code>prefers-color-scheme</code> fallback, localStorage override.</td></tr>
 <tr><td>Accessibility</td><td>Skip link, focus ring, <code>aria-current</code> on the active nav, <code>prefers-reduced-motion</code> respected, WCAG 2.2 contrast targets.</td></tr>
 </tbody>

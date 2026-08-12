@@ -1,0 +1,227 @@
+/* Tessera Observatory v1 -- typography.
+ *
+ * Element-level styles. Reads from tokens.css. Never recomputes
+ * sizes locally; always references the modular scale.
+ *
+ * Monospace is reserved for identities, hashes, digests, commands,
+ * schemas, values, machine-state labels, and code. Prose never
+ * uses mono; identities never use proportional.
+ */
+
+:root {
+  color-scheme: dark light;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: var(--line-height-base);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+html { font-size: 100%; }
+body { font-size: var(--font-size-base); }
+
+/* Headings. Editorial variant: serif display for argument
+ * headlines (h1/h2), sans for structure (h3-h6). Display heads
+ * read as the essay's argument; body heads read as the instrument's
+ * scaffolding. */
+h1, h2, h3, h4, h5, h6 {
+  margin: 0 0 var(--space-4) 0;
+  color: var(--color-fg);
+  hanging-punctuation: first;
+}
+
+h1 {
+  font-family: var(--font-display);
+  font-size: var(--font-size-3xl);
+  font-weight: 400;
+  line-height: var(--line-height-display);
+  letter-spacing: -0.03em;
+}
+h2 {
+  font-family: var(--font-display);
+  font-size: var(--font-size-2xl);
+  font-weight: 400;
+  line-height: var(--line-height-display);
+  letter-spacing: -0.025em;
+}
+h3 {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-tight);
+  letter-spacing: var(--letter-spacing-base);
+}
+h4 {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-snug);
+  letter-spacing: var(--letter-spacing-base);
+}
+h5, h6 {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  line-height: var(--line-height-snug);
+}
+
+/* Body prose. Editorial measure: 62-66ch, hanging punctuation,
+ * lining/oldstyle nums opt-in. Chapter sets max-width; prose
+ * inherits it. */
+p {
+  margin: 0 0 var(--space-4) 0;
+  max-width: var(--max-prose);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-prose);
+  hanging-punctuation: first;
+  font-variant-ligatures: common-ligatures;
+  font-variant-numeric: lining-nums;
+}
+p:last-child { margin-bottom: 0; }
+
+.lede {
+  font-size: 1.2rem;
+  line-height: var(--line-height-loose);
+  color: var(--color-fg-muted);
+  max-width: var(--max-prose);
+  hanging-punctuation: first;
+}
+.byline {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  color: var(--color-fg-subtle);
+  margin-bottom: var(--space-4);
+}
+.byline a { color: var(--color-fg-muted); }
+
+/* Links. Cyan accent, underline on hover only. */
+a {
+  color: var(--color-accent);
+  text-decoration: none;
+  text-underline-offset: 0.2em;
+  text-decoration-thickness: 0.05em;
+  transition: color var(--motion-fast) var(--motion-ease);
+}
+a:hover { text-decoration: underline; }
+a:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Lists. */
+ul, ol {
+  margin: 0 0 var(--space-4) 0;
+  padding-left: var(--space-5);
+  max-width: var(--max-prose);
+}
+li { margin-bottom: var(--space-2); }
+
+/* Inline code and code blocks. */
+code, kbd, samp {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  letter-spacing: var(--letter-spacing-mono);
+  color: var(--color-fg);
+  background: var(--color-surface-1);
+  padding: 0.1em 0.35em;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-rule);
+}
+pre {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  line-height: 1.55;
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-md);
+  padding: var(--space-4) var(--space-5);
+  overflow-x: auto;
+  margin: 0 0 var(--space-4) 0;
+  max-width: var(--max-width);
+}
+pre code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-size: inherit;
+  color: inherit;
+}
+
+/* Quotes. The Observatory's voice is factual; quotes are used
+ * sparingly, for receipt-style attestations only. */
+blockquote {
+  margin: var(--space-5) 0;
+  padding: var(--space-3) var(--space-5);
+  border-left: 3px solid var(--color-accent);
+  color: var(--color-fg-muted);
+  font-style: normal;
+}
+
+/* Horizontal rules. */
+hr {
+  border: 0;
+  border-top: 1px solid var(--color-rule);
+  margin: var(--space-7) 0;
+}
+
+/* Tables. The Observatory's data-density use case. */
+table {
+  width: 100%;
+  max-width: var(--max-width);
+  border-collapse: collapse;
+  margin: 0 0 var(--space-5) 0;
+  font-size: var(--font-size-sm);
+}
+th, td {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-rule);
+}
+th {
+  color: var(--color-fg-muted);
+  font-weight: var(--font-weight-medium);
+  text-transform: uppercase;
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--letter-spacing-wide);
+}
+
+/* Forms. */
+input, textarea, select, button {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+/* Focus visible. WCAG 2.4.7 + 2.4.11. */
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Selection. */
+::selection {
+  background: var(--color-accent);
+  color: var(--color-bg);
+}
+
+/* Utility. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

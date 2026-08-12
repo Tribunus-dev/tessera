@@ -1,0 +1,234 @@
+/* Tessera Observatory v1 -- receipt.
+ *
+ * A receipt is a durable, auditable record of a single run. The
+ * component renders the per-tensor t_l2 and the kernel hash as
+ * they appear in the sidecar. No decorative imagery; the data is
+ * the visualization.
+ */
+
+.receipt {
+  margin: var(--space-5) 0;
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.receipt-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3) var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--color-rule);
+}
+
+.receipt-title {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  color: var(--color-fg);
+  margin: 0;
+}
+
+.receipt-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-subtle);
+}
+
+.receipt-meta dt {
+  display: inline;
+  text-transform: uppercase;
+  letter-spacing: var(--letter-spacing-wide);
+  margin-right: 0.35em;
+}
+
+.receipt-meta dd {
+  display: inline;
+  margin: 0;
+  color: var(--color-fg-muted);
+}
+
+.receipt-body {
+  padding: var(--space-4) var(--space-5);
+}
+
+.receipt-kv {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-1) var(--space-4);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+  margin: 0;
+}
+
+.receipt-kv dt {
+  color: var(--color-fg-subtle);
+  text-transform: uppercase;
+  letter-spacing: var(--letter-spacing-wide);
+}
+
+.receipt-kv dd {
+  margin: 0;
+  color: var(--color-fg-muted);
+  word-break: break-all;
+}
+
+.receipt-table {
+  width: 100%;
+  margin-top: var(--space-4);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+.receipt-table th {
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-subtle);
+  border-bottom-color: var(--color-rule-strong);
+}
+
+.receipt-table td {
+  color: var(--color-fg-muted);
+}
+
+.receipt-table td:last-child {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.receipt-footer {
+  padding: var(--space-3) var(--space-5);
+  background: var(--color-surface-2);
+  border-top: 1px solid var(--color-rule);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-subtle);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+}
+
+/* Terminal block -- the actual harness output */
+.terminal {
+  margin: var(--space-5) 0;
+  background: var(--color-bg);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.terminal-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-surface-1);
+  border-bottom: 1px solid var(--color-rule);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-subtle);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+}
+
+.terminal-bar::before {
+  content: "";
+  display: inline-block;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: var(--color-state-validated);
+  opacity: 0.9;
+  flex-shrink: 0;
+}
+
+.terminal pre {
+  margin: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: var(--space-4) var(--space-5);
+  font-size: var(--font-size-xs);
+  line-height: 1.7;
+  color: var(--color-fg-muted);
+}
+
+.terminal pre .hl-accent { color: var(--color-accent); }
+.terminal pre .hl-warm { color: var(--color-accent-warm); }
+.terminal pre .hl-good { color: var(--color-state-validated); }
+.terminal pre .hl-dim { color: var(--color-fg-subtle); }
+
+/* Figure with caption for Studio preview */
+.figure-frame {
+  margin: var(--space-5) 0;
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.figure-frame img,
+.figure-frame svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.figure-caption {
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface-2);
+  border-top: 1px solid var(--color-rule);
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-subtle);
+  line-height: var(--line-height-base);
+}
+
+.figure-caption strong {
+  color: var(--color-fg-muted);
+  font-weight: var(--font-weight-medium);
+}
+
+/* Evidence strip — data as editorial vis, no glow */
+.receipt-bar {
+  display: block;
+  width: 100%;
+  max-width: 8rem;
+  height: 0.4rem;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-rule);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.receipt-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--color-accent);
+  border-radius: 999px;
+}
+:root[data-theme="light"] .receipt-bar { background: var(--color-surface-3); }
+.receipt-bar-head { font-variant-numeric: tabular-nums; }
+
+.status-groups { display: grid; gap: var(--space-6); margin-top: var(--space-5); }
+.status-group-title { font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); margin: 0 0 var(--space-3) 0; display: flex; align-items: center; gap: var(--space-2); }
+.status-group-list { list-style: none; margin: 0; padding: 0; font-size: var(--font-size-sm); line-height: 1.7; }
+.status-group-list li { padding: var(--space-2) 0; border-bottom: 1px solid var(--color-rule); }
+.status-group-list li:last-child { border-bottom: 0; }
+.status-group-list code { font-size: 0.92em; }
+
+.receipt-details { margin-top: var(--space-4); border-top: 1px solid var(--color-rule); padding-top: var(--space-3); }
+.receipt-details summary { cursor: pointer; font-family: var(--font-mono); font-size: var(--font-size-xs); letter-spacing: var(--letter-spacing-wide); text-transform: uppercase; color: var(--color-fg-muted); list-style: none; }
+.receipt-details summary::-webkit-details-marker { display: none; }
+.receipt-details summary::before { content: "▸ "; color: var(--color-fg-subtle); }
+.receipt-details[open] summary::before { content: "▾ "; }
+.receipt-hist { margin-top: var(--space-3); display: grid; gap: var(--space-3); }
+.receipt-hist-row { display: grid; grid-template-columns: 9rem 8rem 7rem; gap: var(--space-3); align-items: center; font-family: var(--font-mono); font-size: var(--font-size-xs); }
+.receipt-hist-label { color: var(--color-fg-muted); }
+.receipt-hist-range { color: var(--color-fg-subtle); font-variant-numeric: tabular-nums; }
