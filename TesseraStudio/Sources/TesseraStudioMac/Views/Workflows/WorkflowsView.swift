@@ -589,10 +589,12 @@ struct WorkflowsView: View {
                     .font(.callout)
                     .lineLimit(2)
                     .truncationMode(.tail)
+                    .accessibilityLabel("Connection error: \(message)")
                 Spacer()
                 Button("Dismiss") { connectionError = nil }
                     .buttonStyle(.borderless)
                     .keyboardShortcut(.cancelAction)
+                    .accessibilityLabel("Dismiss error message")
             }
             .padding(10)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))

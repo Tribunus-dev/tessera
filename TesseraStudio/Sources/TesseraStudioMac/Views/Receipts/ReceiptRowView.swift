@@ -55,7 +55,7 @@ public struct ReceiptRowView: View {
         .background(isSelected ? Color.accentColor.opacity(0.12) : Color.clear)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(actorLabel), \(receipt.summary), \(timestampText)")
+        .accessibilityLabel("\(actorLabel), \(receipt.summary), \(timestampText)\(receipt.isVoided ? ", voided" : "")")
     }
 
     // MARK: - Pieces

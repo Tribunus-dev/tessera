@@ -50,6 +50,7 @@ public struct CodeSearchPanelView: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Clear search")
             }
         }
         .padding(.horizontal, 8)
@@ -61,13 +62,16 @@ public struct CodeSearchPanelView: View {
             Toggle("Case", isOn: $caseSensitive)
                 .toggleStyle(.button)
                 .controlSize(.small)
+                .accessibilityLabel("Case sensitive")
             Toggle("Regex", isOn: $isRegex)
                 .toggleStyle(.button)
                 .controlSize(.small)
+                .accessibilityLabel("Regular expression")
             TextField("Language", text: $languageFilter)
                 .textFieldStyle(.roundedBorder)
                 .controlSize(.small)
                 .frame(maxWidth: 100)
+                .accessibilityLabel("Filter by language")
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
@@ -110,16 +114,24 @@ public struct CodeSearchPanelView: View {
     }
 
     private func hitRow(_ hit: CodeSearchHit) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 4) {
-                Text("L\(hit.line):\(hit.column)")
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.secondary)
-                Text(hit.lineText)
-                    .font(.caption.monospaced())
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+        Button {
+            // Navigation to the hit line is handled by the parent
+            // view observing the search selection.
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Text("L\(hit.line):\(hit.column)")
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                    Text(hit.lineText)
+                        .font(.caption.monospaced())
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
             }
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Line \(hit.line): \(hit.lineText)")
+        .keyboardShortcut(.return)
     }
 }

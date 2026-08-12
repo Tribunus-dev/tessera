@@ -45,6 +45,7 @@ public struct C2PAManifestSheet: View {
                     .padding(12)
             }
             .background(.background)
+            .accessibilityLabel("C2PA manifest JSON")
         }
         .frame(minWidth: 480, idealWidth: 600, minHeight: 320)
         .onAppear { jsonString = encodeJSON() }

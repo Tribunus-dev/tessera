@@ -312,6 +312,8 @@ struct SlidesTagChipsView: View {
                         .opacity(activeTag == nil || activeTag == tag ? 1.0 : 0.4)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Filter by \(tag)")
+                .accessibilityAddTraits(activeTag == tag ? .isSelected : [])
             }
         }
     }

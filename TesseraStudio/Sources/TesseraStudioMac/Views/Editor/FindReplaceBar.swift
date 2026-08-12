@@ -54,6 +54,7 @@ public struct FindReplaceBar: View {
                     .font(.system(size: 12))
                     .frame(minWidth: 160, maxWidth: 280)
                     .focused($isSearchFocused)
+                    .accessibilityLabel("Find text")
                     .onSubmit { onFindNext() }
                     .onChange(of: findText) { _, _ in
                         // Trigger a search update when find text changes.
@@ -75,6 +76,7 @@ public struct FindReplaceBar: View {
                     .font(.system(size: 10))
                     .foregroundStyle(matchCount > 0 ? Color.secondary : Color.red)
                     .frame(minWidth: 40)
+                    .accessibilityLabel(matchCount > 0 ? "\(currentMatch) of \(matchCount) matches" : "No matches found")
             }
 
             // Navigation buttons
@@ -106,6 +108,7 @@ public struct FindReplaceBar: View {
                 .toggleStyle(.button)
                 .buttonStyle(.plain)
                 .help("Case sensitive")
+                .accessibilityLabel("Case sensitive")
 
                 Toggle(isOn: $isWholeWord) {
                     Image(systemName: "text.alignleft")
@@ -114,6 +117,7 @@ public struct FindReplaceBar: View {
                 .toggleStyle(.button)
                 .buttonStyle(.plain)
                 .help("Whole word")
+                .accessibilityLabel("Whole word")
 
                 Toggle(isOn: $isRegex) {
                     Text(".*")
@@ -122,6 +126,7 @@ public struct FindReplaceBar: View {
                 .toggleStyle(.button)
                 .buttonStyle(.plain)
                 .help("Regular expression")
+                .accessibilityLabel("Regular expression")
             }
             .frame(height: 22)
 
@@ -134,6 +139,7 @@ public struct FindReplaceBar: View {
                     .textFieldStyle(.plain)
                     .font(.system(size: 12))
                     .frame(minWidth: 120, maxWidth: 200)
+                    .accessibilityLabel("Replace with text")
             }
             .padding(.horizontal, 6)
             .padding(.vertical, 4)
@@ -172,6 +178,7 @@ public struct FindReplaceBar: View {
             }
             .buttonStyle(.plain)
             .help("Close (Esc)")
+            .accessibilityLabel("Close find bar")
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
@@ -223,6 +230,9 @@ public final class FindReplaceCoordinator: ObservableObject {
     @Published public var isBarVisible: Bool = false
     @Published public var matchCount: Int = 0
     @Published public var currentMatch: Int = 0
+    @Published public var isCaseSensitive: Bool = false
+    @Published public var isWholeWord: Bool = false
+    @Published public var isRegex: Bool = false
 
     public weak var textView: TesseraSTTextView?
 
@@ -266,17 +276,5 @@ public final class FindReplaceCoordinator: ObservableObject {
         if isRegex { options.insert(.regularExpr) }
         options.insert(.wrap)  // Always wrap for UX consistency.
         return options
-    }
-
-    private var isCaseSensitive: Bool {
-        false
-    }
-
-    private var isWholeWord: Bool {
-        false
-    }
-
-    private var isRegex: Bool {
-        false
     }
 }

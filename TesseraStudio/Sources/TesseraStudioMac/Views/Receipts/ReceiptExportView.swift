@@ -89,6 +89,7 @@ public struct ReceiptExportView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(isExporting)
+                .keyboardShortcut("e", modifiers: .command)
             }
         }
         .padding(16)
@@ -123,6 +124,9 @@ public struct ReceiptExportView: View {
         }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityLabel("\(fmt.displayName)\(format == fmt ? ", selected" : "")")
+        .accessibilityAddTraits(format == fmt ? .isSelected : [])
+        .keyboardShortcut(format == fmt ? .defaultAction : nil)
     }
 
     private func formatDescription(_ fmt: ReceiptExportFormat) -> String {

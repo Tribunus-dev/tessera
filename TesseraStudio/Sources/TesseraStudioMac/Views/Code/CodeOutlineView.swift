@@ -49,6 +49,7 @@ public struct CodeOutlineView: View {
             }
             .pickerStyle(.menu)
             .labelsHidden()
+            .accessibilityLabel("Filter outline by kind")
             Spacer()
         }
         .padding(.horizontal, 8)
@@ -94,21 +95,29 @@ public struct CodeOutlineView: View {
 
     @ViewBuilder
     private func outlineRow(_ row: OutlineRow) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: iconName(for: row.kind))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(.tint)
-                .frame(width: 14)
-            Text(row.label)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            Spacer()
-            Text("L\(row.line)")
-                .font(.caption2.monospaced())
-                .foregroundStyle(.secondary)
+        Button {
+            // Navigation is handled by the parent view observing
+            // the outline selection; this button activates it.
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: iconName(for: row.kind))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(.tint)
+                    .frame(width: 14)
+                Text(row.label)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+                Text("L\(row.line)")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.leading, CGFloat(row.depth) * 8)
+            .padding(.vertical, 2)
         }
-        .padding(.leading, CGFloat(row.depth) * 8)
-        .padding(.vertical, 2)
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(row.kind.rawValue) \(row.label) at line \(row.line)")
+        .keyboardShortcut(.return)
     }
 
     private func filtered() -> [CodeOutlineItem] {

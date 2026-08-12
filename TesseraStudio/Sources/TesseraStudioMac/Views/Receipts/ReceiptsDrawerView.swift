@@ -100,6 +100,7 @@ public struct ReceiptsDrawerView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(.bar)
+        .accessibilityLabel("Receipts drawer sections")
     }
 
     // MARK: - Content
@@ -272,6 +273,14 @@ public struct ReceiptsDrawerView: View {
         .padding(.vertical, 4)
         .padding(.horizontal, 8)
         .contentShape(Rectangle())
+        .accessibilityLabel(allDocumentsRowLabel(entry))
+    }
+
+    private func allDocumentsRowLabel(_ entry: AllDocumentsEntry) -> String {
+        if entry.documentID != documentID {
+            return "\(entry.receipt.summary), \(entry.documentTitle), \(entry.timestampText), disabled: not in current document"
+        }
+        return "\(entry.receipt.summary), \(entry.documentTitle), \(entry.timestampText)"
     }
 
     // MARK: - Loading

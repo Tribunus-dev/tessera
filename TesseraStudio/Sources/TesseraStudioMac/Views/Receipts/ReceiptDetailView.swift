@@ -96,6 +96,7 @@ public struct ReceiptDetailView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            .accessibilityLabel(actorLabel)
             Text("Document: \(documentTitle)")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
@@ -107,6 +108,7 @@ public struct ReceiptDetailView: View {
                 }
                 .buttonStyle(.borderless)
                 .font(.caption)
+                .accessibilityLabel("Show in chat")
 
                 Button {
                     onShowInGraph()
@@ -115,6 +117,7 @@ public struct ReceiptDetailView: View {
                 }
                 .buttonStyle(.borderless)
                 .font(.caption)
+                .accessibilityLabel("Show in graph")
             }
         }
     }
@@ -185,6 +188,7 @@ public struct ReceiptDetailView: View {
                             .font(.caption.weight(.medium))
                             .foregroundStyle(result.tint)
                     }
+                    .accessibilityLabel("Signature verification: \(result.label)")
                 }
             }
         }

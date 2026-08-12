@@ -65,5 +65,7 @@ struct WorkflowPaletteView: View {
         // inserts a node for.
         .contentShape(Rectangle())
         .draggable(entry.typeId)
+        .accessibilityLabel("\(entry.displayName), \(entry.typeId)")
+        .accessibilityHint("Drag onto the canvas to add this node")
     }
 }

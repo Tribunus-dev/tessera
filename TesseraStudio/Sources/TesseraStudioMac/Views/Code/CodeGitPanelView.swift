@@ -47,31 +47,38 @@ public struct CodeGitPanelView: View {
     }
 
     private func commitRow(_ commit: GitCommit) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Text(String(commit.hash.prefix(7)))
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                Text(commit.message)
-                    .lineLimit(2)
-                Spacer()
+        Button {
+            // Commit navigation handled by parent view.
+        } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(String(commit.hash.prefix(7)))
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                    Text(commit.message)
+                        .lineLimit(2)
+                    Spacer()
+                }
+                HStack(spacing: 6) {
+                    Text(commit.authorName)
+                        .font(.caption)
+                    Text(commit.date, style: .relative)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if !commit.filesChanged.isEmpty {
+                    Text(commit.filesChanged.joined(separator: ", "))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
             }
-            HStack(spacing: 6) {
-                Text(commit.authorName)
-                    .font(.caption)
-                Text(commit.date, style: .relative)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            if !commit.filesChanged.isEmpty {
-                Text(commit.filesChanged.joined(separator: ", "))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
+            .padding(.vertical, 2)
         }
-        .padding(.vertical, 2)
+        .buttonStyle(.plain)
+        .accessibilityLabel("Commit \(commit.hash.prefix(7)): \(commit.message), by \(commit.authorName)")
+        .keyboardShortcut(.return)
     }
 
     private func blameRow(_ line: GitBlame) -> some View {
@@ -88,6 +95,7 @@ public struct CodeGitPanelView: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
+        .accessibilityLabel("Line \(line.line): \(line.originalLine), commit \(line.commit.hash.prefix(7))")
     }
 
     private var emptyState: some View {

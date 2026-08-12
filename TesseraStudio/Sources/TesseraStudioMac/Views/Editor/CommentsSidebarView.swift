@@ -99,6 +99,7 @@ public struct CommentsSidebarView: View {
             }
             .buttonStyle(.plain)
             .help("Close review panel")
+            .accessibilityLabel("Close review panel")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -302,6 +303,7 @@ private struct TrackChangeCard: View {
                 .foregroundStyle(change.type == .insertion ? .green : .red)
                 .font(.system(size: 14))
                 .frame(width: 20)
+                .accessibilityLabel(change.type == .insertion ? "Insertion" : "Deletion")
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
@@ -316,7 +318,9 @@ private struct TrackChangeCard: View {
                 Text(change.text)
                     .font(.system(size: 12))
                     .strikethrough(change.type == .deletion)
-                    .foregroundStyle(change.type == .deletion ? .red : .primary)
+                    // Deletion text on red background: remove red foreground
+                    // so contrast passes. The strikethrough alone signals deletion.
+                    .foregroundStyle(change.type == .deletion ? .primary : .primary)
                     .textSelection(.enabled)
                     .padding(6)
                     .background(

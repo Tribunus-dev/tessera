@@ -125,6 +125,12 @@ public struct VersionHistorySheet: View {
             selectedReceipt = receipt
         } label: {
             HStack(alignment: .top, spacing: 10) {
+                // Leading accent bar (not color-only: the filled Rectangle
+                // provides a shape signal alongside the circle color).
+                Rectangle()
+                    .fill(selectedReceipt?.id == receipt.id ? Color.accentColor : Color.clear)
+                    .frame(width: 3)
+                    .frame(minHeight: 40)
                 VStack(alignment: .center, spacing: 2) {
                     Circle()
                         .fill(selectedReceipt?.id == receipt.id ? Color.accentColor : Color.secondary.opacity(0.3))
@@ -152,12 +158,13 @@ public struct VersionHistorySheet: View {
                 }
                 Spacer()
             }
-            .padding(.horizontal, 16)
+            .padding(.trailing, 16)
             .padding(.vertical, 10)
             .background(selectedReceipt?.id == receipt.id ? Color.accentColor.opacity(0.08) : Color.clear)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("\(receipt.summary), \(actorLabel(receipt.actor)), \(formattedDate(receipt.timestamp))")
     }
 
     // MARK: - Receipt detail

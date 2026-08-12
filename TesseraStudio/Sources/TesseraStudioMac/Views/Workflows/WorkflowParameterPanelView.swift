@@ -75,8 +75,6 @@ struct WorkflowParameterPanelView: View {
             // Re-attach it here, plus the schema description as
             // the accessibility hint when one exists.
             field(key: key, prop: prop)
-                .accessibilityLabel(propLabel(key))
-                .accessibilityHint(prop.description ?? "")
             if let desc = prop.description {
                 Text(desc)
                     .font(.caption2)
@@ -99,6 +97,8 @@ struct WorkflowParameterPanelView: View {
             case "boolean":
                 Toggle("", isOn: bindingForBool(key: key))
                     .labelsHidden()
+                    .accessibilityLabel(propLabel(key))
+                    .accessibilityHint(prop.description ?? "")
             case "integer", "number":
                 NumericParameterField(
                     isInteger: prop.type == "integer",

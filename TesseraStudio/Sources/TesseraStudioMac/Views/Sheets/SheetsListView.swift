@@ -290,6 +290,8 @@ struct SheetsTagChipsView: View {
                         .foregroundStyle(activeTag == tag ? Color.white : Color.primary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Filter by \(tag)")
+                .accessibilityAddTraits(activeTag == tag ? .isSelected : [])
             }
         }
         .padding(.horizontal, 8)

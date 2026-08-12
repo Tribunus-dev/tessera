@@ -115,6 +115,8 @@ struct WorkflowCanvasView: View {
             zoomControls.padding(10)
         }
         .background(.background)
+        .accessibilityLabel("Workflow canvas. \(workflow.nodes.count) nodes, \(workflow.edges.count) connections.")
+        .accessibilityHint("Use Tab to move focus into nodes. Arrow keys nudge the selected node.")
     }
 
     /// Zoom in / out / reset cluster, pinned to the canvas
@@ -180,6 +182,7 @@ struct WorkflowCanvasView: View {
             }
             ctx.stroke(path, with: .color(color), lineWidth: 0.5)
         }
+        .accessibilityHidden(true)
     }
 
     private var nodeLayer: some View {

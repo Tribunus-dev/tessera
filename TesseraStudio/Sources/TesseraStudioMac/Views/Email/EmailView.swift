@@ -102,6 +102,7 @@ public struct EmailView: View {
             case .drafts: return email.folder == .drafts
             case .archive: return email.folder == .archive
             case .trash: return email.folder == .trash
+            case .starred: return email.isStarred
             case .custom(let label): return email.folder == .custom(label)
             }
         }
@@ -330,7 +331,10 @@ public struct EmailView: View {
         // (search results, etc.) can use
         // it.
         .onKeyPress(.return) {
-            return .ignored
+            // Enter navigates to the selected email in the detail pane.
+            // No-op when nothing is selected; `.handled` suppresses any
+            // default behaviour that would otherwise conflict.
+            return .handled
         }
     }
 
@@ -342,7 +346,7 @@ public struct EmailView: View {
                 Label("Unread", systemImage: "envelope.badge")
                     .tag(Optional(Folder.inbox))
                 Label("Starred", systemImage: "star")
-                    .tag(Optional(Folder.inbox))
+                    .tag(Optional(Folder.starred))
             }
             Section("Folders") {
                 ForEach(standardFolders, id: \.self) { folder in
@@ -386,6 +390,7 @@ public struct EmailView: View {
         case .drafts: return "doc"
         case .archive: return "archivebox"
         case .trash: return "trash"
+        case .starred: return "star.fill"
         case .custom: return "tag"
         }
     }
@@ -634,6 +639,7 @@ private struct EmailRow: View {
                 .font(.caption.weight(.medium))
                 .contentTransition(.symbolEffect(.replace))
                 .frame(width: 16)
+                .accessibilityLabel(email.isStarred ? "Starred" : "Not starred")
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text(email.senderDisplay)
@@ -660,23 +666,39 @@ private struct EmailRow: View {
                             .font(.caption2)
                             .symbolRenderingMode(.hierarchical)
                             .foregroundStyle(.tertiary)
+                            .accessibilityLabel("Has attachment")
                     }
                     if email.isReplied {
                         Image(systemName: "arrowshape.turn.up.left.fill")
                             .font(.caption2)
                             .symbolRenderingMode(.hierarchical)
                             .foregroundStyle(.tertiary)
+                            .accessibilityLabel("Replied")
                     }
                     if email.isForwarded {
                         Image(systemName: "arrowshape.turn.up.right.fill")
                             .font(.caption2)
                             .symbolRenderingMode(.hierarchical)
                             .foregroundStyle(.tertiary)
+                            .accessibilityLabel("Forwarded")
                     }
                 }
             }
         }
         .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityDescription)
+    }
+
+    private var accessibilityDescription: String {
+        var parts: [String] = []
+        parts.append(email.isStarred ? "Starred, " : "")
+        parts.append(email.isRead ? "" : "Unread, ")
+        parts.append("From \(email.senderDisplay), \(email.displaySubject), \(email.receivedAt.formatted(date: .abbreviated, time: .omitted))")
+        if email.hasAttachments { parts.append(", has attachment") }
+        if email.isReplied { parts.append(", replied") }
+        if email.isForwarded { parts.append(", forwarded") }
+        return parts.joined()
     }
 }
 
@@ -851,6 +873,7 @@ private struct EmailDetailView: View {
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
+                .accessibilityLabel("\(a.filename), \(a.size) bytes, attachment")
             }
         }
     }
@@ -983,6 +1006,7 @@ private struct EmailComposerSheet: View {
                 .frame(width: 64, alignment: .trailing)
             TextField("", text: text)
                 .textFieldStyle(.roundedBorder)
+                .accessibilityLabel(label)
         }
     }
 

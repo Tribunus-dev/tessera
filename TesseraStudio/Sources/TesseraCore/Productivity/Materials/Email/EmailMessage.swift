@@ -203,7 +203,7 @@ public struct EmailMessage: Codable, Sendable, Identifiable, Hashable {
     /// Used by the sidebar's count badge.
     public var isActive: Bool {
         switch folder {
-        case .inbox, .sent, .drafts: return !isArchived && !isTrashed
+        case .inbox, .sent, .drafts, .starred: return !isArchived && !isTrashed
         case .archive, .trash: return false
         case .custom: return !isArchived && !isTrashed
         }
@@ -280,6 +280,7 @@ public enum Folder: Codable, Sendable, Equatable, Hashable {
     case drafts
     case archive
     case trash
+    case starred
     case custom(String)
 
     /// Display name. The sidebar shows this string.
@@ -290,6 +291,7 @@ public enum Folder: Codable, Sendable, Equatable, Hashable {
         case .drafts: return "Drafts"
         case .archive: return "Archive"
         case .trash: return "Trash"
+        case .starred: return "Starred"
         case .custom(let s): return s
         }
     }
@@ -304,6 +306,7 @@ public enum Folder: Codable, Sendable, Equatable, Hashable {
         case .drafts: return "drafts"
         case .archive: return "archive"
         case .trash: return "trash"
+        case .starred: return "starred"
         case .custom(let s): return "label:\(s.lowercased())"
         }
     }
