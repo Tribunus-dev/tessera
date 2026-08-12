@@ -11,6 +11,52 @@ public enum AgentEvent: Sendable {
     case done
 }
 
+/// The prefix used in `AgentEvent.error(...)` to signal a hard stop
+/// (paradox 5, Microsoft HAX G11). Consumers that want to render a
+/// "stopped" confirmation distinct from a generic cancellation can
+/// check the prefix. The canonical record of the stop is the loop's
+/// `lastStopReason` field; the prefix is just a stream-level marker
+/// so consumers that already switch on `.error` can react without
+/// depending on a new AgentEvent case (which would ripple into every
+/// exhaustive switch in the codebase).
+public enum AgentEventMarker {
+    public static let stoppedPrefix: String = "[stopped]"
+}
+
+/// Why the agent loop was stopped.
+///
+/// The agent loop exposes a hard stop (Microsoft HAX G11 "Support
+/// efficient dismissal"; paradox 5 of agent-ux-fatigue). The hard
+/// stop is a control surface, not a safety hatch: once the user
+/// stops the loop, the loop does NOT auto-resume. A new `run()` call
+/// is rejected with a clear error until the caller explicitly
+/// invokes `clearStop()` (or constructs a new loop).
+public enum StopReason {
+    /// The user pressed the inline stop button (paradox 5). This is
+    /// the load-bearing case; the off-ramp is the trust feature.
+    case userRequest
+    /// The loop exceeded its time budget without producing a result.
+    /// Distinct from a user-initiated stop so the audit log and the
+    /// receipt can record a different category.
+    case timeout
+    /// The loop stopped because of an unrecoverable error. The
+    /// original error is preserved so the audit log and the UI can
+    /// surface a meaningful message; the loop refuses to resume
+    /// because the underlying condition is unknown.
+    case error(any Error)
+
+    /// Short, human-readable description of the reason. Stable
+    /// across runs; suitable for the audit log, the event stream,
+    /// and the inline stop button's confirmation label.
+    public var description: String {
+        switch self {
+        case .userRequest:        return "Stopped by user"
+        case .timeout:            return "Timed out"
+        case .error(let err):     return "Stopped due to error: \(String(describing: err))"
+        }
+    }
+}
+
 /// The streaming agent loop. Takes a user message, calls the LLM,
 /// parses tool calls, executes them via the registry with approval
 /// gating, and streams events back to the UI.
@@ -33,6 +79,17 @@ public final class TesseraAgentLoop {
     public private(set) var isRunning = false
     public private(set) var currentTask: Task<Void, Never>?
     public private(set) var tokenBudget: TokenBudget
+    /// The reason the loop was last stopped, if any. Non-nil means
+    /// the loop is in a HARD-STOP state: a new `run()` call is
+    /// rejected with a `.error(...)` event until the caller invokes
+    /// `clearStop()`. The agent does not auto-resume.
+    ///
+    /// This is the anti-metric guard for paradox 5: the
+    /// "% of stop-button presses that were followed by an agent
+    /// auto-resume" target is ==0. The state lives on the loop
+    /// instance (not in the chat controller) so the hard stop is
+    /// structural, not a flag the controller can forget to check.
+    public private(set) var lastStopReason: StopReason?
     /// Stable id for this loop run; tags approval receipts (autonomy spec 14).
     public let sessionID = UUID().uuidString
 
@@ -72,7 +129,27 @@ public final class TesseraAgentLoop {
         userMessage: String,
         history: [ChatMessage]
     ) -> AsyncStream<AgentEvent> {
-        AsyncStream { continuation in
+        // Hard-stop guard (paradox 5 / Microsoft HAX G11). Once the user
+        // has stopped the loop, the loop is in a parked state and refuses
+        // to start a new run until the caller explicitly clears the stop.
+        // The agent does not auto-resume; this is the structural defense
+        // against the off-ramp paradox failure mode (the user has no
+        // escape from the agent's actions).
+        if let reason = lastStopReason {
+            return AsyncStream { continuation in
+                let description = "Loop is stopped (\(reason.description)). Call clearStop() to resume."
+                // Mark this as a stop signal via the prefix so consumers
+                // that already switch on `.error` can render a stop
+                // confirmation without depending on a new AgentEvent
+                // case (which would ripple into every exhaustive
+                // switch in the codebase).
+                continuation.yield(.error("\(AgentEventMarker.stoppedPrefix) \(description)"))
+                continuation.yield(.done)
+                continuation.finish()
+            }
+        }
+
+        return AsyncStream { continuation in
             let task = Task { @MainActor in
                 self.isRunning = true
                 defer {
@@ -87,7 +164,21 @@ public final class TesseraAgentLoop {
                         continuation: continuation
                     )
                 } catch is CancellationError {
-                    continuation.yield(.error("Cancelled"))
+                    // Cancellation here is either a user-initiated stop
+                    // (recorded via `lastStopReason` in `stop(reason:)`)
+                    // or a sub-task cancellation (e.g. the stream's
+                    // onTermination fired when the consumer dropped the
+                    // stream). Distinguish the two by prefixing the
+                    // error so consumers can render a "stopped"
+                    // confirmation distinct from a generic "cancelled"
+                    // message. The hard-stop state lives in
+                    // `lastStopReason`; the prefix is just a stream-
+                    // level marker.
+                    if let reason = self.lastStopReason {
+                        continuation.yield(.error("\(AgentEventMarker.stoppedPrefix) \(reason.description)"))
+                    } else {
+                        continuation.yield(.error("Cancelled"))
+                    }
                 } catch {
                     continuation.yield(.error(error.localizedDescription))
                 }
@@ -104,6 +195,44 @@ public final class TesseraAgentLoop {
 
     public func cancel() {
         currentTask?.cancel()
+    }
+
+    /// Hard-stop the agent loop (paradox 5, Microsoft HAX G11 "Support
+    /// efficient dismissal"). Cancels the running task (which propagates
+    /// cancellation into every awaited sub-task: the LLM stream, the
+    /// tool execution, the approval prompt), records the reason on the
+    /// loop instance, and signals the stop into the active stream via
+    /// the `AgentEventMarker.stoppedPrefix` marker on the `.error` event.
+    ///
+    /// Hard-stop semantics: the agent does NOT auto-resume. A new
+    /// `run()` call is rejected with a `.error(...)` event until the
+    /// caller invokes `clearStop()`. The off-ramp is a control surface,
+    /// not a safety hatch.
+    ///
+    /// Calling `stop` on a loop that is not running is a no-op (the
+    /// loop is already in a stopped-or-idle state); the reason is still
+    /// recorded so subsequent `run()` calls refuse to start.
+    public func stop(reason: StopReason) {
+        // Record the reason FIRST so the loop is in a hard-stop state
+        // even if the cancellation races with the loop's own termination
+        // path. The order matters: a stop signal must be observable on
+        // the active stream BEFORE `isRunning` flips back to false, so
+        // the user sees a "stopped" confirmation rather than a silent
+        // disappearance. The signal is delivered as a prefixed
+        // `.error(...)` event from the cancellation handler in `run`,
+        // which checks `lastStopReason` to choose the prefix.
+        lastStopReason = reason
+        currentTask?.cancel()
+    }
+
+    /// Clear the hard-stop state. Required before a new `run()` call
+    /// is accepted after `stop(reason:)` was invoked. The caller is
+    /// the only party that can resume the agent; this is the second
+    /// half of the thermostat-on-a-schedule metaphor (paradox 5):
+    /// "a manual nudge holds until the next scheduled slot" -- the
+    /// next slot is a user-initiated `clearStop()`.
+    public func clearStop() {
+        lastStopReason = nil
     }
 
     /// Exposed for the dual-agent controller, which drives the provider's
