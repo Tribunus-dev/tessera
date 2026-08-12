@@ -54,6 +54,8 @@ public final class TesseraStreamingDiffView: NSObject, ObservableObject {
     // MARK: - Public API
 
     /// Start a streaming rewrite for `selectedRange` in the given `textView`.
+    /// Marked @MainActor so it can access $overlayState for the hosting view.
+    @MainActor
     public func startRewrite(
         originalText: String,
         selectedRange: NSRange,
@@ -143,7 +145,8 @@ public final class TesseraStreamingDiffView: NSObject, ObservableObject {
 
     /// Simple word-level LCS-based diff.
     /// Produces [DiffSegment] from original vs rewritten.
-    private func computeDiff(original: String, rewritten: String) -> [DiffSegment] {
+    /// Marked nonisolated so it can be called from streaming callbacks.
+    private nonisolated func computeDiff(original: String, rewritten: String) -> [DiffSegment] {
         let originalWords = original.split(separator: " ", omittingEmptySubsequences: false).map(String.init)
         let rewrittenWords = rewritten.split(separator: " ", omittingEmptySubsequences: false).map(String.init)
 
@@ -167,13 +170,13 @@ public final class TesseraStreamingDiffView: NSObject, ObservableObject {
     }
 
     /// Heuristic: prefer insertion when the rewritten word doesn't appear later in original.
-    private func shouldInsert(word: String, inOriginal: [String], fromIndex: Int) -> Bool {
+    private nonisolated func shouldInsert(word: String, inOriginal: [String], fromIndex: Int) -> Bool {
         let remainingOriginal = Array(inOriginal.dropFirst(fromIndex))
         return !remainingOriginal.contains(word)
     }
 
     /// Collapse consecutive segments of the same type.
-    private func collapseSegments(_ segments: [DiffSegment]) -> [DiffSegment] {
+    private nonisolated func collapseSegments(_ segments: [DiffSegment]) -> [DiffSegment] {
         guard !segments.isEmpty else { return [] }
         var result: [DiffSegment] = [segments[0]]
         for segment in segments.dropFirst() {
@@ -194,43 +197,24 @@ public final class TesseraStreamingDiffView: NSObject, ObservableObject {
 
     // MARK: - Overlay Positioning
 
+    @MainActor
     private func positionOverlay(over range: NSRange, in textView: NSView) {
         guard let stTextView = textView as? STTextView else { return }
-        guard let layoutManager = stTextView.textLayoutManager else { return }
 
-        // Get bounding rect for the range in the text view's coordinate system
-        let textContainer = layoutManager.textContainer
-        let rangeStart = IntTextLocation(intValue: range.location)
-        let rangeEnd = IntTextLocation(intValue: range.location + range.length)
+        // Use the standard NSTextView method to get the rect for the character range.
+        var actualRange: NSRange = NSRange(location: 0, length: 0)
+        let overlayRect = stTextView.firstRect(forCharacterRange: range, actualRange: &actualRange)
 
-        var overlayRect: NSRect = .zero
-        var found = false
-
-        layoutManager.enumerateTextLayoutFragments(
-            from: rangeStart,
-            options: []
-        ) { fragment in
-            if let fragmentRange = fragment.textRange {
-                let fragStart = fragmentRange.start
-                let fragEnd = fragmentRange.end
-                // Check overlap with our target range
-                if fragStart.compare(rangeEnd as NSTextLocation) != .orderedDescending,
-                   fragEnd.compare(rangeStart as NSTextLocation) != .orderedAscending {
-                    overlayRect = fragment.layoutFragment.frame
-                    found = true
-                }
-            }
-            return !found  // continue until found
-        }
-
-        // Fallback: use the cursor/selection rect if no fragment found
-        if !found {
-            overlayRect = stTextView.firstRect(forCharacterRange: range, actualRange: nil)
-        }
+        // Capture the binding explicitly to satisfy the type checker in this
+        // @MainActor context where @Published projects as Binding on this actor.
+        let stateBinding = Binding(
+            get: { self.overlayState },
+            set: { self.overlayState = $0 }
+        )
 
         // Create and position the hosting view 120pt above the text
         let rootView = TesseraDiffOverlayView(
-            state: $overlayState,
+            state: stateBinding,
             mode: currentMode,
             onAccept: { [weak self] in self?.accept() },
             onReject: { [weak self] in self?.reject() }
@@ -253,4 +237,3 @@ public final class TesseraStreamingDiffView: NSObject, ObservableObject {
         overlayState = .idle
     }
 }
-#endif

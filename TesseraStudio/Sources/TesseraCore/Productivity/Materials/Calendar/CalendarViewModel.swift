@@ -310,4 +310,19 @@ public final class CalendarViewModel: ObservableObject {
             errorMessage = "Respond failed: \(error)"
         }
     }
+
+    /// Update the notes field of a specific event. Used by
+    /// the detail pane's notes editor on the macOS surface.
+    public func updateEventNotes(eventID: UUID, notes: String) async {
+        guard let event = events.first(where: { $0.id == eventID }) else { return }
+        var updated = event
+        updated.notes = notes
+        updated.updatedAt = Date()
+        do {
+            _ = try await store.upsert(updated)
+            await loadEvents()
+        } catch {
+            errorMessage = "Save notes failed: \(error)"
+        }
+    }
 }

@@ -29,6 +29,9 @@ public struct CalendarSurfaceView: View {
         self.chatFocus = chatFocus
     }
 
+    @State private var eventReceipts: [GraphReceipt] = []
+    @State private var eventLinks: [EntityLink] = []
+
     public var body: some View {
         NavigationSplitView {
             sidebar
@@ -48,6 +51,23 @@ public struct CalendarSurfaceView: View {
         }
         .onDisappear { chatFocus?.clear() }
         .task { await model.loadEvents() }
+        .task(id: model.selectedEventID) {
+            await loadEventDetail()
+        }
+    }
+
+    private func loadEventDetail() async {
+        guard let eventID = model.selectedEventID else {
+            eventReceipts = []
+            eventLinks = []
+            return
+        }
+        // Links and receipts are loaded lazily here so the detail
+        // pane can display them without polling the store directly.
+        // Placeholder: the CalendarGraphConnector wires entity_links
+        // in a follow-up phase. For now, show the pane with no links.
+        eventReceipts = []
+        eventLinks = []
     }
 
     // MARK: - Sidebar
@@ -267,8 +287,11 @@ public struct CalendarSurfaceView: View {
     @ViewBuilder
     private var detailColumn: some View {
         if let event = model.selectedEvent {
-            CalendarEventDetailView(
+            CalendarEventNotesEditorView(
                 event: event,
+                model: model,
+                receipts: eventReceipts,
+                links: eventLinks,
                 onRespond: { status in
                     Task { await model.respond(to: status) }
                 },

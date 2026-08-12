@@ -1,49 +1,87 @@
 import SwiftUI
+import TesseraCore
 
 // MARK: - SurfaceLinkedEntityChip
 
-/// A compact chip showing a linked entity's UUID prefix and optional icon.
+/// A minimal pill chip for displaying one linked entity in a surface
+/// detail pane. Created as the Phase 12 Wave 1 Agent 1 component.
 ///
-/// Replaces `DocLinkedEntityChip`, `SheetLinkedEntityChip`,
-/// `SlideLinkedEntityChip`, and `LinkedEntityChip` across all
-/// surface detail views.
+/// Displays an SF Symbol icon, the entity's label, and an optional
+/// type badge. Compact enough to appear inline in metadata rows or
+/// as a horizontal scroll in a linked-entities section.
 public struct SurfaceLinkedEntityChip: View {
-    public let id: UUID
-    /// Optional SF Symbol name. Defaults to `"link"` when nil.
-    public var icon: String? = nil
-    /// Optional click handler. When nil the chip is read-only
-    /// (matching the detail-view pattern). When provided the
-    /// chip wraps a `Button`.
-    public var onClick: (() -> Void)? = nil
+    public let link: EntityLink
+    public let label: String
+    public var onTap: (() -> Void)?
 
-    public init(id: UUID, icon: String? = nil, onClick: (() -> Void)? = nil) {
-        self.id = id
-        self.icon = icon
-        self.onClick = onClick
+    /// Convenience init from just a target entity ID (used by Doc/Sheet/Slide
+    /// detail views that only have the id, not the full EntityLink).
+    public init(id: UUID) {
+        self.link = EntityLink(
+            id: id,
+            sourceID: id,
+            targetID: id,
+            linkType: "",
+            weight: 1.0
+        )
+        self.label = String(id.uuidString.prefix(8))
+        self.onTap = nil
     }
 
-    private var chipContent: some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon ?? "link")
-                .symbolRenderingMode(.hierarchical)
-            Text(String(id.uuidString.prefix(8)) + "…")
-        }
-        .font(.caption)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
-        .background(Capsule().fill(.quaternary))
+    public init(link: EntityLink, label: String, onTap: (() -> Void)? = nil) {
+        self.link = link
+        self.label = label
+        self.onTap = onTap
     }
 
     public var body: some View {
-        if let onClick {
-            Button(action: onClick) {
-                chipContent
-                    .foregroundStyle(.secondary)
+        Button {
+            onTap?()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: iconName)
+                    .font(.caption2)
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(iconColor)
+                Text(label)
+                    .font(.caption)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                if !link.linkType.isEmpty {
+                    Text(link.linkType)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Color.secondary.opacity(0.12), in: Capsule())
+                }
             }
-            .buttonStyle(.plain)
-        } else {
-            chipContent
-                .foregroundStyle(.secondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color.accentColor.opacity(0.08), in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var iconName: String {
+        switch link.linkType {
+        case CalendarLinkType.attendeeOf.rawValue: return "person.crop.circle"
+        case CalendarLinkType.prepDocument.rawValue: return "doc.text"
+        case CalendarLinkType.prepTask.rawValue: return "checkmark.square"
+        case CalendarLinkType.reminderFor.rawValue: return "bell"
+        // Contacts and Reminders surfaces use plain string link types.
+        default: return "link"
+        }
+    }
+
+    private var iconColor: Color {
+        switch link.linkType {
+        case CalendarLinkType.attendeeOf.rawValue: return .blue
+        case CalendarLinkType.prepDocument.rawValue: return .purple
+        case CalendarLinkType.prepTask.rawValue: return .green
+        case CalendarLinkType.reminderFor.rawValue: return .yellow
+        default: return .secondary
         }
     }
 }

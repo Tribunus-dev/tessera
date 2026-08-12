@@ -1,4 +1,5 @@
 import SwiftUI
+import TesseraCore
 #if canImport(AppKit)
 import AppKit
 #endif
@@ -99,7 +100,7 @@ public struct TesseraDiffOverlayView: View {
 
     @ViewBuilder
     private func diffSegmentsView(segments: [DiffSegment]) -> some View {
-        Text(segments.map { segment -> AttributedString in
+        let attributed: AttributedString = segments.reduce(into: AttributedString()) { result, segment in
             var attr = AttributedString(segment.text)
             switch segment {
             case .unchanged:
@@ -112,9 +113,10 @@ public struct TesseraDiffOverlayView: View {
                 attr.strikethroughStyle = .single
                 attr.backgroundColor = Color.red.opacity(0.1)
             }
-            return attr
-        }.joined())
-        .font(.system(.body, design: .monospaced))
+            result.append(attr)
+        }
+        return Text(attributed)
+            .font(.system(.body, design: .monospaced))
     }
 
     private var controlBar: some View {
@@ -160,4 +162,3 @@ public struct TesseraDiffOverlayView: View {
         }
     }
 }
-#endif

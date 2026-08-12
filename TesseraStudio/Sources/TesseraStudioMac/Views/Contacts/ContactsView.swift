@@ -239,6 +239,29 @@ private struct ContactDetailView: View {
 
     @State private var receipts: [GraphReceipt] = []
     @State private var showExportError: String?
+    @State private var notesDocument: DocumentAST
+    @State private var isSaving = false
+    @State private var lastError: String?
+    @State private var saveTask: Task<Void, Never>?
+    @State private var formattingState = FormattingState()
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.scenePhase) private var scenePhase
+
+    init(contact: Contact, store: ContactStore) {
+        self.contact = contact
+        self.store = store
+
+        let initialText = contact.notes ?? ""
+        let bid = UUID()
+        var ast = DocumentAST()
+        ast.blocks[bid] = Block(
+            id: bid,
+            type: .paragraph,
+            content: [InlineRun(text: initialText)]
+        )
+        ast.rootChildren = [bid]
+        _notesDocument = State(initialValue: ast)
+    }
 
     var body: some View {
         ScrollView {
@@ -246,6 +269,8 @@ private struct ContactDetailView: View {
                 header
                 Divider()
                 contactFields
+                Divider()
+                notesEditorSection
                 Divider()
                 receiptsSection
             }
@@ -264,6 +289,15 @@ private struct ContactDetailView: View {
         }
         .task {
             await loadReceipts()
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            switch newPhase {
+            case .inactive, .background:
+                saveTask?.cancel()
+                Task { await saveNotes() }
+            default:
+                break
+            }
         }
         .alert("Export failed",
                isPresented: Binding(
@@ -322,11 +356,61 @@ private struct ContactDetailView: View {
                 Text("Birthday: \(birthday.formatted(date: .abbreviated, time: .omitted))")
                     .font(.caption)
             }
-            if let notes = contact.notes, !notes.isEmpty {
-                Text(notes)
-                    .font(.caption)
-            }
         }
+    }
+
+    private var notesEditorSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Notes")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            SurfaceMetadataRow(
+                isSaving: isSaving,
+                lastError: lastError,
+                stats: [
+                    (label: "words", value: "\(wordCount)")
+                ]
+            )
+
+            TesseraEditorView(
+                mode: .notes,
+                theme: EditorTheme.current(isDark: colorScheme == .dark),
+                document: $notesDocument,
+                onMutationCommitted: { _, _ in
+                    scheduleCommitNotes()
+                }
+            )
+            .frame(minHeight: 100, maxHeight: 200)
+        }
+    }
+
+    private var wordCount: Int {
+        notesDocument.plainText()
+            .split(whereSeparator: { $0.isWhitespace || $0.isNewline })
+            .count
+    }
+
+    private func scheduleCommitNotes() {
+        saveTask?.cancel()
+        saveTask = Task {
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            await saveNotes()
+        }
+    }
+
+    private func saveNotes() async {
+        isSaving = true
+        lastError = nil
+        var updated = contact
+        updated.notes = notesDocument.plainText()
+        do {
+            _ = try await store.upsert(updated)
+        } catch {
+            lastError = String(describing: error)
+        }
+        isSaving = false
     }
 
     private func fieldSection(_ title: String, rows: [(String, String)]) -> some View {

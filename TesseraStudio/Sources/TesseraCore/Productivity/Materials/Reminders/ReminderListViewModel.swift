@@ -190,6 +190,20 @@ public final class ReminderListViewModel: ObservableObject, @unchecked Sendable 
         }
     }
 
+    /// Update the notes field of a specific reminder. Used by
+    /// the detail pane's notes editor on the macOS surface.
+    public func updateNotes(reminderID: UUID, notes: String) async {
+        guard let reminder = reminders.first(where: { $0.id == reminderID }) else { return }
+        var updated = reminder
+        updated.notes = notes
+        do {
+            _ = try await store.upsert(updated)
+            await load()
+        } catch {
+            loadError = String(describing: error)
+        }
+    }
+
     // MARK: - Relative time formatting
 
     /// Human-readable relative time, e.g. "in 15 min",

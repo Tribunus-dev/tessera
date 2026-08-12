@@ -15,6 +15,20 @@ import TesseraCore
 /// metadata is the audit trail the user can scroll.
 public struct ReminderDetailView: View {
 
+    let reminder: Reminder
+    let store: any ReminderStoring
+    let scheduler: ReminderNotificationScheduler
+
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var receipts: [GraphReceipt] = []
+    @State private var showError: String?
+    @State private var notesDocument: DocumentAST
+    @State private var isSaving = false
+    @State private var lastError: String?
+    @State private var saveTask: Task<Void, Never>?
+    @State private var formattingState = FormattingState()
+
     public init(
         reminder: Reminder,
         store: any ReminderStoring,
@@ -23,14 +37,18 @@ public struct ReminderDetailView: View {
         self.reminder = reminder
         self.store = store
         self.scheduler = scheduler
+
+        let initialText = reminder.notes
+        let bid = UUID()
+        var ast = DocumentAST()
+        ast.blocks[bid] = Block(
+            id: bid,
+            type: .paragraph,
+            content: [InlineRun(text: initialText)]
+        )
+        ast.rootChildren = [bid]
+        _notesDocument = State(initialValue: ast)
     }
-
-    let reminder: Reminder
-    let store: any ReminderStoring
-    let scheduler: ReminderNotificationScheduler
-
-    @State private var receipts: [GraphReceipt] = []
-    @State private var showError: String?
 
     public var body: some View {
         ScrollView {
@@ -38,6 +56,8 @@ public struct ReminderDetailView: View {
                 header
                 Divider()
                 metadata
+                Divider()
+                notesEditorSection
                 Divider()
                 receiptChain
             }
@@ -83,6 +103,15 @@ public struct ReminderDetailView: View {
         }
         .task {
             await loadReceipts()
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            switch newPhase {
+            case .inactive, .background:
+                saveTask?.cancel()
+                Task { await saveNotes() }
+            default:
+                break
+            }
         }
         .alert("Error",
                isPresented: Binding(
@@ -132,16 +161,61 @@ public struct ReminderDetailView: View {
                 row("Acknowledged", ack.formatted(date: .abbreviated, time: .shortened))
             }
             row("Calendar event", reminder.calendarEventID.uuidString)
-            if !reminder.notes.isEmpty {
-                Divider()
-                Text("Notes")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                Text(reminder.notes)
-                    .font(.body)
-                    .textSelection(.enabled)
-            }
         }
+    }
+
+    private var notesEditorSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Notes")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            SurfaceMetadataRow(
+                isSaving: isSaving,
+                lastError: lastError,
+                stats: [
+                    (label: "words", value: "\(wordCount)")
+                ]
+            )
+
+            TesseraEditorView(
+                mode: .notes,
+                theme: EditorTheme.current(isDark: colorScheme == .dark),
+                document: $notesDocument,
+                onMutationCommitted: { _, _ in
+                    scheduleCommitNotes()
+                }
+            )
+            .frame(minHeight: 100, maxHeight: 200)
+        }
+    }
+
+    private var wordCount: Int {
+        notesDocument.plainText()
+            .split(whereSeparator: { $0.isWhitespace || $0.isNewline })
+            .count
+    }
+
+    private func scheduleCommitNotes() {
+        saveTask?.cancel()
+        saveTask = Task {
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            await saveNotes()
+        }
+    }
+
+    private func saveNotes() async {
+        isSaving = true
+        lastError = nil
+        var updated = reminder
+        updated.notes = notesDocument.plainText()
+        do {
+            _ = try await store.upsert(updated)
+        } catch {
+            lastError = String(describing: error)
+        }
+        isSaving = false
     }
 
     private func row(_ label: String, _ value: String) -> some View {
