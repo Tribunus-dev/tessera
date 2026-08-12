@@ -124,6 +124,7 @@ public struct NoteDetailView: View {
             }
             .help("Toggle focus mode (Cmd-\\)")
             .accessibilityLabel(isFocusMode ? "Exit Focus" : "Focus")
+            .keyboardShortcut("\\", modifiers: .command)
         }
 
         ToolbarItem(placement: .destructiveAction) {
@@ -144,6 +145,7 @@ public struct NoteDetailView: View {
         .textFieldStyle(.plain)
         .font(.title)
         .fontWeight(.bold)
+        .accessibilityLabel("Note title")
     }
 
     // MARK: - Tag bar
@@ -167,6 +169,8 @@ public struct NoteDetailView: View {
                         .foregroundStyle(.tint)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Remove tag \(tag)")
+                    .accessibilityHint("Removes the tag '\(tag)' from this note")
                 }
             }
             TextField("Add tag…", text: $viewModel.draftTag, onCommit: {
@@ -190,6 +194,8 @@ public struct NoteDetailView: View {
             }
             .toggleStyle(.button)
             .controlSize(.small)
+            .accessibilityLabel(viewModel.note.isPinned ? "Pinned" : "Pin note")
+            .accessibilityValue(viewModel.note.isPinned ? "Note is pinned" : "Note is not pinned")
 
             Toggle(isOn: archiveBinding) {
                 Label(
@@ -199,11 +205,15 @@ public struct NoteDetailView: View {
             }
             .toggleStyle(.button)
             .controlSize(.small)
+            .accessibilityLabel(viewModel.note.isArchived ? "Archived" : "Archive note")
+            .accessibilityValue(viewModel.note.isArchived ? "Note is archived" : "Note is not archived")
 
             Button { showLinkSearch = true } label: {
                 Label("Link…", systemImage: "link.badge.plus")
             }
             .controlSize(.small)
+            .accessibilityLabel("Link to another material")
+            .accessibilityHint("Opens a sheet to paste an entity UUID and create a link")
 
             Spacer()
 
@@ -275,12 +285,12 @@ public struct NoteDetailView: View {
                 .font(.callout)
             HStack {
                 Button("Cancel") { showDeleteConfirm = false }
-                    .keyboardShortcut(.defaultAction)
+                    .keyboardShortcut(.cancelAction)
                 Button("Delete", role: .destructive) {
                     showDeleteConfirm = false
                     onDelete()
                 }
-                .keyboardShortcut(.cancelAction)
+                .keyboardShortcut(.defaultAction)
             }
         }
         .padding()
@@ -406,5 +416,7 @@ private struct LinkedEntityChip: View {
         .padding(.vertical, 3)
         .background(.quaternary, in: Capsule())
         .foregroundStyle(.secondary)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Linked entity, ID \(String(id.uuidString.prefix(8)))")
     }
 }

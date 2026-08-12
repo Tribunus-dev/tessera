@@ -229,7 +229,7 @@ public struct DocDetailView: View {
     private var headerSection: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             if let emoji = viewModel.doc.iconEmoji, !emoji.isEmpty {
-                Text(emoji).font(.title)
+                Text(emoji).font(.title).accessibilityHidden(true)
             }
             TextField("Title", text: $viewModel.draftTitle, onCommit: {
                 Task { await viewModel.commitTitle() }
@@ -237,6 +237,7 @@ public struct DocDetailView: View {
             .textFieldStyle(.plain)
             .font(.title)
             .fontWeight(.bold)
+            .accessibilityLabel("Document title")
         }
     }
 
@@ -273,23 +274,31 @@ public struct DocDetailView: View {
                       systemImage: viewModel.doc.isFavorite ? "star.fill" : "star")
             }
             .toggleStyle(.button).controlSize(.small)
+            .accessibilityLabel(viewModel.doc.isFavorite ? "Favorited" : "Favorite")
+            .accessibilityValue(viewModel.doc.isFavorite ? "Document is favorited" : "Document is not favorited")
 
             Toggle(isOn: archiveBinding) {
                 Label(viewModel.doc.isArchived ? "Archived" : "Archive",
                       systemImage: viewModel.doc.isArchived ? "archivebox.fill" : "archivebox")
             }
             .toggleStyle(.button).controlSize(.small)
+            .accessibilityLabel(viewModel.doc.isArchived ? "Archived" : "Archive document")
+            .accessibilityValue(viewModel.doc.isArchived ? "Document is archived" : "Document is not archived")
 
             Toggle(isOn: trashBinding) {
                 Label(viewModel.doc.isTrashed ? "In Trash" : "Trash",
                       systemImage: viewModel.doc.isTrashed ? "trash.fill" : "trash")
             }
             .toggleStyle(.button).controlSize(.small)
+            .accessibilityLabel(viewModel.doc.isTrashed ? "In Trash" : "Move to Trash")
+            .accessibilityValue(viewModel.doc.isTrashed ? "Document is in trash" : "Document is not in trash")
 
             Button { showLinkSearch = true } label: {
                 Label("Link…", systemImage: "link.badge.plus")
             }
             .controlSize(.small)
+            .accessibilityLabel("Link to another material")
+            .accessibilityHint("Opens a sheet to paste an entity UUID and create a link")
 
             Spacer()
         }
@@ -345,9 +354,9 @@ public struct DocDetailView: View {
             Text("Hard delete removes the row. The receipt chain is preserved.")
                 .multilineTextAlignment(.center).foregroundStyle(.secondary).font(.callout)
             HStack {
-                Button("Cancel") { showDeleteConfirm = false }.keyboardShortcut(.defaultAction)
+                Button("Cancel") { showDeleteConfirm = false }.keyboardShortcut(.cancelAction)
                 Button("Delete", role: .destructive) { showDeleteConfirm = false; onDelete() }
-                    .keyboardShortcut(.cancelAction)
+                    .keyboardShortcut(.defaultAction)
             }
         }
         .padding().frame(width: 360)

@@ -31,6 +31,7 @@ struct RouteChip: View {
                     )
             )
             .help("AI enabled: \(aiRoute == "local" ? "Granite running locally" : "Using cloud endpoint")")
+            .accessibilityLabel("AI route: \(aiRoute == "local" ? "Granite running locally" : "Cloud endpoint")")
         }
     }
 }
@@ -290,8 +291,8 @@ public struct TesseraEditorToolbar: View {
 
             ribbonGroup {
                 RibbonToggleButton(icon: "text.alignleft", isActive: formattingState.alignment == .leading, shortcut: "⌘L", action: { onCommand(.alignLeft) })
-                RibbonToggleButton(icon: "text.aligncenter", isActive: formattingState.alignment == .center, shortcut: "⌘E", action: { onCommand(.alignCenter) })
-                RibbonToggleButton(icon: "text.alignright", isActive: formattingState.alignment == .trailing, shortcut: "⌘R", action: { onCommand(.alignRight) })
+                RibbonToggleButton(icon: "text.aligncenter", isActive: formattingState.alignment == .center, shortcut: "⌘⇧C", action: { onCommand(.alignCenter) })
+                RibbonToggleButton(icon: "text.alignright", isActive: formattingState.alignment == .trailing, shortcut: "⌘⇧R", action: { onCommand(.alignRight) })
                 RibbonToggleButton(icon: "text.justify", isActive: formattingState.alignment == .justify, shortcut: "⌘J", action: { onCommand(.alignJustify) })
                 groupDivider()
                 RibbonButton(icon: "list.bullet", shortcut: "⌘⇧U") { onCommand(.toggleUnorderedList) }
@@ -571,6 +572,7 @@ public struct TesseraEditorToolbar: View {
             }
             .buttonStyle(.plain)
             .help(shortcutHint)
+            .accessibilityLabel(shortcutHint)
         }
 
         private var shortcutHint: String {
@@ -623,6 +625,7 @@ public struct TesseraEditorToolbar: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(label ?? icon ?? "")
         }
     }
 
@@ -655,6 +658,7 @@ public struct TesseraEditorToolbar: View {
                     )
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(label)
         }
     }
 

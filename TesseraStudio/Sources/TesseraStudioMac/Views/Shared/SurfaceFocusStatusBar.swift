@@ -31,6 +31,8 @@ public struct SurfaceFocusStatusBar: View {
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
             .help("Exit focus mode (Escape)")
+            .accessibilityLabel("Exit Focus mode")
+            .accessibilityHint("Press Escape to exit focus mode.")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 6)

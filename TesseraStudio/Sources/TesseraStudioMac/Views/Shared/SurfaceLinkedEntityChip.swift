@@ -62,6 +62,8 @@ public struct SurfaceLinkedEntityChip: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Linked \(link.linkType.isEmpty ? "entity" : link.linkType): \(label)")
+        .accessibilityHint("Double-tap to navigate to this linked material")
     }
 
     private var iconName: String {
@@ -77,10 +79,10 @@ public struct SurfaceLinkedEntityChip: View {
 
     private var iconColor: Color {
         switch link.linkType {
-        case CalendarLinkType.attendeeOf.rawValue: return .blue
+        case CalendarLinkType.attendeeOf.rawValue: return .accentColor
         case CalendarLinkType.prepDocument.rawValue: return .purple
         case CalendarLinkType.prepTask.rawValue: return .green
-        case CalendarLinkType.reminderFor.rawValue: return .yellow
+        case CalendarLinkType.reminderFor.rawValue: return .orange
         default: return .secondary
         }
     }

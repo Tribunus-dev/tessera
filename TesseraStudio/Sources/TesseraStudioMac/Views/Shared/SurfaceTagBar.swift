@@ -44,6 +44,8 @@ public struct SurfaceTagBar: View {
                     .foregroundStyle(Color.accentColor)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Remove tag \(tag)")
+                .accessibilityHint("Double-tap to remove the tag '\(tag)'")
             }
             TextField("Add tag…", text: draftTag, onCommit: onAdd)
                 .textFieldStyle(.roundedBorder)
