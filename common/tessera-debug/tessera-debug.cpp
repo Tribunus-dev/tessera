@@ -112,6 +112,14 @@ struct EnvState {
     std::string calibration_corpus;
     std::string calibration_corpus_hash;
     int64_t     stride = 1;
+    // FP environment block (v3 extension, spec §2.3). Set by the
+    // runtime hook via set_fp_env() before the sidecar is opened.
+    // Defaults are F32 accumulator, RTN rounding, IEEE denormals,
+    // CPU backend — the v3 extension's zero-init contract.
+    uint32_t    fp_accumulator_dtype = 0;  // 0=F32
+    uint32_t    rounding_mode        = 0;  // 0=RTN
+    uint32_t    denormal_mode        = 0;  // 0=IEEE
+    uint32_t    backend_id           = 0;  // 0=CPU
     bool        initialized = false;
 };
 
@@ -304,6 +312,21 @@ bool sidecar_open_impl(SidecarStream & s,
     s.ofs.write(reinterpret_cast<const char *>(&threshold),  sizeof(threshold));
     s.ofs.write(reinterpret_cast<const char *>(&total_zero), sizeof(total_zero));
 
+    // FP environment block (v3 extension, spec §2.3). The runtime
+    // hook sets the FP env via tessera_debug::set_fp_env() before
+    // the sidecar is opened; the writer reads it from
+    // env_state() here. Default values (zero-init) are
+    // platform-default / F32 accumulator / CPU; the runtime hook
+    // is responsible for setting the right values for its backend.
+    s.ofs.write(reinterpret_cast<const char *>(&env_state().fp_accumulator_dtype),
+                sizeof(env_state().fp_accumulator_dtype));
+    s.ofs.write(reinterpret_cast<const char *>(&env_state().rounding_mode),
+                sizeof(env_state().rounding_mode));
+    s.ofs.write(reinterpret_cast<const char *>(&env_state().denormal_mode),
+                sizeof(env_state().denormal_mode));
+    s.ofs.write(reinterpret_cast<const char *>(&env_state().backend_id),
+                sizeof(env_state().backend_id));
+
     // Reserve the per-row outlier-count strip (v2). Filled at close.
     s.row_outlier_counts.assign((size_t) rows, 0);
     s.outlier_count_total = 0;
@@ -463,9 +486,12 @@ void sidecar_close_impl(SidecarStream & s) {
                     sizeof(s.outlier_count_total));
     }
 
-    // Patch the per-row outlier-count strip at offset 40, just before
-    // the v3 per-row strip.
-    const std::streamoff v2_strip_off = (std::streamoff) (4 + 4 + 8 + 8 + 4 + 4 + 8);
+    // Patch the per-row outlier-count strip at offset 56 (after the
+    // 16-byte FP environment block that follows the 40-byte v1+v2
+    // header). Pre-v3-extension files had the v2 strip at offset 40
+    // (the v3 zero-init FP env block is 16 bytes of zero, so the
+    // offsets shift by 16).
+    const std::streamoff v2_strip_off = (std::streamoff) (4 + 4 + 8 + 8 + 4 + 4 + 8 + 16);
     s.ofs.seekp(v2_strip_off, std::ios::beg);
     if (!s.ofs) {
         fprintf(stderr, "tessera_debug: seekp to v2-strip-offset failed for '%s'\n",
@@ -737,6 +763,23 @@ int64_t dequant_stride() {
     ensure_env_loaded();
     return env_state().stride;
 }
+
+void set_fp_env(uint32_t fp_accumulator_dtype,
+               uint32_t rounding_mode,
+               uint32_t denormal_mode,
+               uint32_t backend_id) {
+    ensure_env_loaded();
+    EnvState & s = env_state();
+    s.fp_accumulator_dtype = fp_accumulator_dtype;
+    s.rounding_mode        = rounding_mode;
+    s.denormal_mode        = denormal_mode;
+    s.backend_id           = backend_id;
+}
+
+uint32_t fp_accumulator_dtype() { ensure_env_loaded(); return env_state().fp_accumulator_dtype; }
+uint32_t fp_rounding_mode()    { ensure_env_loaded(); return env_state().rounding_mode; }
+uint32_t fp_denormal_mode()    { ensure_env_loaded(); return env_state().denormal_mode; }
+uint32_t fp_backend_id()       { ensure_env_loaded(); return env_state().backend_id; }
 
 void set_dequant_capture_mode(DequantCaptureMode mode) {
     // No env-var load needed: the capture mode is purely a setter

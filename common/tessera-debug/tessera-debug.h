@@ -210,6 +210,31 @@ namespace tessera_debug {
     // Returns the currently-configured row capture stride (default 1).
     int64_t dequant_stride();
 
+    // --- FP environment block (v3 extension, spec §2.3) ---
+    //
+    // The runtime hook records the matmul accumulator dtype, the
+    // FMA rounding mode, the denormal mode, and the backend identity
+    // so two sidecars produced on different hardware are visibly
+    // different. The four fields form a 16-byte block at the end of
+    // the v3 header (offset 40). Defaults are F32 accumulator / RTN
+    // rounding / IEEE denormals / CPU backend (the v3 zero-init
+    // contract). The runtime hook MUST call set_fp_env() before the
+    // first sidecar write to record its actual FP environment.
+    //
+    // fp_accumulator_dtype: 0=F32, 1=F16, 2=BF16, 3=TF32
+    // rounding_mode:        0=RTN, 1=RTZ, 2=stochastic, 3=platform-default
+    // denormal_mode:        0=IEEE, 1=FTZ
+    // backend_id:           0=CPU, 1=CUDA, 2=METAL, 3=other
+    void set_fp_env(uint32_t fp_accumulator_dtype,
+                   uint32_t rounding_mode,
+                   uint32_t denormal_mode,
+                   uint32_t backend_id);
+    // Per-field getters.
+    uint32_t fp_accumulator_dtype();
+    uint32_t fp_rounding_mode();
+    uint32_t fp_denormal_mode();
+    uint32_t fp_backend_id();
+
     // --- Row-capture mode (L1+L1.5 trigger-gated reference) ---
     //
     // The shipped L1 capture is stride-based: every Nth row is written

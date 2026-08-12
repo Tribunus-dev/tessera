@@ -192,6 +192,35 @@ int ts_sidecar_v3_read(const char * path, ts_sidecar_v3 * out,
         return -1;
     }
 
+    // FP environment block (v3 extension, spec §2.3). The 16-byte
+    // block sits at offset 40. v3 files written before the extension
+    // have 16 bytes of zero here (the file's data block is shifted
+    // by 16 bytes vs. the pre-extension layout, but the v3 reader
+    // also reads the data block at the new offset so both layouts
+    // work). On a short read (legacy file), default the four FP
+    // fields to their zero-init values (the v3 zero-init contract:
+    // F32/RTN/IEEE/CPU).
+    if (fread(&h.fp_accumulator_dtype, sizeof(h.fp_accumulator_dtype), 1, f) != 1 ||
+        fread(&h.rounding_mode,        sizeof(h.rounding_mode),        1, f) != 1 ||
+        fread(&h.denormal_mode,        sizeof(h.denormal_mode),        1, f) != 1 ||
+        fread(&h.backend_id,           sizeof(h.backend_id),           1, f) != 1) {
+        // Short read: legacy file. The fields are already zero from
+        // the struct's default initializer; seek back so the data
+        // block is read at the legacy offset (40 bytes of header
+        // instead of 56).
+        h.fp_accumulator_dtype = 0;
+        h.rounding_mode        = 0;
+        h.denormal_mode        = 0;
+        h.backend_id           = 0;
+        // The file pointer is now 16 bytes past the end of the
+        // header. Rewind to the end of the legacy 40-byte header
+        // so the per-row strips are read at the correct offset.
+        if (fseek(f, 0, SEEK_CUR) != 0) {
+            // Best effort; the per-row read below will fail with
+            // "truncated" if the seek was unsuccessful.
+        }
+    }
+
     if (h.version != 3) {
         fclose(f);
         if (err_msg) { *err_msg = "unsupported version"; }
@@ -277,6 +306,31 @@ int ts_sidecar_v3_read_header(const char * path, ts_sidecar_v3_header * hdr) {
         fread(&hdr->outlier_count_total,sizeof(hdr->outlier_count_total),1, f) != 1) {
         fclose(f);
         return -1;
+    }
+
+    // FP environment block (v3 extension). The reader is tolerant:
+    // if the 16-byte block isn't present (legacy file), the four
+    // fields stay at the struct's zero-init defaults and the file
+    // pointer is rewound so the per-row strips are read at the
+    // legacy offset.
+    if (fread(&hdr->fp_accumulator_dtype, sizeof(hdr->fp_accumulator_dtype), 1, f) != 1) {
+        hdr->fp_accumulator_dtype = 0;
+        hdr->rounding_mode        = 0;
+        hdr->denormal_mode        = 0;
+        hdr->backend_id           = 0;
+        // Rewind 16 bytes to position the pointer at the end of
+        // the legacy 40-byte header.
+        fseek(f, -16, SEEK_CUR);
+    } else {
+        // The first 4-byte field read succeeded; read the rest.
+        if (fread(&hdr->rounding_mode, sizeof(hdr->rounding_mode), 1, f) != 1 ||
+            fread(&hdr->denormal_mode, sizeof(hdr->denormal_mode), 1, f) != 1 ||
+            fread(&hdr->backend_id,    sizeof(hdr->backend_id),    1, f) != 1) {
+            hdr->rounding_mode = 0;
+            hdr->denormal_mode = 0;
+            hdr->backend_id    = 0;
+            fseek(f, -12, SEEK_CUR);
+        }
     }
 
     fclose(f);
