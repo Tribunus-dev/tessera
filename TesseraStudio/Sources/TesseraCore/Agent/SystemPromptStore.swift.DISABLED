@@ -1,0 +1,343 @@
+import Foundation
+
+// MARK: - SystemPromptOverlay
+
+/// The provenance of an overlay — which system produced it.
+public enum SystemPromptOverlayProvenance: String, Codable, Sendable, Hashable {
+    /// Agent proposed the overlay based on escalation reasoning or world signals.
+    case outcomeBased = "outcome_based"
+    /// Agent proposed the overlay from heuristic / intuition.
+    case heuristic = "heuristic"
+    /// Overlay was applied automatically by the curation feedback loop.
+    case curationAuto = "curation_auto"
+    /// User authored the overlay directly.
+    case user = "user"
+}
+
+/// The curation verdict that resolved the provenance session/escalation.
+/// Used by the feedback loop to accept or revert outcome-based overlays.
+public enum SystemPromptOverlayVerdict: String, Codable, Sendable, Hashable {
+    /// The provenance session was promoted — overlay confirmed.
+    case promoted = "promoted"
+    /// The provenance session was quarantined — overlay reverted.
+    case quarantined = "quarantined"
+    /// The provenance session was dropped — overlay reverted.
+    case dropped = "dropped"
+    /// Verdict not yet resolved.
+    case pending = "pending"
+
+    /// Map from the session-curation ledger verdict. Unrecognized strings
+    /// (future schema additions) default to .pending so the feedback loop
+    /// re-checks instead of crashing.
+    public init(fromLedgerVerdict verdict: TesseraSessionVerdict) {
+        switch verdict {
+        case .promoted:    self = .promoted
+        case .quarantined: self = .quarantined
+        case .dropped:     self = .dropped
+        case .purged:      self = .dropped
+        }
+    }
+}
+
+/// A named instruction fragment that the agent writes to the system prompt.
+/// Overlays are applied on top of the base persona + tools + skills prompt,
+/// enabling the recursive self-modification loop (docs/self-improving-loop-design.md).
+///
+/// Each overlay carries:
+/// - `id`: stable UUID for the receipt linkage
+/// - `tag`: short identifier shown in the prompt section header
+/// - `content`: the instruction fragment (may be empty — a null overlay is valid)
+/// - `createdAt`: ISO8601 wall time
+/// - `provenance`: where the overlay came from (curation verdict, heuristic, user)
+/// - `supersededBy`: if non-nil, this overlay was replaced by another and is inactive
+/// - `verdict`: curation verdict linking to the provenance session/escalation
+public struct SystemPromptOverlay: Codable, Sendable, Hashable, Identifiable {
+
+    /// Convenience: true when this overlay was authored from outcome-grounded
+    /// reasoning (world signals, escalation). Used for backwards-compatible
+    /// access from the tool layer and for the store summary filter.
+    public var outcomeBased: Bool {
+        provenance == .outcomeBased
+    }
+
+    public let id: UUID
+    public var tag: String
+    public var content: String
+    public let createdAt: Date
+    /// Where this overlay came from. Determines which feedback loop applies.
+    public var provenance: SystemPromptOverlayProvenance
+    /// nil = active. Non-nil = superseded by the named overlay (never deleted).
+    public var supersededBy: UUID?
+    /// The curation verdict for outcome-based overlays. Pending until the
+    /// session curation sweep resolves the provenance session.
+    public var verdict: SystemPromptOverlayVerdict
+
+    public init(
+        id: UUID = UUID(),
+        tag: String,
+        content: String,
+        createdAt: Date = Date(),
+        provenance: SystemPromptOverlayProvenance = .heuristic,
+        supersededBy: UUID? = nil,
+        verdict: SystemPromptOverlayVerdict = .pending
+    ) {
+        self.id = id
+        self.tag = tag
+        self.content = content
+        self.createdAt = createdAt
+        self.provenance = provenance
+        self.supersededBy = supersededBy
+        self.verdict = verdict
+    }
+}
+
+// MARK: - SystemPromptOverlayEnvelope
+
+/// The persisted form of the store. Versioned for forward-compat: a v0 store
+/// (no envelope) is loaded as active overlays only, with an empty history.
+struct SystemPromptOverlayEnvelope: Codable, Sendable {
+    /// Version marker. Bump to 1 if we add fields that need migration.
+    var version: Int = 0
+    /// Active overlays (supersededBy == nil), newest-first.
+    var activeOverlays: [SystemPromptOverlay] = []
+    /// Full history including superseded overlays, newest-first.
+    var allOverlays: [SystemPromptOverlay] = []
+}
+
+// MARK: - SystemPromptStore
+
+/// Persistent store for system-prompt overlays. Thread-safe via actor isolation.
+///
+/// Overlays are never deleted — superseded overlays are kept in `allOverlays` with
+/// a `supersededBy` link so the audit trail is complete and reverts are possible.
+/// The `activeOverlays` array is a fast-path view over the same data.
+///
+/// The store is backed by a JSON file under the app's learning data dir
+/// (shared with `TesseraLearningStore`). Atomic writes via `Data.write(options: .atomic)`.
+public actor SystemPromptStore {
+    private let store: TesseraLearningStore
+    private let filename = "system-prompt-overlays.json"
+    private var envelope: SystemPromptOverlayEnvelope
+
+    /// Errors raised by the store.
+    public enum StoreError: Error, Sendable {
+        case overlayNotFound(id: UUID)
+        case alreadySuperseded(id: UUID)
+        case supersedeTargetNotFound(id: UUID)
+    }
+
+    /// Designated init: callers supply the learning store explicitly.
+    /// Internal because `TesseraLearningStore` is internal to this module.
+    init(store: TesseraLearningStore) {
+        self.store = store
+        self.envelope = store.load(SystemPromptOverlayEnvelope.self, from: filename, default: SystemPromptOverlayEnvelope())
+    }
+
+    /// Convenience init with the default learning store.
+    /// Used by internal call sites (agent loop, processor, curator).
+    init() {
+        self.init(store: TesseraLearningStore())
+    }
+
+    // MARK: - Read
+
+    /// All active overlays (supersededBy == nil), newest-first.
+    public var activeOverlays: [SystemPromptOverlay] {
+        envelope.activeOverlays
+    }
+
+    /// Every overlay in history, newest-first.
+    public var allOverlays: [SystemPromptOverlay] {
+        envelope.allOverlays
+    }
+
+    /// Render the active overlays as a prompt section, or "" if there are none.
+    /// Called by `TesseraAgentLoop.buildSystemPrompt()` to inject overlays.
+    public func asPromptSection() -> String {
+        guard !envelope.activeOverlays.isEmpty else { return "" }
+        var lines: [String] = []
+        lines.append("# Active instruction overlays")
+        lines.append("")
+        for overlay in envelope.activeOverlays {
+            if !overlay.content.isEmpty {
+                lines.append("## [\(overlay.tag)]")
+                lines.append(overlay.content)
+                lines.append("")
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// Summary of the store state, used by `get_system_prompt_context`.
+    public func summary() -> StoreSummary {
+        StoreSummary(
+            activeCount: envelope.activeOverlays.count,
+            totalCount: envelope.allOverlays.count,
+            outcomeBasedOverlayCount: envelope.allOverlays.filter(\.outcomeBased).count,
+            newestOverlay: envelope.allOverlays.first
+        )
+    }
+
+    // MARK: - Write
+
+    /// Add a new overlay. The tag must be non-empty; content may be empty.
+    /// Persists atomically before returning.
+    public func add(_ overlay: SystemPromptOverlay) throws {
+        guard !overlay.tag.isEmpty else {
+            throw StoreError.overlayNotFound(id: overlay.id) // reuse error
+        }
+        envelope.allOverlays.insert(overlay, at: 0)
+        if overlay.supersededBy == nil {
+            envelope.activeOverlays.insert(overlay, at: 0)
+        }
+        try persist()
+    }
+
+    /// Mark an overlay as superseded by another. The old overlay is NOT deleted;
+    /// it is moved from `activeOverlays` to `allOverlays` with `supersededBy` set.
+    /// Persists atomically before returning.
+    public func supersede(oldID: UUID, by newID: UUID) throws {
+        guard let index = envelope.allOverlays.firstIndex(where: { $0.id == oldID }) else {
+            throw StoreError.overlayNotFound(id: oldID)
+        }
+        guard envelope.allOverlays.contains(where: { $0.id == newID }) else {
+            throw StoreError.supersedeTargetNotFound(id: newID)
+        }
+        guard envelope.allOverlays[index].supersededBy == nil else {
+            throw StoreError.alreadySuperseded(id: oldID)
+        }
+        envelope.allOverlays[index].supersededBy = newID
+        envelope.activeOverlays.removeAll { $0.id == oldID }
+        try persist()
+    }
+
+    /// Update an existing overlay's content and provenance.
+    /// Only works on active (non-superseded) overlays.
+    public func update(id: UUID, content: String, provenance: SystemPromptOverlayProvenance? = nil) throws {
+        guard let allIndex = envelope.allOverlays.firstIndex(where: { $0.id == id }) else {
+            throw StoreError.overlayNotFound(id: id)
+        }
+        guard envelope.allOverlays[allIndex].supersededBy == nil else {
+            throw StoreError.alreadySuperseded(id: id)
+        }
+        envelope.allOverlays[allIndex].content = content
+        if let prov = provenance {
+            envelope.allOverlays[allIndex].provenance = prov
+            // Also update the activeOverlays view if present.
+            if let actIndex = envelope.activeOverlays.firstIndex(where: { $0.id == id }) {
+                envelope.activeOverlays[actIndex].provenance = prov
+            }
+        }
+        try persist()
+    }
+
+    /// Remove an overlay entirely (hard delete). Prefer `supersede` — this
+    /// is only for the curation pipeline to purge genuinely harmful overlays.
+    public func delete(id: UUID) throws {
+        guard envelope.allOverlays.firstIndex(where: { $0.id == id }) != nil else {
+            throw StoreError.overlayNotFound(id: id)
+        }
+        envelope.activeOverlays.removeAll { $0.id == id }
+        envelope.allOverlays.removeAll { $0.id == id }
+        try persist()
+    }
+
+    // MARK: - Verdict tracking (curation feedback loop)
+
+    /// Add a new overlay with explicit provenance. Use this when the caller
+    /// knows the provenance at add-time (e.g. from escalation reasoning).
+    public func addWithProvenance(_ overlay: SystemPromptOverlay) throws {
+        try add(overlay)
+    }
+
+    /// Set the curation verdict on an outcome-based overlay.
+    /// Only updates if the overlay is still active (not superseded).
+    /// Throws if the overlay is not outcome-based.
+    public func setVerdict(id: UUID, verdict: SystemPromptOverlayVerdict) throws {
+        guard let allIndex = envelope.allOverlays.firstIndex(where: { $0.id == id }) else {
+            throw StoreError.overlayNotFound(id: id)
+        }
+        guard envelope.allOverlays[allIndex].supersededBy == nil else { return }
+        envelope.allOverlays[allIndex].verdict = verdict
+        if let actIndex = envelope.activeOverlays.firstIndex(where: { $0.id == id }) {
+            envelope.activeOverlays[actIndex].verdict = verdict
+        }
+        try persist()
+    }
+
+    /// All outcome-based overlays (active or superseded), newest-first.
+    public func outcomeBasedOverlays() -> [SystemPromptOverlay] {
+        envelope.allOverlays.filter { $0.provenance == .outcomeBased }
+    }
+
+    /// Outcome-based overlays with a pending verdict, newest-first.
+    /// These are the candidates the verdict-driven processor acts on.
+    public func pendingVerdictOverlays() -> [SystemPromptOverlay] {
+        envelope.allOverlays.filter {
+            $0.provenance == .outcomeBased && $0.verdict == .pending && $0.supersededBy == nil
+        }
+    }
+
+    /// Process a ledger verdict: find the overlay linked to the provenance
+    /// sid, apply the verdict policy, and persist. Safe to call repeatedly
+    /// (idempotent — already-resolved overlays are skipped).
+    ///
+    /// Policy:
+    /// - `.promoted` -> mark overlay verdict as .promoted
+    /// - `.quarantined` / `.dropped` -> supersede the overlay by a synthetic null
+    /// - `.purged` -> hard-delete the overlay (rare; user-initiated purge)
+    ///
+    /// Returns the affected overlay id if a mutation was applied, nil otherwise.
+    @discardableResult
+    public func processVerdict(
+        provenanceSid: String,
+        ledgerVerdict: TesseraSessionVerdict
+    ) throws -> UUID? {
+        // Find the outcome-based overlay that was created in the provenance session.
+        // The overlay's tag encodes the provenance sid so we can link them.
+        // Format: "provenance-<sid>" where sid matches the session that escalated.
+        guard let overlay = envelope.allOverlays.first(where: {
+            $0.provenance == .outcomeBased && $0.tag == "provenance-\(provenanceSid)"
+        }) else {
+            return nil
+        }
+        // Already resolved — skip.
+        if overlay.verdict != .pending { return nil }
+
+        let overlayVerdict = SystemPromptOverlayVerdict(fromLedgerVerdict: ledgerVerdict)
+
+        switch overlayVerdict {
+        case .promoted:
+            try setVerdict(id: overlay.id, verdict: .promoted)
+            return overlay.id
+
+        case .quarantined, .dropped:
+            // Suppress: create a synthetic null overlay to supersede this one.
+            let nullOverlay = SystemPromptOverlay(
+                tag: "curation-suppress-\(overlay.id.uuidString.prefix(8))",
+                content: "",
+                provenance: .curationAuto
+            )
+            try add(nullOverlay)
+            try supersede(oldID: overlay.id, by: nullOverlay.id)
+            return overlay.id
+
+        case .pending:
+            // Should not happen — already checked above.
+            return nil
+        }
+    }
+
+    // MARK: - Persistence
+
+    private func persist() throws {
+        try store.save(envelope, to: filename)
+    }
+
+    public struct StoreSummary: Sendable {
+        public let activeCount: Int
+        public let totalCount: Int
+        public let outcomeBasedOverlayCount: Int
+        public let newestOverlay: SystemPromptOverlay?
+    }
+}

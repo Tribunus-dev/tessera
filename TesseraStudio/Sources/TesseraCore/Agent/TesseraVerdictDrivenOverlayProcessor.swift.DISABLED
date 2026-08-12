@@ -1,0 +1,113 @@
+import Foundation
+
+/// Report from one verdict-processing run.
+public struct VerdictProcessorReport: Sendable, Equatable {
+    public var entriesChecked: Int = 0
+    public var overlaysPromoted: Int = 0
+    public var overlaysReverted: Int = 0
+    public var overlaysPurged: Int = 0
+    public var overlaysProcessed: [UUID] = []
+    public var note: String?
+
+    public init() {}
+}
+
+/// Actor that closes the curation feedback loop: reads new ledger verdicts
+/// since the last check and applies the verdict policy to outcome-based
+/// overlays in the system-prompt store.
+///
+/// Policy per verdict:
+/// - `.promoted`  -> mark overlay verdict as .promoted (confirmed)
+/// - `.quarantined` / `.dropped` -> supersede the overlay by a synthetic null
+/// - `.purged`    -> hard-delete the overlay (user-initiated purge)
+///
+/// The processor is stateless except for the `lastCheckedLedgerTimestamp`.
+/// Each invocation reads the ledger from that point onward, applies verdicts,
+/// then advances the marker. Re-runs with the same marker are no-ops.
+///
+/// Wired into `TesseraSessionCurationScheduler` after each sweep completes.
+public actor TesseraVerdictDrivenOverlayProcessor {
+    private let store: SystemPromptStore
+    private let ledger: TesseraCurationLedger
+
+    /// ISO8601 UTC timestamp of the last ledger entry we processed.
+    /// The ledger is append-only; entries newer than this are candidates.
+    private var lastCheckedLedgerTimestamp: String = "1970-01-01T00:00:00Z"
+
+    /// Public init: callers supply store and ledger explicitly.
+    public init(
+        store: SystemPromptStore,
+        ledger: TesseraCurationLedger
+    ) {
+        self.store = store
+        self.ledger = ledger
+    }
+
+    /// Internal convenience init with defaults (for use within the module).
+    init() {
+        self.init(store: SystemPromptStore(), ledger: TesseraCurationLedger())
+    }
+
+    /// Process all new ledger entries since the last check.
+    /// Idempotent: already-resolved overlays are skipped.
+    public func processPendingVerdicts() async -> VerdictProcessorReport {
+        var report = VerdictProcessorReport()
+
+        let allEntries = ledger.entries()
+        let newEntries = allEntries.filter { $0.ts > lastCheckedLedgerTimestamp }
+
+        if newEntries.isEmpty {
+            report.note = "no new ledger entries"
+            return report
+        }
+
+        report.entriesChecked = newEntries.count
+
+        for entry in newEntries {
+            guard let verdict = entry.verdictValue else { continue }
+
+            do {
+                let affected = try await store.processVerdict(
+                    provenanceSid: entry.sid,
+                    ledgerVerdict: verdict
+                )
+                if let id = affected {
+                    report.overlaysProcessed.append(id)
+                    switch verdict {
+                    case .promoted:    report.overlaysPromoted += 1
+                    case .quarantined,
+                         .dropped:     report.overlaysReverted += 1
+                    case .purged:      report.overlaysPurged += 1
+                    }
+                }
+            } catch {
+                // Log and continue: one bad overlay does not poison the batch.
+                let suffix = "processVerdict(\(entry.sid)) threw: \(error.localizedDescription)"
+                report.note = report.note.map { "\($0); \(suffix)" } ?? suffix
+            }
+        }
+
+        // Advance the marker to the latest entry we saw.
+        lastCheckedLedgerTimestamp = newEntries.map(\.ts).max() ?? lastCheckedLedgerTimestamp
+
+        return report
+    }
+
+    /// Force a re-check from a specific timestamp (e.g. after restoring
+    /// from a backup). Does NOT advance the marker unless the run succeeds.
+    public func reprocessSince(_ timestamp: String) async -> VerdictProcessorReport {
+        let saved = lastCheckedLedgerTimestamp
+        lastCheckedLedgerTimestamp = timestamp
+        let report = await processPendingVerdicts()
+        // If the run was a no-op, restore the original marker.
+        if report.entriesChecked == 0 {
+            lastCheckedLedgerTimestamp = saved
+        }
+        return report
+    }
+
+    /// How many outcome-based overlays have a pending verdict right now.
+    public func pendingVerdictCount() async -> Int {
+        await store.pendingVerdictOverlays().count
+    }
+}

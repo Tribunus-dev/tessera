@@ -1,0 +1,210 @@
+import Foundation
+
+/// Reads the current system prompt context: base fragments (persona, tools, skills),
+/// active overlays, and a digest of recent tool outcomes.
+///
+/// This is the read-only observability tool for the recursive self-modification loop
+/// (Phase 1). It exposes the current instruction state so the agent can reason
+/// about what it's working with before proposing an overlay edit via
+/// `update_system_prompt` (Phase 2).
+///
+/// The store is looked up via the registry at execute time so the tool is stateless
+/// and the agent loop can inject a shared store without needing concrete-type casts.
+public struct GetSystemPromptContextTool: TesseraTool {
+    public let name = "get_system_prompt_context"
+    public let description = """
+Read the current system prompt context: base persona + tools + skills fragments, active \
+instruction overlays, and a digest of recent tool outcomes. Use this before proposing a \
+system prompt update (via update_system_prompt) so you understand what's already in scope \
+and avoid redundant or contradictory overlays.
+"""
+    public let defaultApprovalLevel = ApprovalLevel.auto
+
+    public let parameters = JSONSchema(
+        type: "object",
+        properties: [
+            "include_outcomes": SchemaProperty(
+                type: "boolean",
+                description: "Include recent tool outcomes in the digest. Default false.",
+                defaultValue: "false"
+            ),
+            "outcome_limit": SchemaProperty(
+                type: "integer",
+                description: "Maximum number of recent outcomes to include. Default 20.",
+                defaultValue: "20",
+                minimum: 1,
+                maximum: 200
+            ),
+        ],
+        required: []
+    )
+
+    /// Snapshot of the system prompt state, assembled by the tool.
+    public struct ContextSnapshot: Sendable {
+        public let basePersona: String
+        public let activeOverlayCount: Int
+        public let outcomeBasedOverlayCount: Int
+        public let overlays: [SystemPromptOverlay]
+        public let recentOutcomes: [OutcomeDigest]
+        public let totalTokenEstimate: Int
+
+        public struct OutcomeDigest: Sendable {
+            public let toolName: String
+            public let success: Bool
+            public let timestamp: Date
+        }
+
+        public init(
+            basePersona: String,
+            activeOverlayCount: Int,
+            outcomeBasedOverlayCount: Int,
+            overlays: [SystemPromptOverlay],
+            recentOutcomes: [OutcomeDigest],
+            totalTokenEstimate: Int
+        ) {
+            self.basePersona = basePersona
+            self.activeOverlayCount = activeOverlayCount
+            self.outcomeBasedOverlayCount = outcomeBasedOverlayCount
+            self.overlays = overlays
+            self.recentOutcomes = recentOutcomes
+            self.totalTokenEstimate = totalTokenEstimate
+        }
+    }
+
+    private let outcomeReader: OutcomeReader
+
+    public init(outcomeReader: OutcomeReader = RecentOutcomeReader()) {
+        self.outcomeReader = outcomeReader
+    }
+
+    public func execute(arguments: [String: JSONValue]) async throws -> ToolResult {
+        // Look up the shared store from the registry. The agent loop sets it
+        // via TesseraToolRegistry.setSystemPromptStore before the loop runs.
+        guard let store = TesseraToolRegistry.sharedSystemPromptStore else {
+            return .fail("System prompt store not configured. The agent loop must call TesseraToolRegistry.setSystemPromptStore before running.")
+        }
+
+        let includeOutcomes = arguments["include_outcomes"]?.boolValue ?? false
+        let outcomeLimit = arguments["outcome_limit"]?.numberValue.map { Int($0) } ?? 20
+
+        let overlaySummary = await store.summary()
+
+        var lines: [String] = []
+        lines.append("=== System Prompt Context ===")
+        lines.append("")
+
+        // Overlays section
+        lines.append("## Active instruction overlays (\(overlaySummary.activeCount) active, \(overlaySummary.outcomeBasedOverlayCount) outcome-based)")
+        let overlays = await store.activeOverlays
+        if overlays.isEmpty {
+            lines.append("(none)")
+        } else {
+            for overlay in overlays {
+                let prov = overlay.provenance == .outcomeBased ? " [outcome-based]" : ""
+                let ver = overlay.verdict == .pending ? "" : " [verdict: \(overlay.verdict.rawValue)]"
+                lines.append("")
+                lines.append("### [\(overlay.tag)]\(prov)\(ver)")
+                if overlay.content.isEmpty {
+                    lines.append("(empty — no instruction fragment)")
+                } else {
+                    lines.append(overlay.content)
+                }
+                lines.append("(created: \(ISO8601DateFormatter().string(from: overlay.createdAt)); provenance: \(overlay.provenance.rawValue))")
+            }
+        }
+        lines.append("")
+
+        // Base persona note (abbreviated — the full text is in buildSystemPrompt)
+        lines.append("## Base persona")
+        lines.append("(persona + tools + skills assembled by TesseraAgentLoop.buildSystemPrompt; ")
+        lines.append("call this tool to see active overlays above)")
+        lines.append("")
+
+        // Outcomes section (optional)
+        var recentOutcomes: [ContextSnapshot.OutcomeDigest] = []
+        if includeOutcomes {
+            lines.append("## Recent tool outcomes (last \(outcomeLimit))")
+            let outcomes = await outcomeReader.recentOutcomes(limit: outcomeLimit)
+            recentOutcomes = outcomes.map { ContextSnapshot.OutcomeDigest(toolName: $0.toolName, success: $0.success, timestamp: $0.timestamp) }
+            if outcomes.isEmpty {
+                lines.append("(no recent outcomes available)")
+            } else {
+                for outcome in outcomes {
+                    let status = outcome.success ? "OK" : "FAIL"
+                    let ts = ISO8601DateFormatter().string(from: outcome.timestamp)
+                    lines.append("- [\(status)] \(outcome.toolName) @ \(ts)")
+                }
+            }
+        }
+
+        let snapshot = ContextSnapshot(
+            basePersona: "see buildSystemPrompt",
+            activeOverlayCount: overlaySummary.activeCount,
+            outcomeBasedOverlayCount: overlaySummary.outcomeBasedOverlayCount,
+            overlays: overlays,
+            recentOutcomes: recentOutcomes,
+            totalTokenEstimate: estimatePromptTokens(overlays: overlays)
+        )
+
+        return .ok(
+            lines.joined(separator: "\n"),
+            data: [
+                "active_overlay_count": .number(Double(snapshot.activeOverlayCount)),
+                "outcome_based_overlay_count": .number(Double(snapshot.outcomeBasedOverlayCount)),
+                "total_token_estimate": .number(Double(snapshot.totalTokenEstimate)),
+                "overlays": .array(overlays.map { overlayJSON($0) }),
+            ]
+        )
+    }
+
+    /// Rough token estimate: 1 token ≈ 4 chars for English prose.
+    private func estimatePromptTokens(overlays: [SystemPromptOverlay]) -> Int {
+        let chars = overlays.reduce(0) { $0 + $1.content.count }
+        return max(1, chars / 4)
+    }
+
+    private func overlayJSON(_ overlay: SystemPromptOverlay) -> JSONValue {
+        .object([
+            "id": .string(overlay.id.uuidString),
+            "tag": .string(overlay.tag),
+            "content": .string(overlay.content),
+            "created_at": .string(ISO8601DateFormatter().string(from: overlay.createdAt)),
+            "provenance": .string(overlay.provenance.rawValue),
+            "verdict": .string(overlay.verdict.rawValue),
+            "outcome_based": .bool(overlay.outcomeBased),
+            "superseded_by": overlay.supersededBy.map { .string($0.uuidString) } ?? .null,
+        ])
+    }
+}
+
+// MARK: - Outcome Reader Protocol
+
+/// Protocol for reading recent tool outcomes. The real implementation reads from
+/// the session trace store; tests use a no-op or fixture reader.
+public protocol OutcomeReader: Sendable {
+    func recentOutcomes(limit: Int) async -> [RecentOutcome]
+}
+
+public struct RecentOutcome: Sendable {
+    public let toolName: String
+    public let success: Bool
+    public let timestamp: Date
+}
+
+/// Default implementation: reads from the world-signal observer (ring buffer
+/// of verifiable outcomes). Returns empty if the observer has no outcomes yet.
+public struct RecentOutcomeReader: OutcomeReader {
+    public init() {}
+
+    public func recentOutcomes(limit: Int) async -> [RecentOutcome] {
+        TesseraWorldSignalObserver.shared.recent(limit: limit).map {
+            RecentOutcome(toolName: $0.kind.rawValue, success: $0.success, timestamp: $0.timestamp)
+        }
+    }
+}
+
+/// Test seam: a no-op reader that returns empty outcomes.
+public struct NoOpOutcomeReader: OutcomeReader {
+    public init() {}
+    public func recentOutcomes(limit: Int) async -> [RecentOutcome] { [] }
+}

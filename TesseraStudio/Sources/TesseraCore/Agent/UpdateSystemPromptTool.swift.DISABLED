@@ -1,0 +1,281 @@
+import Foundation
+
+/// Proposes or manages an instruction-overlay in the system prompt store.
+///
+/// Phase 2 of the recursive self-modification loop: the agent reads the current
+/// context via `get_system_prompt_context`, reasons about what instruction
+/// fragment would improve its behaviour on this codebase, and calls this tool
+/// to write the overlay.
+///
+/// **Approval:** the approval engine gates this tool at `.prompt` (user must
+/// approve before the write goes to the store). The tool's result metadata
+/// includes `overlay_id` so the agent loop can build the matching receipt
+/// mutation after a successful write.
+///
+/// **Receipt:** the loop creates a `setSystemPromptOverlay` mutation after a
+/// successful execute and appends it to the agent's session receipts.
+///
+/// **Revert:** set `action = "revert"` with `overlay_id`. The revert does NOT
+/// require additional approval (the user already approved the revert action).
+public struct UpdateSystemPromptTool: TesseraTool {
+    public let name = "update_system_prompt"
+    public let description = """
+Propose or manage an instruction-overlay in the system prompt. \
+Call get_system_prompt_context first to understand what is already active. \
+**Approval required** — the tool is gated at .prompt so the user reviews the \
+proposed content before it is written. The overlay appears in subsequent \
+system prompts immediately after approval. \
+Revert a bad overlay with action="revert" and overlay_id="<id>".
+"""
+    public let defaultApprovalLevel = ApprovalLevel.prompt
+
+    public let parameters = JSONSchema(
+        type: "object",
+        properties: [
+            "action": SchemaProperty(
+                type: "string",
+                description: "add | update | revert. 'add' inserts a new overlay; 'update' replaces the content of an existing overlay; 'revert' marks an overlay superseded.",
+                enumValues: ["add", "update", "revert"],
+                defaultValue: "add"
+            ),
+            "overlay_id": SchemaProperty(
+                type: "string",
+                description: "UUID of the overlay to update or revert. Required for action='update' and action='revert'. Ignored for action='add'."
+            ),
+            "tag": SchemaProperty(
+                type: "string",
+                description: "Short identifier for this overlay, shown in the prompt section header (e.g. 'code-style', 'tessera-conventions', 'escalation-guidance'). Required for action='add'."
+            ),
+            "content": SchemaProperty(
+                type: "string",
+                description: "The instruction fragment to add or update. May be empty (null overlay is valid — use as a placeholder). Required for action='add' and action='update'."
+            ),
+            "provenance": SchemaProperty(
+                type: "string",
+                description: "Where this overlay came from: 'outcome_based' (from escalation reasoning / world signals), 'heuristic' (intuition), 'user' (authored by you directly). Default: 'heuristic'.",
+                enumValues: ["outcome_based", "heuristic", "user"],
+                defaultValue: "heuristic"
+            ),
+            "outcome_based": SchemaProperty(
+                type: "boolean",
+                description: "DEPRECATED alias for provenance='outcome_based'. Use 'provenance' instead.",
+                defaultValue: "false"
+            ),
+        ],
+        required: ["action"]
+    )
+
+    /// The store this tool writes to. Looked up from the registry at execute
+    /// time so the tool is stateless and registry-compatible. Test seam overrides
+    /// this via `init(store:)`.
+    private var testStore: SystemPromptStore?
+
+    /// Session metadata the tool needs from the running agent context.
+    /// Set by the agent loop before calling execute() (via the approval-gated
+    /// content path). Nil in unit tests.
+    public var sessionContext: SessionContext?
+
+    /// Context from the agent loop needed to produce complete tool results.
+    public struct SessionContext: Sendable {
+        public let sessionID: String
+        public let agentRunID: AgentRunID
+        public let modelName: String
+        public let promptHash: String
+    }
+
+    public init() {}
+
+    /// Test seam: provides an explicit store, bypassing the registry lookup.
+    init(store: SystemPromptStore) {
+        self.testStore = store
+    }
+
+    /// The store to use: testStore if set, otherwise the registry's shared store.
+    private func currentStore() async -> SystemPromptStore? {
+        testStore ?? TesseraToolRegistry.sharedSystemPromptStore
+    }
+
+    public func execute(arguments: [String: JSONValue]) async throws -> ToolResult {
+        let action = arguments["action"]?.stringValue ?? "add"
+
+        switch action {
+        case "add":
+            return try await executeAdd(arguments: arguments)
+        case "update":
+            return try await executeUpdate(arguments: arguments)
+        case "revert":
+            return try await executeRevert(arguments: arguments)
+        default:
+            return .fail("action must be 'add', 'update', or 'revert'. Got '\(action)'.")
+        }
+    }
+
+    // MARK: - Add
+
+    private func executeAdd(arguments: [String: JSONValue]) async throws -> ToolResult {
+        guard let store = await currentStore() else {
+            return .fail("System prompt store not configured. The agent loop must call TesseraToolRegistry.setSystemPromptStore before running.")
+        }
+        guard let tag = arguments["tag"]?.stringValue, !tag.isEmpty else {
+            return .fail("tag is required for action='add'.")
+        }
+        guard arguments["content"] != nil || arguments["content"]?.stringValue != nil else {
+            return .fail("content is required for action='add'.")
+        }
+        let content = arguments["content"]?.stringValue ?? ""
+
+        // provenance: explicit 'provenance' param wins; legacy 'outcome_based'
+        // bool maps to .outcomeBased for backwards compatibility.
+        let provenance: SystemPromptOverlayProvenance
+        if let provStr = arguments["provenance"]?.stringValue {
+            switch provStr {
+            case "outcome_based": provenance = .outcomeBased
+            case "heuristic":     provenance = .heuristic
+            case "user":           provenance = .user
+            default:               provenance = .heuristic
+            }
+        } else if arguments["outcome_based"]?.boolValue == true {
+            provenance = .outcomeBased
+        } else {
+            provenance = .heuristic
+        }
+
+        let overlay = SystemPromptOverlay(
+            tag: tag,
+            content: content,
+            provenance: provenance
+        )
+
+        try await store.add(overlay)
+
+        var lines: [String] = []
+        lines.append("Overlay added successfully.")
+        lines.append("ID: \(overlay.id.uuidString)")
+        lines.append("Tag: [\(tag)]")
+        if !content.isEmpty {
+            lines.append("Content preview: \(content.prefix(120))...")
+        } else {
+            lines.append("(empty overlay — no instruction fragment)")
+        }
+        lines.append("Provenance: \(provenance.rawValue)")
+        lines.append("")
+        lines.append("The overlay is active in the system prompt immediately.")
+
+        return .ok(
+            lines.joined(separator: "\n"),
+            data: [
+                "overlay_id": .string(overlay.id.uuidString),
+                "tag": .string(tag),
+                "action": .string("add"),
+                "provenance": .string(provenance.rawValue),
+                "outcome_based": .bool(provenance == .outcomeBased),
+                "active": .bool(true),
+            ]
+        )
+    }
+
+    // MARK: - Update
+
+    private func executeUpdate(arguments: [String: JSONValue]) async throws -> ToolResult {
+        guard let store = await currentStore() else {
+            return .fail("System prompt store not configured. The agent loop must call TesseraToolRegistry.setSystemPromptStore before running.")
+        }
+        guard let idStr = arguments["overlay_id"]?.stringValue,
+              let id = UUID(uuidString: idStr) else {
+            return .fail("overlay_id (valid UUID) is required for action='update'.")
+        }
+        guard arguments["content"] != nil || arguments["content"]?.stringValue != nil else {
+            return .fail("content is required for action='update'.")
+        }
+        let content = arguments["content"]?.stringValue ?? ""
+
+        let provenance: SystemPromptOverlayProvenance?
+        if let provStr = arguments["provenance"]?.stringValue {
+            switch provStr {
+            case "outcome_based": provenance = .outcomeBased
+            case "heuristic":    provenance = .heuristic
+            case "user":          provenance = .user
+            default:              provenance = nil
+            }
+        } else if arguments["outcome_based"]?.boolValue == true {
+            provenance = .outcomeBased
+        } else {
+            provenance = nil
+        }
+
+        do {
+            try await store.update(id: id, content: content, provenance: provenance)
+        } catch SystemPromptStore.StoreError.overlayNotFound {
+            return .fail("overlay not found: \(idStr)")
+        } catch SystemPromptStore.StoreError.alreadySuperseded {
+            return .fail("overlay is already superseded: \(idStr). Use action='revert' to supersede it with a new overlay.")
+        }
+
+        return .ok(
+            "Overlay \(idStr) updated.",
+            data: [
+                "overlay_id": .string(idStr),
+                "action": .string("update"),
+                "active": .bool(true),
+            ]
+        )
+    }
+
+    // MARK: - Revert
+
+    private func executeRevert(arguments: [String: JSONValue]) async throws -> ToolResult {
+        guard let store = await currentStore() else {
+            return .fail("System prompt store not configured. The agent loop must call TesseraToolRegistry.setSystemPromptStore before running.")
+        }
+        guard let idStr = arguments["overlay_id"]?.stringValue,
+              let oldID = UUID(uuidString: idStr) else {
+            return .fail("overlay_id (valid UUID) is required for action='revert'.")
+        }
+
+        // Revert requires a replacement overlay. If the user wants a bare revert
+        // (just disabling without replacement), they can use action='update' with
+        // empty content. A bare revert without replacement is treated as
+        // superseding by a synthetic null overlay.
+        if let newIDStr = arguments["new_overlay_id"]?.stringValue,
+           let newID = UUID(uuidString: newIDStr) {
+            do {
+                try await store.supersede(oldID: oldID, by: newID)
+            } catch SystemPromptStore.StoreError.overlayNotFound {
+                return .fail("overlay not found: \(idStr)")
+            } catch SystemPromptStore.StoreError.supersedeTargetNotFound {
+                return .fail("replacement overlay not found: \(newIDStr)")
+            } catch SystemPromptStore.StoreError.alreadySuperseded {
+                return .fail("overlay is already superseded: \(idStr)")
+            }
+            return .ok(
+                "Overlay \(idStr) superseded by \(newIDStr).",
+                data: [
+                    "overlay_id": .string(idStr),
+                    "superseded_by": .string(newIDStr),
+                    "action": .string("revert"),
+                    "active": .bool(false),
+                ]
+            )
+        } else {
+            // Bare revert: mark superseded by a synthetic null overlay.
+            let nullOverlay = SystemPromptOverlay(
+                tag: "revert-\(idStr.prefix(8))",
+                content: "",
+                provenance: .curationAuto
+            )
+            try await store.add(nullOverlay)
+            try await store.supersede(oldID: oldID, by: nullOverlay.id)
+
+            return .ok(
+                "Overlay \(idStr) reverted (superseded by synthetic null overlay).",
+                data: [
+                    "overlay_id": .string(idStr),
+                    "superseded_by": .string(nullOverlay.id.uuidString),
+                    "action": .string("revert"),
+                    "active": .bool(false),
+                    "bare_revert": .bool(true),
+                ]
+            )
+        }
+    }
+}

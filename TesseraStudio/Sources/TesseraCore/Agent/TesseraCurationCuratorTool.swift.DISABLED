@@ -1,0 +1,258 @@
+import Foundation
+
+/// Inspects and drives the curation feedback loop: shows pending verdict
+/// overlays, recent ledger entries, and can trigger a manual curation sweep.
+///
+/// The tool is read-only by default (`.auto` approval). Passing
+/// `action = "sweep"` runs a one-shot session curation pass and then
+/// processes any new verdict entries through the overlay processor.
+///
+/// This is the human-in-the-loop inspection surface for the recursive
+/// self-modification loop (docs/self-improving-loop-design.md Phase 3).
+public struct TesseraCurationCuratorTool: TesseraTool {
+    public let name = "curate_system_prompt"
+    public let description = """
+Inspect the curation feedback loop state and optionally trigger a manual sweep. \
+Read-only by default: shows pending verdict overlays, recent ledger entries, \
+and outcome-based overlay counts. \
+Pass action="sweep" to run a one-shot session curation pass followed by \
+verdict processing (applies policy to all pending outcome-based overlays).
+"""
+    public let defaultApprovalLevel = ApprovalLevel.auto
+
+    public let parameters = JSONSchema(
+        type: "object",
+        properties: [
+            "action": SchemaProperty(
+                type: "string",
+                description: "inspect | sweep. 'inspect' (default) reads state without modifying. 'sweep' runs one curation pass then processes new verdicts.",
+                enumValues: ["inspect", "sweep"],
+                defaultValue: "inspect"
+            ),
+            "show_history": SchemaProperty(
+                type: "boolean",
+                description: "Include superseded overlays in the history section. Default false.",
+                defaultValue: "false"
+            ),
+            "ledger_limit": SchemaProperty(
+                type: "integer",
+                description: "Maximum recent ledger entries to show. Default 20.",
+                defaultValue: "20",
+                minimum: 1,
+                maximum: 200
+            ),
+        ],
+        required: []
+    )
+
+    /// The ledger to read. Injected for testability.
+    private let ledger: TesseraCurationLedger
+
+    /// The curation stage for manual sweep. Nil in test mode.
+    private let curationStage: TesseraSessionCurationStage?
+
+    /// The verdict processor. Injected for testability.
+    private let processor: TesseraVerdictDrivenOverlayProcessor?
+
+    public init(
+        ledger: TesseraCurationLedger = TesseraCurationLedger(),
+        curationStage: TesseraSessionCurationStage? = nil,
+        processor: TesseraVerdictDrivenOverlayProcessor? = nil
+    ) {
+        self.ledger = ledger
+        self.curationStage = curationStage
+        self.processor = processor
+    }
+
+    /// Test seam with explicit processor.
+    init(
+        ledger: TesseraCurationLedger,
+        processor: TesseraVerdictDrivenOverlayProcessor
+    ) {
+        self.ledger = ledger
+        self.curationStage = nil
+        self.processor = processor
+    }
+
+    public func execute(arguments: [String: JSONValue]) async throws -> ToolResult {
+        let action = arguments["action"]?.stringValue ?? "inspect"
+        let showHistory = arguments["show_history"]?.boolValue ?? false
+        let ledgerLimit = arguments["ledger_limit"]?.numberValue.map { Int($0) } ?? 20
+
+        switch action {
+        case "sweep":
+            return try await executeSweep(ledgerLimit: ledgerLimit)
+        default:
+            return await executeInspect(showHistory: showHistory, ledgerLimit: ledgerLimit)
+        }
+    }
+
+    // MARK: - Inspect
+
+    private func executeInspect(showHistory: Bool, ledgerLimit: Int) async -> ToolResult {
+        // Look up the store from the registry.
+        guard let store = TesseraToolRegistry.sharedSystemPromptStore else {
+            return .fail("System prompt store not configured. Run the agent loop first.")
+        }
+
+        let storeSummary = await store.summary()
+        let pendingVerdicts = await store.pendingVerdictOverlays()
+        let outcomeBased = await store.outcomeBasedOverlays()
+        let allOverlays = showHistory ? await store.allOverlays : await store.activeOverlays
+        let ledgerEntries = Array(ledger.entries().reversed().prefix(ledgerLimit))
+        let counts = ledger.curationCounts(sessionSids: Set(ledgerEntries.map(\.sid)))
+
+        var lines: [String] = []
+        lines.append("=== Curation Feedback Loop State ===")
+        lines.append("")
+
+        // Store summary
+        lines.append("## System prompt overlays")
+        lines.append("  Active: \(storeSummary.activeCount)")
+        lines.append("  Total (incl. superseded): \(storeSummary.totalCount)")
+        lines.append("  Outcome-based: \(storeSummary.outcomeBasedOverlayCount)")
+        lines.append("  Pending verdict: \(pendingVerdicts.count)")
+        lines.append("")
+
+        // Pending verdict overlays
+        if pendingVerdicts.isEmpty {
+            lines.append("## Pending verdict overlays")
+            lines.append("  (none)")
+        } else {
+            lines.append("## Pending verdict overlays (\(pendingVerdicts.count))")
+            for overlay in pendingVerdicts {
+                lines.append("")
+                lines.append("  [\(overlay.tag)] id=\(overlay.id.uuidString.prefix(8))")
+                lines.append("    provenance: \(overlay.provenance.rawValue)")
+                lines.append("    created: \(ISO8601DateFormatter().string(from: overlay.createdAt))")
+                if !overlay.content.isEmpty {
+                    let preview = overlay.content.prefix(120)
+                    lines.append("    content: \(preview)\(overlay.content.count > 120 ? "..." : "")")
+                }
+            }
+        }
+        lines.append("")
+
+        // Outcome-based overlay history
+        if !outcomeBased.isEmpty {
+            lines.append("## Outcome-based overlay history (\(outcomeBased.count))")
+            for overlay in outcomeBased.prefix(10) {
+                let status: String
+                if overlay.supersededBy != nil {
+                    status = "superseded"
+                } else if overlay.verdict == .pending {
+                    status = "pending"
+                } else {
+                    status = overlay.verdict.rawValue
+                }
+                lines.append("  [\(overlay.tag)] \(status) — \(ISO8601DateFormatter().string(from: overlay.createdAt))")
+            }
+            if outcomeBased.count > 10 {
+                lines.append("  ... and \(outcomeBased.count - 10) more")
+            }
+            lines.append("")
+        }
+
+        // Ledger summary
+        lines.append("## Curation ledger (last \(ledgerLimit))")
+        let promoted = ledger.promotedSids().count
+        let quarantined = ledger.quarantinedSids().count
+        lines.append("  Promoted: \(promoted) sessions")
+        lines.append("  Quarantined: \(quarantined) sessions")
+        lines.append("  Total entries: \(ledgerEntries.count)")
+        for entry in ledgerEntries.prefix(5) {
+            let verdict = entry.verdictValue?.rawValue ?? "?"
+            let ts = TesseraCurationLedger.date(fromTimestamp: entry.ts)
+            let tsStr = ts.map { ISO8601DateFormatter().string(from: $0) } ?? entry.ts
+            lines.append("  [\(verdict)] sid=\(entry.sid.prefix(8)) @ \(tsStr) tokens=\(entry.score.tokens)")
+        }
+        if ledgerEntries.count > 5 {
+            lines.append("  ... and \(ledgerEntries.count - 5) more entries")
+        }
+
+        return .ok(
+            lines.joined(separator: "\n"),
+            data: {
+                let activeCount = Double(storeSummary.activeCount)
+                let obCount = Double(storeSummary.outcomeBasedOverlayCount)
+                let pendingCount = Double(pendingVerdicts.count)
+                let ledgerPromoted = Double(promoted)
+                let ledgerQuarantined = Double(quarantined)
+                let ledgerTotal = Double(ledgerEntries.count)
+                return [
+                    "active_overlay_count": .number(activeCount),
+                    "outcome_based_count": .number(obCount),
+                    "pending_verdict_count": .number(pendingCount),
+                    "ledger_promoted": .number(ledgerPromoted),
+                    "ledger_quarantined": .number(ledgerQuarantined),
+                    "ledger_total_entries": .number(ledgerTotal),
+                ]
+            }()
+        )
+    }
+
+    // MARK: - Sweep
+
+    private func executeSweep(ledgerLimit: Int) async throws -> ToolResult {
+        var lines: [String] = []
+        lines.append("=== Manual Curation Sweep ===")
+        lines.append("")
+
+        // Step 1: run the curation stage.
+        lines.append("## Running session curation...")
+        guard let stage = curationStage else {
+            return .fail("Curation stage not available in this context.")
+        }
+        let curationReport = await stage.sweep()
+        lines.append("  Sessions seen: \(curationReport.sessionsSeen)")
+        lines.append("  Analyzed: \(curationReport.analyzed)")
+        lines.append("  Promoted: \(curationReport.promoted)")
+        lines.append("  Quarantined: \(curationReport.quarantined)")
+        lines.append("  Dropped: \(curationReport.dropped)")
+        lines.append("  Replay records: \(curationReport.replayRecords)")
+        if let note = curationReport.note {
+            lines.append("  Note: \(note)")
+        }
+        lines.append("")
+
+        // Step 2: run the verdict processor on new ledger entries.
+        lines.append("## Processing new verdict entries...")
+        let processorReport: VerdictProcessorReport
+        if let proc = processor {
+            processorReport = await proc.processPendingVerdicts()
+        } else {
+            // Fallback: run inline with a fresh processor.
+            let fallback = TesseraVerdictDrivenOverlayProcessor()
+            processorReport = await fallback.processPendingVerdicts()
+        }
+
+        lines.append("  Entries checked: \(processorReport.entriesChecked)")
+        lines.append("  Overlays promoted: \(processorReport.overlaysPromoted)")
+        lines.append("  Overlays reverted: \(processorReport.overlaysReverted)")
+        lines.append("  Overlays purged: \(processorReport.overlaysPurged)")
+        if !processorReport.overlaysProcessed.isEmpty {
+            lines.append("  Processed IDs: \(processorReport.overlaysProcessed.map { $0.uuidString.prefix(8) }.joined(separator: ", "))")
+        }
+        if let note = processorReport.note {
+            lines.append("  Note: \(note)")
+        }
+        lines.append("")
+        lines.append("Sweep complete.")
+
+        return .ok(
+            lines.joined(separator: "\n"),
+            data: [
+                "curation_analyzed": .number(Double(curationReport.analyzed)),
+                "curation_promoted": .number(Double(curationReport.promoted)),
+                "curation_quarantined": .number(Double(curationReport.quarantined)),
+                "curation_dropped": .number(Double(curationReport.dropped)),
+                "curation_replay_records": .number(Double(curationReport.replayRecords)),
+                "verdict_entries_checked": .number(Double(processorReport.entriesChecked)),
+                "verdict_promoted": .number(Double(processorReport.overlaysPromoted)),
+                "verdict_reverted": .number(Double(processorReport.overlaysReverted)),
+                "verdict_purged": .number(Double(processorReport.overlaysPurged)),
+                "processed_overlay_ids": .array(processorReport.overlaysProcessed.map { .string($0.uuidString) }),
+            ]
+        )
+    }
+}
