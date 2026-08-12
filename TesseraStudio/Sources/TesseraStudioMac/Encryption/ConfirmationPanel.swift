@@ -33,13 +33,26 @@ public final class ConfirmationPanel: NSObject, NSWindowDelegate {
     private let rateLimitWindow: TimeInterval = 30
     private let rateLimitCap = 3
     private let tier: TesseraTier
+    /// 3D (review #4 follow-up, agent-ux-fatigue): the
+    /// audit-log toggle handler. The host wires this to
+    /// the `ActionAuditLogPanelPresenter`'s
+    /// `present() / dismiss()` so the confirmation
+    /// surface can toggle the side panel. Optional so
+    /// existing call sites that do not opt in still
+    /// compile.
+    private let onToggleAuditLog: (() -> Void)?
 
-    public init(onResult: @escaping (Result) -> Void, tier: TesseraTier = .tier3) {
+    public init(
+        onResult: @escaping (Result) -> Void,
+        tier: TesseraTier = .tier3,
+        onToggleAuditLog: (() -> Void)? = nil
+    ) {
         self.onResult = onResult
         // The panic-wipe confirmation is the strictest tier by definition;
         // the caller can override (e.g. for a lower-stakes confirmation
         // that reuses the same panel) but the default is the safe one.
         self.tier = tier
+        self.onToggleAuditLog = onToggleAuditLog
     }
 
     public func present() {
@@ -56,11 +69,20 @@ public final class ConfirmationPanel: NSObject, NSWindowDelegate {
             },
             onCancel: { [weak self] in
                 self?.finish(.cancelled)
+            },
+            onToggleAuditLog: { [weak self] in
+                // 3D (review #4 follow-up, agent-ux-fatigue):
+                // forward the toggle to the host's audit-log
+                // presenter, when one is wired. The default
+                // (no presenter) is a no-op; existing callers
+                // that do not opt in still see the same
+                // confirmation surface.
+                self?.onToggleAuditLog?()
             }
         )
         let hosting = NSHostingController(rootView: view)
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 220),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 260),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -142,6 +164,16 @@ private struct ConfirmationView: View {
     let unlockDelaySeconds: TimeInterval
     let onSubmit: (String) -> SubmitResult
     let onCancel: () -> Void
+    /// 3D (review #4 follow-up, agent-ux-fatigue): the
+    /// audit-log toggle. Called when the user taps the
+    /// "Audit log" button at the bottom of the panel.
+    /// The host wires this to the
+    /// ``ActionAuditLogPanelPresenter`` (or to a
+    /// binding on the host view that owns the
+    /// presenter). Default is a no-op so existing
+    /// call sites that do not opt in to the toggle
+    /// still compile and behave the same.
+    let onToggleAuditLog: () -> Void
 
     @State private var text: String = ""
     @State private var unlockAt: Date = Date()
@@ -180,6 +212,23 @@ private struct ConfirmationView: View {
                 Button("Confirm") { submit() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(!canConfirm)
+            }
+            // 3D (review #4 follow-up, agent-ux-fatigue): toggle the
+            // Action Audit Log side panel from the confirmation
+            // surface. The toggle is intentionally a non-default
+            // button so the confirm flow is not crowded; the user
+            // pulls the audit log as a read surface, separate from
+            // the typed-phrase confirmation that fires the wipe.
+            HStack {
+                Button(action: onToggleAuditLog) {
+                    Label("Audit log", systemImage: "clock.arrow.circlepath")
+                        .labelStyle(.titleAndIcon)
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Toggle action audit log")
+                .accessibilityHint("Opens a side panel with the chronological list of every agent action + outcome.")
+                Spacer()
             }
         }
         .padding(20)
