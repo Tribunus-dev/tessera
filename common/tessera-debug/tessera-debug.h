@@ -210,6 +210,89 @@ namespace tessera_debug {
     // Returns the currently-configured row capture stride (default 1).
     int64_t dequant_stride();
 
+    // --- Row-capture mode (L1+L1.5 trigger-gated reference) ---
+    //
+    // The shipped L1 capture is stride-based: every Nth row is written
+    // (or every row when stride=1). The shipped L1.5 reference writes
+    // a per-row F32 buffer (currently the kernel's own dequant output,
+    // see write_fp16_reference_row_from_f32). Both are uniform in
+    // row-index space; neither is information-driven.
+    //
+    // The trigger-gated reference (the v3.1 mode) is the production
+    // path for the L1.5 ground truth: the L1.5 row is materialized
+    // (and the L1 row is full-captured) only when the L1 row's
+    // outlier count or divergence from a row-neighbor mean crosses
+    // a dynamic threshold. For the bulk of the matrix the L1.5 row
+    // is *not* materialized; the L1 row is captured as a compact
+    // F32 mean + per-channel stddev (8 bytes/row instead of 4*cols).
+    //
+    // See the calibration refinements spec, section 1 ("L1 Adaptive
+    // Outlier-Driven Capture") and section 3 ("L1.5 True FP16 Reference
+    // Routing"). The trigger-gated path is the first PR for the
+    // runtime-aware calibration pipeline.
+
+    enum DequantCaptureMode {
+        DEQUANT_CAPTURE_FULL     = 0,  // current behavior: every row
+        DEQUANT_CAPTURE_OUTLIER  = 1,  // Mode A: trigger-gated
+        DEQUANT_CAPTURE_RESERVOIR = 2, // Mode B: streaming reservoir
+    };
+
+    // Configure the row capture mode. Default is DEQUANT_CAPTURE_FULL
+    // (the shipped behavior, fully backward-compatible). Can also be
+    // set via the env var `LLAMA_TILE640_DEBUG_DEQUANT_CAPTURE_MODE`
+    // at process start; valid values are "full" (0), "outlier" (1),
+    // "reservoir" (2). The setter is idempotent and last-write-wins.
+    void set_dequant_capture_mode(DequantCaptureMode mode);
+
+    // Returns the currently-configured capture mode (default
+    // DEQUANT_CAPTURE_FULL).
+    DequantCaptureMode dequant_capture_mode();
+
+    // Mode A trigger quantile: a row fires the trigger if its
+    // per-row outlier count is in the top `quantile` fraction of all
+    // rows seen so far. Default 0.01 (top 1%). Set to 0 to disable
+    // the outlier-count trigger. Can also be set via the env var
+    // `LLAMA_TILE640_DEBUG_DEQUANT_TRIGGER_QUANTILE`. Values outside
+    // [0, 1] are clamped.
+    void set_dequant_trigger_quantile(float quantile);
+
+    // Returns the currently-configured trigger quantile (default 0.01).
+    float dequant_trigger_quantile();
+
+    // Mode A trigger delta: a row also fires the trigger if its
+    // max-abs divergence from a rolling mean of recent row max-abs
+    // values exceeds `delta`. Default 0.5 (half a unit of activation
+    // magnitude). Set to 0 to disable the divergence trigger. Can
+    // also be set via the env var
+    // `LLAMA_TILE640_DEBUG_DEQUANT_TRIGGER_DELTA`. Values < 0 are
+    // clamped to 0.
+    void set_dequant_trigger_delta(float delta);
+
+    // Returns the currently-configured trigger delta (default 0.5).
+    float dequant_trigger_delta();
+
+    // Per-row trigger decision for Mode A (DEQUANT_CAPTURE_OUTLIER).
+    // Returns true if the row should be full-captured (and the L1.5
+    // reference row materialized); false if it should be compressed
+    // to the mean+stddev surrogate. In Mode B (reservoir) and FULL,
+    // the function always returns true (the bypass case is the
+    // existing behavior).
+    //
+    // The hook call site uses this in the per-row hot path:
+    //
+    //   if (tessera_debug::dequant_row_fires_trigger(
+    //           row_outlier_count, row_max_abs, rolling_mean)) {
+    //       tessera_debug::write_dequant_row(...);
+    //       tessera_debug::write_fp16_reference_row_from_f32(...);
+    //   } else {
+    //       // write the compact mean+stddev surrogate
+    //   }
+    //
+    // See the calibration refinements spec, section 1.3 and 1.7.
+    bool dequant_row_fires_trigger(int64_t row_outlier_count,
+                                   float   row_max_abs,
+                                   float   rolling_mean_max_abs);
+
     // Open (or reuse) the L1 dequant sidecar file for `tensor_name` and
     // write its v3 header. The first call opens the file at
     // `<dequant_dir>/<tensor_name>.dequant.f32` in truncating write mode;

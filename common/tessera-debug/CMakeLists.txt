@@ -119,4 +119,14 @@ if (LLAMA_BUILD_TESTS)
     target_link_libraries(${TS_MM_OUT_TEST_TARGET} PRIVATE ${TARGET})
     target_compile_features(${TS_MM_OUT_TEST_TARGET} PRIVATE cxx_std_17)
     add_test(NAME ${TS_MM_OUT_TEST_TARGET} COMMAND ${TS_MM_OUT_TEST_TARGET})
+
+    # Standalone test for the L1+L1.5 row-capture mode (NEW, v3.1).
+    # Covers the trigger-gated L1.5 reference path from the
+    # calibration refinements spec, section 1 and 3. Run as:
+    # ./bin/test-tessera-capture-mode.
+    set(TS_CAPTURE_MODE_TEST_TARGET test-tessera-capture-mode)
+    add_executable(${TS_CAPTURE_MODE_TEST_TARGET} test_capture_mode.cpp)
+    target_link_libraries(${TS_CAPTURE_MODE_TEST_TARGET} PRIVATE ${TARGET})
+    target_compile_features(${TS_CAPTURE_MODE_TEST_TARGET} PRIVATE cxx_std_17)
+    add_test(NAME ${TS_CAPTURE_MODE_TEST_TARGET} COMMAND ${TS_CAPTURE_MODE_TEST_TARGET})
 endif()
