@@ -8,6 +8,7 @@
 //
 
 #include "tessera-dispatch.h"
+#include "tessera-debug.h"
 #include "tessera-quant.h"
 #include "tessera-awq.h"
 #include "tessera-awq-fitness.h"
@@ -1835,6 +1836,47 @@ int ts_dispatch_run(const ts_dispatch_params * params,
         printf("tessera-dispatch: loaded '%s' (%lld tensors)\n",
                params->input_path.c_str(), (long long)n_tensors);
     }
+
+    // --- step 5a: L1.5 FP16 reference capture (NEW, v3.1 spec §3) ---
+    // The L1.5 sidecar is the FP16 ground truth that the kernel's
+    // dequant output is compared against by L3 coherence (and v2 of
+    // the L2 activation-space differential). The legacy runtime-hook
+    // path produced it as F16(F32(dequant)) which collapsed L3's
+    // per-row cosine to ~1.0 by construction. The dispatch's
+    // calibration-time capture produces F16(original weight) — the
+    // actual unquantized reference.
+    //
+    // The capture is a no-op unless the dequant sidecar directory is
+    // configured (i.e. the runtime hook would have written a file
+    // there). When w4a4 is enabled and l15_dtype is f16, the runtime
+    // hook no longer writes the F16 L1.5 (it would re-introduce the
+    // round-trip); the dispatch does.
+    {
+        // Read the dequant dir from the same env var the runtime hook
+        // uses (the CLI flag has already been pushed to
+        // tessera_debug::set_dequant_dir by common/arg.cpp, but the
+        // dispatch runs from a separate code path that may not have
+        // been through the CLI; the env-var fallback is the safe
+        // canonical source).
+        std::string l15_dir;
+        const char * env = std::getenv("LLAMA_TILE640_DEBUG_DEQUANT_DIR");
+        if (env != nullptr && env[0] != '\0') {
+            l15_dir = env;
+        }
+        if (!l15_dir.empty() && tessera_debug::dequant_w4a4_enabled() &&
+            tessera_debug::l15_dtype_is_f16()) {
+            std::string l15_err;
+            const int l15_rc = ts_dispatch_capture_l15_references(
+                in_ctx, ggml_ctx, l15_dir,
+                /*stride=*/(int64_t) tessera_debug::dequant_stride(),
+                &l15_err);
+            if (l15_rc != 0 && verbose) {
+                std::fprintf(stderr, "tessera-dispatch: warning: L1.5 capture "
+                                "reported %s\n", l15_err.c_str());
+            }
+        }
+    }
+
     // Seed the GA phase total with n_tensors (upper bound; refined at the
     // evolve_all call site once ga_layers.size() is known).
     ts_progress_set_phase(prog, ts_progress_phase::GA_EVOLVE, n_tensors,

@@ -309,3 +309,38 @@ int ts_dispatch_run_l5_joint(
     const ts_dispatch_params * params,
     ts_dispatch_result * result,
     std::string * err_msg);
+
+// L1.5 FP16 reference capture (§3 of docs/l1-l6-telemetry-refinements-spec.md).
+//
+// For each 2D weight tensor in the input GGUF, write the FP16 cast of
+// the ORIGINAL (unquantized) weight to the L1.5 sidecar. This is the
+// "true FP16 reference" — the FP16 ground truth that the kernel's
+// dequant output is compared against by L3 coherence and (in v2) the
+// L2 activation-space differential.
+//
+// The capture is a no-op when:
+//   - sidecar_dir is empty
+//   - tessera_debug::dequant_w4a4_enabled() is false
+//   - tessera_debug::l15_dtype_is_f16() is false (the F32 legacy path
+//     is handled by the existing runtime hook auto-populate branch and
+//     doesn't need a calibration-time writer)
+//
+// Skips:
+//   - Non-2D tensors (norms, biases, embeddings, expert stacks)
+//   - Quantized input tensors (the input is expected to be BF16/FP16;
+//     re-quantizing a quantized model is a different code path)
+//
+// on_input is the GGUF context (already loaded by ts_dispatch_run
+// before this call); ggml_ctx is the ggml metadata context. The
+// per-tensor data pointers are taken from t->data (which ts_dispatch_run
+// patches into the mmap'd region at step 5). stride is the same
+// dequant capture stride as the runtime hook (1 = every row).
+//
+// Returns 0 on success (or no-op), non-zero on hard error. err_msg
+// (optional) is populated on error.
+int ts_dispatch_capture_l15_references(
+    const struct gguf_context * on_input,
+    struct ggml_context * ggml_ctx,
+    const std::string & sidecar_dir,
+    int64_t stride,
+    std::string * err_msg);

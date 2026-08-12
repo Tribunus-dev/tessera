@@ -80,6 +80,7 @@ add_library(${TARGET}
     # policy I/O + dispatch + GGUF writer
     tessera/tessera-policy.cpp
     tessera/tessera-dispatch.cpp
+    tessera/tessera-dispatch-l15.cpp
     tessera/tessera-gguf-writer.cpp
     # structured progress reporting (terminal live line + NDJSON for UI)
     tessera/tessera-progress.cpp
@@ -565,6 +566,17 @@ if(LLAMA_BUILD_TESTS)
     # modules + libgguf/libggml).
     set(TARGET test-tessera-l5-dispatch)
     add_executable(${TARGET} tessera/test_l5_dispatch.cpp)
+    target_link_libraries(${TARGET} PRIVATE llama-quantize-impl)
+    target_compile_features(${TARGET} PRIVATE cxx_std_17)
+    add_test(NAME ${TARGET} COMMAND ${TARGET})
+
+    # L1.5 dispatch-time capture (v3.1, §3 of the spec). Verifies the
+    # calibration-time F16 reference capture writes F16 of the ORIGINAL
+    # (unquantized) weight — the spec's "true FP16 reference", which
+    # replaces the legacy runtime-hook round-trip F16(F32(dequant))
+    # that collapsed L3's per-row cosine to ~1.0.
+    set(TARGET test-tessera-l15-capture)
+    add_executable(${TARGET} tessera/test_l15_capture.cpp)
     target_link_libraries(${TARGET} PRIVATE llama-quantize-impl)
     target_compile_features(${TARGET} PRIVATE cxx_std_17)
     add_test(NAME ${TARGET} COMMAND ${TARGET})

@@ -207,6 +207,11 @@ compile_and_run l1_fitness  $T/test_l1_fitness.cpp  $T/tessera-l1-fitness.cpp $C
 # outlier-dominance case where the tail MSE swamps the Frobenius.
 compile_and_run l1_fitness_tail $T/test_l1_fitness_tail.cpp $T/tessera-l1-fitness.cpp -I $C
 
+# L1.5 dispatch-time capture (v3.1, §3 of the spec) is built via
+# CMake (test-tessera-l15-capture target) because it needs ggml/gguf
+# headers plus a chunk of the dispatch source tree. See
+# tools/quantize/CMakeLists.txt.
+
 # --- L2-L5 runtime-aware pipeline (L2 diff + L3 coherence + L5 adaptive) ---
 # L2 needs vendor/nlohmann (JSON report); L3 needs the sidecar reader.
 compile_and_run l2l5        $T/test_l2l5.cpp        $T/tessera-l2-diff.cpp $T/tessera-l3-coherence.cpp $T/tessera-l5.cpp $T/tessera-ppl.cpp $C/tessera-sidecar-v3.cpp -I vendor -I $C
