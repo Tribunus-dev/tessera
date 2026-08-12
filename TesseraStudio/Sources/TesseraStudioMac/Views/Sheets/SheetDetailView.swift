@@ -159,6 +159,7 @@ public struct SheetDetailView: View {
         .textFieldStyle(.plain)
         .font(.title)
         .fontWeight(.bold)
+        .accessibilityLabel("Sheet title")
     }
 
     // MARK: - Metadata row
@@ -255,6 +256,7 @@ public struct SheetDetailView: View {
                 .onSubmit {
                     Task { await viewModel.commitEditingCell() }
                 }
+                .accessibilityLabel("Cell formula for \(cellAddressLabel)")
             } else {
                 Text("Select a cell")
                     .font(.system(.caption, design: .monospaced))
@@ -377,9 +379,9 @@ public struct SheetDetailView: View {
             Text("Hard delete removes the row. The receipt chain is preserved.")
                 .multilineTextAlignment(.center).foregroundStyle(.secondary).font(.callout)
             HStack {
-                Button("Cancel") { showDeleteConfirm = false }.keyboardShortcut(.defaultAction)
+                Button("Cancel") { showDeleteConfirm = false }.keyboardShortcut(.cancelAction)
                 Button("Delete", role: .destructive) { showDeleteConfirm = false; onDelete() }
-                    .keyboardShortcut(.cancelAction)
+                    .keyboardShortcut(.defaultAction)
             }
         }
         .padding().frame(width: 360)

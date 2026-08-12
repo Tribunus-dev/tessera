@@ -167,6 +167,7 @@ public struct SlideDeckDetailView: View {
                 Task { await viewModel.commitTitle() }
             })
             .textFieldStyle(.plain).font(.title).fontWeight(.bold)
+            .accessibilityLabel("Slide deck title")
         }
     }
 
@@ -242,6 +243,7 @@ public struct SlideDeckDetailView: View {
                     Label("Add Slide", systemImage: "plus.rectangle.on.rectangle")
                 }
                 .controlSize(.small)
+                .accessibilityLabel("Add new slide")
             }
             if viewModel.slides.isEmpty {
                 Text("No slides yet. Add one to get started.")
@@ -251,10 +253,12 @@ public struct SlideDeckDetailView: View {
                     HStack(spacing: 10) {
                         ForEach(viewModel.slides) { slide in
                             VStack(spacing: 4) {
-                                SlideThumbnailView(
-                                    slide: slide,
-                                    isSelected: slide.index == selectedSlideIndex)
-                                .onTapGesture { selectedSlideIndex = slide.index }
+                                Button { selectedSlideIndex = slide.index } label: {
+                                    SlideThumbnailView(
+                                        slide: slide,
+                                        isSelected: slide.index == selectedSlideIndex)
+                                }
+                                .buttonStyle(.plain)
                                 Text("\(slide.index + 1)").font(.caption2).foregroundStyle(.secondary)
                             }
                             .contextMenu {

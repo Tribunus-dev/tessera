@@ -125,6 +125,7 @@ public struct CodeDetailView: View {
                 )
             }
             .help("Toggle focus mode")
+            .accessibilityLabel(isFocusMode ? "Exit Focus" : "Focus")
         }
     }
 

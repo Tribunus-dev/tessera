@@ -109,6 +109,7 @@ public struct SheetEditorView: View {
                 }
             }
             .controlSize(.small)
+            .accessibilityLabel("Create a 5 by 4 grid")
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 24)

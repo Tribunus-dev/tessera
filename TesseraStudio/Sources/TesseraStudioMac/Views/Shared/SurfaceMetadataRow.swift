@@ -25,7 +25,7 @@ public struct SurfaceMetadataRow: View {
 
     public var body: some View {
         HStack(spacing: 8) {
-            ForEach(Array(stats.enumerated()), id: \.offset) { _, stat in
+            ForEach(stats, id: \.label) { stat in
                 Text("\(stat.label) · \(stat.value)")
                     .font(.caption)
                     .foregroundStyle(.secondary)

@@ -66,6 +66,7 @@ public struct CodeSurfaceView: View {
                 }
                 .pickerStyle(.segmented)
                 .padding(8)
+                .accessibilityLabel("Detail panel tabs")
                 Divider()
                 Group {
                     switch detailTab {
@@ -88,10 +89,12 @@ public struct CodeSurfaceView: View {
         .navigationTitle("Code")
         .toolbar {
             ToolbarItem(placement: .secondaryAction) {
-                Text(viewModel.statusMessage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                if !viewModel.statusMessage.isEmpty {
+                    Text(viewModel.statusMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
         }
         .onAppear {
