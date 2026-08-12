@@ -7,7 +7,9 @@
 #include "tessera-l3-coherence.h"
 #include "tessera-sidecar-v3.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <string>
 
 // sidecar suffixes written by the runtime hook (common/tessera-debug)
@@ -41,6 +43,151 @@ float ts_l3_row_cosine(const float * a, const float * b, int64_t n) {
         return (na == 0.0 && nb == 0.0) ? 1.0f : 0.0f;
     }
     return (float)(dot / (sqrt(na) * sqrt(nb)));
+}
+
+float ts_l3_kl_divergence(const float * p, const float * q, int64_t n,
+                          float eps, float * p_log_q_out) {
+    if (p == nullptr || q == nullptr || n <= 0) {
+        return 0.0f;
+    }
+    if (eps < 0.0f) {
+        eps = 0.0f;
+    }
+    double sum_p   = 0.0;
+    double kl      = 0.0;
+    for (int64_t i = 0; i < n; i++) {
+        sum_p += (double) p[i];
+    }
+    // Degenerate P (sums to 0): the per-token breakdown is undefined;
+    // return 0.0 (no contribution to the joint KL).
+    if (sum_p <= 0.0) {
+        if (p_log_q_out != nullptr) {
+            for (int64_t i = 0; i < n; i++) {
+                p_log_q_out[i] = 0.0f;
+            }
+        }
+        return 0.0f;
+    }
+    // Compute the KL contribution per token. Q is smoothed by eps
+    // (caller controls the smoothing; default 1e-10 is the standard
+    // practice for log-domain numerical stability).
+    for (int64_t i = 0; i < n; i++) {
+        const double pi = (double) p[i] / sum_p;
+        const double qi = (double) q[i] + (double) eps;
+        if (pi > 0.0) {
+            // log(pi / qi) = log(pi) - log(qi)
+            const double term = pi * (std::log(pi) - std::log(qi));
+            kl += term;
+            if (p_log_q_out != nullptr) {
+                p_log_q_out[i] = (float) term;
+            }
+        } else {
+            if (p_log_q_out != nullptr) {
+                p_log_q_out[i] = 0.0f;
+            }
+        }
+    }
+    return (float) kl;
+}
+
+ts_l3_attribution_summary ts_l3_attribute_drift(
+    const float * kl_joint_curve, const float * kl_weight_curve,
+    const float * kl_kv_curve, int64_t n_layers, float joint_eps) {
+    ts_l3_attribution_summary s = {};
+    s.attribution = TS_L3_ATTR_OK;
+    s.compounding_layer = -1;
+    if (kl_joint_curve == nullptr || n_layers <= 0) {
+        return s;
+    }
+    if (joint_eps <= 0.0f) {
+        joint_eps = 0.1f;
+    }
+
+    // Per-layer sums (used for first-50 mean and the compounding
+    // detection). The "first 50" is a position count, not a layer
+    // count; the per-position mean at layer L is the average over
+    // positions 1..50 of the per-position KL at layer L. For now we
+    // treat the input curves as already-averaged (i.e. one scalar
+    // per layer) and compute the layer-mean of those; the
+    // position-level reduction is the orchestrator's job.
+    double sum_joint  = 0.0;
+    double sum_weight = 0.0;
+    double sum_kv     = 0.0;
+    int64_t n_joint_layers  = 0;
+    int64_t n_weight_layers = 0;
+    int64_t n_kv_layers     = 0;
+    for (int64_t i = 0; i < n_layers; i++) {
+        const float vj = kl_joint_curve[i];
+        if (vj > 0.0f) {
+            sum_joint += vj;
+            n_joint_layers++;
+        }
+        if (kl_weight_curve != nullptr) {
+            const float vw = kl_weight_curve[i];
+            if (vw > 0.0f) {
+                sum_weight += vw;
+                n_weight_layers++;
+            }
+        }
+        if (kl_kv_curve != nullptr) {
+            const float vk = kl_kv_curve[i];
+            if (vk > 0.0f) {
+                sum_kv += vk;
+                n_kv_layers++;
+            }
+        }
+    }
+    s.mean_kl_all_joint = (n_joint_layers > 0)
+        ? (float) (sum_joint / (double) n_joint_layers) : 0.0f;
+    // "first 50" is the same as the layer-mean in this scalar API;
+    // the orchestrator may want to use the position-level curves
+    // directly. We populate both fields with the same value so
+    // the JSON report has a well-defined mean_kl_first_50_joint.
+    s.mean_kl_first_50_joint  = s.mean_kl_all_joint;
+    s.mean_kl_first_50_weight = (n_weight_layers > 0)
+        ? (float) (sum_weight / (double) n_weight_layers) : 0.0f;
+    s.mean_kl_first_50_kv     = (n_kv_layers > 0)
+        ? (float) (sum_kv / (double) n_kv_layers) : 0.0f;
+
+    // Coupling ratio: joint / max(weight, kv, eps). The eps floor
+    // avoids div-by-zero when both components are zero.
+    const float max_comp = std::max({
+        s.mean_kl_first_50_weight, s.mean_kl_first_50_kv, joint_eps * 0.1f});
+    s.coupling_ratio = s.mean_kl_first_50_joint / max_comp;
+
+    // For the NUMERICAL check, use the raw max of the two
+    // components (no floor) so a true "both below eps" situation
+    // is detected even when joint_eps is small.
+    const float max_comp_raw = std::max(
+        s.mean_kl_first_50_weight, s.mean_kl_first_50_kv);
+
+    // Attribution classification (spec §6.3b).
+    if (s.mean_kl_first_50_joint < joint_eps) {
+        s.attribution = TS_L3_ATTR_OK;
+    } else if (max_comp_raw < joint_eps) {
+        // Both components are below the joint epsilon: the joint
+        // error isn't explained by either, so flag as numerical
+        // (FP rounding, layout mismatch, etc.).
+        s.attribution = TS_L3_ATTR_NUMERICAL;
+    } else if (s.coupling_ratio > 2.0f) {
+        s.attribution = TS_L3_ATTR_COMPOUNDING;
+        // Find the first layer where joint > 2 * max(weight, kv).
+        for (int64_t i = 0; i < n_layers; i++) {
+            const float vj = kl_joint_curve[i];
+            const float vw = (kl_weight_curve != nullptr) ? kl_weight_curve[i] : 0.0f;
+            const float vk = (kl_kv_curve     != nullptr) ? kl_kv_curve[i]     : 0.0f;
+            const float m  = std::max({vw, vk, joint_eps * 0.1f});
+            if (vj > 2.0f * m) {
+                s.compounding_layer = (int) i;
+                break;
+            }
+        }
+    } else if (s.mean_kl_first_50_weight > s.mean_kl_first_50_kv) {
+        s.attribution = TS_L3_ATTR_WEIGHT;
+    } else {
+        s.attribution = TS_L3_ATTR_KV;
+    }
+    return s;
 }
 
 int ts_l3_tensor_coherence(const float * l1, const float * ref,

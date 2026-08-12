@@ -17,6 +17,10 @@
 
 #include <cmath>
 #include <cstdint>
+#include <vector>
+
+#include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -209,6 +213,137 @@ static void test_l2() {
               d_zero_size.relative_frobenius == 0.0f);
         check("act 0x0: top1_mismatch == 0",
               d_zero_size.top1_mismatch == 0.0f);
+    }
+
+    // --- L3 KL divergence + four-forward attribution (v3.1 spec §6) ---
+    {
+        // KL(P || Q) for two simple distributions.
+        const int64_t vocab = 4;
+        float p[4] = { 0.5f, 0.3f, 0.15f, 0.05f };
+        float q[4] = { 0.5f, 0.3f, 0.15f, 0.05f };  // identical
+        const float kl_identical = ts_l3_kl_divergence(p, q, vocab);
+        check_close("kl identical == 0", kl_identical, 0.0f, 1e-6f);
+
+        // P different from Q: positive KL.
+        float p2[4]  = { 0.7f, 0.2f, 0.05f, 0.05f };
+        float q2[4]  = { 0.25f, 0.25f, 0.25f, 0.25f };
+        const float kl_pq = ts_l3_kl_divergence(p2, q2, vocab);
+        check("kl(p2 || q2) > 0", kl_pq > 0.0f);
+        // P close to Q: small KL.
+        float p_close[4] = { 0.51f, 0.29f, 0.15f, 0.05f };
+        const float kl_close = ts_l3_kl_divergence(p_close, q, vocab);
+        check("kl close to identical < kl(p2 || q2)",
+              kl_close < kl_pq);
+
+        // P == all-zero: degenerate, returns 0.
+        float p_zero[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+        const float kl_zero = ts_l3_kl_divergence(p_zero, q, vocab);
+        check_close("kl zero P == 0", kl_zero, 0.0f, 1e-9f);
+
+        // Q has a near-zero entry: smoothed by eps, no NaN/Inf.
+        float q_tiny[4] = { 0.5f, 0.5f - 1e-15f, 0.0f, 0.0f + 1e-15f };
+        const float kl_tiny = ts_l3_kl_divergence(p, q_tiny, vocab);
+        check("kl with near-zero Q entries is finite",
+              std::isfinite(kl_tiny));
+
+        // Per-position breakdown.
+        std::vector<float> per_pos((size_t) vocab, 0.0f);
+        const float kl_breakdown = ts_l3_kl_divergence(
+            p, q, vocab, 1e-10f, per_pos.data());
+        double sum_per_pos = 0.0;
+        for (int64_t i = 0; i < vocab; i++) {
+            sum_per_pos += (double) per_pos[(size_t) i];
+        }
+        check_close("kl per_pos sum == kl scalar",
+                    (float) sum_per_pos, kl_breakdown, 1e-5f);
+
+        // --- four-forward attribution ---
+        // OK: all three curves below joint_eps.
+        {
+            const int64_t n_layers = 4;
+            std::vector<float> joint_curve (n_layers, 0.05f);
+            std::vector<float> weight_curve(n_layers, 0.02f);
+            std::vector<float> kv_curve    (n_layers, 0.01f);
+            ts_l3_attribution_summary s = ts_l3_attribute_drift(
+                joint_curve.data(), weight_curve.data(), kv_curve.data(),
+                n_layers, 0.1f);
+            check("attr OK: attribution == OK", s.attribution == TS_L3_ATTR_OK);
+            check_close("attr OK: coupling_ratio", s.coupling_ratio, 0.05f / 0.02f, 1e-3f);
+            check("attr OK: compounding_layer == -1", s.compounding_layer == -1);
+        }
+        // COMPOUNDING: joint >> max(weight, kv), with the components
+        // both above eps (so the NUMERICAL test, which requires both
+        // components below eps, does not preempt).
+        {
+            const int64_t n_layers = 4;
+            std::vector<float> joint_curve (n_layers, 0.5f);
+            std::vector<float> weight_curve(n_layers, 0.15f);
+            std::vector<float> kv_curve    (n_layers, 0.15f);
+            ts_l3_attribution_summary s = ts_l3_attribute_drift(
+                joint_curve.data(), weight_curve.data(), kv_curve.data(),
+                n_layers, 0.1f);
+            check("attr COMPOUNDING: attribution", s.attribution == TS_L3_ATTR_COMPOUNDING);
+            check_close("attr COMPOUNDING: coupling_ratio == 3.33",
+                        s.coupling_ratio, 0.5f / 0.15f, 1e-3f);
+            check("attr COMPOUNDING: compounding_layer == 0",
+                  s.compounding_layer == 0);
+        }
+        // WEIGHT: joint ~ max(weight, kv), weight > kv.
+        {
+            const int64_t n_layers = 4;
+            std::vector<float> joint_curve (n_layers, 0.3f);
+            std::vector<float> weight_curve(n_layers, 0.25f);
+            std::vector<float> kv_curve    (n_layers, 0.05f);
+            ts_l3_attribution_summary s = ts_l3_attribute_drift(
+                joint_curve.data(), weight_curve.data(), kv_curve.data(),
+                n_layers, 0.1f);
+            check("attr WEIGHT: attribution", s.attribution == TS_L3_ATTR_WEIGHT);
+            check("attr WEIGHT: coupling_ratio < 2.0", s.coupling_ratio < 2.0f);
+        }
+        // KV: joint ~ max(weight, kv), kv > weight.
+        {
+            const int64_t n_layers = 4;
+            std::vector<float> joint_curve (n_layers, 0.3f);
+            std::vector<float> weight_curve(n_layers, 0.05f);
+            std::vector<float> kv_curve    (n_layers, 0.25f);
+            ts_l3_attribution_summary s = ts_l3_attribute_drift(
+                joint_curve.data(), weight_curve.data(), kv_curve.data(),
+                n_layers, 0.1f);
+            check("attr KV: attribution", s.attribution == TS_L3_ATTR_KV);
+        }
+        // NUMERICAL: joint > eps, both components below eps.
+        {
+            const int64_t n_layers = 4;
+            std::vector<float> joint_curve (n_layers, 0.2f);
+            std::vector<float> weight_curve(n_layers, 0.0f);
+            std::vector<float> kv_curve    (n_layers, 0.0f);
+            ts_l3_attribution_summary s = ts_l3_attribute_drift(
+                joint_curve.data(), weight_curve.data(), kv_curve.data(),
+                n_layers, 0.1f);
+            check("attr NUMERICAL: attribution",
+                  s.attribution == TS_L3_ATTR_NUMERICAL);
+        }
+        // Compounding layer: only the 3rd layer is compounding.
+        {
+            const int64_t n_layers = 5;
+            std::vector<float> joint_curve = { 0.05f, 0.05f, 0.5f, 0.5f, 0.5f };
+            std::vector<float> weight_curve(n_layers, 0.15f);
+            std::vector<float> kv_curve    (n_layers, 0.15f);
+            ts_l3_attribution_summary s = ts_l3_attribute_drift(
+                joint_curve.data(), weight_curve.data(), kv_curve.data(),
+                n_layers, 0.1f);
+            check("attr late compounding: attribution",
+                  s.attribution == TS_L3_ATTR_COMPOUNDING);
+            check("attr late compounding: layer == 2",
+                  s.compounding_layer == 2);
+        }
+        // Null joint curve: zero summary.
+        {
+            ts_l3_attribution_summary s = ts_l3_attribute_drift(
+                nullptr, nullptr, nullptr, 0, 0.1f);
+            check("attr null: attribution == OK", s.attribution == TS_L3_ATTR_OK);
+            check("attr null: compounding_layer == -1", s.compounding_layer == -1);
+        }
     }
 
     // --- run + flagging ---
