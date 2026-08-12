@@ -47,6 +47,7 @@
 		5585350E0FD8C152B358FB1B /* CodeOutlineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D7F20C6E3BCA609B32E9CAF /* CodeOutlineView.swift */; };
 		561C364154E0918D86AD8D30 /* LearningDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCD3045F308A4FC885C96939 /* LearningDashboardView.swift */; };
 		5628BD9FBDF5CB2C6FD2C20C /* SheetDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 657EA5B6BA559A1A7BAC2924 /* SheetDetailView.swift */; };
+		E5A1B2C3D4E5F60123456789 /* SheetEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A1B2C3D4E5F60123456788 /* SheetEditorView.swift */; };
 		5B10DBAFFAD71E948A8094C0 /* ReportWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = E053C048DC7AD97E5C1BD774 /* ReportWindow.swift */; };
 		5C95D66AE6E8D039739FCBC7 /* SlidesListView_iOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = 563E0793B448A3FB525AD2CF /* SlidesListView_iOS.swift */; };
 		5DBE077503600EFBE41476A1 /* DocDetailView_iOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E0E95004AE80B971031F915 /* DocDetailView_iOS.swift */; };
@@ -168,6 +169,7 @@
 		5E0E95004AE80B971031F915 /* DocDetailView_iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocDetailView_iOS.swift; sourceTree = "<group>"; };
 		6281FE0DBAFFD779BEAEBB33 /* SurfaceLinkedEntityChip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurfaceLinkedEntityChip.swift; sourceTree = "<group>"; };
 		657EA5B6BA559A1A7BAC2924 /* SheetDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SheetDetailView.swift; sourceTree = "<group>"; };
+		E5A1B2C3D4E5F60123456788 /* SheetEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SheetEditorView.swift; sourceTree = "<group>"; };
 		66BB674348D21932683F6247 /* ChatPanelView_iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatPanelView_iOS.swift; sourceTree = "<group>"; };
 		6AAA5BEEED6B2F93155F3F2E /* CodeSurfaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeSurfaceView.swift; sourceTree = "<group>"; };
 		6E33EB0CB8E4B73019CA2705 /* EditorUndoCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorUndoCoordinator.swift; sourceTree = "<group>"; };
@@ -724,6 +726,7 @@
 			isa = PBXGroup;
 			children = (
 				657EA5B6BA559A1A7BAC2924 /* SheetDetailView.swift */,
+				E5A1B2C3D4E5F60123456788 /* SheetEditorView.swift */,
 				A24BA0CB02B2C07B4F40798A /* SheetGridView.swift */,
 				B30714C14AE68559057127E6 /* SheetsListView.swift */,
 			);
@@ -926,6 +929,7 @@
 				5B10DBAFFAD71E948A8094C0 /* ReportWindow.swift in Sources */,
 				ACA69BEBB04769F1DD146753 /* SettingsView.swift in Sources */,
 				5628BD9FBDF5CB2C6FD2C20C /* SheetDetailView.swift in Sources */,
+				E5A1B2C3D4E5F60123456789 /* SheetEditorView.swift in Sources */,
 				4B4C3B5F837872BD7A2066BB /* SheetGridView.swift in Sources */,
 				F65C4A28543800692ECDE3A7 /* SheetsListView.swift in Sources */,
 				740EE592E11B002355354AD7 /* SidebarGroup.swift in Sources */,

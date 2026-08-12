@@ -55,7 +55,7 @@ public struct CodeSurfaceView: View {
             CodeFileTreeView(viewModel: viewModel)
                 .frame(minWidth: 220, idealWidth: 280)
         } content: {
-            CodeEditorPaneView(viewModel: viewModel)
+            CodeDetailView(viewModel: viewModel)
                 .frame(minWidth: 360)
         } detail: {
             VStack(spacing: 0) {

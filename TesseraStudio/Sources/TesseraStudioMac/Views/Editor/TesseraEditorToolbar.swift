@@ -156,11 +156,69 @@ public struct TesseraEditorToolbar: View {
     }
 
     public var body: some View {
-        VStack(spacing: 0) {
-            ribbonTabBar
-            ribbonContentArea
+        Group {
+            if mode.isCodeMode {
+                codeToolbarContent
+            } else {
+                VStack(spacing: 0) {
+                    ribbonTabBar
+                    ribbonContentArea
+                }
+            }
         }
         .background(Color(.windowBackgroundColor))
+    }
+
+    // MARK: - Code mode toolbar
+
+    /// Compact single-row toolbar for `.code` and `.codeWithConfig` modes.
+    /// Shows: language badge, focus toggle, line numbers toggle.
+    /// No text formatting (bold/italic/etc. don't apply to code).
+    private var codeToolbarContent: some View {
+        HStack(spacing: 8) {
+            // Language badge — placeholder; host passes language via
+            // formattingState.blockType metadata or a dedicated binding.
+            Text(formattingState.isCode ? "Code" : "")
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color(.controlBackgroundColor), in: RoundedRectangle(cornerRadius: 4))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(Color(.separatorColor), lineWidth: 0.5)
+                )
+
+            Spacer()
+
+            // Focus mode toggle.
+            RibbonToggleButton(
+                label: isFocusModeActive == true ? "Exit Focus" : "Focus",
+                icon: "rectangle.center.inset.filled",
+                isActive: isFocusModeActive ?? false
+            ) {
+                onCommand(.enterFocusMode)
+            }
+
+            // Line numbers toggle.
+            RibbonToggleButton(
+                label: "Lines",
+                icon: "list.number",
+                isActive: formattingState.showLineNumbers
+            ) {
+                formattingState.showLineNumbers.toggle()
+                onCommand(.toggleLineNumbers)
+            }
+
+            Spacer()
+
+            RouteChip()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Color(.separatorColor)).frame(height: 1)
+        }
     }
 
     // MARK: - Tab bar

@@ -80,6 +80,33 @@ public final class CodeSurfaceViewModel: ObservableObject {
     /// non-fatal banner with this string.
     @Published public var lastError: String?
 
+    // MARK: - Editor AST
+
+    /// The in-memory editor document. A single paragraph
+    /// block wrapping the file body — the AST is the
+    /// interface the ``TesseraEditorView`` consumes.
+    @Published public var document: DocumentAST = .empty
+
+    /// True while a debounced save is in flight.
+    @Published public var isSaving: Bool = false
+
+    /// Set when a newer recovery file exists than what
+    /// was persisted. The view prompts the user.
+    @Published public var pendingRecovery: Bool = false
+
+    private var saveDebounceTask: Task<Void, Never>?
+    private let debounceDelay: TimeInterval = 2.0
+
+    /// Recovery file URL keyed to the current file's path.
+    private var recoveryFileURL: URL {
+        let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        let suffix = currentFile?.path
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: ".", with: "_")
+            ?? "no-file"
+        return cacheDir.appendingPathComponent("code-recovery-\(suffix).json")
+    }
+
     // MARK: - Dependencies
 
     private let store: CodeStore
@@ -166,17 +193,20 @@ public final class CodeSurfaceViewModel: ObservableObject {
 
     /// Open a file. The view model:
     ///   1. Sets `currentFile` (the editor re-renders).
-    ///   2. Recomputes the outline (the outline panel
+    ///   2. Rebuilds the single-block AST from the file body.
+    ///   3. Recomputes the outline (the outline panel
     ///      re-renders).
-    ///   3. Kicks off a git background task for the
+    ///   4. Kicks off a git background task for the
     ///      recent commits + blame.
     public func open(file: CodeFile) async {
         currentFile = file
+        document = buildDocument(from: file.body)
         currentOutline = outlineExtractor.extract(
             source: file.body, language: file.language
         )
         recentCommits = nil
         currentBlame = nil
+        checkRecovery()
         if let git {
             do {
                 let commits = try await git.recentCommits(file: file, limit: 20)
@@ -280,6 +310,9 @@ public final class CodeSurfaceViewModel: ObservableObject {
                 searchIndex.upsert(file)
                 if currentFile?.path == file.path {
                     self.currentFile = file
+                    // Sync the AST to disk state; if the user has
+                    // uncommitted edits the editor holds a divergent AST.
+                    self.document = buildDocument(from: file.body)
                     self.currentOutline = outlineExtractor.extract(
                         source: file.body, language: file.language
                     )
@@ -374,5 +407,161 @@ public final class CodeSurfaceViewModel: ObservableObject {
 
     private func indexedCount() -> Int {
         return searchIndex.fileCount
+    }
+
+    // MARK: - Editor AST
+
+    /// Build a single-block paragraph AST from a plain body string.
+    private func buildDocument(from body: String) -> DocumentAST {
+        var ast = DocumentAST()
+        let bid = UUID()
+        ast.blocks[bid] = Block(
+            id: bid,
+            type: .paragraph,
+            content: [InlineRun(text: body)]
+        )
+        ast.rootChildren = [bid]
+        return ast
+    }
+
+    /// Extract plain text from a single-block paragraph AST.
+    private func plainText(from ast: DocumentAST) -> String {
+        for blockID in ast.rootChildren {
+            guard let block = ast.blocks[blockID], block.type == .paragraph else { continue }
+            return block.content.map(\.text).joined()
+        }
+        return ""
+    }
+
+    // MARK: - Session recovery
+
+    /// Check for a session-recovery file on init. Returns true if
+    /// a newer backup exists than the persisted file.
+    public func checkRecovery() {
+        let file = recoveryFileURL
+        guard FileManager.default.fileExists(atPath: file.path) else {
+            pendingRecovery = false
+            return
+        }
+        do {
+            let attrs = try FileManager.default.attributesOfItem(atPath: file.path)
+            guard let modDate = attrs[.modificationDate] as? Date else {
+                pendingRecovery = false
+                return
+            }
+            if let file = currentFile {
+                pendingRecovery = modDate > file.updatedAt
+            } else {
+                pendingRecovery = false
+            }
+        } catch {
+            pendingRecovery = false
+        }
+    }
+
+    /// Restore from the session-recovery file.
+    public func recoverFromBackup() async {
+        let file = recoveryFileURL
+        guard FileManager.default.fileExists(atPath: file.path) else { return }
+        do {
+            let data = try Data(contentsOf: file)
+            let wrapper = try JSONDecoder().decode(CodeRecoveryWrapper.self, from: data)
+            self.document = buildDocument(from: wrapper.body)
+            if let currentFile {
+                _ = await saveBodyInternal(wrapper.body)
+                // Re-sync currentFile from store after save.
+                if let updated = try store.get(id: currentFile.id) {
+                    self.currentFile = updated
+                }
+            }
+            pendingRecovery = false
+        } catch {
+            self.lastError = "Failed to restore backup: \(error)"
+        }
+    }
+
+    /// Discard the recovery file.
+    public func discardRecovery() {
+        try? FileManager.default.removeItem(at: recoveryFileURL)
+        pendingRecovery = false
+    }
+
+    /// Save a recovery snapshot for session-crash recovery.
+    public func saveRecoveryFile() {
+        guard let currentFile else { return }
+        do {
+            let wrapper = CodeRecoveryWrapper(body: currentFile.body)
+            let data = try JSONEncoder().encode(wrapper)
+            try data.write(to: recoveryFileURL, options: .atomic)
+        } catch {
+            NSLog("CodeSurfaceViewModel.saveRecoveryFile: \(error)")
+        }
+    }
+
+    /// Update the local document without persisting (editor binding path).
+    public func setDocumentLocal(_ ast: DocumentAST) {
+        self.document = ast
+    }
+
+    /// Debounced persist. Cancels any in-flight save, then schedules a
+    /// new one after `debounceDelay` seconds.
+    public func commitBody(_ ast: DocumentAST) async {
+        let body = plainText(from: ast)
+        guard body != currentFile?.body else { return }
+        saveDebounceTask?.cancel()
+        saveDebounceTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await Task.sleep(nanoseconds: UInt64(self.debounceDelay * 1_000_000_000))
+            } catch {
+                // Cancelled — discard this save.
+                return
+            }
+            _ = await self.saveBodyInternal(body)
+        }
+    }
+
+    /// Force an immediate save (flushes the debounce). Called on
+    /// scenePhase change to background.
+    public func flushBody() async {
+        saveDebounceTask?.cancel()
+        saveDebounceTask = nil
+        _ = await saveBodyInternal(plainText(from: document))
+    }
+
+    /// Internal save path — extracts plain text, applies mutation,
+    /// refreshes outline + search index.
+    private func saveBodyInternal(_ newBody: String) async -> CodeFile? {
+        guard let currentFile else { return nil }
+        let mutation = CodeMutation.replaceCodeBlock(
+            fileID: currentFile.id, newBody: newBody
+        )
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            let result = try await store.apply(mutation, to: currentFile.id)
+            self.currentFile = result.updated
+            self.currentOutline = outlineExtractor.extract(
+                source: result.updated.body, language: result.updated.language
+            )
+            searchIndex.upsert(result.updated)
+            return result.updated
+        } catch {
+            self.lastError = "Save failed: \(error)"
+            return nil
+        }
+    }
+}
+
+// MARK: - Recovery helper
+
+/// Codable wrapper for the recovery file (stores plain body text + timestamp).
+private struct CodeRecoveryWrapper: Codable {
+    let body: String
+    let savedAt: Date
+
+    init(body: String) {
+        self.body = body
+        self.savedAt = Date()
     }
 }
