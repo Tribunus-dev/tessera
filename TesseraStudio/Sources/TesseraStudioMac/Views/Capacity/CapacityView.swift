@@ -87,6 +87,7 @@ struct CapacityView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+        .accessibilityElement(children: .combine)
     }
 
     private func memoryBar(_ cap: TesseraLocalCapacity) -> some View {
@@ -95,7 +96,10 @@ struct CapacityView: View {
         return VStack(alignment: .leading, spacing: 4) {
             Text("Memory: \(used / 1024) GB used of \(cap.ramTotalMB / 1024) GB")
                 .font(.caption)
-            ProgressView(value: frac).tint(frac > 0.85 ? .red : .accentColor)
+            ProgressView(value: frac)
+                .tint(frac > 0.85 ? Color.red : .accentColor)
+                .accessibilityLabel("Memory usage: \(Int(frac * 100)) percent")
+                .accessibilityValue("\(used / 1024) of \(cap.ramTotalMB / 1024) gigabytes used")
         }
     }
 
@@ -117,10 +121,14 @@ struct CapacityView: View {
                     }
                     Spacer()
                     if !fit.fitsRAM {
-                        Text("won't fit").font(.caption2).foregroundStyle(.red)
+                        Text("won't fit")
+                            .font(.caption2)
+                            .foregroundStyle(Color.red)
+                            .accessibilityLabel("Won't fit in RAM")
                     }
                 }
                 .padding(.vertical, 2)
+                .accessibilityElement(children: .combine)
             }
         }
     }
@@ -131,7 +139,8 @@ struct CapacityView: View {
         case "amber": .orange
         default: .red
         }
-        return Circle().fill(color).frame(width: 12, height: 12)
+        let label = kind == "green" ? "Fits" : kind == "amber" ? "Marginal fit" : "Does not fit"
+        return Circle().fill(color).frame(width: 12, height: 12).accessibilityLabel(label)
     }
 
     // MARK: - MoE bench
@@ -149,6 +158,7 @@ struct CapacityView: View {
                 }
             }
             .pickerStyle(.segmented)
+            .accessibilityLabel("APEX quantization tier: \(benchTier.label)")
             Text(benchTier.tensorPlan)
                 .font(.caption2).foregroundStyle(.secondary)
                 .lineLimit(1).truncationMode(.middle)
@@ -160,6 +170,7 @@ struct CapacityView: View {
                     if benchRunning { ProgressView().controlSize(.small) } else { Text("Run bench") }
                 }
                 .disabled(benchRunning)
+                .accessibilityLabel(benchRunning ? "Benchmark running" : "Run MoE A/B benchmark")
 
                 if let path = benchPath {
                     Text("Wrote: \(path.lastPathComponent)")

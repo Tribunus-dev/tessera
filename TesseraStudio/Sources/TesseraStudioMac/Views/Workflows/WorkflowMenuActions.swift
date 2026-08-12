@@ -154,7 +154,7 @@ struct ViewMenuItems: View {
                ? "Hide Inspector" : "Show Inspector") {
             workflowActions?.toggleInspector()
         }
-        .keyboardShortcut("i", modifiers: [.command, .option])
+        .keyboardShortcut("i", modifiers: [.command, .shift])
         .disabled(workflowActions == nil)
 
         Divider()

@@ -66,7 +66,7 @@ struct LearningDashboardView: View {
             if teachers.isEmpty {
                 Text("No teacher assessments yet").foregroundStyle(.secondary)
             } else {
-                ForEach(teachers) { teacher in
+                ForEach(teachers, id: \.teacherId) { teacher in
                     VStack(alignment: .leading, spacing: 4) {
                         Text(teacher.teacherId).font(.headline)
                         LabeledContent("world-gate pass", value: String(format: "%.2f", teacher.worldGatePassFraction))

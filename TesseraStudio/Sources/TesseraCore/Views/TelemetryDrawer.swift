@@ -173,6 +173,8 @@ public struct TelemetryDrawer: View {
                 }
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("\(category.rawValue), \(isCollapsed ? "collapsed" : "expanded")")
+            .accessibilityHint("Double tap to \(isCollapsed ? "expand" : "collapse")")
 
             if !isCollapsed {
                 HStack(spacing: 12) {

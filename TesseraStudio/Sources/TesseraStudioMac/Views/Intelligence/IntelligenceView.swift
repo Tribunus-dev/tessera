@@ -41,6 +41,7 @@ struct IntelligenceView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
+            .accessibilityLabel("Intelligence theme")
 
             Picker("Level", selection: $interfaceLevelRaw) {
                 ForEach(InterfaceLevel.allCases) { level in
@@ -49,6 +50,7 @@ struct IntelligenceView: View {
             }
             .pickerStyle(.segmented)
             .help("Standard hides the ML-researcher controls; Advanced reveals them.")
+            .accessibilityLabel("Interface level: \(interfaceLevel.displayName)")
             .frame(width: 180)
         }
         .padding(12)
@@ -177,6 +179,7 @@ private struct AgentAutonomyTheme: View {
             Text(name).font(.callout.bold()).frame(width: 64, alignment: .leading)
             Text(detail).foregroundStyle(.secondary)
         }
+        .accessibilityElement(children: .combine)
     }
 
     private func card<C: View>(_ title: String, @ViewBuilder content: () -> C) -> some View {

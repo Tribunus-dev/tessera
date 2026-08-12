@@ -119,6 +119,7 @@ public struct ChatHistoryDrawer: View {
         VStack(spacing: 8) {
             TextField("Search title, model, tool", text: $searchText)
                 .textFieldStyle(.roundedBorder)
+                .accessibilityLabel("Search conversations by title, model, or tool")
             Picker("Date", selection: $dateFilter) {
                 ForEach(HistoryDateFilter.allCases, id: \.self) { filter in
                     Text(filter.rawValue).tag(filter)
@@ -140,9 +141,8 @@ public struct ChatHistoryDrawer: View {
                 )
             } else {
                 List(filtered) { convo in
-                    row(convo)
-                        .contentShape(Rectangle())
-                        .onTapGesture { onRestore(convo) }
+                    Button { onRestore(convo) } label: { row(convo) }
+                        .buttonStyle(.plain)
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                             Button(role: .destructive) {
                                 confirmingDelete = convo

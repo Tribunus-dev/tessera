@@ -110,7 +110,7 @@ struct SettingsView: View {
             advancedTab
                 .tabItem { Label("Advanced", systemImage: "slider.horizontal.3") }
         }
-        .frame(width: 520, height: 460)
+        .frame(width: 520, height: 540)
         .onAppear {
             loadAPIKey()
             loadSkyKey()
@@ -134,32 +134,44 @@ struct SettingsView: View {
         Form {
             Section("Editing") {
                 Toggle("Automatic bulleted lists", isOn: $autoBulletedLists)
+                    .accessibilityLabel("Automatic bulleted lists")
                 Toggle("Automatic numbered lists", isOn: $autoNumberedLists)
+                    .accessibilityLabel("Automatic numbered lists")
                 Toggle("AutoCorrect (text, email, date)", isOn: $autoCorrect)
+                    .accessibilityLabel("AutoCorrect")
                 Toggle("Match formatting of an inserted list to the preceding paragraph", isOn: $autoFormatBeginningOfListItem)
+                    .accessibilityLabel("Match formatting of an inserted list")
                 Toggle("Bold, italic, underline with math AutoCorrect", isOn: $autoBoldItalicUnderlineMath)
+                    .accessibilityLabel("Bold italic underline with math AutoCorrect")
                 Picker("Default paste from other apps", selection: $defaultPasteFormat) {
                     Text("Keep Source Formatting").tag("keepSourceFormatting")
                     Text("Keep Text Only").tag("keepTextOnly")
                     Text("Match Destination Formatting").tag("matchDestination")
                 }
+                .accessibilityLabel("Default paste from other apps")
             }
             Section("Document Defaults") {
                 TextField("Default font family", text: $defaultDocFontFamily)
                     .help("Use \"system\" for the OS default font")
+                    .accessibilityLabel("Default font family")
                 Stepper("Default font size: \(defaultDocFontSize) pt", value: $defaultDocFontSize, in: 8...72)
+                    .accessibilityLabel("Default font size")
             }
             Section("Slides Defaults") {
                 TextField("Default text box font family", text: $defaultSlidesFontFamily)
                     .help("Use \"system\" for the OS default font")
+                    .accessibilityLabel("Default text box font family")
                 Stepper("Default font size: \(defaultSlidesFontSize) pt", value: $defaultSlidesFontSize, in: 8...144)
+                    .accessibilityLabel("Default text box font size")
             }
             Section("AI") {
                 Toggle("Enable AI features", isOn: $aiEnabled)
+                    .accessibilityLabel("Enable AI features")
                 Picker("AI route", selection: $aiRoute) {
                     Text("Granite · Local (no data leaves your machine)").tag("local")
                     Text("Cloud API (requires API key in Model tab)").tag("cloud")
                 }
+                .accessibilityLabel("AI route")
                 if aiEnabled && aiRoute == "cloud" {
                     Text("Cloud mode sends prompts to the remote endpoint. Data is not retained by the model provider.")
                         .font(.caption)
@@ -172,8 +184,11 @@ struct SettingsView: View {
                         Text(rt.displayName).tag(rt.rawValue)
                     }
                 }
+                .accessibilityLabel("Default runtime")
                 PathField("Model directory", text: $modelDirectory, picks: .directory)
+                    .accessibilityLabel("Model directory")
                 Stepper("Threads: \(threadCount == 0 ? "all cores" : "\(threadCount)")", value: $threadCount, in: 0...64)
+                    .accessibilityLabel("Thread count")
             }
         }
         .formStyle(.grouped)
@@ -183,12 +198,15 @@ struct SettingsView: View {
     private var agentTab: some View {
         Form {
             Stepper("Max tool iterations: \(maxIterations)", value: $maxIterations, in: 1...50)
+                .accessibilityLabel("Max tool iterations")
             Picker("Default approval level", selection: $defaultApprovalLevel) {
                 ForEach(ApprovalLevel.allCases, id: \.rawValue) { level in
                     Text(level.rawValue.capitalized).tag(level.rawValue)
                 }
             }
+            .accessibilityLabel("Default approval level")
             TextField("Token budget", value: $tokenBudget, format: .number)
+                .accessibilityLabel("Token budget")
         }
         .formStyle(.grouped)
         .padding()
@@ -207,24 +225,32 @@ struct SettingsView: View {
                 Section("On-Device (llama.cpp)") {
                     PathField("GGUF model path", text: $onDeviceModelPath,
                               picks: .file(types: [.init(filenameExtension: "gguf")].compactMap { $0 }))
+                        .accessibilityLabel("GGUF model path")
                     PathField("libllama.dylib path (optional)", text: $onDeviceLibraryPath,
                               picks: .file(types: [UTType(filenameExtension: "dylib")].compactMap { $0 }))
+                        .accessibilityLabel("libllama.dylib path")
                     TextField("Context length", value: $onDeviceContextLength, format: .number)
+                        .accessibilityLabel("Context length")
                     Stepper("GPU layers: \(onDeviceGPULayers < 0 ? "all" : "\(onDeviceGPULayers)")",
                             value: $onDeviceGPULayers, in: -1...200)
+                        .accessibilityLabel("GPU layers")
                 }
             }
 
             if llmProviderType == TesseraLLMProviderType.remoteAPI.rawValue {
                 Section("Remote API") {
                     TextField("Base URL", text: $remoteAPIBaseURL)
+                        .accessibilityLabel("Base URL")
                     SecureField("API key", text: $apiKeyDraft)
                         .onSubmit { commitAPIKey() }
                         .onDisappear { commitAPIKey() }
+                        .accessibilityLabel("API key")
                         .accessibilityHint("Stored in the macOS Keychain, not preferences")
                     apiKeyStateRow
                     TextField("Model name", text: $remoteModelName)
+                        .accessibilityLabel("Remote model name")
                     Toggle("Stream responses (SSE)", isOn: $remoteUseStreaming)
+                        .accessibilityLabel("Stream responses")
                 }
             }
 
@@ -390,16 +416,21 @@ struct SettingsView: View {
                 Text("Standard").tag(TesseraPermissionProfile.standard)
                 Text("Elevated").tag(TesseraPermissionProfile.elevated)
             }
+            .accessibilityLabel("Permission floor")
             Picker("Ceiling (maximum learning may reach)", selection: $autonomyConfig.ceiling) {
                 Text("Contained low-risk only").tag(AutonomyCeiling.containedLowRiskOnly)
                 Text("Any non-irreversible class").tag(AutonomyCeiling.anyNonIrreversible)
             }
+            .accessibilityLabel("Permission ceiling")
             Stepper("Approvals needed to grant: \(autonomyConfig.grantThresholdN)",
                     value: $autonomyConfig.grantThresholdN, in: 1...20)
+                .accessibilityLabel("Approvals needed to grant")
             Stepper("Distinct sessions needed: \(autonomyConfig.sessionThresholdM)",
                     value: $autonomyConfig.sessionThresholdM, in: 1...10)
+                .accessibilityLabel("Distinct sessions needed")
             Stepper("Path-glob depth: \(autonomyConfig.pathGlobDepth)",
                     value: $autonomyConfig.pathGlobDepth, in: 1...4)
+                .accessibilityLabel("Path-glob depth")
         }
     }
 
@@ -413,9 +444,13 @@ struct SettingsView: View {
                 Button("End autonomous session") { endYolo() }
             } else {
                 TextField("Goal (optional)", text: $yoloGoal)
+                    .accessibilityLabel("Autonomous session goal")
                 TextField("Reason (for the audit log)", text: $yoloReason)
+                    .accessibilityLabel("Autonomous session reason")
                 Stepper("Minutes: \(yoloMinutes)", value: $yoloMinutes, in: 5...240)
+                    .accessibilityLabel("Autonomous session duration")
                 Button("Start autonomous session") { startYolo() }
+                    .accessibilityLabel("Start autonomous session")
                     .disabled(autonomySessionID.isEmpty)
                 if autonomySessionID.isEmpty {
                     Text("Run the agent once first; the autonomous session binds to that run.")
@@ -442,8 +477,11 @@ struct SettingsView: View {
                         Text(rec.message)
                         HStack {
                             Button("Confirm") { confirmRecommendation(rec.actionClass, .confirm) }
+                                .accessibilityLabel("Confirm recommendation")
                             Button("Not now") { confirmRecommendation(rec.actionClass, .notNow) }
+                                .accessibilityLabel("Dismiss recommendation")
                             Button("Never") { confirmRecommendation(rec.actionClass, .never) }
+                                .accessibilityLabel("Block recommendation permanently")
                         }
                     }
                     .padding(.vertical, 2)
@@ -470,12 +508,15 @@ struct SettingsView: View {
                         HStack {
                             if entry.granted {
                                 Button("Revoke") { revokeEntry(entry.actionClass) }
+                                    .accessibilityLabel("Revoke permission")
                             }
                             if entry.revoked {
-                                Button("Un-revoke") { unrevokeEntry(entry.actionClass) }
+                                Button("Restore") { unrevokeEntry(entry.actionClass) }
+                                    .accessibilityLabel("Restore revoked permission")
                             }
                             if !entry.irreversible {
                                 Button("Add to denylist") { denylistEntry(entry.actionClass) }
+                                    .accessibilityLabel("Add to denylist")
                             }
                         }
                     }
@@ -506,6 +547,7 @@ struct SettingsView: View {
         Section("Approver network") {
             LabeledContent("status", value: netWarm ? "warm (modulating grants)" : "cold (rule-based only)")
             Button("Train now") { trainApproverNow() }
+                .accessibilityLabel("Train approver network now")
             if let netNote {
                 Text(netNote).font(.caption).foregroundStyle(.secondary)
             }
@@ -520,9 +562,11 @@ struct SettingsView: View {
             Button("Reset all grants") {
                 confirmResetGrants = true
             }
+            .accessibilityLabel("Reset all grants")
             Button("Purge all learning data", role: .destructive) {
                 confirmPurge = true
             }
+            .accessibilityLabel("Purge all learning data")
         }
         // HIG 14.1 / 13.5: both actions fire only after an explicit
         // confirmation; the destructive button is never the default.
@@ -637,6 +681,8 @@ struct SettingsView: View {
                         .accessibilityLabel("Covert trigger armed")
                 }
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Plea the Fifth")
         }
     }
 
@@ -666,6 +712,7 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
                 HStack {
                     Button("Test") { testCovertTrigger() }
+                        .accessibilityLabel("Test covert trigger")
                         .disabled(!canTestCovertTrigger)
                     if let note = covertTriggerTestNote {
                         Text(note).font(.caption).foregroundStyle(.secondary)
@@ -677,6 +724,7 @@ struct SettingsView: View {
             }
             Section {
                 Toggle("Coercion mode", isOn: $coercionMode)
+                    .accessibilityLabel("Coercion mode")
                     .help("Hide the visible 'Plea the Fifth' menu item. The hot-key and covert trigger still work.")
                 if coercionMode {
                     Label(
@@ -720,6 +768,7 @@ struct SettingsView: View {
                 .onDisappear { commitCovertTrigger() }
             HStack {
                 Button("Save") { commitCovertTrigger() }
+                    .accessibilityLabel("Save covert trigger")
                     .disabled(covertTriggerPhraseDraft.trimmingCharacters(in: .whitespacesAndNewlines).count < CovertTriggerMonitor.minPhraseLength)
                 if covertTriggerIsSet {
                     Button("Cancel") {
@@ -728,6 +777,7 @@ struct SettingsView: View {
                         covertTriggerEditing = false
                         loadCovertTrigger()
                     }
+                    .accessibilityLabel("Cancel covert trigger edit")
                 }
             }
         }
@@ -844,14 +894,18 @@ struct SettingsView: View {
     private var advancedTab: some View {
         Form {
             Toggle("Enable telemetry", isOn: $telemetryEnabled)
+                .accessibilityLabel("Enable telemetry")
             Picker("Log level", selection: $logLevel) {
                 ForEach(TesseraLogLevel.allCases, id: \.rawValue) { level in
                     Text(level.rawValue.uppercased()).tag(level.rawValue)
                 }
             }
+            .accessibilityLabel("Log level")
             PathField("Custom CLI path", text: $cliPath, picks: .directory)
+                .accessibilityLabel("Custom CLI path")
             Section("Engine binary (tessera-cli)") {
                 PathField("tessera-cli path", text: $tesseraCLIPath, picks: .file(types: [.unixExecutable]))
+                    .accessibilityLabel("tessera-cli path")
                 tesseraCLIStateRow
                 Text("Leave empty to auto-resolve; the known install locations and $PATH are checked in order.")
                     .font(.caption)
@@ -912,6 +966,7 @@ private struct PathField: View {
         LabeledContent(label) {
             HStack(spacing: 6) {
                 TextField(label, text: $text)
+                    .accessibilityLabel(label)
                 Button("Browse…") { browse() }
                     .accessibilityLabel("Browse for \(label)")
             }

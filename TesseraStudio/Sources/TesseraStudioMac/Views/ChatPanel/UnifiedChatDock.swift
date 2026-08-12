@@ -75,7 +75,7 @@ struct UnifiedChatDock: View {
                 .foregroundStyle(persona.tint)
                 .font(.caption2)
             Text(persona.displayName).font(.caption2.bold())
-            Text(persona.roleHint).font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1)
+            Text(persona.roleHint).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 2)

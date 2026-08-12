@@ -132,6 +132,7 @@ struct ContentView: View {
                 Section(group.rawValue) {
                     ForEach(group.destinations) { dest in
                         Label(dest.rawValue, systemImage: dest.icon)
+                            .accessibilityLabel("\(group.rawValue), \(dest.rawValue)")
                             .tag(dest)
                     }
                 }
@@ -145,14 +146,16 @@ struct ContentView: View {
                     withAnimation(reduceMotion ? nil : .default) { showHistory.toggle() }
                 }
                 .help("Show or hide the chat history drawer")
-                .accessibilityHint("Shows or hides the chat history drawer")
+                .accessibilityLabel("Chat history")
+                .accessibilityHint("Double tap to show or hide the chat history drawer")
             }
             ToolbarItem(placement: .primaryAction) {
                 Button("Chat", systemImage: "sidebar.right") {
                     withAnimation(reduceMotion ? nil : .default) { chatDockVisible.toggle() }
                 }
                 .help("Show or hide the Tessy + Sky chat dock")
-                .accessibilityHint("Shows or hides the persistent chat dock")
+                .accessibilityLabel(chatDockVisible ? "Hide chat dock" : "Show chat dock")
+                .accessibilityHint("Double tap to show or hide the Tessy and Sky chat dock")
                 .keyboardShortcut("\\", modifiers: .command)
             }
         }
