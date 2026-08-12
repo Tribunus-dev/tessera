@@ -124,6 +124,93 @@ static void test_l2() {
     check_close("l2 tol q4_k", ts_l2_expected_frob("q4_k"),         5e-2f, 1e-9f);
     check_close("l2 tol t640", ts_l2_expected_frob("tessera_t640"), 2e-2f, 1e-9f);
 
+    // --- L2 activation-space differential (v3.1 spec §4) ---
+    // Synthetic matmul outputs: 4 samples x 8 out_dim. Each row is a
+    // softmax-shaped distribution (one hot max + small noise) so the
+    // argmax is unambiguous. y_ref has the max at index 2 for all
+    // rows; y_quant has the max at index 5 for the first two rows
+    // (mismatch) and at index 2 for the last two (match).
+    {
+        const int64_t n_samples = 4;
+        const int64_t out_dim   = 8;
+        std::vector<float> y_ref((size_t) (n_samples * out_dim), 0.05f);
+        std::vector<float> y_quant((size_t) (n_samples * out_dim), 0.05f);
+        // Set up distinct argmax positions so the argmax is deterministic.
+        for (int64_t r = 0; r < n_samples; r++) {
+            for (int64_t c = 0; c < out_dim; c++) {
+                y_ref[(size_t) (r * out_dim + c)]   = 0.05f + 0.001f * (float) c;
+                y_quant[(size_t) (r * out_dim + c)] = 0.05f + 0.001f * (float) c;
+            }
+            y_ref[(size_t)   (r * out_dim + 2)]   = 0.99f;  // argmax at 2
+            y_quant[(size_t) (r * out_dim + 5)]   = 0.99f;  // argmax at 5
+        }
+        // Restore the first two rows' y_quant to also have argmax at 2
+        // (so the mismatch count is 2/4 = 0.5).
+        y_quant[(size_t) (2 * out_dim + 5)]   = 0.05f + 0.001f * 5.0f;
+        y_quant[(size_t) (2 * out_dim + 2)]   = 0.99f;
+        y_quant[(size_t) (3 * out_dim + 5)]   = 0.05f + 0.001f * 5.0f;
+        y_quant[(size_t) (3 * out_dim + 2)]   = 0.99f;
+
+        ts_l2_act_divergence d = ts_l2_compute_act_diff(
+            y_ref.data(), y_quant.data(), n_samples, out_dim);
+        check("act n_samples == 4", d.n_samples == 4);
+        check_close("act top1_mismatch == 0.5", d.top1_mismatch, 0.5f, 1e-6f);
+        check("act relative_frobenius > 0", d.relative_frobenius > 0.0f);
+        std::printf("     act_l2_frob=%.6g  top1_mismatch=%.4g  n_samples=%lld\n",
+                    (double) d.relative_frobenius, (double) d.top1_mismatch,
+                    (long long) d.n_samples);
+
+        // Identical inputs: Frobenius = 0, top1_mismatch = 0.
+        ts_l2_act_divergence d_identical = ts_l2_compute_act_diff(
+            y_ref.data(), y_ref.data(), n_samples, out_dim);
+        check_close("act identical: relative_frobenius == 0",
+                    d_identical.relative_frobenius, 0.0f, 1e-9f);
+        check_close("act identical: top1_mismatch == 0",
+                    d_identical.top1_mismatch, 0.0f, 1e-9f);
+        check("act identical: n_samples == 4", d_identical.n_samples == 4);
+
+        // Zero reference: degenerate case, frob == TS_L2_INF. The
+        // top1_mismatch is well-defined but is determined by the
+        // argmax of the zero row (always index 0) vs the argmax of
+        // y_quant (which has a peak at index 2 in our fixture), so
+        // the mismatch is 1.0 in this setup, not 0.
+        std::vector<float> y_zero((size_t) (n_samples * out_dim), 0.0f);
+        ts_l2_act_divergence d_zero = ts_l2_compute_act_diff(
+            y_zero.data(), y_ref.data(), n_samples, out_dim);
+        check("act zero ref: relative_frobenius == TS_L2_INF",
+              d_zero.relative_frobenius >= 1e20f);
+        check("act zero ref: top1_mismatch == 1.0 (zero argmax != y_quant argmax)",
+              d_zero.top1_mismatch == 1.0f);
+
+        // Single-sample single-column: degenerate shape, no NaN/Inf.
+        // (0.5 - 0.4)^2 / 0.5^2 = 0.01 / 0.25 = 0.04
+        std::vector<float> y1_ref(1,  0.5f);
+        std::vector<float> y1_qt(1,  0.4f);
+        ts_l2_act_divergence d1 = ts_l2_compute_act_diff(
+            y1_ref.data(), y1_qt.data(), 1, 1);
+        check("act 1x1: n_samples == 1", d1.n_samples == 1);
+        check_close("act 1x1: relative_frobenius == 0.04",
+                    d1.relative_frobenius, 0.04f, 1e-5f);
+        check_close("act 1x1: top1_mismatch == 0",
+                    d1.top1_mismatch, 0.0f, 1e-9f);
+
+        // Null pointer / zero size: returns zeros.
+        ts_l2_act_divergence d_null = ts_l2_compute_act_diff(
+            nullptr, y_ref.data(), n_samples, out_dim);
+        check("act nullptr y_ref: relative_frobenius == 0",
+              d_null.relative_frobenius == 0.0f);
+        check("act nullptr y_ref: top1_mismatch == 0",
+              d_null.top1_mismatch == 0.0f);
+        check("act nullptr y_ref: n_samples == 0", d_null.n_samples == 0);
+
+        ts_l2_act_divergence d_zero_size = ts_l2_compute_act_diff(
+            y_ref.data(), y_quant.data(), 0, 0);
+        check("act 0x0: relative_frobenius == 0",
+              d_zero_size.relative_frobenius == 0.0f);
+        check("act 0x0: top1_mismatch == 0",
+              d_zero_size.top1_mismatch == 0.0f);
+    }
+
     // --- run + flagging ---
     ts_l2_config cfg;
     ts_l2_default_config(&cfg);

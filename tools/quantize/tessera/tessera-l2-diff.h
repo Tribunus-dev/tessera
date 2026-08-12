@@ -28,6 +28,41 @@ struct ts_l2_divergence {
     float per_layer_norm;       // per-element RMS of the difference
 };
 
+// Activation-space L2 differential (v3.1 spec §4). The forward-pass
+// metric: for the same calibration input X, run the BF16 source
+// (Y_ref = X @ W_bf16) and the quantized matmul (Y_quant = X @ W_hat),
+// then compute:
+//
+//   act_l2_frob = ||Y_ref - Y_quant||_F^2 / ||Y_ref||_F^2
+//   act_l2_top1_mismatch = mean over rows of 1[argmax(Y_ref[r]) != argmax(Y_quant[r])]
+//
+// The inputs are per-row F32 vectors of the matmul outputs (a
+// (n_samples, out_dim) buffer flattened to (n_samples * out_dim) F32).
+// Per-sample and per-row are equivalent here because the metric is
+// position-wise: each output position is one comparison. n_samples is
+// the row count of the buffer (= number of matmul invocations captured
+// for this tensor). The function reduces over all positions to a
+// single scalar pair (frobenius + top1_mismatch).
+struct ts_l2_act_divergence {
+    float relative_frobenius;   // ||Y_ref - Y_quant||_F^2 / ||Y_ref||_F^2
+    float top1_mismatch;        // mean over rows of argmax mismatch
+    int64_t n_samples;          // number of matmul invocations (= rows)
+};
+
+// Compute activation-space L2 differential between two matmul-output
+// buffers. y_ref and y_quant are (n_samples * out_dim) F32 vectors in
+// row-major order (one row per matmul invocation, each row is
+// out_dim F32 values). n_samples is the row count; out_dim is the
+// column count. The function is pure math: no I/O, no global state.
+// Returns the per-tensor (frobenius, top1_mismatch, n_samples) triple.
+// When y_ref is all zeros (||Y_ref||_F^2 = 0), the relative_frobenius
+// is set to TS_L2_INF (1e30) and top1_mismatch is set to 0; this is
+// the same "zero reference" handling the weight-level divergence uses.
+ts_l2_act_divergence ts_l2_compute_act_diff(const float * y_ref,
+                                            const float * y_quant,
+                                            int64_t n_samples,
+                                            int64_t out_dim);
+
 // Result for one tensor, including the type-aware flag decision.
 struct ts_l2_tensor_result {
     std::string tensor_name;

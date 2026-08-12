@@ -9,8 +9,10 @@
 #include <nlohmann/json.hpp>
 
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <vector>
 #include <sstream>
 
 using json = nlohmann::json;
@@ -78,6 +80,77 @@ ts_l2_divergence ts_l2_tensor_divergence(const float * bf16,
     d.relative_frobenius = (den > 0.0) ? (float)(num / den)
                                        : (num > 0.0 ? TS_L2_INF : 0.0f);
     d.per_layer_norm = (float)sqrt(num / (double)n);
+    return d;
+}
+
+ts_l2_act_divergence ts_l2_compute_act_diff(const float * y_ref,
+                                            const float * y_quant,
+                                            int64_t n_samples,
+                                            int64_t out_dim) {
+    ts_l2_act_divergence d = { 0.0f, 0.0f, 0 };
+    if (y_ref == nullptr || y_quant == nullptr ||
+        n_samples <= 0 || out_dim <= 0) {
+        return d;
+    }
+
+    // Two reductions:
+    //   (1) Frobenius: ||Y_ref - Y_quant||_F^2 / ||Y_ref||_F^2
+    //   (2) Per-row argmax mismatch: mean over rows of
+    //       1[argmax(Y_ref[r]) != argmax(Y_quant[r])]
+    //
+    // Both reductions walk the buffer once (single-pass for
+    // Frobenius; per-row argmax with one pass over out_dim per row).
+    // We accumulate in F64 for numerical stability on large n.
+
+    double num = 0.0;        // ||Y_ref - Y_quant||_F^2
+    double den = 0.0;        // ||Y_ref||_F^2
+    int64_t n_mismatch = 0;  // per-row argmax mismatch count
+
+    std::vector<float> y_ref_row((size_t) out_dim, 0.0f);
+    std::vector<float> y_quant_row((size_t) out_dim, 0.0f);
+
+    for (int64_t r = 0; r < n_samples; r++) {
+        // Copy this row into the local buffers (small per-row copy
+        // is cheaper than random-access math on the inputs). Then
+        // walk the row once for Frobenius accumulation and once for
+        // argmax (the argmax is single-pass within the row).
+        std::memcpy(y_ref_row.data(),   y_ref   + r * out_dim, (size_t) out_dim * sizeof(float));
+        std::memcpy(y_quant_row.data(), y_quant + r * out_dim, (size_t) out_dim * sizeof(float));
+
+        // Frobenius contribution for this row.
+        for (int64_t c = 0; c < out_dim; c++) {
+            const double diff = (double) y_ref_row[(size_t) c] - (double) y_quant_row[(size_t) c];
+            num += diff * diff;
+            den += (double) y_ref_row[(size_t) c] * (double) y_ref_row[(size_t) c];
+        }
+
+        // Argmax of each row. Ties broken by lowest index (standard
+        // argmax convention); the test fixture uses distinct values
+        // to make the argmax deterministic, so ties are not a
+        // practical concern.
+        int64_t argmax_ref   = 0;
+        int64_t argmax_quant = 0;
+        float   max_ref      = y_ref_row[0];
+        float   max_quant    = y_quant_row[0];
+        for (int64_t c = 1; c < out_dim; c++) {
+            if (y_ref_row[(size_t) c] > max_ref) {
+                max_ref    = y_ref_row[(size_t) c];
+                argmax_ref = c;
+            }
+            if (y_quant_row[(size_t) c] > max_quant) {
+                max_quant    = y_quant_row[(size_t) c];
+                argmax_quant = c;
+            }
+        }
+        if (argmax_ref != argmax_quant) {
+            n_mismatch++;
+        }
+    }
+
+    d.relative_frobenius = (den > 0.0) ? (float)(num / den)
+                                       : (num > 0.0 ? TS_L2_INF : 0.0f);
+    d.top1_mismatch = (float) ((double) n_mismatch / (double) n_samples);
+    d.n_samples     = n_samples;
     return d;
 }
 
