@@ -5162,6 +5162,89 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             tessera_params.l5_joint_out = value;
         }
     ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_L5}));
+    add_opt(common_arg(
+        {"--l5-scorer"}, "SPEC",
+        "Tessera: L5 scorer combine spec for the main quantize dispatch "
+        "(v3.1, spec section 9.4). SPEC is a comma-separated list of "
+        "name:weight pairs (e.g. hessian:0.5,imatrix:0.3,grad:0.2). "
+        "Known names: hessian, imatrix, grad, layer (alias "
+        "layer_position). Bare names imply weight 1.0. Unknown names, "
+        "non-positive weights, and duplicate entries are rejected. "
+        "Empty = legacy (no Hessian combine).",
+        [](common_params &, const std::string & value) {
+            // Late validation so the user gets an immediate error even
+            // before the dispatch runs. Keep a single implementation —
+            // duplicate the lightweight name parsing here rather than
+            // pulling tessera-l5.h into arg.cpp's translation unit.
+            auto trim = [](std::string s) -> std::string {
+                size_t b = 0, e = s.size();
+                while (b < e && (s[b] == ' ' || s[b] == '\t' || s[b] == '\r')) b++;
+                while (e > b && (s[e - 1] == ' ' || s[e - 1] == '\t' || s[e - 1] == '\r')) e--;
+                return s.substr(b, e - b);
+            };
+            const std::string t = trim(value);
+            if (t.empty()) { tessera_params.l5_scorer.clear(); return; }
+            std::vector<std::string> pairs;
+            {
+                std::string cur;
+                for (char c : t) {
+                    if (c == ',') { pairs.push_back(cur); cur.clear(); }
+                    else cur.push_back(c);
+                }
+                pairs.push_back(cur);
+            }
+            std::set<std::string> seen;
+            for (std::string raw : pairs) {
+                raw = trim(raw);
+                if (raw.empty()) {
+                    throw std::invalid_argument(
+                        string_format("error: --l5-scorer: empty entry in '%s'\n", value.c_str()));
+                }
+                std::string name_raw, weight_raw;
+                const size_t colon = raw.find(':');
+                if (colon == std::string::npos) { name_raw = raw; weight_raw = "1.0"; }
+                else {
+                    name_raw = trim(raw.substr(0, colon));
+                    weight_raw = trim(raw.substr(colon + 1));
+                    if (weight_raw.find(':') != std::string::npos) {
+                        throw std::invalid_argument(
+                            string_format("error: --l5-scorer: too many ':' in '%s'\n", raw.c_str()));
+                    }
+                }
+                if (name_raw.empty() || weight_raw.empty()) {
+                    throw std::invalid_argument(
+                        string_format("error: --l5-scorer: malformed entry '%s'\n", raw.c_str()));
+                }
+                std::string name = name_raw;
+                for (char & c : name) c = (char) std::tolower((unsigned char) c);
+                if (name == "layer_position") name = "layer";
+                const bool known = (name == "hessian" || name == "imatrix" || name == "grad" || name == "layer");
+                if (!known) {
+                    throw std::invalid_argument(
+                        string_format("error: --l5-scorer: unknown scorer '%s' (expected hessian/imatrix/grad/layer)\n",
+                                      name_raw.c_str()));
+                }
+                float w = 0.0f;
+                try {
+                    size_t pos = 0; w = std::stof(weight_raw, &pos);
+                    if (pos != weight_raw.size()) throw std::invalid_argument("trailing");
+                } catch (...) {
+                    throw std::invalid_argument(
+                        string_format("error: --l5-scorer: weight is not a number in '%s'\n", raw.c_str()));
+                }
+                if (!(w > 0.0f) || !std::isfinite(w)) {
+                    throw std::invalid_argument(
+                        string_format("error: --l5-scorer: weight must be a finite positive number in '%s'\n",
+                                      raw.c_str()));
+                }
+                if (!seen.insert(name).second) {
+                    throw std::invalid_argument(
+                        string_format("error: --l5-scorer: duplicate scorer '%s'\n", name.c_str()));
+                }
+            }
+            tessera_params.l5_scorer = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_L5}));
 
     // ----- `policy` subcommand -----
     add_opt(common_arg(

@@ -12,7 +12,11 @@
 #include <cstdlib>
 #include <functional>
 #include <fstream>
+#include <algorithm>
+#include <cctype>
+#include <cmath>
 #include <map>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -410,6 +414,44 @@ static const std::vector<key_handler> k_l5 = {
     {"l5-outlier-overshoot-scale",SET_F_NONNEG(l5_outlier_overshoot_scale)},
     {"l5-outlier-frac-cap",       SET_F_RANGE(l5_outlier_frac_cap, 0.0f, 1.0f, true)},
     {"l5-out",                    SET_STR(l5_out)},
+    {"l5-scorer",                 [](common_tessera_params & p, const std::string & v, std::string & err) -> bool {
+                                     auto trim = [](std::string s) -> std::string {
+                                         size_t b = 0, e = s.size();
+                                         while (b < e && (s[b] == ' ' || s[b] == '\t' || s[b] == '\r')) b++;
+                                         while (e > b && (s[e - 1] == ' ' || s[e - 1] == '\t' || s[e - 1] == '\r')) e--;
+                                         return s.substr(b, e - b);
+                                     };
+                                     const std::string t = trim(v);
+                                     if (t.empty()) { p.l5_scorer.clear(); return true; }
+                                     std::vector<std::string> pairs;
+                                     { std::string cur; for (char c : t) { if (c == ',') { pairs.push_back(cur); cur.clear(); } else cur.push_back(c); } pairs.push_back(cur); }
+                                     std::set<std::string> seen;
+                                     for (std::string raw : pairs) {
+                                         raw = trim(raw);
+                                         if (raw.empty()) { err = "l5-scorer: empty entry in '" + v + "'"; return false; }
+                                         std::string name_raw, weight_raw;
+                                         const size_t colon = raw.find(':');
+                                         if (colon == std::string::npos) { name_raw = raw; weight_raw = "1.0"; }
+                                         else {
+                                             name_raw = trim(raw.substr(0, colon));
+                                             weight_raw = trim(raw.substr(colon + 1));
+                                             if (weight_raw.find(':') != std::string::npos) { err = "l5-scorer: too many ':' in '" + raw + "'"; return false; }
+                                         }
+                                         if (name_raw.empty() || weight_raw.empty()) { err = "l5-scorer: malformed entry '" + raw + "'"; return false; }
+                                         std::string name = name_raw;
+                                         for (char & c : name) c = (char) std::tolower((unsigned char) c);
+                                         if (name == "layer_position") name = "layer";
+                                         const bool known = (name == "hessian" || name == "imatrix" || name == "grad" || name == "layer");
+                                         if (!known) { err = "l5-scorer: unknown scorer '" + name_raw + "' (expected hessian/imatrix/grad/layer)"; return false; }
+                                         float w = 0.0f;
+                                         try { size_t pos = 0; w = std::stof(weight_raw, &pos); if (pos != weight_raw.size()) throw std::invalid_argument("trailing"); }
+                                         catch (...) { err = "l5-scorer: weight is not a number in '" + raw + "'"; return false; }
+                                         if (!(w > 0.0f) || !std::isfinite(w)) { err = "l5-scorer: weight must be finite positive in '" + raw + "'"; return false; }
+                                         if (!seen.insert(name).second) { err = "l5-scorer: duplicate scorer '" + name + "'"; return false; }
+                                     }
+                                     p.l5_scorer = v;
+                                     return true;
+                                 }},
     // L5 joint PPL (the production default)
     {"l5-joint",                  SET_BOOL(l5_joint_mode)},
     {"l5-strict",                 SET_BOOL(l5_joint_strict)},

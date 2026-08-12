@@ -673,3 +673,113 @@ int ts_l5_hessian_factorize_inverse(int64_t in_dim,
     }
     return 0;
 }
+
+// --- Scorer spec parsing (v3.1 spec section 9.4) ---
+//
+// Grammar (whitespace is trimmed on both sides of each pair/name/weight):
+//   spec := pair (',' pair)*
+//   pair := name ':' weight | name           // bare name => weight 1.0
+// Known names (all folded to lower-case): hessian, imatrix, grad,
+// layer, layer_position. Unknown names and non-positive weights are
+// rejected; duplicate names are rejected; empty/whitespace-only input
+// is accepted and returns true with no entries (the disabled sentinel).
+bool ts_l5_parse_scorer_spec(const std::string & spec,
+                             std::vector<ts_l5_scorer_entry> & out,
+                             std::string & err) {
+    out.clear();
+    err.clear();
+
+    auto trim = [](const std::string & s) -> std::string {
+        size_t b = 0, e = s.size();
+        while (b < e && (s[b] == ' ' || s[b] == '\t' || s[b] == '\r' || s[b] == '\n')) b++;
+        while (e > b && (s[e - 1] == ' ' || s[e - 1] == '\t' || s[e - 1] == '\r' || s[e - 1] == '\n')) e--;
+        return s.substr(b, e - b);
+    };
+    auto lower = [](std::string s) -> std::string {
+        for (char & c : s) c = (char) std::tolower((unsigned char) c);
+        return s;
+    };
+
+    const std::string t = trim(spec);
+    if (t.empty()) {
+        return true;  // disabled sentinel
+    }
+
+    // Split on commas (no quote/escape handling — the value grammar is simple).
+    std::vector<std::string> pairs;
+    {
+        std::string cur;
+        for (char c : t) {
+            if (c == ',') {
+                pairs.push_back(cur);
+                cur.clear();
+            } else {
+                cur.push_back(c);
+            }
+        }
+        pairs.push_back(cur);
+    }
+
+    std::vector<ts_l5_scorer_entry> tmp;
+    for (std::string raw : pairs) {
+        raw = trim(raw);
+        if (raw.empty()) {
+            err = "scorer spec: empty entry (trailing or duplicate comma in '" + spec + "')";
+            return false;
+        }
+        // Split on the first ':'.
+        std::string name_raw, weight_raw;
+        const size_t colon = raw.find(':');
+        if (colon == std::string::npos) {
+            name_raw = raw;
+            weight_raw = "1.0";
+        } else {
+            name_raw   = trim(raw.substr(0, colon));
+            weight_raw = trim(raw.substr(colon + 1));
+            if (weight_raw.find(':') != std::string::npos) {
+                err = "scorer spec: entry '" + raw + "' has more than one ':'";
+                return false;
+            }
+        }
+        if (name_raw.empty()) {
+            err = "scorer spec: empty scorer name in entry '" + raw + "'";
+            return false;
+        }
+        if (weight_raw.empty()) {
+            err = "scorer spec: empty weight in entry '" + raw + "'";
+            return false;
+        }
+        std::string name = lower(trim(name_raw));
+        // Canonical aliases.
+        if (name == "layer_position") name = "layer";
+        const bool known = (name == "hessian" || name == "imatrix" || name == "grad" || name == "layer");
+        if (!known) {
+            err = "scorer spec: unknown scorer '" + name_raw + "' in entry '" + raw +
+                  "' (expected one of hessian, imatrix, grad, layer)";
+            return false;
+        }
+        float w = 0.0f;
+        try {
+            size_t pos = 0;
+            w = std::stof(weight_raw, &pos);
+            if (pos != weight_raw.size()) throw std::invalid_argument("trailing");
+        } catch (...) {
+            err = "scorer spec: weight is not a number in entry '" + raw + "'";
+            return false;
+        }
+        if (!(w > 0.0f) || !std::isfinite(w)) {
+            err = "scorer spec: weight must be a finite positive number in entry '" + raw + "'";
+            return false;
+        }
+        // Duplicate check (O(n) but n <= 4).
+        for (const auto & e : tmp) {
+            if (e.name == name) {
+                err = "scorer spec: duplicate scorer '" + name + "'";
+                return false;
+            }
+        }
+        tmp.push_back({name, w});
+    }
+    out = std::move(tmp);
+    return true;
+}

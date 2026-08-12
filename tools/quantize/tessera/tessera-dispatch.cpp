@@ -1485,6 +1485,20 @@ int ts_dispatch_run(const ts_dispatch_params * params,
 
     *result = {};
 
+    // Validate l5_scorer eagerly so an invalid combine spec (e.g. unknown
+    // scorer name or duplicate entry) fails fast before any heavy work is
+    // done. The same validation is already performed by the CLI arg and INI
+    // handlers, but direct ts_dispatch_params callers (tests, tools/cli)
+    // bypass those handlers and must get the same error contract.
+    if (!params->l5_scorer.empty()) {
+        std::vector<ts_l5_scorer_entry> spec_entries;
+        std::string spec_err;
+        if (!ts_l5_parse_scorer_spec(params->l5_scorer, spec_entries, spec_err)) {
+            if (err_msg) *err_msg = spec_err;
+            return 1;
+        }
+    }
+
     const bool verbose = params->verbose;
 
     // Persistent store. Opened once; closed via the unique_ptr deleter so

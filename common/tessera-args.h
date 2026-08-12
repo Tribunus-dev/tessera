@@ -74,6 +74,12 @@ struct common_tessera_params {
     std::string l5_joint_drafter_dspark;   // empty = DSPark inactive
     std::string l5_joint_drafter_mtp;      // empty = MTP inactive
     std::string l5_joint_drafter_talker;   // empty = talker inactive
+    // L5 Hessian scorer dispatch (v3.1 spec section 9.4). When non-empty,
+    // the main quantize dispatch parses this as a weighted scorer spec
+    // "hessian:0.5,imatrix:0.3,grad:0.2" and joins the named scorers via
+    // ts_l5_combine. Empty = legacy (no Hessian combine). See
+    // tessera-l5.h:ts_l5_parse_scorer_spec for the grammar.
+    std::string l5_scorer;
     std::string l5_joint_calibration;      // empty = synthetic fixture
     std::string l5_joint_out;              // empty = beside policy_out as <stem>.l5-joint.json
     // self-improving capability loop: output-targeting ops that run then exit

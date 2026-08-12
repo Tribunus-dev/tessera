@@ -167,6 +167,14 @@ struct ts_dispatch_params {
     // test).
     float       l6_tail_tau     = 6.0f;  // outlier threshold
     float       l6_tail_weight  = 4.0f;  // tail loss multiplier
+    // L5 Hessian scorer dispatch (v3.1, spec section 9.4). When non-empty,
+    // the main dispatch parses it via ts_l5_parse_scorer_spec and joins
+    // the named scorers via ts_l5_combine (e.g.
+    // --tessera-l5-scorer=hessian:0.5,imatrix:0.3,grad:0.2). Empty = legacy
+    // (no Hessian combine). Placed last so appending it doesn't shift
+    // the layout of fields that fixtures initialize via `ts_dispatch_params
+    // p = {};` then set explicitly.
+    std::string l5_scorer;
 };
 
 // Result of the Tessera pipeline for one tensor.

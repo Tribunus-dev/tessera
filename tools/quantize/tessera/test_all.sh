@@ -217,7 +217,7 @@ compile_and_run l1_fitness_tail $T/test_l1_fitness_tail.cpp $T/tessera-l1-fitnes
 # --- L2-L5 runtime-aware pipeline (L2 diff + L3 coherence + L5 adaptive) ---
 # L2 needs vendor/nlohmann (JSON report); L3 needs the sidecar reader;
 # L2 spectral metrics need tessera-linalg for ts_linalg_svd_topk.
-compile_and_run l2l5        $T/test_l2l5.cpp        $T/tessera-l2-diff.cpp $T/tessera-l3-coherence.cpp $T/tessera-l5.cpp $T/tessera-ppl.cpp $T/tessera-linalg.cpp $C/tessera-sidecar-v3.cpp -I vendor -I $C -framework Accelerate
+compile_and_run l2l5        $T/test_l2l5.cpp        $T/tessera-l2-diff.cpp $T/tessera-l3-coherence.cpp $T/tessera-l5.cpp $T/tessera-ppl.cpp $T/tessera-linalg.cpp $T/tessera-septq.cpp $C/tessera-sidecar-v3.cpp -I vendor -I $C -framework Accelerate
 
 # --- Needs vendor (nlohmann/json) ---
 compile_and_run policy      $T/test_policy.cpp      $T/tessera-policy.cpp -I vendor

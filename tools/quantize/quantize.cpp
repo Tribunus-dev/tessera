@@ -2122,6 +2122,7 @@ int llama_quantize(int argc, char ** argv) {
         tparams.talker_gguf_path             = tp.l5_joint_drafter_talker;
         tparams.l5_joint_calibration_path    = tp.l5_joint_calibration;
         tparams.l5_joint_out_path            = tp.l5_joint_out;
+        tparams.l5_scorer                    = tp.l5_scorer;
         tparams.tessera_db_path              = tp.tessera_db;
         tparams.force_requantize             = tp.force_requantize;
         tparams.runtime_probe                = tp.runtime_probe;

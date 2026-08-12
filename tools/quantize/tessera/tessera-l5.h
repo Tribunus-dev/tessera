@@ -315,3 +315,29 @@ int ts_l5_adaptive_requant(const ts_l2_report * report,
                            const ts_l5_adaptive_params * params,
                            int64_t generation,
                            ts_l5_adaptive_plan * plan);
+
+// --- L5 scorer spec parsing (v3.1 spec section 9.4) ---
+//
+// The main quantize dispatch carries l5_scorer as a single string
+// "hessian:0.5,imatrix:0.3,grad:0.2" (CLI --l5-scorer, INI l5-scorer
+// under [l5]). This helper parses it into canonical name/weight
+// pairs that the dispatch feeds into ts_l5_combine. Names are
+// case-folded to lower-case; duplicate names and non-positive weights
+// are rejected; empty or all-whitespace input is accepted and returns
+// true with no entries (the "disabled" sentinel — the dispatch treats
+// an empty spec as legacy/no-Hessian). Unknown names are rejected so
+// the user gets an actionable error rather than a silent drop. The
+// only currently-supported names are "hessian", "imatrix", "grad",
+// and "layer" (alias "layer_position"). The "hessian" entry is
+// optional: a spec with only imatrix/grad is valid (it just doesn't
+// include the Hessian signal), but the dispatch will warn when the
+// Hessian signal is absent. Normalizing weights to sum to 1.0 is the
+// caller's responsibility (ts_l5_combine does the weighted sum as-is).
+struct ts_l5_scorer_entry {
+    std::string name;
+    float       weight = 0.0f;
+};
+
+bool ts_l5_parse_scorer_spec(const std::string & spec,
+                             std::vector<ts_l5_scorer_entry> & out,
+                             std::string & err);
