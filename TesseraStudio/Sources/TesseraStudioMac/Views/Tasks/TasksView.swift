@@ -158,7 +158,9 @@ public struct TasksView: View {
             )
             .textFieldStyle(.plain)
             .onSubmit { submitInput() }
+            .accessibilityLabel("New task input. Type a task description and press Add or Return.")
             Button("Add") { submitInput() }
+                .accessibilityLabel("Add task")
                 .keyboardShortcut(.defaultAction)
                 .disabled(inputText.trimmingCharacters(in: .whitespaces).isEmpty || isParsing)
         }
@@ -373,15 +375,17 @@ private struct TaskRow: View {
                     .font(.body)
                 HStack(spacing: 8) {
                     if let due = task.dueAt {
+                        let isOverdue = due < Date() && !task.isCompleted
                         Label {
                             Text(due.formatted(date: .abbreviated, time: .shortened))
                         } icon: {
-                            Image(systemName: "calendar")
+                            Image(systemName: isOverdue ? "exclamationmark.circle.fill" : "calendar")
                                 .font(.caption)
-                                .symbolRenderingMode(.hierarchical)
+                                .symbolRenderingMode(isOverdue ? .monochrome : .hierarchical)
+                                .foregroundStyle(isOverdue ? .red : .secondary)
                         }
                         .font(.caption)
-                        .foregroundStyle(due < Date() && !task.isCompleted ? .red : .secondary)
+                        .foregroundStyle(isOverdue ? .red : .secondary)
                     }
                     if !task.tags.isEmpty {
                         Text(task.tags.joined(separator: ", "))
@@ -512,6 +516,8 @@ private struct TaskDetailView: View {
                     }
                 }
                 .pickerStyle(.segmented)
+                .accessibilityLabel("Task priority")
+                .accessibilityValue(priority.displayName)
             }
             HStack {
                 Text("Due")
@@ -520,6 +526,8 @@ private struct TaskDetailView: View {
                 if hasDueDate {
                     DatePicker("", selection: $dueAt)
                         .labelsHidden()
+                        .accessibilityLabel("Due date")
+                        .accessibilityValue(dueAt.formatted(date: .abbreviated, time: .shortened))
                 }
             }
             VStack(alignment: .leading) {
@@ -543,8 +551,9 @@ private struct TaskDetailView: View {
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(task.linkedEntityIDs, id: \.self) { id in
-                    Label(id.uuidString, systemImage: "link")
+                    Label(String(id.uuidString.prefix(8)), systemImage: "link")
                         .font(.caption)
+                        .accessibilityLabel("Linked entity: \(id.uuidString)")
                 }
             }
         }
