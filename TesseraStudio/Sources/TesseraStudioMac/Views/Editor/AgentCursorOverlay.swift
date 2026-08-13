@@ -39,6 +39,17 @@ import TesseraCore
 /// callback is the `TesseraAgentLoop.stop(reason:)`
 /// entry point; the overlay only owns the rendering and
 /// the hit-test, not the stop semantics.
+///
+/// **Pending-mutation preview (Wave 4A, review #5).**
+/// When the host supplies a `pendingMutation` payload
+/// (the loop publishes one whenever a tool call is
+/// in flight), the overlay renders a one-line chip next
+/// to the stop button. The chip shows WHAT the agent is
+/// about to change (tier, risk, tool, outcome) so the
+/// user verifies the mutation in place, not by opening
+/// the audit log. The chip vocabulary matches Wave 1C's
+/// `AuditLogHead` (`field: value` shape, pipe
+/// separator, field cap of 5).
 public struct AgentCursorOverlay: View {
     public let state: EditorCursorState
     public let theme: EditorTheme
@@ -57,19 +68,30 @@ public struct AgentCursorOverlay: View {
     /// pre-existing surface shape, preserved for hosts that
     /// do not want the affordance yet).
     public let onStop: (() -> Void)?
+    /// Optional pending-mutation payload (Wave 4A). When
+    /// non-nil, the overlay renders the WHAT-not-WHERE
+    /// preview chip next to the stop button. The chip is
+    /// informational; no tap target. The host wires this to
+    /// `TesseraAgentLoop.pendingMutation` (an `@Observable`
+    /// property on the loop). When nil, the chip is not
+    /// rendered (the pre-existing surface shape, preserved
+    /// for hosts that do not opt in to the WHAT preview yet).
+    public let pendingMutation: PendingMutation?
 
     public init(
         state: EditorCursorState,
         theme: EditorTheme = .light,
         screenPositionProvider: @escaping (TextCursor) -> CGPoint?,
         tier: TesseraTier = .tier1,
-        onStop: (() -> Void)? = nil
+        onStop: (() -> Void)? = nil,
+        pendingMutation: PendingMutation? = nil
     ) {
         self.state = state
         self.theme = theme
         self.screenPositionProvider = screenPositionProvider
         self.tier = tier
         self.onStop = onStop
+        self.pendingMutation = pendingMutation
     }
 
     public var body: some View {
@@ -104,6 +126,26 @@ public struct AgentCursorOverlay: View {
                         y: position.y
                     )
                 }
+
+                // Pending-mutation preview chip (Wave 4A). Sits to
+                // the right of the stop button with a 8pt gap.
+                // The chip is informational (no tap target); the
+                // diff overlay's chip (Wave 1C) is the surface
+                // for receipt-id taps. The chip's x position is
+                // computed from the stop button's tier-weighted
+                // width (per-tier constants in
+                // `InlineStopMetrics`) so the layout does not
+                // depend on SwiftUI measurement.
+                if state.agentCursorActive, let mutation = pendingMutation {
+                    PendingMutationChip(mutation: mutation)
+                        .position(
+                            x: position.x + InlineStopMetrics.glyphWidth
+                                + InlineStopMetrics.gap
+                                + InlineStopMetrics.stopButtonWidth(tier: tier)
+                                + InlineStopMetrics.chipGap,
+                            y: position.y
+                        )
+                }
             }
         }
     }
@@ -120,6 +162,24 @@ public struct AgentCursorOverlay: View {
 private enum InlineStopMetrics {
     static let glyphWidth: CGFloat = 14
     static let gap: CGFloat = 12
+    /// Gap between the inline stop button's trailing edge and
+    /// the pending-mutation chip's leading edge. 8pt matches
+    /// Apple's minimum tap-target separation so the two
+    /// affordances do not visually merge.
+    static let chipGap: CGFloat = 8
+    /// Approximate width of the inline stop button at each
+    /// tier. The exact width depends on font metrics; the
+    /// layout only needs a leading-edge anchor for the
+    /// pending-mutation chip, so a tier-keyed constant is
+    /// sufficient. tier3 is the widest (the "Stop now" label
+    /// has 8 characters vs 4 for the other tiers).
+    static func stopButtonWidth(tier: TesseraTier) -> CGFloat {
+        switch tier {
+        case .tier0, .tier1: return 46
+        case .tier2:        return 52
+        case .tier3:        return 70
+        }
+    }
 }
 
 // MARK: - AgentCursorGlyph
@@ -271,6 +331,89 @@ private struct AgentInlineStopButton: View {
         case .tier3:
             return "Hard-stops the agent. Multi-party-tier actions in progress will be cancelled. The agent will not resume until you ask it to."
         }
+    }
+}
+
+// MARK: - PendingMutationChip
+
+/// The WHAT-not-WHERE preview chip rendered next to the agent
+/// cursor (Wave 4A, review #5 of the agent-ux-fatigue audit).
+/// The chip is the headline, not the article: it shows at most
+/// `fieldCap` fields in a `field: value` shape joined by ` | `,
+/// matching Wave 1C's `AuditLogHead` chip vocabulary. The four
+/// canonical keys are `tier:`/`risk:`/`tool:`/`outcome:`; a
+/// 5th `summary:` field is appended when present.
+///
+/// **Why this lives here, not on the diff overlay.** The
+/// agent cursor sits at the action's location; the diff
+/// overlay sits at the action's surface. The cursor is the
+/// "is the agent about to do the right thing?" surface
+/// (paradox 1: verification cost -- the user wants to see
+/// WHAT before the tool runs). The diff overlay is the
+/// "did the agent do the right thing?" surface (Wave 1C:
+/// the audit-log HEAD chip shows AFTER the tool has run).
+/// Both surfaces share the chip vocabulary so the user
+/// sees the same structural data either way.
+///
+/// **No tap target.** The chip is informational. Consumers
+/// that want a tap target use Wave 1C's `AuditLogHeadChip`
+/// on the diff overlay, which carries the receipt id. The
+/// cursor chip does not need a tap target because the
+/// cursor is the agent's live edit position, not a history
+/// surface.
+private struct PendingMutationChip: View {
+    let mutation: PendingMutation
+
+    var body: some View {
+        // Match the AuditLogHeadChip shape: caption monospaced
+        // text on a subtle background, no border, no padding
+        // chrome that would compete with the stop button. The
+        // outcome field is the only one that changes color
+        // (pending/approved/blocked use a soft palette step)
+        // so the user can read the gate state at a glance.
+        Text(mutation.displayString)
+            .font(.caption.monospaced())
+            .foregroundStyle(textColor)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .padding(.vertical, 2)
+            .padding(.horizontal, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(backgroundColor)
+            )
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(accessibilityText)
+    }
+
+    /// Soft color step on the `outcome` field. Mirrors the
+    /// stop button's tier-weighting (Wave 3C) in spirit: the
+    /// more consequential the state, the more saturated the
+    /// background. `blocked` is the most saturated so a
+    /// denied action is visible from across the editor.
+    private var textColor: Color {
+        switch mutation.outcome {
+        case .pending:  return .secondary
+        case .approved: return .secondary
+        case .blocked:  return .red
+        }
+    }
+
+    private var backgroundColor: Color {
+        switch mutation.outcome {
+        case .pending:  return Color.secondary.opacity(0.08)
+        case .approved: return Color.secondary.opacity(0.08)
+        case .blocked:  return Color.red.opacity(0.12)
+        }
+    }
+
+    /// VoiceOver-friendly description. The displayString is
+    /// already the chip's content; the accessibility label
+    /// adds a leading phrase so VoiceOver users hear
+    /// "Pending mutation: tier T2, risk medium, ..." rather
+    /// than just the field/value pairs.
+    private var accessibilityText: String {
+        "Pending mutation: \(mutation.displayString)"
     }
 }
 

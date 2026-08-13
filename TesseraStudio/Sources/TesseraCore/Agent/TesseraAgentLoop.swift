@@ -23,6 +23,130 @@ public enum AgentEventMarker {
     public static let stoppedPrefix: String = "[stopped]"
 }
 
+// MARK: - PendingMutation (agent-ux-fatigue 4A, review #5)
+
+/// The "WHAT the agent is about to change" payload surfaced at the
+/// agent cursor (paradox 1: verification cost; review #5 of the
+/// agent-ux-fatigue audit). The cursor overlay renders the payload
+/// as a one-line chip next to the agent cursor so the user can see
+/// the mutation in place, without navigating to the chat panel or
+/// the audit log.
+///
+/// **Why a struct, not an AgentEvent case.** Adding a new
+/// `AgentEvent.pendingMutation` case would force every exhaustive
+/// switch in the codebase (ChatGraphBuilder, the chat controller,
+/// the chat rows) to grow a new case, with the risk that one is
+/// missed and the build breaks. Wave 3C's `AgentEventMarker` shows
+/// the same trade-off: stream-level signal lives on the loop
+/// instance, the `AgentEvent` surface stays stable. The chip reads
+/// the loop's `pendingMutation` property directly; the loop
+/// publishes it as a regular `@Observable` mutation so the SwiftUI
+/// view re-renders without any new event plumbing.
+///
+/// **Lifetime.** The payload is non-nil from the moment the loop
+/// yields `.toolCall(...)` until the matching `.toolResult(...)`
+/// arrives (or the loop terminates for any reason). It is the
+/// preview of an in-flight mutation, not a journal of past
+/// mutations. Past mutations live in the audit log (Wave 1C's
+/// `AuditLogHead` on the diff overlay).
+///
+/// **Chip vocabulary (review #5, section 4).** The chip renders at
+/// most `fieldCap` fields. The vocabulary matches Wave 1C's
+/// `AuditLogHead` (`field: value` shape, pipe separator, field
+/// cap of 5). The four canonical keys are `tier:`, `risk:`,
+/// `tool:`, `outcome:`. A 5th field (`summary:`) is appended
+/// when present.
+public struct PendingMutation: Sendable, Equatable {
+
+    /// Outcome of the pending mutation from the user's perspective.
+    /// `pending` = the agent has announced the call, the gate is
+    /// not yet resolved. `approved` = the gate approved (auto- or
+    /// user-approval), the tool is running. `blocked` = the safety
+    /// policy rejected the call (the mutation will not run).
+    public enum Outcome: String, Sendable, Codable, CaseIterable {
+        case pending
+        case approved
+        case blocked
+
+        public var displayLabel: String {
+            switch self {
+            case .pending:  return "pending"
+            case .approved: return "approved"
+            case .blocked:  return "blocked"
+            }
+        }
+    }
+
+    /// The risk tier of the action (Wave 1B's `TesseraTier`). Drives
+    /// the inline stop button's prominence (Wave 3C) AND the
+    /// pending-mutation chip's first field. Tier is the surface
+    /// for the blast-radius dimension (reversibility + scope); the
+    /// chip shows the tier label so the user can decide whether to
+    /// intervene before the tool runs.
+    public let tier: TesseraTier
+    /// The categorical risk level. Distinct from `tier`: risk is
+    /// the rule-based classification (low | medium | high |
+    /// forbidden), tier is the surface-facing label that combines
+    /// risk with reversibility. Both surface on the chip.
+    public let risk: TesseraActionRisk
+    /// The tool name (e.g. "file_write", "bash", "calibrate").
+    public let tool: String
+    /// The structural action class id produced by
+    /// `TesseraActionClass.classify(...)` (e.g. "bash:git",
+    /// "file_write:src/**"). Distinct from `tool`: the class id
+    /// encodes the verb head or path glob, which the tier
+    /// computation depends on.
+    public let actionClass: String
+    /// Where the mutation stands in the gate/execute lifecycle.
+    public let outcome: Outcome
+    /// Optional one-line human-readable summary of the mutation
+    /// (e.g. "rewrite line 42", "drop table foo"). Appended as
+    /// the 5th chip field when present.
+    public let summary: String?
+
+    /// Hard cap on rendered chip fields. Same value as
+    /// `AuditLogHead.fieldCap` (5). The chip is the headline; more
+    /// is the article, which lives in the diff overlay's chip and
+    /// the audit log.
+    public static let fieldCap: Int = 5
+
+    public init(
+        tier: TesseraTier,
+        risk: TesseraActionRisk,
+        tool: String,
+        actionClass: String,
+        outcome: Outcome = .pending,
+        summary: String? = nil
+    ) {
+        self.tier = tier
+        self.risk = risk
+        self.tool = tool
+        self.actionClass = actionClass
+        self.outcome = outcome
+        self.summary = summary
+    }
+
+    /// One-line chip string. Format mirrors Wave 1C's
+    /// `AuditLogHead.displayString`: `field: value` pairs joined
+    /// by ` | `. The four canonical fields are
+    /// `tier:`/`risk:`/`tool:`/`outcome:`; a 5th `summary:` field
+    /// is appended when present. Field count is capped at
+    /// `fieldCap` so the chip never becomes a wall of text.
+    public var displayString: String {
+        var fields: [String] = [
+            "tier: \(tier.shortLabel)",
+            "risk: \(risk.rawValue)",
+            "tool: \(tool)",
+            "outcome: \(outcome.displayLabel)",
+        ]
+        if let summary, !summary.isEmpty {
+            fields.append("summary: \(summary)")
+        }
+        let capped = Array(fields.prefix(Self.fieldCap))
+        return capped.joined(separator: " | ")
+    }
+}
+
 /// Why the agent loop was stopped.
 ///
 /// The agent loop exposes a hard stop (Microsoft HAX G11 "Support
@@ -79,6 +203,21 @@ public final class TesseraAgentLoop {
     public private(set) var isRunning = false
     public private(set) var currentTask: Task<Void, Never>?
     public private(set) var tokenBudget: TokenBudget
+    /// The most recent in-flight mutation the agent has announced
+    /// but not yet completed (Wave 4A, review #5 of the
+    /// agent-ux-fatigue audit). Non-nil from the moment the loop
+    /// yields `.toolCall(...)` until the matching `.toolResult(...)`
+    /// arrives (or the loop terminates for any reason).
+    ///
+    /// The cursor overlay reads this property to render a
+    /// one-line chip next to the agent cursor (paradox 1:
+    /// verification cost -- the user sees WHAT the agent is about
+    /// to change, not just WHERE). The property is published via
+    /// `@Observable` so the SwiftUI view re-renders on every
+    /// set/clear. The struct itself is the chip vocabulary
+    /// (`tier:`/`risk:`/`tool:`/`outcome:`/`summary:`), matching
+    /// Wave 1C's `AuditLogHead` chip shape.
+    public private(set) var pendingMutation: PendingMutation?
     /// The reason the loop was last stopped, if any. Non-nil means
     /// the loop is in a HARD-STOP state: a new `run()` call is
     /// rejected with a `.error(...)` event until the caller invokes
@@ -174,12 +313,14 @@ public final class TesseraAgentLoop {
                     // message. The hard-stop state lives in
                     // `lastStopReason`; the prefix is just a stream-
                     // level marker.
+                    self.pendingMutation = nil
                     if let reason = self.lastStopReason {
                         continuation.yield(.error("\(AgentEventMarker.stoppedPrefix) \(reason.description)"))
                     } else {
                         continuation.yield(.error("Cancelled"))
                     }
                 } catch {
+                    self.pendingMutation = nil
                     continuation.yield(.error(error.localizedDescription))
                 }
 
@@ -311,6 +452,32 @@ public final class TesseraAgentLoop {
             for call in toolCalls {
                 guard !Task.isCancelled else { throw CancellationError() }
 
+                // Publish the pending-mutation preview (Wave 4A).
+                // The chip vocabulary (tier/risk/tool/outcome) is
+                // populated here, before the gate check resolves, so
+                // the user sees the preview during the approval
+                // prompt (the highest-value window: the user is
+                // about to approve something). The cursor overlay
+                // observes this property via `@Observable` and
+                // re-renders the chip.
+                let actionClass = TesseraActionClass.classify(
+                    PendingAction(toolName: call.name, arguments: call.arguments)
+                )
+                let pendingRisk = (try? TesseraActionVerifier.ruleBasedRisk(
+                    for: PendingAction(toolName: call.name, arguments: call.arguments)
+                )) ?? .medium
+                let pendingTier = TesseraTier.tier(
+                    for: actionClass,
+                    risk: pendingRisk
+                )
+                self.pendingMutation = PendingMutation(
+                    tier: pendingTier,
+                    risk: pendingRisk,
+                    tool: call.name,
+                    actionClass: actionClass,
+                    outcome: .pending
+                )
+
                 continuation.yield(.toolCall(name: call.name, arguments: call.arguments))
 
                 // Autonomy-aware gate (autonomy-calibration-design.md 7):
@@ -339,8 +506,24 @@ public final class TesseraAgentLoop {
                         source: gate.source,
                         sessionID: sessionID
                     )
+                    // The mutation will not run; mark it blocked so
+                    // the cursor chip's `outcome` field flips from
+                    // `pending` to `blocked` in the same view tick
+                    // the user sees the failure. The chip is cleared
+                    // after the toolResult is yielded below.
+                    self.pendingMutation = self.pendingMutation.map {
+                        PendingMutation(
+                            tier: $0.tier,
+                            risk: $0.risk,
+                            tool: $0.tool,
+                            actionClass: $0.actionClass,
+                            outcome: .blocked,
+                            summary: $0.summary
+                        )
+                    }
                     let blocked = ToolResult.fail("Blocked by the safety policy before execution.")
                     continuation.yield(.toolResult(name: call.name, result: blocked))
+                    self.pendingMutation = nil
                     messages.append(LLMMessage(role: "tool", content: "Tool '\(call.name)' was blocked by the safety policy."))
                     if approvalEngine.circuitBreaker.isTripped {
                         continuation.yield(.error("Interrupted: the denial circuit-breaker tripped (too many blocked actions)."))
@@ -366,12 +549,26 @@ public final class TesseraAgentLoop {
                         approvalEngine.circuitBreaker.record(denied: true)
                         let denied = ToolResult.fail("Denied by user")
                         continuation.yield(.toolResult(name: call.name, result: denied))
+                        self.pendingMutation = nil
                         messages.append(LLMMessage(role: "tool", content: "Tool '\(call.name)' was denied by the user."))
                         if approvalEngine.circuitBreaker.isTripped {
                             continuation.yield(.error("Interrupted: the denial circuit-breaker tripped (too many denied actions)."))
                             return
                         }
                         continue
+                    }
+                    // User approved the action. Flip the chip to
+                    // `approved` so the user sees the gate resolve
+                    // in place.
+                    self.pendingMutation = self.pendingMutation.map {
+                        PendingMutation(
+                            tier: $0.tier,
+                            risk: $0.risk,
+                            tool: $0.tool,
+                            actionClass: $0.actionClass,
+                            outcome: .approved,
+                            summary: $0.summary
+                        )
                     }
                 case .autoApprove:
                     approvalEngine.recordOutcome(
@@ -383,6 +580,18 @@ public final class TesseraAgentLoop {
                         source: gate.source,
                         sessionID: sessionID
                     )
+                    // Auto-approved; flip the chip to `approved`
+                    // so the user sees the gate resolve.
+                    self.pendingMutation = self.pendingMutation.map {
+                        PendingMutation(
+                            tier: $0.tier,
+                            risk: $0.risk,
+                            tool: $0.tool,
+                            actionClass: $0.actionClass,
+                            outcome: .approved,
+                            summary: $0.summary
+                        )
+                    }
                 }
 
                 // Execute
@@ -398,6 +607,11 @@ public final class TesseraAgentLoop {
                 }
 
                 continuation.yield(.toolResult(name: call.name, result: result))
+                // Mutation has completed (or failed); the cursor chip
+                // hides until the next tool call announces a new
+                // mutation. Past mutations live in the audit log;
+                // the chip is a preview, not a journal.
+                self.pendingMutation = nil
                 // Forward the tool's output (string) + structured data (when
                 // present) back to the model so rich tool results survive.
                 var toolContent = result.output
