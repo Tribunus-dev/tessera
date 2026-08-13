@@ -1665,14 +1665,21 @@ int ts_dispatch_run(const ts_dispatch_params * params,
     evolve_params.heldout_weight     = 2.0f;
     evolve_params.seed               = (uint32_t)params->evolve_seed;
     evolve_params.verbose            = verbose;
-    // Early termination: stop a tensor's GA after 10 consecutive flat
-    // generations (velocity gate, see tessera-convergence.h). Most
-    // tensors converge by gen 15-30; without this the GA wastes 70+% of
-    // its evaluations on stagnant populations. Combined with family
-    // warm-start (the seed_candidate field, populated by evolve_all from
-    // same-family converged tensors), later tensors in a family converge
-    // in 1-5 generations.
-    evolve_params.stagnation_limit   = 10;
+    // Early termination: stop a tensor's GA after `stagnation_limit`
+    // consecutive flat generations (velocity gate, see
+    // tessera-convergence.h). The window MUST be smaller than the
+    // generation budget or the gate can never fire: the previous default
+    // (10) on the production 8-generation budget was mathematically
+    // unreachable, and the exit path papered over it by marking tensors
+    // converged anyway. Measured consequence on the talker run: every
+    // tensor's best was found at initialization and 8 generations of
+    // evolution bought zero improvement, at full cost. A window of 2
+    // stops after two flat transitions (patience-2); a tensor that is
+    // genuinely climbing keeps its full budget. NOTE also
+    // seed_accept_ratio below: the talker run averaged 2,112 evals/tensor
+    // with every tensor warm-started, so the one-shot accept apparently
+    // never fired -- audit its ratio test against negative composites.
+    evolve_params.stagnation_limit   = 2;
     evolve_params.velocity_threshold     = 1e-5f;
     evolve_params.acceleration_threshold = 2e-5f;
     // One-shot family hypothesis test: accept a family seed if this tensor's

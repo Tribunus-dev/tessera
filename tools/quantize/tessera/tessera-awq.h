@@ -147,16 +147,24 @@ struct ts_awq_archive_cell {
 // to ts_awq_evolve_result, defined below.
 struct ts_awq_evolve_result;
 
+// INVARIANT: every field carries an in-class initializer. This struct is
+// default-constructed by tests and external callers; a bare field is
+// indeterminate stack memory there. That exact gap shipped once: the bare
+// seed_candidate pointer read as garbage-non-null, the GA injected the
+// garbage candidate into every island's initial population, and its genes
+// bred into otherwise-converged winners -- alpha deterministic,
+// clip/outlier/ternary different on every run (test_awq's determinism
+// checks were red on main). If you add a field, initialize it here.
 struct ts_awq_evolve_params {
-    int64_t population;     // island population size, default 32
-    int64_t generations;    // total generations, default 100
-    int64_t islands;        // number of islands, default 4
-    int64_t migration_interval;  // generations between migration, default 10
-    float     mutation_sigma;    // Gaussian mutation std, default 0.1
-    float     crossover_rate;    // default 0.7
-    float     heldout_weight;    // weight for held-out MSE in composite, default 2.0
-    uint32_t  seed;              // determinism
-    bool      verbose;
+    int64_t population = 32;         // island population size
+    int64_t generations = 100;       // total generations
+    int64_t islands = 4;             // number of islands
+    int64_t migration_interval = 10; // generations between migration
+    float     mutation_sigma = 0.1f; // Gaussian mutation std
+    float     crossover_rate = 0.7f;
+    float     heldout_weight = 2.0f; // weight for held-out MSE in composite
+    uint32_t  seed = 42;             // determinism
+    bool      verbose = false;
     // Parallel candidate evaluation: when > 1, the population evaluation
     // within each generation is fanned out across this many threads. This is
     // the "one layer, parallel candidates" model: the weight buffer is loaded
@@ -164,35 +172,35 @@ struct ts_awq_evolve_params {
     // candidate. Combined with ts_awq_evolve_all's n_threads=1 (serial layer
     // processing), this keeps peak memory at 1 weight buffer + n_eval_threads
     // scratch buffers instead of n_threads x (weight + scratch).
-    int32_t   n_eval_threads;
+    int32_t   n_eval_threads = 1;
     // One-shot family hypothesis test: when seed_candidate is non-null AND
     // seed_composite > 0, evaluate the seed once. If the score is >=
     // seed_composite * seed_accept_ratio, accept it directly (skip the GA).
     // seed_composite is the score the seed achieved on its original tensor.
     // seed_accept_ratio is the transfer threshold (e.g. 0.95 = accept if this
     // tensor scores within 95% of the original). Default 0.95.
-    float     seed_composite;
-    float     seed_accept_ratio;
+    float     seed_composite = 0.0f;
+    float     seed_accept_ratio = 0.95f;
     // Per-tensor parallelism for ts_awq_evolve_all: each layer's GA runs
     // independently (its population, archive and rng are local to one
     // ts_awq_evolve call), so the per-layer loop fans out across this many
     // threads. 0/1 = serial (the historical behaviour). The evaluator ctx is
     // shared across threads and must guard any mutable state itself.
-    int32_t   n_threads;
+    int32_t   n_threads = 1;
     // Optional per-layer progress hook. Invoked once when each layer's GA
     // completes, with the layer index, the layer count, and the layer's
     // tensor name (may be NULL). The callback must be thread-safe since
     // layers run concurrently when n_threads > 1. May be NULL.
     void    (* on_layer_done)(int64_t idx, int64_t n_layers, const char * name,
-                              void * user);
-    void     * on_layer_done_user;
+                              void * user) = nullptr;
+    void     * on_layer_done_user = nullptr;
     // Optional phase-transition hook. Invoked when evolve_all enters the
     // screening phase (with the screen layer count) and again when it enters
     // the main evolution (with the full layer count). phase is one of
     // "screen" or "evolve". May be NULL.
     void    (* on_phase_change)(const char * phase, int64_t n_layers,
-                                void * user);
-    void     * on_phase_change_user;
+                                void * user) = nullptr;
+    void     * on_phase_change_user = nullptr;
     // Early termination (PR #11, spec §10): the best composite score is
     // fed into a velocity gate (common/tessera-convergence.h) each
     // generation. The GA stops early and marks the tensor converged when
@@ -208,7 +216,7 @@ struct ts_awq_evolve_params {
     // of every island (replacing one random member). This lets the caller pass
     // the best candidate from a previously-converged tensor in the same family,
     // so the GA starts near-optimal instead of from scratch. May be NULL.
-    const ts_awq_candidate * seed_candidate;
+    const ts_awq_candidate * seed_candidate = nullptr;
     // Persistent-store hooks (optional, used when the dispatch opens a
     // DuckDB-backed store via --quantize-db). All may be NULL.
     //

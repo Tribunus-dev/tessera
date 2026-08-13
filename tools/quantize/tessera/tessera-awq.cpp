@@ -405,6 +405,18 @@ int ts_awq_evolve(const ts_awq_layer * layer,
     // Main GA loop
     int64_t gen = 0;
     for (; gen < n_gen; gen++) {
+        // Breed every island first; evaluate ONCE per generation over the
+        // union of new children only. This evaluation used to live INSIDE
+        // the island loop and covered the full n_islands x pop_size grid
+        // each time -- with 4 islands, 75% of every generation's
+        // evaluations re-scored unchanged populations, and carried elites
+        // were re-scored on top of that. Measured on the talker run: 77%
+        // of 601,920 evaluations were within-generation duplicates.
+        // Elites keep the scores they already earned; only children are
+        // scored, so the recorder stream and the evaluations counter now
+        // count real work.
+        std::vector<std::pair<int64_t,int64_t>> gen_tasks;
+        gen_tasks.reserve((size_t)n_islands * (size_t)pop_size);
         for (int64_t isl = 0; isl < n_islands; isl++) {
             // Rank by composite descending (higher = better)
             std::vector<int64_t> idx(pop_size);
@@ -426,8 +438,10 @@ int ts_awq_evolve(const ts_awq_layer * layer,
             // Elitism: keep top 25% (min 2)
             int64_t elite_count = std::max((int64_t)2, pop_size / 4);
             std::vector<const ts_awq_candidate *> elites;
+            std::vector<ts_awq_score> elite_scores;
             for (int64_t i = 0; i < elite_count; i++) {
                 elites.push_back(&pops[isl][idx[i]]);
+                elite_scores.push_back(scores[isl][idx[i]]);
             }
 
             // Breed next generation
@@ -446,23 +460,22 @@ int ts_awq_evolve(const ts_awq_layer * layer,
             }
             pops[isl] = std::move(next_pop);
 
-            // Evaluate new population (parallel across the full generation's
-            // candidates: all islands x pop_size evaluated at once for better
-            // load balancing when some candidates converge faster than others).
-            {
-                std::vector<std::pair<int64_t,int64_t>> gen_tasks;
-                gen_tasks.reserve((size_t)n_islands * (size_t)pop_size);
-                for (int64_t j = 0; j < n_islands; j++) {
-                    for (int64_t i = 0; i < pop_size; i++) {
-                        gen_tasks.push_back({j, i});
-                    }
-                }
-                eval_population(gen_tasks, gen);
-                // update_best is serial (mutates best/best_score)
-                for (auto & t : gen_tasks) {
-                    update_best(pops[t.first][t.second], scores[t.first][t.second]);
-                }
+            // Elites land at [0, elite_count) with their known scores;
+            // children at [elite_count, pop_size) get queued for the
+            // single per-generation evaluation below.
+            for (int64_t i = 0; i < elite_count; i++) {
+                scores[isl][i] = elite_scores[i];
             }
+            for (int64_t i = elite_count; i < pop_size; i++) {
+                gen_tasks.push_back({isl, i});
+            }
+        }
+
+        eval_population(gen_tasks, gen);
+        // update_best is serial (mutates best/best_score); elites are
+        // already reflected in best from the generation they were scored.
+        for (auto & t : gen_tasks) {
+            update_best(pops[t.first][t.second], scores[t.first][t.second]);
         }
 
         // Migration: best of island i -> worst of island (i+1) % n
