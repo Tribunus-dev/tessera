@@ -342,8 +342,16 @@ final class ActionAuditLogPanelTests: XCTestCase {
             receiptID: UUID()
         )
         let fields = entry.displayString.components(separatedBy: " | ")
-        XCTAssertEqual(fields.count, AuditLogHead.fieldCap,
-            "chip field cap must mirror AuditLogHead.fieldCap (5): \(fields)")
+        // The panel row shares the chip VOCABULARY but not its field
+        // budget (approved 2026-08-13). `AuditLogHead.fieldCap` exists
+        // for the inline diff-overlay chip, which has no room; a
+        // side-panel row does. Applying the cap here silently dropped
+        // `receipt:` from every row carrying a summary - the one field
+        // that routes the row to its full record.
+        XCTAssertGreaterThan(fields.count, AuditLogHead.fieldCap,
+            "the panel row is not capped: \(fields)")
+        XCTAssertTrue(entry.displayString.contains("receipt: "),
+            "the receipt must survive alongside a long summary: \(entry.displayString)")
     }
 
     func testShortReceiptIDIsEightChars() {

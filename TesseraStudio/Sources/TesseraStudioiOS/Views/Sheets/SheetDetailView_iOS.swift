@@ -252,7 +252,9 @@ private struct SheetGridView_iOS: View {
                                 .textFieldStyle(.plain).font(.caption)
                                 .padding(.horizontal, 4)
                             } else {
-                                Text(viewModel.sheet.cellText(row: row, col: col))
+                                // Computed value, not the source text;
+                                // editing swaps back to the formula.
+                                Text(viewModel.workbook.displayText(row: row, col: col))
                                     .font(.caption).lineLimit(1)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .padding(.horizontal, 4)

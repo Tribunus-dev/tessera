@@ -1,0 +1,745 @@
+# Tessera Studio Expansion Plan: LibreOffice Capability Parity
+
+**Status:** architect-approved (2026-08-13), Draw scope added 2026-08-13. Open questions resolved; see §8 decisions log.
+**Date:** 2026-08-13 (initial), 2026-08-13 (Draw scope added)
+**Author:** Mavis (orchestrator), with capability inventories from three explore agents
+**Scope:** documents (Writer), spreadsheets (Calc), presentations (Impress), drawings (Draw) - all to LibreOffice-class capability parity within tesseracore
+**Out of scope:** Math (StarMath standalone), Base (database), mail-merge UI wizards, Basic/VBA macros, Draw 3D objects + morph (heavy and out-of-scope for the productivity use case)
+
+> **Architect decisions (2026-08-13).** Bridge for DOCX import. Keep the
+> `SheetWorkbook` name. `BlockType` case growth is fine. **Full** number-format
+> parser in Swift (not the 80% subset). **Full** master-pages layout picker
+> UI in P1. Chart engine on **CoreGraphics** long-term (not Swift Charts).
+> Animations **evolve to SMIL tree** (not flat list). Pivot tables **Swift
+> with full UNO parity** (not a simplified model). **Draw as a first-class
+> peer surface** (not folded into SlideDeck); 2D vector full parity, 3D +
+> morph explicitly punted. See §8 for the full decisions log.
+
+---
+
+## TL;DR
+
+Tessera Studio already has a credible, agent-native document/spreadsheet/slides surface
+(`Doc`, `SheetWorkbook`/`Sheet`, `SlideDeck`/`Slide`, a 16-case `BlockType` AST, a
+recursive-formula `FormulaEngine`, an in-process `LibreOfficeBootstrap` + UNO bridge, and
+a `DocumentExporter` for DOCX/PDF/ODT). The path to LibreOffice parity is to **evolve
+the existing primitives**, not to fork a v2 surface or import LO as a dependency.
+
+Three parallel explore agents inventoried the LO modules (`sw/`, `sc/`, `sd/`) against
+the current tesseracore. The detailed reports are at:
+
+- `docs/.scratch/lo-writer-report.md` - 19 capability rows
+- `docs/.scratch/lo-calc-report.md` - 27 capability rows
+- `docs/.scratch/lo-impress-report.md` - 27 capability rows
+
+This plan summarizes the consolidated findings, names the reusable components, and
+proposes a four-phase rollout. **Phase 0 (P0) is the MVP**: the ten reusable
+components that close the largest gaps and unlock Word-class / Calc-class / Impress-
+class file round-trips.
+
+The no-versioned-implementations rule is binding: every new component either
+**evolves an existing type** (e.g. extend `BlockType`, `SheetWorkbook`, `SlideLayout`,
+`FormulaEngine.Evaluator`) or **sits next to it as a peer** (e.g. `MasterPageStore`
+next to `SlideStore`). Nothing is `_v2`-suffixed, nothing is left alongside its
+predecessor in the same tree.
+
+---
+
+## 1. What tesseracore has today
+
+The expansion evolves this surface. Recap of what already exists (paths relative to
+`TesseraStudio/Sources/TesseraCore/`):
+
+### 1a. Document model (shared by Doc, Sheet, Slide)
+
+- `Productivity/Block.swift` - `BlockType` enum (16 cases: heading, paragraph, list,
+  listItem, table, tableCell, image, codeBlock, callout, divider, quote, toggle,
+  equation, comment, trackInsertion, trackDeletion), `InlineRun` with annotation tags,
+  `DocumentPageLayout` (page geometry + columnCount + headerBlockID/footerBlockID).
+- `Productivity/Block.swift` `DocumentAST` - the canonical body value type referenced
+  by every material.
+
+### 1b. Longform documents (Writer side)
+
+- `Productivity/Materials/Docs/Doc.swift` - first-class `Doc` material (id, title,
+  body, cover, tags).
+- `Productivity/Materials/Docs/DocStore.swift` - receipt-backed mutation store.
+- `Productivity/Materials/Docs/DocsViewModel.swift` - SwiftUI binding.
+- `Editor/TesseraTextContentManager.swift`, `TesseraTextElement.swift` - TextKit 2
+  binding to `DocumentAST`.
+- `Editor/BlockRenderer.swift`, `EditorMode.swift`, `EditorCursorState.swift`,
+  `EditorCoalescer.swift`, `TextEditReducer.swift` - editor surface.
+
+### 1c. Spreadsheets (Calc side)
+
+- `Productivity/Materials/Sheets/Sheet.swift`, `SheetWorkbook.swift`,
+  `SheetColumn.swift` (with `SheetColumnType: text | number | date | checkbox`).
+- `Productivity/Materials/Sheets/SheetStore.swift`, `SheetsViewModel.swift`,
+  `SheetReceiptType.swift`, `SheetsGraphConnector.swift`.
+- `FormulaEngine/` - `Lexer.swift`, `Parser.swift`, `Evaluator.swift`,
+  `FormulaAST.swift`, `DependencyGraph.swift`, `TypeSystem.swift`,
+  `UndoRedoStack.swift`, `SheetEngine.swift`, `FormulaReferenceAdjuster.swift`,
+  `ColumnSlice.swift`, `CellAddr.swift`, plus `Functions/{Date,Statistics,Array,
+  Lookup,Financial,Criteria}Functions.swift` + `FunctionRegistry.swift`.
+- `Tools/SheetTools.swift` - agent tool surface for sheets.
+
+### 1d. Slides (Impress side)
+
+- `Productivity/Materials/Slides/SlideDeck.swift` (453 lines) - durable row; the deck
+  carries a `body: DocumentAST` and a `slideMeta` map; each `Slide` is a derived
+  view (`id, title, body, index, layout: SlideLayout, notes`).
+- `Productivity/Materials/Slides/SlideLayout` - 4-case enum (`title`, `titleAndContent`,
+  `image`, `blank`). Comment at `SlideDeck.swift:9` punts master layouts, transitions,
+  animations.
+- `Productivity/Materials/Slides/SlideStore.swift` (547 lines),
+  `SlidesViewModel.swift` (618 lines), `SlideReceiptType.swift`,
+  `SlidesGraphConnector.swift`.
+
+### 1e. Drawings (Draw side)
+
+**Scope decision (2026-08-13):** Draw is a separate tesseracore surface, NOT
+a feature of `SlideDeck`. The two share the `sd/` binary in LO but the
+user-facing semantics are distinct: a deck is a sequence of slides; a
+drawing is a single page of vector graphics. The existing slide comments
+that say "Draw is bundled inside the same `sd/` binary but lives mostly in
+`sd/source/ui/func/fu*.cxx`" are correct about the upstream layout, but the
+Tessera product split is one surface per material (a la the existing
+Doc / Sheet / Slide split).
+
+The existing tesseracore surface has:
+
+- **No `Drawing` material yet.** This is a green-field add. New module
+  `TesseraCore/Productivity/Materials/Draw/` containing `Drawing.swift`
+  (durable `graph_entity` row, `id`, `title`, `body: DocumentAST`,
+  `canvasSize: CanvasSize`, `canvasBackground: ShapeFill?`,
+  `gridEnabled: Bool`), `DrawingStore.swift`, `DrawingsViewModel.swift`,
+  `DrawingReceiptType.swift`, `DrawingsGraphConnector.swift`. All peers of
+  the existing `*Store` / `*ViewModel` / `*ReceiptType` / `*GraphConnector`
+  pattern in Doc / Sheet / SlideDeck.
+- **No `Shape` value type yet.** New value type at
+  `TesseraCore/Productivity/Shape.swift` peer of `Block.swift`. Carries
+  `id`, `kind: ShapeKind` (rect, ellipse, line, arrow, polygon, star,
+  freeform - the P0 set; P1 adds connector, P2 adds bezier/cad paths),
+  `geometry: ShapeGeometry` (x, y, width, height, rotation, anchor),
+  `fill: ShapeFill?`, `stroke: ShapeStroke?`, `text: ShapeText?`
+  (optional text-on-shape), `zIndex: Int`, `parentGroupID: UUID?`
+  (for P1 group support).
+- **No shape rendering.** `BlockRenderer.swift` is text-focused; we add
+  `ShapeRenderer.swift` peer of `BlockRenderer` (CoreGraphics; consistent
+  with the architect decision on chart engine). `Drawing` body is
+  `DocumentAST` of `BlockType.shape` cases (see §3 - the new `.shape` /
+  `.shapeGroup` cases that the original plan already approved as P1
+  `BlockType` evolutions now move to P0 because Draw needs them).
+- **No shape catalog.** `ShapeCatalog` at
+  `TesseraCore/Productivity/Materials/Draw/ShapeCatalog.swift` - the
+  authoritative list of shape kinds + their default geometry. Shared
+  by Draw (canvas) and Impress (free shapes on a slide).
+
+### 1f. Import/Export + the LibreOffice bridge
+
+- `Productivity/DocumentExporter.swift` - exports `DocumentAST` to DOCX (textutil),
+  PDF (NSPrintOperation), ODT (textutil). Comments note native ODF writer is
+  Phase 2 target.
+- `Productivity/ImportExport/{TesseraImporter,TesseraExporter}.swift` - Python
+  subprocess pipeline.
+- `Productivity/ImportExport/SpreadsheetDigester.swift` - csv/tsv/xlsx digest path.
+- `DocumentProcessing/LibreOffice/LibreOfficeBootstrap.swift` (174 lines) - LO
+  bundle discovery (`.app`/system install) and in-process UNO bootstrap.
+- `DocumentProcessing/LibreOffice/EmbeddedPythonBridge.swift` (673 lines) -
+  CPython lifecycle and URE bootstrap.
+- `DocumentProcessing/LibreOffice/tessera_lo_service.py` (745 lines) - in-process
+  UNO service; today exposes `writer_get_text`, `writer_get_paragraphs`,
+  `writer_set_paragraph_style`, `writer_insert_text` and the format-agnostic
+  `open_document` / `save_document`.
+
+### 1g. Already-merged adjacent plans (read before writing the next evolution)
+
+- `TesseraStudio/docs/word-class-document-processor-implementation-plan.md` - 772-
+  line, 12-phase plan for the Writer side, locked in pre-LO-study.
+- `TesseraStudio/docs/phase12-hig-review-sheets-slides-code.md` - HIG sweep of
+  current sheets/slides views, 9 must-fix items.
+- `TesseraStudio/docs/phase11-integration-plan.md` - 4-agent parallel execution
+  plan; defines the `GhostTextProvider` / `DiffProvider` interface contracts the
+  editor surface consumes.
+
+The Writer plan above is the *de facto* design contract for the doc side; this
+expansion plan is **complementary**, not contradictory. Where the writer plan
+proposes an evolution (e.g. `DocumentMetadata.trackChangesEnabled = false`), this
+plan does not relitigate it.
+
+---
+
+## 2. The consolidated capability matrix
+
+Below is the unified view across Writer + Calc + Impress. The rows are a
+**deduplicated rollup** of the three sibling reports; full per-source-path detail
+is in the scratch reports.
+
+| # | Capability | Surface | LO today | Tessera today | Phase |
+|---|---|---|---|---|---|
+| 1 | Block-level section / multi-column | Writer | covered | **gap** - no `BlockType.section`, no frame | P0 |
+| 2 | Block-level field (page #, cross-ref, formula, user) | Writer | covered | **absent** - no `BlockType.field` | P1 |
+| 3 | Block-level footnote / endnote | Writer | covered | **gap** - no `BlockType.footnote`/`.endnote`; `DocumentPageLayout.headerBlockID/footerBlockID` exist but are empty | P1 |
+| 4 | Block-level shape (frame, anchored object) | Writer | covered | **gap** - only `BlockType.image`; no text frame, no group | P1 |
+| 5 | Block-level shape (catalog) | Impress | covered | **gap** - no `ShapeCatalog`; only the 6 block primitives slide reuses | P1 |
+| 6 | Block-level chart | Calc + Impress | covered | **gap** - no `BlockType.chart` | P1 |
+| 7 | Block-level media (audio/video) | Impress | covered | **absent** - no `BlockType.media`; no `avmedia` wrapper | P1 |
+| 8 | Table with rowspan/colspan, nested, repeating header | Writer + Calc | covered | **partial** - flat `<table><tr><td>`; spans dropped by `DocumentExporter.swift:235-242` | P0 |
+| 9 | Style registry (paragraph/character/page/list/table) | Writer | covered | **gap** - `Block.attributes["style"]` is a string label, not a UUID | P1 |
+| 10 | List level hierarchy + outline + bullet glyphs | Writer | covered | **partial** - 3 styles only, no level | P1 |
+| 11 | Master page + per-slide layout picker | Impress | covered (25+ AutoLayouts) | **gap** - 4-case enum only | P0 |
+| 12 | Slide transition | Impress | covered (30+ presets) | **absent** (punted) | P1 |
+| 13 | Per-shape animation (entrance/emphasis/exit/motion) | Impress | covered (SMIL tree) | **absent** (punted) | P2 |
+| 14 | Theme (palette, fonts, background) | Impress + Writer | covered | **absent** | P1 |
+| 15 | Multi-sheet workbook model | Calc | covered | **partial** - `SheetWorkbook` is a single-sheet proxy | P0 |
+| 16 | Cell types: numeric/string/boolean/date/formula/error + merged/shared/array | Calc | covered | **partial** - `SheetColumnType` is 4 cases; no merged/shared/array | P0 |
+| 17 | Formula engine: TokenArray IR + shared formula groups | Calc | covered (RPN) | **gap** - AST-only; no shared-formula path; no TokenArray | P0 |
+| 18 | Recalc state machine + dirty-cone scheduler | Calc | covered | **partial** - `DependencyGraph` has graph, no state enum | P0 |
+| 19 | Name resolution in compiler, not evaluator | Calc | covered | **gap** - `engine.resolveNamedRange` is per-eval | P0 |
+| 20 | Volatile + array volatility | Calc | covered | **partial** - scalar volatility only; no `FunctionVolatility.array` | P1 |
+| 21 | Array / matrix formulas (CSE, dynamic arrays) | Calc | covered | **gap** - no `Spilled` semantics, no implicit intersection | P1 |
+| 22 | Named ranges (workbook + sheet scoped) | Calc | covered | **partial** - workbook-scoped only, not persisted | P0 |
+| 23 | Number formats (locale-aware) | Calc | covered (~60K LoC upstream) | **gap** - no per-cell `nFormat`; no `NumberFormatParser` | P0 |
+| 24 | Cell styles, fonts, borders, alignment | Calc | covered | **gap** - block-AST run formatting, no per-cell | P1 |
+| 25 | Charts (embedded + chart sheet) | Calc + Impress | covered | **gap** - no Swift chart primitive | P1 |
+| 26 | Pivot tables / DataPilot | Calc | covered | **gap** - no pivot, no data pilot | P2 |
+| 27 | Data validation | Calc | covered | **gap** - no per-range rule | P1 |
+| 28 | Conditional formatting (rules + databars + color scales + icon sets) | Calc | covered | **gap** - no rule list, no databar | P1 |
+| 29 | Solver (LP, nonlinear) | Calc | covered | **gap** - no native solver | P2 |
+| 30 | Sort / filter (standard, advanced, autofilter) + subtotals | Calc | covered | **gap** - no sort, no filter, no `QueryParam` | P1 (P2 for subtotals) |
+| 31 | Cell-level comments / threaded notes | Calc | covered | **gap** - no per-cell `Note` | P1 |
+| 32 | Sheet protection | Calc | covered | **gap** - no `SheetProtection` | P1 |
+| 33 | Statistics wizards (18 dialogs) | Calc | covered | **gap** - functions present, no wizard UI | P1 (agent-tool surface) |
+| 34 | Find / replace (with regex) | Writer | covered | **gap** - no `DocumentSearchIndex` | P1 |
+| 35 | Mail merge | Writer | covered | **absent** | P2 |
+| 36 | ToC / index / bibliography | Writer | covered | **gap** | P2 |
+| 37 | Track changes accept/reject | Writer | covered | **partial** - block types exist; no accept/reject lifecycle | P1 |
+| 38 | ODT / DOCX / RTF / HTML / MD / EPUB / TXT reader | Writer | covered | **partial** - Python subprocess pipeline; UNO bridge has the right hooks but is not wired for full import | P0 |
+| 39 | ODP / PPTX import + export | Impress | covered | **absent** - `DocumentExporter` has no deck formats | P1 |
+| 40 | PDF export for slide deck (with master chrome, 16:9, notes) | Impress | covered | **gap** - `DocumentExporter` is `DocumentAST`-shaped only | P1 |
+| 41 | Image export (PNG/JPG/SVG) | Impress | covered | **absent** | P1 |
+| 42 | Auto-correct, spell-check, grammar | Writer | covered | **absent** - use macOS native spell APIs | P2 |
+| 43 | Document session recovery + auto-save + version history | Writer | covered (Word-class) | **partial** - `DocStore.commitBody` exists, no recovery/versions | P1 (part of writer plan) |
+| 44 | 2D vector shape catalog (rect, ellipse, line, arrow, polygon, star, freeform) | Draw + Impress | covered | **gap** - no `Shape` value type, no `BlockType.shape` case, no `ShapeCatalog` | P0 |
+| 45 | Shape geometry + z-order + basic fill/stroke | Draw | covered | **gap** - no `ShapeGeometry`, no `ShapeFill`/`ShapeStroke` | P0 |
+| 46 | Z-order control (bring forward, send back, to front, to back) | Draw | covered | **gap** - no z-order on the block primitive | P0 |
+| 47 | Text on shape (text frame) | Draw + Impress | covered | **gap** - no text-on-shape; only `BlockType.image` for picture shapes | P1 |
+| 48 | Group / ungroup of shapes | Draw | covered | **gap** - no `BlockType.shapeGroup`, no parent group on `Shape` | P1 |
+| 49 | Connector shapes (straight, elbow, curved, with arrow heads) | Draw | covered | **gap** - connector is a separate `ShapeKind` not in P0 | P1 |
+| 50 | Layers (add/delete/hide/lock/reorder) | Draw | covered | **gap** - no `Layer` value type, no `LayerStore` | P1 |
+| 51 | Snap to grid + snap to object + alignment helpers | Draw | covered | **gap** - no `SnapEngine`; canvas is unsnapped | P1 |
+| 52 | Transform / rotate / flip / scale | Draw | covered | **gap** - `ShapeGeometry` has `rotation` but no UI or undo for it | P1 |
+| 53 | Custom geometry paths (bezier curves) | Draw | covered | **gap** - freeform paths are out of P0; needs a path-edit mode | P2 |
+| 54 | Bullet/numbered lists inside text frames | Draw | covered | **gap** - shape text is a single `InlineRun` array | P2 |
+| 55 | Draw tables (Draw-side table primitive) | Draw | covered | **gap** - reused `BlockType.table` works; needs the canvas binding | P2 |
+| 56 | Annotations (reviewer notes) | Draw | covered | **gap** - distinct from `BlockType.comment`; LO uses `sd/source/core/annotations/Annotation.cxx` | P2 |
+| 57 | Measure (dimension lines) | Draw | covered | **gap** - no measure shape | P2 |
+| 58 | ODG import + export (Draw) | Draw | covered | **absent** - no native ODG reader/writer; bridge is the path | P1 |
+| 59 | SVG import + export (Draw) | Draw | covered | **absent** - bridge is the path; native SVG is a P3 stretch | P1 |
+| 60 | PNG/JPG export for drawing | Draw | covered | **absent** - `ShapeRenderer` + `UIGraphicsImageRenderer` is a pure-Swift path | P1 |
+| 61 | PDF export for drawing | Draw | covered | **absent** - bridge is the path (LO `sdpdffilter` handles ODG-as-PDF) | P1 |
+| 62 | 3D objects (extrusion, lathe, sphere, cube) | Draw | covered | **punt** - `fucon3d.cxx`; 3D on a productivity surface is unusual | out of scope (P3+ or never) |
+| 63 | Morph (shape-to-shape interpolation) | Draw | covered | **punt** - `fumorph.cxx`; uncommon in the productivity use case | out of scope (P3+ or never) |
+
+(63 rows. The phase column is the consolidated verdict; the three sibling reports
+break the per-source path evidence per row. Rows 44-63 are the Draw scope added
+2026-08-13: 17 new rows, 2 explicitly punted (3D + morph).)
+
+---
+
+## 3. The unified tesseracore component catalog (priority-ordered)
+
+Below are the **24 reusable components** that, together, close the bulk of the
+matrix. Each is named with its concrete file path, its existing peer / parent
+type, and a one-line test contract. The "evolve" vs "new peer" column is the
+no-versioned-implementations check.
+
+| Pri | Component | Path | Evolves / peer of | Phase |
+|---|---|---|---|---|
+| 1 | `SheetWorkbook` multi-sheet model | `TesseraCore/Productivity/Materials/Sheets/SheetWorkbook.swift` | **evolves** `SheetWorkbook` (adds `sheets: [SheetID: SheetSnapshot]`, workbook-wide named ranges, validation/CF registries, pivot list). Name stays per architect decision. | P0 |
+| 2 | `RecalcScheduler` | `TesseraCore/FormulaEngine/RecalcScheduler.swift` | **evolves** `DependencyGraph` (adds cell-level `RecalcState`, dirty-cone plan, shared-formula group cache) | P0 |
+| 3 | `TokenArray` IR | `TesseraCore/FormulaEngine/TokenArray.swift` | **peer of** `FormulaAST` (canonical IR for `DependencyGraph` + shared formula groups; AST stays the authoring surface) | P0 |
+| 4 | `CellValue` + `CellFormat` + per-cell `NumberFormat` | `TesseraCore/Productivity/Materials/Sheets/{CellValue,CellFormat}.swift` | **evolves** `SheetColumn` / `SheetColumnType` (no v2 column type) | P0 |
+| 5 | `NumberFormatEngine` (full parser, locale-aware) | `TesseraCore/FormulaEngine/NumberFormatEngine.swift` | **peer of** `FunctionRegistry` (full parity with `svl/source/numbers/zforlist.cxx` + `zformat.cxx`; not the 80% subset. Owns its own per-locale token table) | P0 |
+| 6 | `BlockType` evolutions: `.section`, `.frame`, `.field`, `.footnote`, `.endnote`, `.shape`, `.shapeGroup`, `.chart`, `.media` | `TesseraCore/Productivity/Block.swift` | **evolves** `BlockType` enum (adds cases; no v2 enum). `.shape` and `.shapeGroup` move to P0 because Draw needs them; the rest stay where the original plan put them. | P0 (section, frame, shape, shapeGroup) / P1 (field, footnote, endnote, chart, media) |
+| 7 | `MasterPageStore` | `TesseraCore/Productivity/Materials/Slides/MasterPageStore.swift` | **peer of** `SlideStore`; lives next to it (not in v2) | P0 |
+| 8 | `SlideLayoutSpec` (value type) | `TesseraCore/Productivity/Materials/Slides/SlideLayoutSpec.swift` | **evolves** `SlideLayout` enum (the 4 cases become defaults; the enum re-exports `caseIterable`) | P0 |
+| 9 | `WriterBridgeFilter` (UNO-bridge-backed reader) | `TesseraCore/Productivity/Filters/WriterBridgeFilter.swift` | **peer of** `TesseraImporter` (subprocess path stays; UNO path is the architect-chosen DOCX import strategy) | P0 |
+| 10 | `CalcBridgeFilter` (UNO-bridge-backed reader/writer) | `TesseraCore/Productivity/Filters/CalcBridgeFilter.swift` | **peer of** `SpreadsheetDigester` (CSV/TSV/XLSX digest stays; this is the UNO path for ODS/XLS) | P0 |
+| 11 | `Shape` value type | `TesseraCore/Productivity/Shape.swift` | **peer of** `Block` (the 2D vector primitive; carries `id`, `kind: ShapeKind`, `geometry`, `fill`, `stroke`, `text?`, `zIndex`, `parentGroupID?`) | P0 |
+| 12 | `ShapeCatalog` | `TesseraCore/Productivity/Materials/Draw/ShapeCatalog.swift` | **peer of** `SlideLayoutSpec`; the authoritative list of shape kinds + default geometry. Shared by Draw (canvas) and Impress (free shapes on a slide). | P0 |
+| 13 | `ShapeRenderer` (CoreGraphics) | `TesseraCore/Productivity/Materials/Draw/ShapeRenderer.swift` | **peer of** `BlockRenderer`; renders a `Shape` to a `CGContext` or a `SwiftUI.Canvas` | P0 |
+| 14 | `Drawing` material (full peer) | `TesseraCore/Productivity/Materials/Draw/Drawing.swift` | **peer of** `SlideDeck`; the durable `graph_entity` row for a single-page vector drawing | P0 |
+| 15 | `DrawingStore` + `DrawingsViewModel` + `DrawingReceiptType` + `DrawingsGraphConnector` | `TesseraCore/Productivity/Materials/Draw/*` | **peer of** `SlideStore` + `SlidesViewModel` + `SlideReceiptType` + `SlidesGraphConnector`; same `*Store`/`*ViewModel`/`*ReceiptType`/`*GraphConnector` quartet | P0 |
+| 16 | `MasterPageLayoutPicker` (full UI surface) | `TesseraCore/Productivity/Materials/Slides/MasterPageLayoutPicker.swift` | **peer of** the existing `SlideDetailView` slides surface; consumes `MasterPageStore`. **Full picker UI** per architect decision, not data-only. | P1 |
+| 12 | `Theme` + `ThemeStore` | `TesseraCore/Productivity/Materials/Slides/Theme.swift` + `ThemeStore.swift` | **peer of** `SlideStore`/`DocStore` (no theme in v1) | P1 |
+| 13 | `LOBridgeDeckIO` (ODP/PPTX import+export, PDF deck export) | `TesseraCore/DocumentProcessing/LibreOffice/LOBridgeDeckIO.swift` | **evolves** `EmbeddedPythonBridge` (adds two methods; no v2 bridge) | P1 |
+| 14 | `SlideDeckRenderer` (Core Graphics) | `TesseraCore/Productivity/Materials/Slides/SlideDeckRenderer.swift` | **evolves** `BlockRenderer` (mode-aware: `EditorMode.document` vs `EditorMode.slideCanvas`) | P1 |
+| 15 | `ChartRenderer` (Core Graphics, full LO chart type parity) | `TesseraCore/Views/Renderers/ChartRenderer.swift` | **peer of** the other `Views/Renderers/*` (no v2 renderer base). **Core Graphics** per architect decision, not Swift Charts. | P1 |
+| 16 | `QueryEngine` (sort / filter / subtotals) | `TesseraCore/Productivity/Materials/Sheets/QueryEngine.swift` | **peer of** `SheetsViewModel` (subscribes to the same `DependencyGraph`) | P1 |
+| 17 | `FieldController` + `RevisionController` | `TesseraCore/Productivity/Editor/{FieldController,RevisionController}.swift` | **evolves** `BlockType.field` and the existing `trackInsertion`/`trackDeletion` types (adds the accept/reject lifecycle, the per-revision ID) | P1 |
+
+Plus, at P2, three substantial pieces of work whose design the architect
+has already chosen:
+
+- **`SMILAnimationTree`** — full evolution to the `XAnimationNode` tree from
+  `sd/source/core/CustomAnimationEffect.cxx` (3,461 LoC). NOT a flat
+  `[AnimationEffect]` list. Includes `ParallelTimeContainer`,
+  `SequenceTimeContainer`, `Animate`, `AnimateMotion`, `AnimateColor`,
+  `AnimateTransform`, `Audio`, `Command`, `IterateContainer`, `Event`.
+  Lives at `TesseraCore/Productivity/Materials/Slides/SMILAnimationTree.swift`,
+  peer of `SlideStore`. Phase 2.
+- **`PivotTableStore`** with **full UNO parity** to `ScDPObject` — NOT the
+  simplified row/col/data/filter model. Includes the
+  `DataPilotFieldOrientation` matrix, page/row/column/data/filter bins,
+  `PivotTableStyleInfo`, layout properties, output properties, save/load
+  (`dpsave.hxx` / `dpdimsave.hxx`). Lives at
+  `TesseraCore/Productivity/Materials/Sheets/PivotTableStore.swift`. Phase 2.
+
+24 components at P0+P1, three substantial design-locked pieces at P2. The
+"evolve" column is the binding constraint: every new component either adds
+cases/fields to an existing type, or sits as a peer file next to its sibling.
+Nothing paralleled; nothing v2.
+
+---
+
+## 4. Bridge strategy: when to call UNO, when to re-implement
+
+The `LibreOfficeBootstrap` + `EmbeddedPythonBridge` + `tessera_lo_service.py`
+stack is a working UNO gateway. The right division of labor is:
+
+### 4a. Call UNO (drive the bridge) for:
+
+| Capability | Why |
+|---|---|
+| ODT / DOCX / RTF / HTML / MD / EPUB / TXT **reader** (Writer) | LO has 30+ years of edge-case handling; the bridge can walk `XText` and emit `DocumentAST` directly. Re-implementing is 20K+ LoC for marginal gain. |
+| ODS / XLS / XLSX / CSV / dBASE / DIF **reader + writer** (Calc) | Same logic. The 50+ years of filter edge cases in `sc/source/filter/{excel,oox,xml}/` are not worth duplicating in Swift. |
+| ODP / PPTX import (Impress) | UNO `XDrawPagesSupplier` -> `SlideDeck` is mechanical. PPTX fidelity is deep; we trust `oox/source/ppt/pptimport.cxx`. |
+| ODG / SVG import + export (Draw) | Same logic. `xmloff/source/drawing/` + `oox/source/export/shapes.cxx` + `filter/source/svg/` are deep enough that bridge is the right call. Pure-Swift SVG is a P3 stretch. |
+| PDF export for a slide deck or drawing | `sd/source/filter/pdf/sdpdffilter.cxx` includes 16:9, master chrome, notes/handout for Impress; the ODG path handles Draw. Native Core Graphics + PDFContext is 6+ months of parity work. |
+| Presenter console (dual display, presenter notes, timer) | `sd/source/console/` is 70 files. Re-implementing is a separate product. The bridge spawns `soffice --show`; SwiftUI just hosts. |
+| Solver (LP, nonlinear) | UNO `com.sun.star.sheet.Solver` is the right call. The native port (`scaddins/source/solver/`) is 1000+ lines and ports would diverge. |
+| Layout-sensitive features: ToC, page-number fields, cross-references, index | LO computes them. We serialize the resolved text. |
+
+### 4b. Re-implement in Swift (don't use the bridge) for:
+
+| Capability | Why |
+|---|---|
+| Formula engine, dependency graph, recalc, named-range resolution, function registry | These are the load-bearing primitives for the agent tool surface (`SheetTools.swift`), the receipts pipeline, and the undo stack. UNO per-edit would be too slow and would not compose with `ReceiptsCoordinator`. |
+| Block / cell rendering (Writer, Calc, Impress views) | The SwiftUI surface is the product. UNO's view layer is irrelevant. |
+| Document / cell / slide edit operations (insert, delete, mutate) | Mutations are constitutional; the receipt backbone is non-negotiable. |
+| Spell-check, autocorrect, grammar | macOS-native `NSSpellChecker` + Apple Intelligence over LO's; smaller, faster, local. |
+| Chart rendering (Core Graphics, full LO chart type parity) | Architect decision: CoreGraphics, not Swift Charts. LO chart objects don't render into `SwiftUI.View`; the full chart type set is part of parity. `ChartRenderer` consumes a `ChartSpec` JSON and draws with `CGContext`. |
+| Number formats (full parser, locale-aware) | Architect decision: full parser in Swift, peer of the upstream `svl/source/numbers/` (60K LoC). Token table per locale, full `nf_*` code coverage, not the 80% subset. Rides `NumberFormatEngine` peer of `FunctionRegistry`. |
+| Cell styles, data validation, conditional formatting, sort / filter, sheet protection, cell comments | Receipt + SwiftUI surface; the bridge round-trip is too slow for live editing. |
+| Animations (full SMIL tree evolution) | Architect decision: evolve to the `XAnimationNode` tree from `CustomAnimationEffect.cxx` (3,461 LoC) at P2, NOT a flat `[AnimationEffect]` list. P2 ships `ParallelTimeContainer`, `SequenceTimeContainer`, `Animate`, `AnimateMotion`, `AnimateColor`, `AnimateTransform`, `Audio`, `Command`, `IterateContainer`, `Event`. Runtime playback is still SwiftUI tween; the tree is the authoring + round-trip surface. |
+| Pivot tables (Swift, full UNO parity) | Architect decision: Swift `PivotTableStore` with full `ScDPObject` schema parity, not the simplified row/col/data/filter model. Includes `DataPilotFieldOrientation`, page/row/column/data/filter bins, `PivotTableStyleInfo`, layout + output properties, save/load via `dpsave.hxx` / `dpdimsave.hxx`. Reuses `QueryEngine` infrastructure. |
+| Auto-save / session recovery / version history | This is a *product* feature, not a *format* feature. Drive it from `DocStore`/`SheetStore`/`SlideStore`/`DrawingStore` and the receipt log. |
+| Image export (PNG/JPG/SVG) for **Slides** | `UIGraphicsImageRenderer` over a `Slide` AST is a pure-Swift path. No UNO needed. |
+| Image export (PNG/JPG) for **Drawings** | `UIGraphicsImageRenderer` over a `Drawing` AST rendered by `ShapeRenderer` is a pure-Swift path. |
+| Shape catalog, geometry, fill/stroke, z-order, layers, snap, transform, group | Receipt + SwiftUI surface; the bridge round-trip is too slow for live editing. `ShapeRenderer` + `ShapeCatalog` + `LayerStore` + `TransformController` + `SnapEngine` are all Swift. |
+| Text frames + bullet lists inside shapes | Swift. `Shape.text: ShapeText` carries the `InlineRun` array; bullet rendering is a SwiftUI tween. |
+
+### 4c. The 3-foot-rule for new components
+
+Before adding any new tesseracore component, ask:
+
+1. Is there an existing primitive I can extend instead of adding a peer? (Per
+   the no-versioned-implementations rule.) Examples: `BlockType` cases,
+   `SheetColumnType` cases, `SlideLayout` cases, `DocumentPageLayout` fields.
+2. If a peer is the right answer, does the peer follow the same `*Store` +
+   `*ViewModel` + `*ReceiptType` pattern as `DocStore`/`SheetStore`/`SlideStore`?
+3. Does the component ride the receipt backbone? If not, why not?
+
+---
+
+## 5. Cross-cutting themes
+
+These bind all three suites together; they are not per-capability.
+
+### 5a. Receipts are universal
+
+Every mutation - insertion, deletion, accept/reject, recalc, sort, filter,
+apply-layout, set-transition - must go through `ReceiptsCoordinator`. The
+explore reports on Writer (`RevisionController.swift` design) and Calc
+(`ChangeTracker.swift` design) and Impress (`MasterPageStore.swift` design)
+all converge on this. There is no parallel mutation log; the receipt log IS
+the mutation log, the audit log, and the change-track viewer.
+
+### 5b. The AST is the source of truth
+
+`DocumentAST` is the authoring surface for every material (Doc, Sheet, SlideDeck,
+future MasterPage). Block / cell / slide / master diffs are all `DocumentAST`
+diffs. The exporter (`DocumentExporter.swift`) is a projection; the bridge
+(`LibreOfficeBootstrap` + `tessera_lo_service.py`) is another projection; the
+chart renderer, the slide renderer, the printer, the email-export - all
+projections of the same `DocumentAST`. The temptation to add a parallel
+internal model for "the rendered page" is the standard way these products
+balloon; we reject it.
+
+### 5c. Per-suite data, one document model
+
+The four materials look different in the UI, but the `body: DocumentAST` is
+identical. `MasterPage.body` will be the same `DocumentAST` (a new
+`masterOnly: true` flag on root children handles chrome vs slide-content
+distinction in the canvas). `SheetWorkbook.sheets[i].body` is the same
+`DocumentAST` with a `BlockType.table` root. The cell grid for sheets is
+also a `DocumentAST` of `BlockType.tableCell`s. `Drawing.body` is the same
+`DocumentAST` interpreted as a list of `BlockType.shape` /
+`BlockType.shapeGroup` cases (the `Shape` value type is the per-block
+carrier; the AST is the document-shaped body). This is the right shape: one
+copy / paste engine, one undo stack, one find/replace, one receipt vocabulary.
+
+### 5d. AGENTS.md is the conductor
+
+The four named capabilities (`alphaevolve`, `tessera-analyst`, `findings-
+curator`, `verifier`) do not change with this expansion. The phase 0 / 1 / 2
+work rolls in under `tessera-analyst` for design study, `worker` for
+implementation, and `verifier` for the review gate before each promotion to
+main. The branch namespaces (`scratch/<feature>/agent-X`, `evolve-review/...`,
+`champions/<id>`, `evolve-baseline/wN`) carry through unchanged.
+
+### 5e. The agent-ux-fatigue rules still apply
+
+The Phase-1 audit shipped 12 units (tier policy, notification budget,
+citation/uncertainty, inline stop, audit log side panel, etc.). This expansion
+must respect:
+
+- **Tier policy** - import/export that mutates a user's file is at least `tier2`;
+  layout-sensitive features (column changes, theme swaps) are `tier1` per the
+  risk-only policy.
+- **Notification budget** - the cross-suite auto-save notification rides
+  `TesseraNotificationBudget`. No "format converted" push.
+- **Inline stop** - long imports (`loadComponentFromURL` for a 500-page DOCX)
+  must wire to `TesseraAgentLoop.stop(reason:)`.
+- **Audit log** - all `WriterBridgeFilter.import(URL)` and
+  `CalcBridgeFilter.import(URL)` calls log a receipt; the side panel surfaces
+  them.
+
+---
+
+## 6. The phased rollout
+
+The 63 capability rows roll up into a four-phase plan. Each phase is a
+**shippable milestone**, not a "we'll get to it eventually" tickbox.
+
+### 6a. Phase 0 - MVP (the 16 things that close the largest gaps)
+
+| # | Deliverable | Surface |
+|---|---|---|
+| 0.1 | `SheetWorkbook` multi-sheet model (multi-sheet identity, workbook-wide named ranges, validation + CF registries, pivot list, protection) | Calc |
+| 0.2 | `RecalcScheduler` + `TokenArray` IR + shared formula groups (cell-level `RecalcState`, dirty-cone plan) | Calc |
+| 0.3 | `CellValue` + `CellFormat` + per-cell `NumberFormat` index (extends `SheetColumn`; no v2) | Calc |
+| 0.4 | `NumberFormatEngine` (full locale-aware parser, parity with `svl/source/numbers/`) | Calc |
+| 0.5 | `BlockType.section` + `BlockType.frame` (the 2 new cases that unblock real-world DOCX import) | Writer |
+| 0.6 | `BlockType.table` extension: `rowSpans`, `colSpans`, nested `children` | Writer + Calc |
+| 0.7 | `MasterPageStore` + `SlideLayoutSpec` (the 4-case `SlideLayout` becomes defaults; no v2 enum) | Impress |
+| 0.8 | `WriterBridgeFilter` (UNO bridge for ODT/DOCX/RTF/HTML import - architect-chosen strategy) | Writer |
+| 0.9 | `CalcBridgeFilter` (UNO bridge for ODS/XLS/XLSX import + export) | Calc |
+| 0.10 | `SheetProtection` + sheet-level protection flags | Calc |
+| 0.11 | Update the `tessera_lo_service.py` schema with the Writer / Calc filter functions the bridge needs | Bridge |
+| 0.12 | `BlockType.shape` + `BlockType.shapeGroup` (Draw needs them at P0; Impress uses at P1 for free shapes) | Draw + Impress |
+| 0.13 | `Shape` value type + `ShapeCatalog` (rect, ellipse, line, arrow, polygon, star, freeform - P0 set) | Draw + Impress |
+| 0.14 | `ShapeRenderer` (CoreGraphics; renders `Shape` to a `CGContext` or a `SwiftUI.Canvas`) | Draw + Impress |
+| 0.15 | `Drawing` material + `DrawingStore` + `DrawingsViewModel` + `DrawingReceiptType` + `DrawingsGraphConnector` (full peer of Slide quartet; data model only, no full UI yet) | Draw |
+| 0.16 | Z-order control on `Shape` (bring forward, send back, to front, to back - sort on `zIndex`) | Draw |
+
+P0 = the MVP that lets a user open a Word document and a Calc workbook and
+not lose the table, the columns, the styles, the formulas, the multi-sheet
+structure, the number formats, or the page layout; plus the **Draw data
+model** (canvas + basic shapes + z-order) ready for the P1 UI wave. **No
+slides MVP at P0** because Impress is inherently a richer surface; the
+slides MVP is at P1.
+
+### 6b. Phase 1 - the second wave (19 deliverables)
+
+| # | Deliverable | Surface |
+|---|---|---|
+| 1.1 | `BlockType.field` + `FieldController` (page #, cross-ref, formula, user, date) | Writer |
+| 1.2 | `BlockType.footnote` / `.endnote` (with `DocumentPageLayout` header/footer body) | Writer |
+| 1.3 | `BlockType.chart` + `ChartRenderer` (CoreGraphics, full LO chart type parity - not Swift Charts) | Calc + Impress |
+| 1.4 | `BlockType.media` + `MediaBlock` (audio/video via AVFoundation) | Impress |
+| 1.5 | `Theme` + `ThemeStore` | Impress + Writer |
+| 1.6 | `TransitionSpec` + `TransitionStore` (LO has 30+ presets; ship a JSON catalog) | Impress |
+| 1.7 | `SlideDeckRenderer` (Core Graphics) + `DeckExportCoordinator` (PNG/JPG export) | Impress |
+| 1.8 | `LOBridgeDeckIO` (ODP/PPTX import + export, PDF deck export) | Impress |
+| 1.9 | `MasterPageLayoutPicker` (full UI surface, architect-chosen) | Impress |
+| 1.10 | `QueryEngine` (sort, filter, autofilter) | Calc |
+| 1.11 | `CellStyle` extension (font, fill, border, alignment per cell) | Calc |
+| 1.12 | `ConditionalFormat` registry (rules, databars, color scales, icon sets) | Calc |
+| 1.13 | `DataValidation` (per-range rule) | Calc |
+| 1.14 | `RevisionController` (accept/reject lifecycle for track-changes; rides receipts) | Writer |
+| 1.15 | `LayerStore` (add/delete/hide/lock/reorder layers; per-Drawing; rides receipts) | Draw |
+| 1.16 | `TransformController` (rotate/flip/scale handles; geometry mutation with undo) | Draw |
+| 1.17 | `SnapEngine` (snap to grid + snap to object + alignment helpers) | Draw |
+| 1.18 | `ODGBridgeFilter` + `SVGBridgeFilter` + `PDFExportBridge` (Draw format I/O via UNO); PNG/JPG export is **native** (`UIGraphicsImageRenderer` over `ShapeRenderer`) | Draw |
+| 1.19 | Text frames on shapes (`Shape.text: ShapeText?` lives at P0; P1 adds the canvas editing UX, the bullet list inside shape text, the connector `ShapeKind`) | Draw + Impress |
+
+P1 = the full P0 + the second-tier features that make the MVP feel like a
+real product. **Phase 1 is the milestone that hits Word-class / Calc-class /
+Impress-class / Draw-class parity at the consumer-Word / consumer-Excel /
+consumer-PowerPoint / consumer-Visio level**. Note that `PivotTableStore`,
+`SMILAnimationTree`, and `BezierPathController` are NOT in P1; they are P2
+(see §6c) because their architect-locked designs need their own dedicated
+waves.
+
+### 6b.1 Phase 1 animation milestone - the flat-list interim
+
+The architect's call is to evolve to the SMIL tree at P2. To not block
+P1 deck delivery, P1 ships a **flat `[AnimationEffect]` list as a P1
+interim** that the SMIL tree at P2 *evolves* (per the no-versioned-
+implementations rule: the flat list becomes a serializable flat
+projection of the tree; existing P1 animations still load at P2, the
+tree is the authoritative source). The flat list is `TesseraCore/
+Productivity/Materials/Slides/AnimationEffectList.swift`; P2
+introduces `SMILAnimationTree.swift` and the list moves to be a
+serialization of the tree.
+
+### 6c. Phase 2 - the advanced features (12 deliverables)
+
+| # | Deliverable | Surface |
+|---|---|---|
+| 2.1 | `SMILAnimationTree` - **full evolution** to the `XAnimationNode` tree from `CustomAnimationEffect.cxx`. Includes `ParallelTimeContainer`, `SequenceTimeContainer`, `Animate`, `AnimateMotion`, `AnimateColor`, `AnimateTransform`, `Audio`, `Command`, `IterateContainer`, `Event`. Replaces the P1 flat `AnimationEffectList` (which becomes a serialization of the tree). | Impress |
+| 2.2 | `PivotTableStore` - **full UNO parity** to `ScDPObject`. Includes `DataPilotFieldOrientation` matrix, page/row/column/data/filter bins, `PivotTableStyleInfo`, layout + output properties, save/load via `dpsave.hxx` / `dpdimsave.hxx`. Reuses `QueryEngine` infrastructure. | Calc |
+| 2.3 | `BezierPathController` - the P2 piece for Draw that lands **full custom-geometry paths** (the bezier curve edit mode, the P0 freeform becomes a full vector path tool). Lives at `TesseraCore/Productivity/Materials/Draw/BezierPathController.swift`, peer of `ShapeRenderer`. | Draw |
+| 2.4 | Mail merge (`MailMergeCoordinator`, driven by `Doc.linkedEntityIDs`) | Writer |
+| 2.5 | ToC / index / bibliography (`BlockType.toc`) | Writer |
+| 2.6 | Solver (UNO call; thin Swift wrapper) | Calc |
+| 2.7 | Subtotals (extend `QueryEngine` with `SubtotalDescriptor`) | Calc |
+| 2.8 | Statistics wizards (18 agent-tool wrappers) | Calc |
+| 2.9 | Track-changes reviewer UI (reads existing receipts; no parallel log) | Calc + Writer |
+| 2.10 | Custom shows (data only, no UI) | Impress |
+| 2.11 | Master documents (uses `Doc.linkedEntityIDs` + a new `MasterDoc` material) | Writer |
+| 2.12 | Draw advanced (annotations, measure/dimension lines, Draw-side tables, bullet lists inside shape text) | Draw |
+
+P2 = the long tail. The features that a power user expects and that round-
+trip real-world files, but that are not day-one must-haves. Note that 2.1,
+2.2, and 2.3 are architect-locked substantial pieces (3-5K LoC each, per
+the upstream references in the sibling reports); the rest are smaller.
+
+### 6d. Out of scope (P3+ / never)
+
+| Item | Why |
+|---|---|
+| Full Basic / VBA macro compatibility | `basic/source/comp/*` is a separate language and runtime; embedding balloons the binary. The agent tool surface IS the scripting model. |
+| Full StarMath equation editor | `starmath/` is its own sibling module with a custom TeX-like engine. `BlockType.equation` with a `latex` string covers the read/round-trip case. |
+| Forms (`sw/source/ui/form/`, `form/source/`) | Form controls tie into the XForms / UNO control hierarchy. Tessera materials are document-shaped, not form-shaped. Future "Tessera Forms" track. |
+| Database connectivity wizard | `connectivity/` + SDBC + ODBC + JDBC. Punt to Python pandas for ad-hoc. The no-egress doctrine says no SDBC. |
+| Full chart wizard (14 chart types, trendlines, 100+ formatting properties) | Ship all 14 chart types via `ChartRenderer` CoreGraphics; full formatting properties at P2 if real demand surfaces. |
+| Solved-style scenario manager | `dpshttab.hxx`; rarely used in modern spreadsheets. |
+| **Draw 3D objects** (extrusion, lathe, sphere, cube - `fucon3d.cxx`) | Architect decision: 3D on a productivity surface is unusual; the use case is dominated by 2D. Out of scope for the initial Draw expansion; revisit only if a future "Tessera 3D" track is greenlit. The P0-P2 plan covers the full 2D capability set. |
+| **Draw morph** (shape-to-shape interpolation - `fumorph.cxx`) | Architect decision: uncommon in the productivity use case. Out of scope for the initial Draw expansion. |
+| OpenGL transition effects | `slideshow/source/engine/opengl/`; SwiftUI tween is enough. |
+| PPT (legacy binary) round-trip | One-way import through LO; never write `.ppt` from tessera. |
+| Section 508 / PDF/UA tagged PDF | `EnhancedPDFExportHelper.cxx` is deep work; native tagged-PDF export is a separate accessibility track. |
+| Auto-text / glossary blocks | `sw/source/core/swg/SwXMLTextBlocks{,1}.cxx`; `Doc.tags` + the document search index subsume most uses. |
+| Mail-merge wizard UI | `mailmergewizard.cxx` is a 5-page wizard; we don't need a wizard. `MailMergeCoordinator` with a single submit endpoint is the right shape. |
+| Scenarios UI | `scenwnd.cxx`; rare in modern spreadsheets. |
+
+---
+
+## 7. Top reusable components to build first (the action list)
+
+The architect-approved rollout order is the priority column of section 3
+above, run in three waves:
+
+- **P0 (16 items, MVP)**: SheetWorkbook multi-sheet, RecalcScheduler,
+  TokenArray, CellValue/CellFormat/NumberFormat index, NumberFormatEngine
+  (full parser), BlockType evolutions (P0 cases including `.shape` /
+  `.shapeGroup` for Draw), MasterPageStore, SlideLayoutSpec,
+  WriterBridgeFilter, CalcBridgeFilter, SheetProtection, **Shape value
+  type, ShapeCatalog, ShapeRenderer, Drawing material quartet, z-order**.
+- **P1 (19 items, parity milestone)**: BlockType evolutions (P1 cases),
+  FieldController, Footnote/Endnote, ChartRenderer (CoreGraphics),
+  MediaBlock, Theme/ThemeStore, TransitionStore, SlideDeckRenderer,
+  LOBridgeDeckIO, MasterPageLayoutPicker, QueryEngine, CellStyle extension,
+  ConditionalFormat, DataValidation, RevisionController, **LayerStore,
+  TransformController, SnapEngine, ODG/SVG/PDF-export bridge filters,
+  text frames on shapes**. Plus the flat `AnimationEffectList` as a SMIL
+  interim.
+- **P2 (12 items, advanced + architect-locked substantial work)**:
+  SMILAnimationTree (full XAnimationNode tree, 3-5K LoC),
+  PivotTableStore (full ScDPObject schema, 4-6K LoC),
+  **BezierPathController (Draw custom-geometry paths)**, mail merge,
+  ToC/index, solver, subtotals, statistics wizards, change-track reviewer
+  UI, custom shows, master documents, **Draw advanced (annotations,
+  measure, Draw tables, bullet lists inside shape text)**.
+
+The ordering is by:
+
+1. **Coverage** - how many capability rows does the component close?
+2. **Surface reach** - does the component unlock one suite or all four?
+3. **Risk** - is the bridge path proven, or do we need to land a Swift
+   primitive first?
+
+The single highest-value component is **`RecalcScheduler`** (priority #2 in
+section 3). Without it, the formula engine re-walks the entire dependent cone
+on every edit. With it, a 100-cell sheet with `=A1*ROW()` recalcs in O(1) on
+no-op edits and in O(depth) on real edits. This is also the single largest
+delta between the Swift AST evaluator and the LO RPN model, so landing it
+early is a load-bearing prerequisite for the formula engine parity claim.
+
+The single highest-value cross-suite component is **`BlockType` evolution**
+(priority #6 in section 3). Nine new cases (`.section`, `.frame`, `.field`,
+`.footnote`, `.endnote`, `.shape`, `.shapeGroup`, `.chart`, `.media`) plus
+a handful of attribute extensions on existing cases (`.table`
+rowSpans/colSpans/nested children, `.list` level/bulletGlyph) close 14 of
+the 63 capability rows. Each case is a small diff; the *test* contract
+per case is the load-bearing artifact.
+
+The single highest-risk P0 deliverable is **`NumberFormatEngine`** (priority
+#5). The architect chose the full parser (not the 80% subset); the upstream
+is `svl/source/numbers/zforlist.cxx` + `zformat.cxx` (~60K LoC), ported
+cleanly into Swift. The risk is scope, not design: we have to commit to the
+full token table, all `nf_*` codes, full locale support. Land early in P0
+so downstream components (cell-style, conditional-format, data-validation)
+can build on it without rework.
+
+The single highest-value P0 Draw deliverable is the **`Shape` value type +
+`Shape` renderer pair** (priorities #11 and #13 in section 3). Without
+these, the entire Draw surface has no first-class primitive; everything
+upstream (Drawing material, ShapeCatalog, the Impress free-shape uses) is
+built on this pair. Land early in P0 so the P1 Draw UI wave has a solid
+data-model foundation.
+
+---
+
+## 8. Architect decisions log (2026-08-13, Draw added 2026-08-13)
+
+All eight original questions resolved, plus two new Draw-scope decisions
+added 2026-08-13. These are the binding calls for the rollout. Future
+waves cite this section; the wave briefs do not re-ask.
+
+| # | Question | Decision | Implication |
+|---|---|---|---|
+| 1 | DOCX import: bridge or native? | **Bridge** (`WriterBridgeFilter` via UNO). | The pure-Swift ODT/DOCX reader is out of scope. Bridge gets 95% of round-trip fidelity for 2-3 weeks of work. Markdown / plain text remain Swift-native. |
+| 2 | Rename `SheetWorkbook` to `Workbook`? | **Keep the name.** | Per the no-versioned-implementations rule. The single-sheet proxy case is a workbook with one sheet, not a different type. |
+| 3 | `BlockType` enum growth (16 -> ~24 over P0-P1)? | **Approved.** | New cases are surface-specific (`.field` Writer, `.chart` Calc+Impress, `.media` Impress, `.shape`/`.shapeGroup` Draw+Impress). `BlockType` is the union; per-material surface checks for the cases it cares about. |
+| 4 | Number formats: 80% parser or full? | **Full parser** (`NumberFormatEngine`, parity with `svl/source/numbers/`). | Token table per locale, full `nf_*` code coverage. Bigger P0 deliverable but the only path to round-trip parity for XLSX/ODS files with locale-specific number formats. |
+| 5 | Master pages: data-only or full picker UI? | **Full picker UI** (`MasterPageLayoutPicker` at P1). | The SwiftUI surface consumes `MasterPageStore` and exposes LO's full layout catalog (25+ AutoLayouts from `sd/source/core/sdpage.cxx:1397`). Wired into `SlideDetailView` per the phase12 HIG review. |
+| 6 | Chart engine: Swift Charts or CoreGraphics? | **CoreGraphics, long-term.** | `ChartRenderer` draws with `CGContext`; parity with all 14 LO chart types. Per the architect: ages better than Swift Charts for the long-term document parity goal. |
+| 7 | Animations: flat list or SMIL tree? | **Evolve to SMIL tree** at P2. | `SMILAnimationTree` is a faithful port of `CustomAnimationEffect.cxx` (3,461 LoC). Includes `ParallelTimeContainer`, `SequenceTimeContainer`, `Animate`, `AnimateMotion`, `AnimateColor`, `AnimateTransform`, `Audio`, `Command`, `IterateContainer`, `Event`. P1 ships a flat `AnimationEffectList` as an interim; P2 evolves it (the list becomes a serialization of the tree, not a parallel v2). |
+| 8 | Pivot tables: Swift or UNO? | **Swift with full UNO parity.** | `PivotTableStore` ships the full `ScDPObject` schema: `DataPilotFieldOrientation` matrix, page/row/column/data/filter bins, `PivotTableStyleInfo`, layout + output properties, save/load via `dpsave.hxx` / `dpdimsave.hxx`. Reuses `QueryEngine` infrastructure. |
+| 9 | **Draw: separate surface or feature of Impress?** | **Separate surface.** Draw is a first-class peer of Impress with its own `Drawing` material at `Materials/Draw/`. A deck is a sequence of slides; a drawing is a single page of vector graphics. The shared `sd/` upstream binary is a single source-of-truth for the *implementation* (UNO bridge), but the *product* surfaces are distinct. | New `Drawing` material + `*Store` + `*ViewModel` + `*ReceiptType` + `*GraphConnector` quartet. New `Shape` value type peer of `Block`. `ShapeCatalog`, `ShapeRenderer` are peers of `SlideLayoutSpec`, `BlockRenderer`. |
+| 10 | **Draw: 3D objects + morph in scope?** | **3D + morph out of scope.** The 2D capability set is in scope (shape catalog, geometry, fill/stroke, z-order, layers, snap, transform, group, connector, text frame, ODG/SVG/PDF I/O). 3D objects (`fucon3d.cxx`) and morph (`fumorph.cxx`) are explicitly punted. | The Draw surface delivers a full 2D vector graphics app. If a future "Tessera 3D" or "Tessera Morph" track is greenlit, it would land in a separate wave; the existing 2D primitives are the foundation. |
+
+The remaining open questions (no longer blocking the rollout, but worth
+tracking):
+
+- **Power-user Basic compatibility** - any future Tessera scripting surface
+  will be a Tessera-native agent tool surface, NOT a Basic dialect.
+- **Multi-user coediting / CRDT layer** - the receipt backbone is the
+  audit log, but real-time coediting is a different design conversation.
+  Out of scope for this expansion.
+- **Draw 3D + morph** - punted (decision #10). Re-evaluate if a future
+  track is greenlit.
+- **Draw star/polygon + complex preset shapes** - the P0 set covers rect,
+  ellipse, line, arrow, polygon, star, freeform. The full LO preset shape
+  catalog (`oox/source/ppt/pptshape.cxx` has 200+ entries) is a P2+
+  extension.
+
+---
+
+## 9. Where this lives in the repo
+
+- **This document**: `TesseraStudio/docs/studio-expansion-plan.md`
+- **Detail per suite**: `TesseraStudio/docs/.scratch/lo-{writer,calc,impress}-report.md`
+- **Existing Writer plan (still valid)**: `TesseraStudio/docs/word-class-document-processor-implementation-plan.md`
+- **Existing slides HIG review**: `TesseraStudio/docs/phase12-hig-review-sheets-slides-code.md`
+- **Existing agent surface (4 capabilities)**: `docs/AGENT-UX-FATIGUE-REVIEW.md` + `AGENTS.md` "Program Routing"
+
+The three sibling scratch reports are kept as evidence; the consolidated
+matrix, component catalog, and phased rollout in this document are the
+proposal. The architect approved the proposal (2026-08-13) and added the
+Draw scope (also 2026-08-13); the alphaevolve + tessera-analyst +
+findings-curator + verifier capabilities carry the work into the wave
+loop (`scratch/<feature>/agent-X` -> `evolve-review/...` -> `champions/<id>`
+-> `evolve-baseline/wN`).
+
+**Note on Draw evidence:** the original Impress scratch report
+(`docs/.scratch/lo-impress-report.md`) covers the Draw-specific subsections
+of `sd/` (the Draw rows in §2 of that report, the Draw-only notes in §8).
+For a dedicated Draw capability study, dispatch a fresh `explore` agent with
+scope `sd/source/ui/func/fu*.cxx` (the `fuconbez`, `fucon3d`, `fulink`,
+`fuconnct`, `fusnapln`, `fumorph`, `futransf`, `fugrou*.cxx`, `futext`,
+`fubullet`, `fuinsert`, `fupoor`, `fumeasur`, `undolayer` files) plus
+`xmloff/source/drawing/` and `oox/source/export/shapes.cxx`. The
+high-level capability inventory is already in §2 of this document (rows
+44-63); a Draw-only scratch report would refine the per-source path evidence
+but is not required to start the rollout.
+
+## 10. Agent tools surface
+
+The expansion is the *architecture* (capability map, components, phased
+rollout). The *agent-facing surface* is the tools the agent loop can call
+on top of that architecture. The full sketch is at
+`docs/agent-tools-surface.md` (companion to this doc, 2026-08-13).
+
+Headline shape:
+
+- **~65 tools total**, organized by prefix:
+  - `doc_*` (Doc / Writer, ~18), `sheet_*` (Sheet / Calc, ~14),
+    `slide_*` (SlideDeck / Impress, ~12), `drawing_*` (Drawing / Draw, ~12),
+    `materials_*` (cross-cutting, ~6), `lifecycle_*` (lifecycle, ~3).
+- **One tool file per material**, peer of the existing `Tools/SheetTools.swift`:
+  `Tools/DocTools.swift`, `Tools/SlideTools.swift`, `Tools/DrawingTools.swift`,
+  `Tools/MaterialsTools.swift`, `Tools/LifecycleTools.swift`. No `_v2`; no
+  parallel implementations.
+- **The existing `TesseraTool` protocol** (`TesseraCore/Agent/TesseraTool.swift:182`)
+  is the binding contract. `name` (snake_case), `description`,
+  `defaultApprovalLevel` (`ApprovalLevel`), `parameters: JSONSchema`,
+  `execute(arguments:) async throws -> ToolResult`. No new tool shape.
+- **Tier mapping** (§7 of the tools doc) maps `ApprovalLevel` to the new
+  `TesseraTier` enum (audit Wave 1). Read tools = `tier0`; per-entity
+  writes = `tier1`; import / export = `tier2`; non-empty trash = `tier3`.
+- **Receipt semantics** (§10 of the tools doc) ride the existing
+  `ReceiptsCoordinator` and the per-material receipt vocabularies. Every
+  mutating tool emits exactly one receipt per call (or one per affected
+  entity in a cascade). Read tools do not emit receipts.
+- **Citation + uncertainty** (§12 of the tools doc) ride the audit Wave
+  2-3 work: every `ToolResult` carries `sources: [Citation]` and
+  `confidenceBand: ConfidenceBand?`. Numeric confidence percentages are
+  forbidden.
+- **Inline stop + notification budget** (§13) bind: long-running tools
+  wire to `TesseraAgentLoop.stop(reason:)`; no tool posts a user-facing
+  push (the budget's 3-per-UTC-day cap is hard; no `force:` override); the
+  audit log is pull, not push.
+
+The wave loop ships a tesseracore component + its tools in the same wave
+(the tool is the agent-facing half of the component). The
+`tools/agent-tools-surface.md` doc is the source of truth for the tool
+API; the per-wave briefs enumerate the specific tools that land in that
+wave.
+
+## 11. Skill refinements (post-claim audit)
+
+The user performed an independent post-claim audit of the agent-ux-fatigue
+sprint on 2026-08-13 and surfaced intent-vs-outcome gaps that the
+existing `superpowers:verification-before-completion` and `code-review`
+skills do not cover. The refinement patches are at
+`docs/skill-refinement-patches-2026-08-13.md` (companion to this doc and
+the agent-tools-surface doc).
+
+Headline:
+
+- **`verification-before-completion` gains a "Post-claim audit"
+  section** — the system-level integrity check (build green at the
+  moment of the claim? test target compiled? metrics runnable?
+  provenance real?).
+- **`code-review` gains a "Claim-vs-evidence pass" section** — the
+  per-unit integrity check (surface instantiated? open path real? call
+  from agent real? chip reachable?).
+- The two refinements form a closed loop: pre-claim verify
+  (existing) -> claim -> post-claim audit (new in
+  verification-before-completion) -> per-unit claim-vs-evidence pass
+  (new in code-review) -> per-scope defect review (existing in
+  code-review) -> integrity verdict.
+
+Both skills are built-in (immutable at runtime per the skill-refiner
+procedure). The patches ship via MR to the upstream Mavis skill
+source; the doc carries the exact text to add and the application path.
+
+**The next wave uses these.** Every wave's review gate runs the
+post-claim audit on the previous wave's claims and the per-unit
+claim-vs-evidence pass on each new component. A wave that ships
+without both passes is unverified.

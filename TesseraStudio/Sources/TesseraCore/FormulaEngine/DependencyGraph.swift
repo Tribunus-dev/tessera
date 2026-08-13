@@ -40,8 +40,9 @@ public final class DependencyGraph: @unchecked Sendable {
     /// Set or update a formula for a cell. Updates edges and detects cycles.
     /// - Throws: CycleError if the new formula creates a dependency cycle.
     public func setFormula(_ addr: CellAddr, ast: FormulaAST) throws {
-        // Remove existing edges for this cell
-        removeEdges(for: addr)
+        // Only this cell's own precedents; the cells reading it keep
+        // depending on it.
+        removePrecedentEdges(for: addr)
 
         // Store the AST
         formulaASTs[addr] = ast
@@ -72,6 +73,19 @@ public final class DependencyGraph: @unchecked Sendable {
         }
     }
 
+    /// Drop `addr`'s formula and the edges to the cells it read, while
+    /// keeping the cells that read IT - the address still exists and now
+    /// holds a plain value.
+    ///
+    /// Typing a value over a formula must go through this. Without it the
+    /// AST stayed in the graph, the next recalculation re-evaluated the
+    /// old formula, and the typed value was silently thrown away.
+    public func clearFormula(_ addr: CellAddr) {
+        removePrecedentEdges(for: addr)
+        formulaASTs.removeValue(forKey: addr)
+        volatileCells.remove(addr)
+    }
+
     /// Remove a cell and all its edges.
     public func removeCell(_ addr: CellAddr) {
         removeEdges(for: addr)
@@ -87,8 +101,14 @@ public final class DependencyGraph: @unchecked Sendable {
         volatileCells.removeAll()
     }
 
-    private func removeEdges(for addr: CellAddr) {
-        // Remove from dependents' precedent lists
+    /// Drop only the OUTGOING edges: the cells `addr` reads.
+    ///
+    /// Re-setting a cell's formula replaces what it reads, not who reads
+    /// it. Incoming edges must survive - dropping them meant that the
+    /// moment a referenced cell's formula was re-set, every cell reading
+    /// it silently stopped depending on it, which disabled both cycle
+    /// detection and incremental recalculation.
+    private func removePrecedentEdges(for addr: CellAddr) {
         if let preds = precedents[addr] {
             for pred in preds {
                 dependents[pred]?.remove(addr)
@@ -96,6 +116,13 @@ public final class DependencyGraph: @unchecked Sendable {
             }
         }
         precedents.removeValue(forKey: addr)
+    }
+
+    /// Drop every edge touching `addr`, incoming and outgoing. Only for
+    /// removing the cell itself; see `removePrecedentEdges` for the
+    /// re-set-a-formula path.
+    private func removeEdges(for addr: CellAddr) {
+        removePrecedentEdges(for: addr)
 
         // Remove from precedents' dependent lists
         if let deps = dependents[addr] {

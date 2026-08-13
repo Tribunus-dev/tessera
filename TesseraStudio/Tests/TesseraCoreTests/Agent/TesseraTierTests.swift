@@ -36,10 +36,20 @@ final class TesseraTierTests: XCTestCase {
         XCTAssertEqual(TesseraTier.tier(for: "bash:rm", risk: .medium), .tier2)
     }
 
-    func testHighRiskReversibleIsTier2() {
-        // Outbound emails, deal-stage changes.
-        XCTAssertEqual(TesseraTier.tier(for: "send_email", risk: .high), .tier2)
-        XCTAssertEqual(TesseraTier.tier(for: "update_deal_stage", risk: .high), .tier2)
+    /// Every high-risk action is tier3, including the ones the pattern
+    /// catalog lists at tier2. `isIrreversible` treats `risk >= .high`
+    /// as irreversible, so a reversible high-risk action cannot exist;
+    /// resolved toward the stricter reading (approved 2026-08-13).
+    func testHighRiskIsAlwaysTier3() {
+        XCTAssertEqual(TesseraTier.tier(for: "send_email", risk: .high), .tier3)
+        XCTAssertEqual(TesseraTier.tier(for: "update_deal_stage", risk: .high), .tier3)
+    }
+
+    /// Both public entry points must agree. They disagreed while the
+    /// unreachable `(.high, false)` branch existed: this returned tier2
+    /// and `tier(for:risk:)` returned tier3 for the same risk.
+    func testBothEntryPointsAgreeOnHighRisk() {
+        XCTAssertEqual(TesseraTier.tier(forRisk: .high), TesseraTier.tier(for: "send_email", risk: .high))
     }
 
     func testHighRiskIrreversibleIsTier3() {
@@ -239,14 +249,15 @@ final class TesseraTierTests: XCTestCase {
     }
 
     func testRiskOnlyTierIgnoresActionClass() {
-        // The risk-only axis assumes reversible. A high-risk reversible
-        // action maps to tier2 via the risk-only path.
+        // High risk is tier3 on BOTH axes (approved 2026-08-13). The
+        // risk-only path used to assume reversible and answer tier2,
+        // disagreeing with `tier(for:risk:)` for the same risk.
         let decision = TesseraSafetyDecision(
             approvalPolicy: .prompt,
             permissionProfile: .standard,
             sandboxEnforceable: false,
             actionRisk: .high
         )
-        XCTAssertEqual(decision.riskOnlyTier, .tier2)
+        XCTAssertEqual(decision.riskOnlyTier, .tier3)
     }
 }

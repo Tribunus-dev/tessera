@@ -425,7 +425,11 @@ public final class TesseraAgentLoop {
             var content = ""
             var toolCalls: [LLMToolCall] = []
             let stream = try await llmProvider.stream(system: systemPrompt, messages: messages, tools: tools)
-            for await chunk in stream {
+            // Labeled so `.done` leaves the for-await, not just the
+            // switch. `.done` is the end of the completion; a provider
+            // that yields it without finishing its continuation would
+            // otherwise park this loop forever, and the turn never ends.
+            streamLoop: for await chunk in stream {
                 switch chunk {
                 case .text(let delta):
                     content += delta
@@ -433,7 +437,7 @@ public final class TesseraAgentLoop {
                 case .toolCalls(let calls):
                     toolCalls = calls
                 case .done:
-                    break
+                    break streamLoop
                 }
             }
             tokenBudget.used += content.count / 4
@@ -493,7 +497,10 @@ public final class TesseraAgentLoop {
                     for: action,
                     permissionProfile: permissionProfile,
                     sandboxEnforceable: sandboxEnforceable,
-                    sessionID: sessionID
+                    sessionID: sessionID,
+                    // The loop owns the registry, so it is the only
+                    // place that knows what level the tool declares.
+                    toolDefaultLevel: registry.tool(named: call.name)?.defaultApprovalLevel ?? .prompt
                 )
                 switch gate.check {
                 case .reject:
@@ -768,6 +775,9 @@ extension LLMProvider {
                         continuation.yield(.toolCalls(response.toolCalls))
                     }
                     continuation.yield(.done)
+                    // `.done` marks the last chunk; the stream must also
+                    // end, or the consumer's for-await never returns.
+                    continuation.finish()
                 } catch {
                     continuation.finish()
                 }
@@ -852,6 +862,7 @@ public struct PlaceholderLLMProvider: LLMProvider {
                             continuation.yield(.text(response.content))
                         }
                         continuation.yield(.done)
+                        continuation.finish()
                         return
                     }
                 }
@@ -867,6 +878,7 @@ public struct PlaceholderLLMProvider: LLMProvider {
                     try? await Task.sleep(nanoseconds: 25_000_000)
                 }
                 continuation.yield(.done)
+                continuation.finish()
             }
             continuation.onTermination = { @Sendable _ in task.cancel() }
         }

@@ -624,17 +624,18 @@ final class TesseraAutonomyTests: XCTestCase {
         XCTAssertEqual(gate.check, .autoApprove)
         XCTAssertEqual(gate.source, "rule")
 
-        // Without sandbox, base is askUser. Ratchet promotes because the class
-        // is granted, low risk, and ceiling is containedLowRiskOnly (but
-        // sandboxEnforceable=false blocks the ceiling check).
+        // Low risk auto-approves without the sandbox too (approved
+        // 2026-08-13), so the base rule already answers here and the
+        // ratchet has nothing left to promote. `source` stays "rule".
         let gate2 = engine.gateCheck(for: action, sandboxEnforceable: false)
-        XCTAssertEqual(gate2.check, .askUser)
+        XCTAssertEqual(gate2.check, .autoApprove)
+        XCTAssertEqual(gate2.source, "rule")
 
-        // Raise the ceiling: now the ratchet promotes even without sandbox.
+        // Raising the ceiling changes nothing for an action the base
+        // rule already approves.
         svc.updateConfig { $0.ceiling = .anyNonIrreversible }
         let gate3 = engine.gateCheck(for: action, sandboxEnforceable: false)
         XCTAssertEqual(gate3.check, .autoApprove)
-        XCTAssertEqual(gate3.source, "ratchet")
     }
 
     @MainActor

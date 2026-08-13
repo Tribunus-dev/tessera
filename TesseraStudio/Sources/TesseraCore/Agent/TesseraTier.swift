@@ -19,8 +19,14 @@ import Foundation
 /// Canonical tier table (pattern-catalog.md sec. Risk-Tiered Approval Gates):
 /// - tier0: internal-only, idempotent reads
 /// - tier1: internal notes, draft creation, status flips on owned records
-/// - tier2: outbound emails, deal-stage changes, record deletion, bulk >N
-/// - tier3: payment writes, contract execution, customer-facing, regulated
+/// - tier2: record deletion, destructive verbs, bulk >N - anything
+///   irreversible below high risk
+/// - tier3: EVERY high-risk action, plus forbidden. Outbound email and
+///   deal-stage changes live here too, not at tier2 as the pattern
+///   catalog suggests: `TesseraActionClass.isIrreversible` treats
+///   `risk >= .high` as irreversible, so high risk cannot be reversible
+///   and the softer branch was unreachable. Resolved toward the stricter
+///   reading (approved 2026-08-13); tier3 asks for more, never less.
 public enum TesseraTier: String, Codable, CaseIterable, Sendable, Comparable {
     case tier0
     case tier1
@@ -66,12 +72,13 @@ public enum TesseraTier: String, Codable, CaseIterable, Sendable, Comparable {
             // Forbidden actions never run; the tier is the strictest so
             // a future bypass is auditable.
             return .tier3
-        case (.high, true):
-            // Payment writes, contract execution, customer-facing comms.
+        case (.high, _):
+            // Payment writes, contract execution, customer-facing comms -
+            // and outbound email, which reaches here because high risk
+            // implies irreversible. Written as `_` because the reversible
+            // arm is unreachable through `tier(for:risk:)`; spelling it
+            // out separately would document a path that cannot run.
             return .tier3
-        case (.high, false):
-            // Outbound emails, deal-stage changes - synchronous approval.
-            return .tier2
         case (.medium, true):
             // Record deletion, medium-risk destructive writes.
             return .tier2

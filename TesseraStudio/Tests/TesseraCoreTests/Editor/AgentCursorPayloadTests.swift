@@ -299,6 +299,10 @@ final class AgentCursorPayloadTests: XCTestCase {
         let approval = TesseraApprovalEngine()
         approval.setOverride(.auto, for: "file_write")
         defer { approval.clearOverride(for: "file_write") }
+        // "file_write" contains a mutating verb, so the spine rates it
+        // medium and asks regardless of the .auto override. Without a
+        // responder the loop parks and this test hangs forever.
+        let responder = ApprovalAutoResponder(engine: approval)
 
         let provider = ScriptedToolProvider(
             toolName: "file_write",
@@ -354,6 +358,7 @@ final class AgentCursorPayloadTests: XCTestCase {
             loop.pendingMutation,
             "pendingMutation must be cleared after the tool result"
         )
+        XCTAssertEqual(responder.answered, ["file_write"], "the gate must be reached and answered")
     }
 
     /// The loop's published payload carries the chip
@@ -369,6 +374,10 @@ final class AgentCursorPayloadTests: XCTestCase {
         let approval = TesseraApprovalEngine()
         approval.setOverride(.auto, for: "file_write")
         defer { approval.clearOverride(for: "file_write") }
+        // "file_write" contains a mutating verb, so the spine rates it
+        // medium and asks regardless of the .auto override. Without a
+        // responder the loop parks and this test hangs forever.
+        let responder = ApprovalAutoResponder(engine: approval)
 
         let provider = ScriptedToolProvider(
             toolName: "file_write",
@@ -419,5 +428,6 @@ final class AgentCursorPayloadTests: XCTestCase {
                 break
             }
         }
+        XCTAssertEqual(responder.answered, ["file_write"], "the gate must be reached and answered")
     }
 }

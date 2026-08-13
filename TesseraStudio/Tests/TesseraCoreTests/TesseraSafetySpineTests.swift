@@ -30,8 +30,11 @@ final class TesseraSafetySpineTests: XCTestCase {
         XCTAssertEqual(check(.auto, .standard, true, .low), .autoApprove)
         XCTAssertEqual(check(.notify, .standard, true, .low), .autoApprove)
 
-        // Not sandboxable -> ask, even at low risk.
-        XCTAssertEqual(check(.auto, .standard, false, .low), .askUser)
+        // Low risk auto-approves REGARDLESS of sandbox (approved
+        // 2026-08-13). Low risk is the read-only class, and the sandbox
+        // is never enforceable on macOS, so requiring it here prompted
+        // on every list/read/search. Elevated risk still asks.
+        XCTAssertEqual(check(.auto, .standard, false, .low), .autoApprove)
 
         // Sandboxable but elevated risk -> ask.
         XCTAssertEqual(check(.auto, .standard, true, .medium), .askUser)

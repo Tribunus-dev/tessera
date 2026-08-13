@@ -18,6 +18,11 @@ public enum Value: Equatable, Sendable, CustomStringConvertible {
     case error(ValueError)
     case date(Date)
     case array(rows: Int, cols: Int, flat: [Value])
+    /// A LAMBDA: parameter names plus the unevaluated body. Produced by
+    /// `LAMBDA(...)` and invoked by name once bound, usually by `LET`.
+    /// Carrying the body as an AST is what makes the parameters lazy -
+    /// they are substituted at call time, not when the LAMBDA is built.
+    indirect case lambda(params: [String], body: FormulaAST)
 
     public var description: String {
         switch self {
@@ -27,6 +32,8 @@ public enum Value: Equatable, Sendable, CustomStringConvertible {
         case .string(let s): return s
         case .error(let e):  return e.displayString
         case .date(let d):  return ISO8601DateFormatter().string(from: d)
+        // A LAMBDA has no cell rendering; Excel shows the definition.
+        case .lambda(let params, _): return "LAMBDA(\(params.joined(separator: ", ")))"
         case .array:        return "{...}"
         }
     }
@@ -69,6 +76,7 @@ public enum Value: Equatable, Sendable, CustomStringConvertible {
         case .string(let s): return s
         case .error(let e):  return e.displayString
         case .date(let d):  return formatDate(d)
+        case .lambda(let params, _): return "LAMBDA(\(params.joined(separator: ", ")))"
         case .array:        return "{...}"
         }
     }
@@ -127,6 +135,12 @@ public enum Value: Equatable, Sendable, CustomStringConvertible {
             case .array(let rows, let cols, let flat):
                 self.type = "array"
                 self.value = AnyCodableValue(flat.map { Serialized(from: $0) })
+            case .lambda(let params, _):
+                // The body is an AST and does not round-trip through this
+                // format. A LAMBDA is not a storable cell result anyway -
+                // it only makes sense bound to a name and invoked.
+                self.type = "lambda"
+                self.value = AnyCodableValue(params.joined(separator: ","))
             }
         }
 
@@ -158,6 +172,8 @@ public enum Value: Equatable, Sendable, CustomStringConvertible {
         case .date(let d):   return ["type": "date", "value": ISO8601DateFormatter().string(from: d)]
         case .array(let r, let c, let flat):
             return ["type": "array", "rows": r, "cols": c, "flat": flat.map { $0.serialized() }]
+        case .lambda(let params, _):
+            return ["type": "lambda", "params": params]
         }
     }
 }
@@ -313,16 +329,28 @@ public enum BinaryOp: String, Sendable, CaseIterable {
     case rangeOp = ":"
     case intersect = " "  // implicit intersection
 
-    /// Precedence from Excel's 18-level table
+    /// Binding power: HIGHER binds tighter, which is what the Pratt
+    /// parser in `FormulaParser.parseExpression` compares against.
+    ///
+    /// Excel documents these the other way round (1 = tightest), and
+    /// transcribing that order directly inverted every relationship:
+    /// `+` outranked `*`, so `=1+2*3` produced 9 instead of 7. The order
+    /// below is Excel's, expressed in the parser's direction.
     public var precedence: Int {
         switch self {
-        case .rangeOp, .intersect: return 1
-        case .power:               return 3
+        case .equal, .notEqual, .less, .greater, .lessOrEqual, .greaterOrEqual: return 1
+        case .concat:              return 2
+        case .add, .subtract:      return 3
         case .multiply, .divide:   return 4
-        case .add, .subtract:      return 5
-        case .concat:              return 6
-        case .equal, .notEqual, .less, .greater, .lessOrEqual, .greaterOrEqual: return 7
+        case .power:               return 5
+        case .rangeOp, .intersect: return 6
         }
+    }
+
+    /// `^` is right-associative in Excel (`2^3^2` is `2^(3^2)`);
+    /// everything else groups left to right.
+    public var isRightAssociative: Bool {
+        self == .power
     }
 
     public var isArithmetic: Bool {

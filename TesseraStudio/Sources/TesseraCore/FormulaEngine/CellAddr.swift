@@ -20,6 +20,23 @@ public struct CellAddr: Hashable, Sendable, CustomStringConvertible {
         self.row = row
     }
 
+    /// Bypasses the non-negative precondition. Private so the marker
+    /// below is the only negative address in the system.
+    private init(unchecked col: Int, row: Int) {
+        self.col = col
+        self.row = row
+    }
+
+    /// Sentinel address flagging a `CellRef` as an unresolved named
+    /// range. The evaluator identifies one by a negative address (see
+    /// `Evaluator.swift`, `case .cell`) and resolves the name from the
+    /// ref's `$`-prefixed sheet at evaluation time.
+    ///
+    /// It needs the unchecked init: the designated one rejects
+    /// negatives, so every attempt to build this marker through it
+    /// trapped, and named ranges could not be parsed at all.
+    public static let namedRangeMarker = CellAddr(unchecked: -1, row: -1)
+
     public var description: String {
         "\(colLetter)\(row + 1)"
     }
@@ -176,12 +193,17 @@ public struct RangeRef: Hashable, Sendable, CustomStringConvertible {
 public enum AddressParser {
     private static let cellPattern = try! NSRegularExpression(
         // Groups: 1=sheet(!), 2=$col, 3=col, 4=$row, 5=row
-        pattern: #"^((?:'[^']*'|[^\s!])+!)?(\\$?)([A-Za-z]+)(\\$?)(\d+)$"#,
+        // `\$?` is an optional literal '$' (absolute refs). In a raw
+        // string `\\$?` is a literal backslash plus an optional
+        // end-anchor, which no cell reference can match - parseCell
+        // rejected every input, including plain "A1".
+        pattern: #"^((?:'[^']*'|[^\s!])+!)?(\$?)([A-Za-z]+)(\$?)(\d+)$"#,
         options: []
     )
 
     private static let rangePattern = try! NSRegularExpression(
-        pattern: #"^((?:'[^']*'|[^\s!])+!)?(\\$?[A-Za-z]+\\$?\d+):(\\$?[A-Za-z]+\\$?\d+)$"#,
+        // Same `\\$?` -> `\$?` correction as cellPattern above.
+        pattern: #"^((?:'[^']*'|[^\s!])+!)?(\$?[A-Za-z]+\$?\d+):(\$?[A-Za-z]+\$?\d+)$"#,
         options: []
     )
 

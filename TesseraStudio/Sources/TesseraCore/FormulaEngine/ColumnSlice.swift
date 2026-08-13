@@ -254,6 +254,14 @@ public struct ColumnSlice: Sendable {
 
     /// Create from a flat array of Values
     public init(from values: [Value]) {
+        // A range argument (`SUM(A1:A3)`) reaches a function as ONE
+        // `.array` value, so it has to be flattened into its cells
+        // here. Treating `.array` as a single opaque slot made every
+        // aggregate over a range ignore its input: SUM and PRODUCT
+        // returned 0, AVERAGE divided by a count of zero and returned
+        // #N/A. Nested arrays flatten too, so `SUM(A1:A3, B1:B3)`
+        // and array literals behave the same as a flat argument list.
+        let values = Self.flattenArrays(values)
         self.count = values.count
 
         var ns = ContiguousArray<Double?>()
@@ -273,13 +281,36 @@ public struct ColumnSlice: Sendable {
             case .string(let s): ns.append(nil); ss.append(s);  bs.append(nil); es.append(nil)
             case .error(let e):  ns.append(nil); ss.append(nil); bs.append(nil); es.append(e)
             case .date(let d):   ns.append(d.timeIntervalSince1970); ss.append(nil); bs.append(nil); es.append(nil)
+            // Unreachable: flattenArrays above removes every `.array`.
             case .array:         ns.append(nil); ss.append(nil); bs.append(nil); es.append(nil)
+            // A LAMBDA is not aggregatable; it occupies a slot as blank.
+            case .lambda:        ns.append(nil); ss.append(nil); bs.append(nil); es.append(nil)
             }
         }
         self.numbers = ns
         self.strings = ss
         self.bools   = bs
         self.errors  = es
+    }
+
+    /// Expand every `.array` into its elements, depth-first, preserving
+    /// row-major order. Non-array values pass through unchanged.
+    public static func flattenArrays(_ values: [Value]) -> [Value] {
+        // Fast path: most calls are plain scalars.
+        guard values.contains(where: { if case .array = $0 { return true } else { return false } }) else {
+            return values
+        }
+        var out: [Value] = []
+        out.reserveCapacity(values.count)
+        func walk(_ v: Value) {
+            if case .array(_, _, let inner) = v {
+                for element in inner { walk(element) }
+            } else {
+                out.append(v)
+            }
+        }
+        for v in values { walk(v) }
+        return out
     }
 
     /// Create a flat row-major slice from a 2D range

@@ -14,6 +14,11 @@ public enum SheetReceiptType: String, Codable, Sendable, CaseIterable {
     case updateBody = "sheet_body_changed"
     /// A single cell value was set.
     case setCell = "sheet_cell_changed"
+    /// A single cell's presentation (number format, fill, borders) was
+    /// set. Distinct from ``setCell`` because it changes nothing a
+    /// formula can see: an auditor reading the chain needs to tell a
+    /// restyle from a data edit.
+    case setCellFormat = "sheet_cell_format_changed"
     /// A row was inserted into the grid.
     case insertRow = "sheet_row_inserted"
     /// A row was deleted from the grid.

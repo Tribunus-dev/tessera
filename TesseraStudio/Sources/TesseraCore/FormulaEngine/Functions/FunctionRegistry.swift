@@ -111,6 +111,12 @@ public final class FunctionRegistry: Sendable {
         registerDate()
         registerType()
         registerLookup()
+        registerLookupExtended()
+        registerFinancial()
+        registerArray()
+        registerCriteria()
+        registerDateExtended()
+        registerStatistics()
     }
 
     // MARK: - Aggregate Functions
@@ -1108,6 +1114,7 @@ public final class FunctionRegistry: Sendable {
                 case .number:       return .number(2)    // Number
                 case .string:       return .number(3)   // Text
                 case .bool:         return .number(4)    // Logical
+                case .lambda:       return .number(128)  // Lambda (no Excel code)
                 case .error:        return .number(16)   // Error
                 case .date, .array: return .number(64)   // Array or other
                 }
@@ -1214,7 +1221,10 @@ public final class FunctionRegistry: Sendable {
 
     /// Check if a value matches a criteria expression.
     /// Supports: number comparison, text comparison, wildcard "*text*"
-    private func matchesCriteria(_ value: Value, _ criteria: Value) -> Bool {
+    /// Internal, not private: SUMIFS/COUNTIFS/AVERAGEIFS in
+    /// `CriteriaFunctions.swift` apply the same rules per criteria pair,
+    /// and two matchers would drift apart.
+    func matchesCriteria(_ value: Value, _ criteria: Value) -> Bool {
         let critStr = criteria.asString
 
         // Numeric comparison: ">5", "<=10", "=3", "<>0"
@@ -1228,7 +1238,11 @@ public final class FunctionRegistry: Sendable {
         }
         if critStr.hasPrefix("<>") {
             let crit = String(critStr.dropFirst(2))
-            return value.asString != crit
+            // Numeric when both sides are numeric, so "<>0" excludes 0.0
+            // as well as "0"; text otherwise, case-insensitively (Excel
+            // does not distinguish case in criteria).
+            if let threshold = Double(crit), let n = value.asNumber { return n != threshold }
+            return value.asString.caseInsensitiveCompare(crit) != .orderedSame
         }
         if critStr.hasPrefix(">") {
             guard let threshold = Double(critStr.dropFirst(1)), let n = value.asNumber else { return false }
@@ -1240,20 +1254,20 @@ public final class FunctionRegistry: Sendable {
         }
         if critStr.hasPrefix("=") {
             let crit = String(critStr.dropFirst(1))
-            return value.asString == crit
+            if let threshold = Double(crit), let n = value.asNumber { return n == threshold }
+            return value.asString.caseInsensitiveCompare(crit) == .orderedSame
         }
 
-        // Text comparison (case-insensitive)
-        let critUpper = critStr.uppercased()
-        if critStr.contains("*") {
-            // Wildcard
-            let pattern = critStr.uppercased().replacingOccurrences(of: "*", with: ".*")
-            let regex = try? NSRegularExpression(pattern: "^\(pattern)$", options: .caseInsensitive)
-            let range = NSRange(value.asString.startIndex..., in: value.asString)
-            return regex?.firstMatch(in: value.asString.uppercased(), options: [], range: range) != nil
+        // Wildcards: `*` any run, `?` exactly one character. Shared with
+        // XLOOKUP's wildcard mode so both surfaces behave alike.
+        if critStr.contains("*") || critStr.contains("?") {
+            return LookupCompare.wildcardMatch(value, pattern: criteria)
         }
 
-        return value.asString.lowercased() == critStr.lowercased()
+        // Bare criteria: numeric when both sides are numeric, so a
+        // criteria of "10" matches the number 10.
+        if let threshold = Double(critStr), let n = value.asNumber { return n == threshold }
+        return value.asString.caseInsensitiveCompare(critStr) == .orderedSame
     }
 
     /// Convert Excel serial number to Date.

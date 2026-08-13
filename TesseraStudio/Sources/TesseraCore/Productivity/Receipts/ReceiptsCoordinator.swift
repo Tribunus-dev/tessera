@@ -273,25 +273,29 @@ public actor ReceiptsCoordinator {
     /// The stream does NOT replay history. Consumers that
     /// need the current snapshot should call
     /// ``currentReceipts()`` after subscribing.
-    public nonisolated func receiptStream() -> AsyncStream<Receipt> {
-        AsyncStream<Receipt>(
+    ///
+    /// Subscription completes before this returns: the
+    /// awaited call lands on the actor, registers the
+    /// continuation, and only then hands back the stream, so
+    /// a receipt registered immediately afterwards is always
+    /// seen. The previous version was `nonisolated` and
+    /// registered through a detached `Task`, which raced -
+    /// a producer that started right after the call could
+    /// deliver every receipt before the subscriber existed,
+    /// leaving the consumer awaiting an event that had
+    /// already been broadcast.
+    public func receiptStream() -> AsyncStream<Receipt> {
+        let (stream, continuation) = AsyncStream<Receipt>.makeStream(
             bufferingPolicy: .bufferingNewest(Self.receiptStreamBufferLimit)
-        ) { continuation in
-            // Hop into the actor to register the
-            // continuation. `AsyncStream`'s init closure
-            // is synchronous, so we dispatch the
-            // registration through a detached task.
-            let id = UUID()
-            let coordinator = self
-            continuation.onTermination = { [weak coordinator] _ in
-                Task { [weak coordinator] in
-                    await coordinator?.removeContinuation(id)
-                }
-            }
-            Task { [coordinator] in
-                await coordinator.addContinuation(id, continuation)
+        )
+        let id = UUID()
+        continuation.onTermination = { [weak self] _ in
+            Task { [weak self] in
+                await self?.removeContinuation(id)
             }
         }
+        receiptContinuations[id] = continuation
+        return stream
     }
 
     private func addContinuation(

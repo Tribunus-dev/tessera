@@ -36,6 +36,11 @@ the middle layers. After five phases of work:
 **The next big thing is the runtime-aware calibration pipeline (Layers 1–6)**
 that closes the loop between kernel dequant fidelity and per-tensor GA fitness.
 
+A parallel next-big-thing is the **Tessera Studio product-surface expansion**
+to bring documents, spreadsheets, and slides to LibreOffice-class capability
+parity within `tesseracore`. Architect-approved plan at
+`TesseraStudio/docs/studio-expansion-plan.md`; see the section below.
+
 ---
 
 ## What we've built
@@ -212,6 +217,602 @@ integration work is bringing Tessera's commits onto current master:
 | `dft.` observer prefix | applied | `src/llama-graph.cpp` |
 | `--no-embedded-mtp` flag | ready | `common/arg.cpp` |
 | Production tests (dflash, dspark, telemetry, server-MTP, patcher, policy) | landed in `tessera/tests` branch | `tests/` |
+
+---
+
+## Tessera Studio agent-UX-fatigue audit (2026-08-12)
+
+Twelve implementation units from the agent-ux-fatigue audit landed on the
+`agent-ux-fatigue-sprint` branch across Waves 1-3. The work targets
+Tessera Studio (the SwiftUI macOS + iOS agent product), not the
+calibration fork. The full audit, the wave plan, and the per-move
+measurement architectures are in `docs/AGENT-UX-FATIGUE-REVIEW.md`. The
+move is opinionated and short: ship the named surface (chip, panel,
+feed) the existing infrastructure already holds the data for, and let
+the user verify in place instead of opening a drawer.
+
+Each unit ships with a one-primary + one-trust + one-anti measurement
+architecture (per the skill's `references/measurement-architecture.md`).
+The columns below are the headline targets; the deadline is week 2-6
+depending on the unit.
+
+### Wave 1 (4 units, all independent)
+
+#### 1A. Onboarding starter prompts + firstGoal card (review #1)
+
+The empty chat (macOS dock placeholder, iOS `ContentUnavailableView`,
+`LibraryView` empty state) is the empty-canvas paradox: an "ask me
+anything" surface with no entry point. The fix is 3-5 destination-aware
+starter prompts + a typed-sentence "firstGoal" card on the onboarding
+step that seeds `UnifiedChatController`.
+
+Files:
+
+- `TesseraStudio/Sources/TesseraCore/Agent/DestinationStarterPrompts.swift`
+  (new: `DestinationStarterPrompts`, `DestinationStarterPrompts.Context`,
+  `DestinationStarterPrompts.Prompt`, `DestinationStarterPromptsList`).
+- `TesseraStudio/Sources/TesseraStudioMac/App/ContentView.swift`
+  (macOS dock placeholder -> starter list).
+- `TesseraStudio/Sources/TesseraStudioiOS/App/ContentView.swift`
+  (iOS `ContentUnavailableView` -> starter list).
+- `TesseraStudio/Sources/TesseraCore/Views/OnboardingView.swift` (page 3
+  -> firstGoal card; later folds in 2B).
+
+Measurement architecture:
+
+- primary (leading-behavior): time-to-first-message, down >=30% by
+  week 2. `TelemetryMonitor` records the event when the first message
+  is sent.
+- trust (leading-qualitative): "first suggested task felt relevant"
+  pulse score, >=60% by week 4. Catches stale prompts.
+- anti (leading-behavior): onboarding firstGoal skip rate, <25% by
+  week 4. Catches the over-correction (asking too long, user dismisses).
+
+#### 1B. `TesseraTier` enum + `tier(for:)` + tier label on `ConfirmationPanel` (review #4)
+
+The approval engine implements tier policy as code in five files but
+never names the tier. The fix is a `TesseraTier` enum + computed
+property on `TesseraSafetyDecision`, with the tier label surfaced on
+`ConfirmationPanel` as a chip. Pure: same inputs always produce the
+same tier. No behavior change. The dimension is reversibility + blast
+radius, NOT action type.
+
+Files:
+
+- `TesseraStudio/Sources/TesseraCore/Agent/TesseraTier.swift` (new:
+  `TesseraTier.tier0 | tier1 | tier2 | tier3`, `tier(for:)`,
+  `tier(forRisk:)`, `revoke()`).
+- `TesseraStudio/Sources/TesseraCore/Agent/TesseraSafetyDecision.swift`
+  (adds `tier(forActionClass:)` and `riskOnlyTier`).
+- `TesseraStudio/Sources/TesseraStudioMac/Encryption/ConfirmationPanel.swift`
+  (surfaces the tier chip).
+- `TesseraStudio/Tests/TesseraCoreTests/Agent/TesseraTierTests.swift`
+  (boundary-drift guard: no tier downgrade without `TesseraTier.revoke`).
+
+Measurement architecture:
+
+- primary (leading-behavior): % of `ApprovalSheet` opens where the
+  user accepted without modification, >=70% by week 4 (catches
+  tier mis-calibration).
+- trust (leading-behavior): approval reject rate on Tier 2/3 actions,
+  <20% by week 6.
+- anti (leading-behavior): % of actions that bypassed the gate
+  (`tier3 -> autoApprove` or `tier0 -> askUser`), <1% by week 4.
+  Catches the tier-boundary drift failure mode. Computable from the
+  existing `approval-receipts.jsonl`.
+
+#### 1C. Audit-log HEAD chip on `TesseraDiffOverlayView` (review #5)
+
+The diff overlay shows "Rewrite complete" prose; the audit log's HEAD
+(risk, tool, receipt id) is one drawer away. The fix is to inline the
+HEAD as a one-line chip on the diff overlay between the diff and the
+Accept/Reject controls. The chip uses the field-cap-of-5 discipline so
+the user reads one chip language on the diff overlay, the chat progress
+feed, and the audit log.
+
+Files:
+
+- `TesseraStudio/Sources/TesseraStudioMac/Views/Editor/TesseraDiffOverlayView.swift`
+  (adds `AuditLogHeadChip` between the diff and the controls; chip
+  rendered only on `state == .diffComplete` or `.editable`; suppressed
+  on `.streaming` and when `Receipt.mutations` is empty).
+- `TesseraStudio/Tests/TesseraCoreTests/Editor/DiffOverlayChipTests.swift`.
+
+Measurement architecture:
+
+- primary (leading-behavior): median time from `diffComplete` to
+  `Accept` tap, <3s. Lau & Hartanto 2026: longer verification windows
+  correlate with approval-by-reflex.
+- trust (leading-behavior): % of Accept taps where the user clicked
+  the receipt-id chip, non-zero = chip is useful, near zero =
+  decoration (Baldeo active-use signal).
+- anti (leading-behavior): P95 character length of
+  `VerifierDecision.rationale`, <80 chars. Paradox 6 alarm.
+
+#### 1D. `TesseraNotificationBudget` actor + `onFinished` hooks (review #3)
+
+Two push notifiers fire without a shared budget. The fix is one
+`TesseraNotificationBudget` actor (per-UTC-day counter, default cap 3,
+**no `force:` override**) called by the two existing push notifiers.
+The cap is a hard cap, not a soft target. `.dryRun` notifications are
+dropped from the postable set and gated behind a separate `devMode`
+flag. `TesseraAdaptationScheduler` and `TesseraAssessmentScheduler`
+gain `onFinished` hooks so silent scheduler collapses surface through
+the budget.
+
+Files:
+
+- `TesseraStudio/Sources/TesseraCore/Encryption/TesseraNotificationBudget.swift`
+  (new: `TesseraNotificationBudget` actor,
+  `TesseraNotificationCategory` enum, `TesseraNotificationEvent` struct,
+  `TesseraNotificationBudgetLog` test-only reader; JSONL log at
+  `tessera.notifications.log`).
+- `TesseraStudio/Sources/TesseraStudioMac/Encryption/PleadTheFifthNotifications.swift`
+  (wrapped in `tryPost`).
+- `TesseraStudio/Sources/TesseraCore/Encryption/CovertTriggerMonitor.swift`
+  (wrapped in `tryPost`).
+- `TesseraStudio/Sources/TesseraCore/Learning/TesseraAdaptationScheduler.swift`
+  (adds `onFinished` hook).
+- `TesseraStudio/Sources/TesseraCore/Learning/TesseraAssessmentScheduler.swift`
+  (adds `onFinished` hook).
+- `TesseraStudio/Tests/TesseraCoreTests/Encryption/TesseraNotificationBudgetTests.swift`.
+
+Measurement architecture:
+
+- primary (leading-behavior): # of push notifications fired per user
+  per UTC day, <=3.
+- trust (leading-behavior): % of fired notifications acted on within
+  15 min (the "actionable" check), >=50%.
+- anti (leading-behavior): # of silent scheduler collapses where
+  `onFinished` should have fired, ==0 by week 2. Catches the
+  silent-forgotten side of paradox 7.
+
+### Wave 2 (4 units, mixed dependencies on Wave 1)
+
+#### 2A. Chat dock progress feed (review #2)
+
+`UnifiedChatController` already has live state (routing, tool calls,
+approval gates, hold queue, collab trace); `statusPill` is a one-line
+bar. The fix is a pull-to-open `ChatProgressFeed` in the dock. **Pull,
+not push** -- the feed never auto-surfaces, or it becomes the
+proactive-agent paradox in production. Depends on 1D
+(`TesseraNotificationBudget`) being in place so the feed cannot
+become a notification flood.
+
+Files:
+
+- `TesseraStudio/Sources/TesseraCore/Agent/ChatProgressFeed.swift`
+  (new: `ChatProgressFeed` view, pull-binding-driven, chip vocabulary
+  shared with the audit-log HEAD chip).
+- `TesseraStudio/Sources/TesseraCore/Agent/UnifiedChatController.swift`
+  (live-state surface model).
+- `TesseraStudio/Sources/TesseraCore/Agent/UnifiedChatRow.swift` (the
+  `LiveState` row type).
+- `TesseraStudio/Sources/TesseraStudioMac/App/ContentView.swift` (the
+  pull-to-open affordance on the chat dock).
+
+Measurement architecture:
+
+- primary (leading-behavior): % of sessions where the feed is opened
+  at least once, >=60% by week 4.
+- trust (leading-qualitative): "I can see what the agent is doing"
+  score, up >=20% by week 4.
+- anti (leading-behavior): % of feed events that arrive as a push
+  notification, <10% by week 4. Catches the proactive-agent paradox
+  failure mode.
+
+#### 2B. `OnboardingView` fold (review #6)
+
+The first-run onboarding imported the SaaS default: a centered purple
+hero, four-row feature list, page dots, page-turn animation, and
+pastel page-tint rotation. The fix is to delete `welcomePage`, the
+page-turn chrome, the page-tint rotation, the `.largeTitle` headline,
+and the `feature()` helper, then fold the model-directory step into
+the form shape used by `TesseraSettings` (PathField verbatim). The
+agent-approval step is the firstGoal card from 1A; preserved as the
+seed mechanism. Depends on 1A (firstGoal card) being in place.
+
+Files:
+
+- `TesseraStudio/Sources/TesseraCore/Views/OnboardingView.swift`
+  (single form, two sections: model-directory + firstGoal card;
+  no welcome page, no page dots, no `.largeTitle`).
+
+Measurement architecture:
+
+- primary (leading-qualitative): first-impression rating from new
+  users in the first 5 minutes (1-question in-app survey on
+  first-run completion), >=4/5.
+- trust (leading-qualitative): "feels premium / feels like a tool"
+  tag, >=80% positive (n=10 session-replay annotation).
+- anti (leading-behavior): bounce rate within 30 seconds of first
+  open (close-app / Cmd-W within 30s of `TesseraStudioMacApp`
+  finishing launch), <10%.
+
+#### 2C. Time-limited undo (review #5)
+
+`AppKitUndoManagerBridge.levelsOfUndo = 100` caps depth, not time.
+After ~30s most users stop noticing the undo affordance. The fix is
+a `TimeLimitedUndoPolicy` (default 90s, configurable) with lazy
+expiry on every `canUndo` read, plus a visible "Undo available for
+Ns" affordance on the editor.
+
+Files:
+
+- `TesseraStudio/Sources/TesseraStudioMac/Views/Editor/EditorUndoCoordinator.swift`
+  (replaces the depth cap with `TimeLimitedUndoPolicy`,
+  `TimeLimitedUndoBudget`, `TimeLimitedUndoChip`).
+- `TesseraStudio/Tests/TesseraCoreTests/Editor/TimeLimitedUndoTests.swift`.
+
+Measurement architecture:
+
+- primary (leading-behavior): % of undone actions where the undo was
+  performed within 30s of the action, >=80% (the rest are cognitive
+  offload -- user forgot).
+- trust (leading-qualitative): "I can recover from a wrong action"
+  score, up >=15% by week 4.
+- anti (leading-behavior): % of undo-affordance impressions that
+  were ignored past the expiry, <20% (catches: affordance is too
+  noisy).
+
+#### 2D. `uncertainty` on `ToolResultPayload` (review #5)
+
+`ToolResultPayload` has `success | output | error` but no
+uncertainty. The Tian Pan 2026-04-12 split: the UI must distinguish
+"the agent was uncertain and said so" from "the agent was confident
+and was wrong". The fix is a categorical `ConfidenceBand` (low |
+medium | high) on `ToolResultPayload`. Categorical bands are more
+robust to model miscalibration than numeric percentages (per the
+skill's anti-pattern on numeric confidence).
+
+Files:
+
+- `TesseraStudio/Sources/TesseraCore/Models/ChatMessage.swift`
+  (adds `ConfidenceBand` enum, extends `ToolResultPayload` with
+  `confidenceBand: ConfidenceBand?`).
+- `TesseraStudio/Sources/TesseraCore/Agent/TesseraActionVerifier.swift`
+  (emits the band on every `ToolResultPayload`).
+- `TesseraStudio/Tests/TesseraCoreTests/Agent/UncertaintyFieldTests.swift`.
+
+Measurement architecture:
+
+- primary (leading-behavior): % of `ToolResultPayload` emissions
+  where the uncertainty is set, 100% by week 2.
+- trust (leading-behavior): % of accept actions on `high`
+  uncertainty payloads, <20% (the user should reject or verify
+  before accepting).
+- anti (leading-behavior): % of `low` uncertainty payloads that
+  the user still verified manually, <30% (catches: user over-trusts,
+  the field is decoration).
+
+### Wave 3 (4 units, 3C and 3D depend on 1B)
+
+#### 3A. `sources: [Citation]` on `ChatMessage` (review #5)
+
+`ChatMessage.content` is free-form `String` with no source citation.
+The fix is a `Citation` struct (`id`, `label`, `snippet`, `url`,
+optional `RangeOffset`) added to `ChatMessage` and `ToolResultPayload`,
+with the chat row rendering the first 3 as inline chips (consistent
+with the audit-log HEAD chip vocabulary). The `research` tool is the
+first producer; other tools that surface evidence can contribute to
+the list.
+
+Files:
+
+- `TesseraStudio/Sources/TesseraCore/Models/ChatMessage.swift` (adds
+  `Citation`, `RangeOffset`, extends `ChatMessage` with
+  `sources: [Citation]` and `ToolResultPayload` with
+  `sources: [Citation]`).
+- `TesseraStudio/Sources/TesseraCore/Agent/UnifiedChatController.swift`
+  (emits citations from the tool-call provenance).
+- `TesseraStudio/Tests/TesseraCoreTests/Agent/ChatMessageCitationTests.swift`.
+
+Measurement architecture:
+
+- primary (leading-behavior): % of `ChatMessage` emissions with at
+  least one citation, >=40% by week 4 (some messages won't have
+  sources).
+- trust (leading-qualitative): "the agent's claims have evidence I
+  can check" score, up >=20% by week 4.
+- anti (leading-behavior): % of citation-chip clicks that route to
+  a non-existent source, ==0 (catches: broken citations).
+
+#### 3B. `ReceiptsCoordinator` refresh -> `AsyncStream` (review #5)
+
+`ReceiptsCoordinator.refresh()` polled every 200ms. The fix is an
+`AsyncStream<Receipt>` broadcast source on the coordinator with
+back-pressure bounded per subscriber via `.bufferingNewest(64)`.
+Drops are exposed via `droppedReceiptCount` as the back-pressure
+anti-metric.
+
+Files:
+
+- `TesseraStudio/Sources/TesseraCore/Productivity/Receipts/ReceiptsCoordinator.swift`
+  (adds `receiptStream()` -> `AsyncStream<Receipt>`, `register(receipt:)`,
+  `droppedReceiptCount`; replaces the 200ms polling in
+  `ReceiptsCoordinatorBridge`).
+
+Measurement architecture:
+
+- primary (leading-behavior): P95 latency from receipt creation to
+  stream emission, <100ms.
+- trust: not applicable (this is infra, not UX).
+- anti (leading-behavior): # of dropped receipts due to
+  back-pressure, ==0 (or logged explicitly via `droppedReceiptCount`).
+
+#### 3C. Inline-stop (paradox 5) (review #4)
+
+The off-ramp is a first-class stage. The fix is a `stop(reason:)`
+method on `TesseraAgentLoop` plus an inline stop button on
+`AgentCursorOverlay` (per Microsoft HAX G11, "Support efficient
+dismissal"). The stop is a hard stop: the agent does not auto-resume.
+A new `run()` call is rejected until the caller explicitly invokes
+`clearStop()`. Depends on 1B (`TesseraTier`) for the weight class
+of the stop affordance.
+
+Files:
+
+- `TesseraStudio/Sources/TesseraCore/Agent/TesseraAgentLoop.swift`
+  (adds `StopReason` enum, `lastStopReason`, `stop(reason:)`,
+  `clearStop()`).
+- `TesseraStudio/Sources/TesseraStudioMac/Views/Editor/AgentCursorOverlay.swift`
+  (renders the inline `AgentInlineStopButton`).
+- `TesseraStudio/Tests/TesseraCoreTests/Agent/InlineStopTests.swift`
+  (`testHardStop`).
+
+Measurement architecture:
+
+- primary (leading-behavior): % of agent actions that were stopped
+  by the user, <5% (low = user trusts the agent; high = over-eager
+  agent).
+- trust (leading-qualitative): "I can stop the agent at any time"
+  score, up >=15% by week 4.
+- anti (leading-behavior): % of stop-button presses that were
+  followed by an agent auto-resume, ==0 (hard-stop guard).
+
+#### 3D. Action audit log side panel (review #4)
+
+The audit log belongs in a pull surface, not in a notification. The
+fix is a SwiftUI `ActionAuditLogPanel` as a side panel on the macOS
+app, toggled from `ConfirmationPanel`. The panel renders a
+chronological list of every agent action + outcome with the tier
+label, time, and receipt id, using the same chip vocabulary as the
+audit-log HEAD chip. Compact default view with filter + search so
+the list does not become a wall. Depends on 1B (`TesseraTier`) and
+1C (chip vocabulary).
+
+Files:
+
+- `TesseraStudio/Sources/TesseraCore/Agent/ActionAuditLogPanel.swift`
+  (new: `ActionAuditOutcome` enum, `ActionAuditEntry` struct,
+  `ActionAuditLogStore` (`@Observable`, `@MainActor`,
+  default capacity 500), `ActionAuditLogPanel` view,
+  `ActionAuditLogRow` view).
+- `TesseraStudio/Sources/TesseraStudioMac/Encryption/ConfirmationPanel.swift`
+  (audit-log toggle handler).
+- `TesseraStudio/Tests/TesseraCoreTests/Agent/ActionAuditLogPanelTests.swift`.
+
+Measurement architecture:
+
+- primary (leading-behavior): % of sessions where the audit panel
+  is opened at least once, >=30% by week 4.
+- trust (leading-qualitative): "I can see what the agent has done"
+  score, up >=20% by week 4.
+- anti (leading-behavior): % of audit-panel opens that are followed
+  by an "undo" action, <10% (catches: the audit is being used as a
+  debugging tool, not as a trust surface).
+
+### Healthy surfaces (do not touch)
+
+The audit's "do not touch" list is the explicit boundary on the next
+pass. The agent-ux-fatigue work did not change:
+
+- Persona design (Tessy / Sky, `AgentPersona.swift:42-55`).
+- Off-ramp exit affordances (`cancel` + `hold` + iOS
+  `HoldYourHorsesDialog_iOS` at `ChatPanelView_iOS.swift:280-323`).
+- Autonomy spine (per-task ratchet; see Priority 9 in this doc).
+- Verifier (rule-based categorical risk at
+  `TesseraActionVerifier.swift:74-90`; fail-closed on its own error
+  at `:55-63`; structured `PendingAction` at `:6-14`).
+- Approval engine (3 pattern shapes, asymmetric ratchet,
+  RULES-not-ML irreversibility guard, denial circuit breaker, scoped
+  YOLO, miscalibration regime-shift tightening, approver-training
+  collapse-guard, tier-1/tier-2 escalation frame, `ConfirmationPanel`
+  friction: paste-block + 5s unlock + 3/30s rate-limit, approval
+  receipts).
+- Telemetry local-only design (`telemetryEnabled` defaults to false
+  at `TesseraSettings.swift:109`; in-memory ring buffer of 60 samples
+  at `TelemetryDrawer.swift:17`; no URLSession).
+- Covert-trigger path (pull-only; `ReportWindow.swift` is a menu item,
+  not a surface ping).
+- Push notifiers' frontmost+surface-visible suppression logic
+  (HIG 14.12, their own comments).
+- iOS navigation (5-tab `TabView` with no landing hero;
+  13-destination sidebar on macOS).
+- Typography / icons / imagery app-wide (zero custom faces,
+  `Font.system(_:design:)` only; SF Symbols everywhere; banned-copy
+  list has zero occurrences in the views).
+
+### Source provenance
+
+The audit is sourced; the per-move citations live in
+`docs/AGENT-UX-FATIGUE-REVIEW.md` Part 7. The headline citations:
+
+- Lau, Hartanto et al. (2026). AI fatigue scale, *Computers in Human
+  Behavior Reports* (n=717, alpha=.92). The 4-factor model.
+- Microsoft Research. HAX Toolkit, 18 Guidelines for Human-AI
+  Interaction (2019 CHI, validated).
+- OWASP Top 10 for Agentic Applications 2026, item ASI09
+  (confirmation fatigue as security vulnerability).
+- Gloria Mark et al. (2005, 2008). Interruption cost, CHI. The
+  23-min recovery number.
+- Tian Pan (2026). Trust calibration curve; background agents and
+  the notification budget.
+- Baldeo (2026). Cognitive offload in high-use GenAI users, *TMB*
+  (APA). Caveat: under community-pending review. The active-use vs
+  passive-use finding.
+
+The skill that produced the move list:
+`/Users/user/.zcode/skills/agent-ux-fatigue/SKILL.md` (load
+`references/measurement-architecture.md` for the one-primary +
+one-trust + one-anti architecture; `references/pattern-catalog.md`
+for the pattern moves; `references/paradoxes-deep.md` for the seven
+paradoxes).
+
+---
+
+## Tessera Studio product-surface expansion (LibreOffice parity, 2026-08-13, Draw added 2026-08-13)
+
+The agent-ux-fatigue audit (above) shipped the agent *control surface* of
+Tessera Studio. The **product-surface expansion** is a separate, parallel
+track: bring documents, spreadsheets, slides, **and drawings** to
+LibreOffice-class capability parity inside `tesseracore`. The full plan is
+at `TesseraStudio/docs/studio-expansion-plan.md`; the per-suite evidence
+(Writer/Calc/Impress capability inventories) is at
+`TesseraStudio/docs/.scratch/lo-{writer,calc,impress}-report.md`. Three
+parallel explore agents inventoried LibreOffice's `sw/`, `sc/`, `sd/`
+modules against the current `tesseraCore` surface (29K LoC across
+`Productivity/`, `Editor/`, `FormulaEngine/`, `Materials/`,
+`DocumentProcessing/`, `Views/`). Draw is a green-field surface; its
+high-level inventory is in §2 of the master plan, and a dedicated Draw
+scratch report can be dispatched when the rollout needs the per-source
+path evidence.
+
+### Architect decisions (binding for every wave)
+
+| Question | Decision |
+|---|---|
+| DOCX import | UNO bridge (`WriterBridgeFilter`); no native Swift ODT/DOCX reader |
+| `SheetWorkbook` name | Keep the name; do not rename to `Workbook` |
+| `BlockType` enum growth | 16 -> ~24 over P0-P1 is approved (incl. `.shape`/`.shapeGroup` for Draw) |
+| Number formats | **Full** parser in Swift (`NumberFormatEngine`, parity with `svl/source/numbers/`). Not the 80% subset. |
+| Master pages | **Full** layout picker UI at P1 (`MasterPageLayoutPicker`) |
+| Chart engine | **CoreGraphics** long-term (`ChartRenderer` with `CGContext`). Not Swift Charts. Parity with all 14 LO chart types. |
+| Animations | **Evolve to SMIL tree** at P2 (`SMILAnimationTree`, port of `CustomAnimationEffect.cxx`). P1 ships a flat `AnimationEffectList` as an interim; P2 evolves it. |
+| Pivot tables | **Swift with full UNO parity** (`PivotTableStore`, parity with `ScDPObject`). Not a simplified model. |
+| **Draw: separate surface or feature of Impress?** | **Separate surface** (`Materials/Draw/` quartet + `Shape` value type). A deck is a sequence of slides; a drawing is a single page of vector graphics. Shared `sd/` upstream binary; distinct Tessera product surfaces. |
+| **Draw: 3D objects + morph in scope?** | **Out of scope.** 2D capability set is in scope (shape catalog, geometry, fill/stroke, z-order, layers, snap, transform, group, connector, text frame, ODG / SVG / PDF I/O). 3D (`fucon3d.cxx`) + morph (`fumorph.cxx`) explicitly punted. |
+
+### Phased rollout
+
+- **P0 - MVP (16 deliverables)**: `SheetWorkbook` multi-sheet, `RecalcScheduler` + `TokenArray` IR + shared formula groups, `CellValue`/`CellFormat`/`NumberFormat` index, `NumberFormatEngine` (full parser), `BlockType` evolutions (`.section`/`.frame`/`.shape`/`.shapeGroup`), `BlockType.table` rowSpans/colSpans/nested, `MasterPageStore` + `SlideLayoutSpec`, `WriterBridgeFilter` (UNO), `CalcBridgeFilter` (UNO), `SheetProtection`, **`Shape` value type + `ShapeCatalog` + `ShapeRenderer` (Draw data model)**, **`Drawing` material quartet (data only)**, **`BlockType.shape` z-order**, plus the `tessera_lo_service.py` schema update.
+- **P1 - parity milestone (19 deliverables)**: `BlockType` evolutions (`.field`/`.footnote`/`.endnote`/`.chart`/`.media`), `FieldController`, `Footnote`/`Endnote`, `ChartRenderer` (CoreGraphics), `MediaBlock`, `Theme`/`ThemeStore`, `TransitionStore`, `SlideDeckRenderer` + `DeckExportCoordinator` (PNG/JPG), `LOBridgeDeckIO`, `MasterPageLayoutPicker`, `QueryEngine`, `CellStyle`, `ConditionalFormat`, `DataValidation`, `RevisionController`, **`LayerStore` + `TransformController` + `SnapEngine` (Draw UI)**, **`ODGBridgeFilter` + `SVGBridgeFilter` + `PDFExportBridge` (Draw format I/O)**, **text frames on shapes (connector, bullet lists inside shape text)**, plus the flat `AnimationEffectList` as a SMIL interim.
+- **P2 - advanced + architect-locked substantial work (12 deliverables)**: `SMILAnimationTree` (3-5K LoC, full `XAnimationNode` tree), `PivotTableStore` (4-6K LoC, full `ScDPObject` schema), **`BezierPathController` (Draw custom-geometry paths)**, mail merge, ToC/index, solver (UNO), subtotals, statistics wizards, change-track reviewer, custom shows, master documents, **Draw advanced (annotations, measure, Draw tables, bullet lists inside shape text)**.
+
+### Top reusable components (priority-ordered)
+
+1. `SheetWorkbook` multi-sheet model (evolves `SheetWorkbook`)
+2. `RecalcScheduler` (evolves `DependencyGraph`)
+3. `TokenArray` IR (peer of `FormulaAST`)
+4. `CellValue` + `CellFormat` + per-cell `NumberFormat` (evolves `SheetColumn`)
+5. `NumberFormatEngine` (peer of `FunctionRegistry`; full locale-aware parser)
+6. `BlockType` evolutions (evolves `BlockType` enum; 9 new cases incl. `.shape`/`.shapeGroup`)
+7. `MasterPageStore` (peer of `SlideStore`)
+8. `SlideLayoutSpec` (evolves `SlideLayout`)
+9. `WriterBridgeFilter` (peer of `TesseraImporter`; UNO path)
+10. `CalcBridgeFilter` (peer of `SpreadsheetDigester`; UNO path)
+11. **`Shape` value type (peer of `Block`)** - **Draw primitive**
+12. **`ShapeCatalog` (peer of `SlideLayoutSpec`)** - Draw + Impress
+13. **`ShapeRenderer` (CoreGraphics, peer of `BlockRenderer`)** - Draw + Impress
+14. **`Drawing` material + `DrawingStore` + `DrawingsViewModel` + `DrawingReceiptType` + `DrawingsGraphConnector` (full quartet, peer of Slide)** - Draw
+15. `MasterPageLayoutPicker` (peer of `SlideDetailView`; full UI)
+16. `Theme` + `ThemeStore`
+17. `LOBridgeDeckIO` (evolves `EmbeddedPythonBridge`)
+18. `SlideDeckRenderer` (Core Graphics; evolves `BlockRenderer`)
+19. `ChartRenderer` (Core Graphics; full LO chart type parity)
+20. `QueryEngine` (peer of `SheetsViewModel`)
+21. `FieldController` + `RevisionController`
+22. **`LayerStore` + `TransformController` + `SnapEngine` (Draw UI)**
+23. **`ODGBridgeFilter` + `SVGBridgeFilter` + `PDFExportBridge` (Draw format I/O)**
+
+### No-versioned-implementations rule (binding)
+
+Every new component either **evolves an existing type** (`BlockType` cases,
+`SheetColumnType` cases, `SlideLayout` cases, `SheetWorkbook` model,
+`DocumentPageLayout` fields, `FormulaEngine.Evaluator`) or **sits as a
+peer file** next to its sibling. Nothing paralleled; nothing v2.
+
+The Draw surface follows the rule: `Drawing` is a peer of `SlideDeck`,
+`DrawingStore` is a peer of `SlideStore`, `Shape` is a peer of `Block`,
+`ShapeCatalog` is a peer of `SlideLayoutSpec`, `ShapeRenderer` is a peer
+of `BlockRenderer`. The quartet of `*Store` / `*ViewModel` / `*ReceiptType`
+/ `*GraphConnector` for `Drawing` mirrors the same quartet for `Doc` /
+`Sheet` / `SlideDeck`.
+
+### Bridge vs Swift split
+
+UNO drives the heavy format-specific paths: DOCX/ODT/ODP/PPTX import, PDF
+deck export, ODG / SVG / PDF-for-Draw export, presenter console, solver.
+Swift drives the authoring surface (formula engine, cells, slides, shapes,
+charts, animations), the receipts pipeline, and the constitutional
+mutation backbone. The existing
+`LibreOfficeBootstrap` + `EmbeddedPythonBridge` + `tessera_lo_service.py`
+is the gateway; no parallel v2 service.
+
+### Wave routing
+
+The four named capabilities (`alphaevolve`, `tessera-analyst`,
+`findings-curator`, `verifier`) carry the work into the wave loop. The
+conductor section in `AGENTS.md` is unchanged. Branch namespaces
+(`scratch/<feature>/agent-X`, `evolve-review/...`, `champions/<id>`,
+`evolve-baseline/wN`) carry through unchanged.
+
+### Post-claim audit (skill refinements, 2026-08-13)
+
+The user performed an independent post-claim audit of the agent-ux-
+fatigue sprint on 2026-08-13 and surfaced intent-vs-outcome gaps that
+the existing `superpowers:verification-before-completion` and
+`code-review` skills do not cover. The audit caught: 251 compile
+errors during the sprint, an integration-test target that hung
+forever, a measurement layer with 42 unrunnable metrics, three
+"shipped" units with no open path, and a `/var/folders/...` source-
+of-truth directory that was purged on reboot.
+
+The refinement patches are at
+`TesseraStudio/docs/skill-refinement-patches-2026-08-13.md`. The
+patches add (a) a "Post-claim audit" section to `verification-before-
+completion` (system-level integrity) and (b) a "Claim-vs-evidence
+pass" section to `code-review` (per-unit integrity). Both skills
+are built-in (immutable at runtime per the skill-refiner procedure);
+the patches ship via MR to the upstream Mavis skill source. Every
+wave's review gate runs both passes on the previous wave's claims.
+
+### Agent tools surface (2026-08-13)
+
+The expansion is the *architecture* (this section). The *agent-facing
+surface* on top of that architecture is the tools the agent loop can
+call. The full sketch is at
+`TesseraStudio/docs/agent-tools-surface.md`. Headline shape:
+
+- **~65 tools** across `doc_*` (Doc/Writer, ~18), `sheet_*`
+  (Sheet/Calc, ~14), `slide_*` (SlideDeck/Impress, ~12), `drawing_*`
+  (Drawing/Draw, ~12), `materials_*` (cross-cutting, ~6), `lifecycle_*`
+  (lifecycle, ~3). One tool file per material, peer of the existing
+  `Tools/SheetTools.swift`. No `_v2`; no parallel implementations.
+- **Existing `TesseraTool` protocol** is the binding contract
+  (`TesseraCore/Agent/TesseraTool.swift:182`): `name` (snake_case),
+  `description`, `defaultApprovalLevel`, `parameters: JSONSchema`,
+  `execute(arguments:) async throws -> ToolResult`. No new tool shape.
+- **Tier mapping** to `TesseraTier` (audit Wave 1): read = `tier0`,
+  per-entity write = `tier1`, import / export = `tier2`, non-empty
+  trash = `tier3`.
+- **Receipt semantics** ride the existing `ReceiptsCoordinator` and
+  per-material receipt vocabularies. Every mutating tool emits exactly
+  one receipt per call. Read tools do not emit.
+- **Citation + uncertainty** ride the audit Wave 2-3 work: every
+  `ToolResult` carries `sources: [Citation]` and
+  `confidenceBand: ConfidenceBand?`. Numeric confidence percentages
+  are forbidden.
+- **Inline stop + notification budget** bind: long-running tools
+  wire to `TesseraAgentLoop.stop(reason:)`; no tool posts a user-facing
+  push (the budget's 3-per-UTC-day cap is hard; no `force:` override);
+  the audit log is pull, not push.
+
+The wave loop ships a tesseracore component + its tools in the same
+wave (the tool is the agent-facing half of the component). The
+`tools/agent-tools-surface.md` doc is the source of truth for the tool
+API; per-wave briefs enumerate the specific tools that land in that
+wave.
 
 ---
 

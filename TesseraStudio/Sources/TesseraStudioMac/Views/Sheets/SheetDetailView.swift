@@ -116,7 +116,7 @@ public struct SheetDetailView: View {
         ToolbarItem(placement: .secondaryAction) {
             TesseraEditorToolbar(
                 mode: .sheets,
-                formattingState: $formattingState,
+                formattingState: ribbonState,
                 onCommand: { command in
                     handleEditorCommand(command)
                 },
@@ -424,11 +424,52 @@ public struct SheetDetailView: View {
         Binding(get: { viewModel.sheet.isTrashed }, set: { _ in Task { await viewModel.toggleTrashed() } })
     }
 
+    // MARK: - Ribbon state
+
+    /// The ribbon's view of the selected cell, derived rather than
+    /// stored: a cached copy would go stale every time the selection
+    /// moved, and the toggles would show the previous cell's format.
+    ///
+    /// Read-only by construction. The sheets branch of the ribbon
+    /// routes every action through `onCommand`, so nothing writes back
+    /// here; a future sheets control that mutates `formattingState`
+    /// directly would silently do nothing and needs a real setter.
+    private var ribbonState: Binding<FormattingState> {
+        Binding(
+            get: {
+                var state = FormattingState()
+                let format = viewModel.selectedCellFormat
+                state.isBold = format.isBold
+                state.isItalic = format.isItalic
+                state.alignment = switch format.alignment {
+                case .automatic, .leading: .leading
+                case .center: .center
+                case .trailing: .trailing
+                }
+                state.sheetNumberFormat = format.numberFormat
+                state.sheetBorders = format.borders
+                state.hasSheetSelection =
+                    viewModel.selectedCell != nil || viewModel.editingCell != nil
+                state.showGridlines = formattingState.showGridlines
+                state.showRuler = formattingState.showRuler
+                return state
+            },
+            set: { _ in }
+        )
+    }
+
+    /// The cell the ribbon acts on. Editing wins over selection because
+    /// an open editor is where the user's attention is.
+    private var targetCell: SheetCellCoord? {
+        viewModel.editingCell ?? viewModel.selectedCell
+    }
+
     // MARK: - Editor command handling
 
-    /// Handles editor commands from the toolbar. Sheets only support
-    /// focus-mode commands; all other commands are forwarded to the
-    /// coordinator for future extension.
+    /// Handles editor commands from the toolbar. The sheets surface
+    /// reuses the shared command vocabulary: `toggleBold` styles the
+    /// selected CELL rather than a text run, and the grid-specific
+    /// commands map onto the view model's existing mutations.
     private func handleEditorCommand(_ command: EditorCommand) {
         switch command {
         case .enterFocusMode:
@@ -436,8 +477,59 @@ public struct SheetDetailView: View {
                 isFocusMode.toggle()
                 editorCoordinator.updateFocusMode(isFocusMode)
             }
+
+        // Emphasis and alignment: same command, cell-scoped meaning.
+        case .toggleBold:
+            applyFormat { var f = $0; f.isBold.toggle(); return f }
+        case .toggleItalic:
+            applyFormat { var f = $0; f.isItalic.toggle(); return f }
+        case .alignLeft:
+            applyFormat { var f = $0; f.alignment = .leading; return f }
+        case .alignCenter:
+            applyFormat { var f = $0; f.alignment = .center; return f }
+        case .alignRight:
+            applyFormat { var f = $0; f.alignment = .trailing; return f }
+
+        // Number format.
+        case .setNumberFormat(let format):
+            applyFormat { $0.settingNumberFormat(format) }
+        case .stepDecimals(let delta):
+            applyFormat { $0.steppingDecimals(by: delta) }
+        case .setCellFill(let hex):
+            applyFormat { var f = $0; f.fillHex = hex; return f }
+        case .setCellBorders(let borders):
+            applyFormat { var f = $0; f.borders = borders; return f }
+
+        // Structure. Row and column indices come from the live
+        // selection, so a command queued behind a selection change
+        // still edits the cell the user is looking at.
+        case .insertSheetRow(let above):
+            guard let coord = targetCell else { return }
+            Task { await viewModel.insertRow(at: above ? coord.row : coord.row + 1) }
+        case .deleteSheetRow:
+            guard let coord = targetCell, viewModel.sheet.rowCount > 1 else { return }
+            Task { await viewModel.deleteRow(at: coord.row) }
+        case .insertSheetColumn(let before):
+            guard let coord = targetCell else { return }
+            Task { await viewModel.insertColumn(at: before ? coord.col : coord.col + 1) }
+        case .deleteSheetColumn:
+            guard let coord = targetCell, viewModel.sheet.columnCount > 1 else { return }
+            Task { await viewModel.deleteColumn(at: coord.col) }
+
+        case .autoSum:
+            Task { await viewModel.autoSum() }
+        case .insertFunction(let name):
+            guard let coord = targetCell else { return }
+            viewModel.beginEditingCell(coord)
+            viewModel.editingText = "=\(name)()"
+            gridEditingFocused = true
+
         default:
             editorCoordinator.handleViewCommand(command)
         }
+    }
+
+    private func applyFormat(_ transform: @escaping (SheetCellFormat) -> SheetCellFormat) {
+        Task { await viewModel.applyCellFormat(transform) }
     }
 }

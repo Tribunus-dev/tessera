@@ -224,6 +224,83 @@ unit:
   cap of 5; the user opens the row (or the receipts drawer) for
   the full record.
 
+## Tessera Studio product-surface expansion (LibreOffice parity, 2026-08-13, Draw added 2026-08-13)
+
+The agent-ux-fatigue audit shipped the agent *control surface* (tier policy,
+notification budget, inline stop, audit log, citation + uncertainty, etc.).
+The **product-surface expansion** is a separate track: bring documents,
+spreadsheets, slides, **and drawings** to LibreOffice-class capability
+parity within `tesseracore`.
+
+The architect-approved plan lives at
+`TesseraStudio/docs/studio-expansion-plan.md`. Decisions on file (binding for
+every wave):
+
+- DOCX import = UNO bridge (`WriterBridgeFilter`); no native Swift ODT/DOCX
+  reader. Markdown / plain text remain Swift-native.
+- `SheetWorkbook` keeps its name as it grows to multi-sheet. No v2.
+- `BlockType` grows from 16 to ~24 cases over P0-P1. The new cases are
+  surface-specific (`.field` Writer, `.chart` Calc+Impress, `.media`
+  Impress, `.shape`/`.shapeGroup` Draw+Impress). Per-material surface
+  checks for the cases it cares about.
+- Number formats: **full** parser in Swift (`NumberFormatEngine`, parity
+  with `svl/source/numbers/`). Not the 80% subset.
+- Master pages: **full** layout picker UI at P1 (`MasterPageLayoutPicker`).
+  Not data-only.
+- Chart engine: **CoreGraphics** long-term (`ChartRenderer` with
+  `CGContext`). Not Swift Charts. Parity with all 14 LO chart types.
+- Animations: **evolve to SMIL tree** at P2 (`SMILAnimationTree`, port of
+  `CustomAnimationEffect.cxx`). P1 ships a flat `AnimationEffectList` as
+  an interim; P2 evolves it (the list becomes a serialization of the tree,
+  not a parallel v2).
+- Pivot tables: **Swift with full UNO parity** (`PivotTableStore`,
+  parity with `ScDPObject`). Not a simplified row/col/data/filter model.
+- **Draw as a separate tesseracore surface** (not folded into
+  `SlideDeck`). New `Drawing` material + `*Store` + `*ViewModel` +
+  `*ReceiptType` + `*GraphConnector` quartet under
+  `Materials/Draw/`. New `Shape` value type peer of `Block`. Full 2D
+  vector capability set in scope: shape catalog, geometry, fill/stroke,
+  z-order, layers, snap, transform, group, connector, text frame, ODG /
+  SVG / PDF I/O. **3D objects + morph are out of scope** (`fucon3d.cxx`
+  and `fumorph.cxx` are explicitly punted; the productivity use case
+  is dominated by 2D).
+
+The plan's no-versioned-implementations rule is binding for the expansion
+exactly the same way it is for the inference engine: every new component
+either **evolves an existing type** (`BlockType` cases, `SheetColumnType`
+cases, `SlideLayout` cases, `SheetWorkbook` model, `DocumentPageLayout`
+fields, `FormulaEngine.Evaluator`) or **sits as a peer file** next to its
+sibling. Nothing paralleled; nothing v2.
+
+Wave routing: this expansion rolls in under the same four capabilities
+(alphaevolve, tessera-analyst, findings-curator, verifier). The conductor
+section below is unchanged. Branch namespaces (`scratch/<feature>/agent-X`,
+`evolve-review/...`, `champions/<id>`, `evolve-baseline/wN`) carry through
+unchanged.
+
+The **agent tools surface** is the API the agent loop calls on top of
+this architecture. The full sketch (per-material tools, cross-cutting
+tools, tier mapping, receipt semantics, citation + uncertainty, inline
+stop + notification budget, composition patterns) is at
+`TesseraStudio/docs/agent-tools-surface.md` (2026-08-13). Headline
+shape: ~65 tools across `doc_*` / `sheet_*` / `slide_*` / `drawing_*` /
+`materials_*` / `lifecycle_*` prefixes, all conforming to the existing
+`TesseraTool` protocol. No new tool shape, no `_v2` tools, no parallel
+implementations. The wave loop ships a tesseracore component + its
+tools in the same wave.
+
+The **post-claim audit** patches the user surfaced on 2026-08-13 are
+at `TesseraStudio/docs/skill-refinement-patches-2026-08-13.md`. They
+add (a) a "Post-claim audit" section to
+`superpowers:verification-before-completion` (system-level integrity:
+build / test target / metrics runnable / provenance real) and (b) a
+"Claim-vs-evidence pass" section to `code-review` (per-unit integrity:
+surface mounted / open path real / call from agent real / chip
+reachable). Both skills are built-in (immutable at runtime); the doc
+carries the exact text to add and the MR-to-upstream application
+path. Every wave's review gate runs both passes on the previous wave's
+claims.
+
 ## Program Routing - the conductor
 
 The model is the dynamic-routing runtime across these capabilities. State
