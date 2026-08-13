@@ -2281,6 +2281,46 @@ int ts_dispatch_run(const ts_dispatch_params * params,
                 evolve_params.layer_skip_lookup       = ts_dispatch_layer_skip;
                 evolve_params.layer_skip_lookup_user  = db_wrap;
             }
+            // Dynamic memory-bounded layer parallelism. The serial default
+            // exists to bound peak memory (one dequant buffer resident at a
+            // time), but the bound should come from the actual tensors, not
+            // a constant: per-tensor GAs are independent, and pipelining
+            // layers is what keeps the eval threads fed now that a
+            // generation only scores its new children. Budget ~1.5 GiB of
+            // concurrent F32 dequant buffers: layers in flight =
+            // clamp(budget / largest_tensor_bytes, 1..4), at most half the
+            // cores, never more than the layer count; per-layer eval
+            // threads are rebalanced so the total stays at the requested
+            // thread count. A MoE expert grid whose flattened tensor is
+            // huge naturally auto-sizes back to serial.
+            // TESSERA_QUANTIZE_LAYERS still overrides explicitly (applied
+            // above); auto-sizing fills only the unset case. Known cost of
+            // parallel layers: same-family warm-start seeds propagate less
+            // often, since later tensors may start before an earlier
+            // sibling finishes -- the one-shot accept still fires on
+            // whatever has completed.
+            if (std::getenv("TESSERA_QUANTIZE_LAYERS") == nullptr) {
+                int64_t largest = 1;
+                for (const auto & gl : ga_layers) {
+                    const int64_t b = gl.out_dim * gl.in_dim * (int64_t)sizeof(float);
+                    if (b > largest) largest = b;
+                }
+                const int64_t budget = (int64_t)1536 * 1024 * 1024;
+                int32_t auto_layers = (int32_t)std::min<int64_t>(4, std::max<int64_t>(1, budget / largest));
+                const unsigned int hw = std::thread::hardware_concurrency();
+                const int32_t half_cores = hw > 1 ? (int32_t)(hw / 2) : 1;
+                auto_layers = std::min(auto_layers, half_cores);
+                auto_layers = std::min(auto_layers, (int32_t)std::max((int64_t)1, (int64_t)ga_layers.size()));
+                if (auto_layers > 1) {
+                    evolve_params.n_threads      = auto_layers;
+                    evolve_params.n_eval_threads = std::max(1, evolve_params.n_eval_threads / auto_layers);
+                    printf("tessera-dispatch: layer parallelism auto-sized to %d "
+                           "(largest tensor %lld MiB, %d eval threads per layer; "
+                           "TESSERA_QUANTIZE_LAYERS overrides)\n",
+                           auto_layers, (long long)(largest >> 20),
+                           evolve_params.n_eval_threads);
+                }
+            }
             int rc = ts_awq_evolve_all(ga_layers.data(), (int64_t)ga_layers.size(),
                                        ts_dispatch_awq_eval, &eval_ctx,
                                        &evolve_params, &ga_results);
