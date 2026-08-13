@@ -1,6 +1,6 @@
-# Tessera — Project Status
+# Tessera - Project Status
 
-_Last updated: 2026-08-01_
+_Last updated: 2026-08-12_
 
 Tessera is a fork of [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) at
 [Tribunus-dev/tessera](https://github.com/Tribunus-dev/tessera). Default branch:
@@ -15,11 +15,11 @@ For subsystem details see the linked docs.
 ## TL;DR
 
 We started from a gemma 4 12B QAT drafter that was incoherent at 0.86% spec
-acceptance and a Tessera-quantized target that diverged 70–150 % from BF16 at
+acceptance and a Tessera-quantized target that diverged 70-150 % from BF16 at
 the middle layers. After five phases of work:
 
 - Tessera's quantizer is now a per-tensor evolutionary system with a direct
-  round-trip fitness mode. It improves round-trip Frobenius by 12–18 % per
+  round-trip fitness mode. It improves round-trip Frobenius by 12-18 % per
   tensor over the legacy importance-weighted calibrator.
 - Spec-decoding telemetry (`llama.tessera.spec.v1`) is in `llama-imatrix`.
   The schema is a single unified record whose cheap per-step fields
@@ -33,27 +33,27 @@ the middle layers. After five phases of work:
   chain), seven hardening-agent branches, and `tessera/integration-upstream-experiments`
   (the upstream-rebased line).
 
-**The next big thing is the runtime-aware calibration pipeline (Layers 1–6)**
+**The next big thing is the runtime-aware calibration pipeline (Layers 1-6)**
 that closes the loop between kernel dequant fidelity and per-tensor GA fitness.
 
 ---
 
 ## What we've built
 
-### Phase 1 — Diagnose the incoherency
+### Phase 1 - Diagnose the incoherency
 
 The shipped gemma 4 12B Tessera build with a dflash drafter was producing
-0.86 % acceptance vs. the 30–70 % range expected for working dflash. Two
+0.86 % acceptance vs. the 30-70 % range expected for working dflash. Two
 root causes:
 
 1. **Null imatrix ledger.** The pre-existing
-   `gemma4-12b-rich.imatrix.gguf` was clean (328 tensors, chunks 64 → 2048,
+   `gemma4-12b-rich.imatrix.gguf` was clean (328 tensors, chunks 64 -> 2048,
    no NaNs). The "rich" rerun that produced the broken state had 321/328
    tensors with all-null `previous_moments` due to a Metal OOM during graph
    construction. The fix is the missing `isfinite()` guard in
-   `tools/imatrix/imatrix.cpp:772–778` of the upstream codebase.
+   `tools/imatrix/imatrix.cpp:772-778` of the upstream codebase.
 2. **Wrong sub-hypothesis.** The drafter was never the problem. Per-layer
-   differential probing (F16 vs Tessera-corrected logits) showed 70–150 %
+   differential probing (F16 vs Tessera-corrected logits) showed 70-150 %
    relative divergence at layers 4, 8, 16, and 32. The sensitive tensors
    (QK-norm, post-norm, attn_output, ffn_down) were fine; the bulk
    (Q, K, V, gate, up, down) was mis-calibrated.
@@ -61,7 +61,7 @@ root causes:
 The reframing was the key insight of the project: **the requantization
 algorithm was the bug, not the drafter.**
 
-### Phase 2 — SOTA survey
+### Phase 2 - SOTA survey
 
 `final_turn_001.md` at
 `/Volumes/Julian T7/mavis-deep-research/20260729_130345_tessera-imatrix-quant-sota/`
@@ -71,19 +71,19 @@ techniques. The conclusion was that AWQ + importance-matrix remains the SOTA
 starting point but none of the public tools have proper per-tensor ternary
 threshold tuning.
 
-### Phase 3 — Tessera quantizer gap-fill
+### Phase 3 - Tessera quantizer gap-fill
 
 Six identified gaps in `tile640_quantize_v3.py`, all now closed:
 
-- **§5.1 n_swa override.** `apply_gemma4_metadata_overrides()` forces
+- **Sec. 5.1 n_swa override.** `apply_gemma4_metadata_overrides()` forces
   `gemma4.attention.sliding_window` from 1024 to 512.
-- **§5.2 imatrix_mse range selection.** `_imatrix_mse_row_scale()` and
+- **Sec. 5.2 imatrix_mse range selection.** `_imatrix_mse_row_scale()` and
   `quantize_2d_imatrix_mse()` for per-row scale-aware error.
-- **§5.3 AWQ layer-output error search.** `awq_scale_search` dispatches via
+- **Sec. 5.3 AWQ layer-output error search.** `awq_scale_search` dispatches via
   `AWQ_SEARCH_TARGET`.
-- **§5.4 gemma 4 sensitive tensors.** `is_gemma4_sensitive_tensor()` plus
+- **Sec. 5.4 gemma 4 sensitive tensors.** `is_gemma4_sensitive_tensor()` plus
   `DEFAULT_GEMMA4_SENSITIVE_PATTERNS`.
-- **§5.5/§5.6 calibration real X.** `load_calibration_activations()` reads
+- **Sec. 5.5/Sec. 5.6 calibration real X.** `load_calibration_activations()` reads
   from `.npz`; `CALIBRATION_ACTIVATIONS` is a module-level cache.
 - **New: per-tensor `ternary_threshold` knob.** Multiplier on per-row
   `mean(|W|)`, range `[0.3, 3.0]`, default `1.0` (legacy behaviour). The
@@ -92,7 +92,7 @@ Six identified gaps in `tile640_quantize_v3.py`, all now closed:
 `tools/tessera/per_tensor_calibrate.py` is the new GA over the full
 calibration mutation space.
 
-### Phase 4 — Per-tensor GA
+### Phase 4 - Per-tensor GA
 
 `tools/tessera/per_tensor_calibrate.py` runs a small GA per tensor over six
 mutation dimensions:
@@ -108,20 +108,20 @@ mutation dimensions:
 
 Three fitness modes: `direct` (BF16-source-vs-dequant round-trip relative
 Frobenius), `importance` (legacy imatrix-weighted), `combined` (direct + a
-max-abs penalty, λ = 4). Default population 8, generations 6, islands 2. The
-`direct` mode gives 12–18 % improvement per tensor over `importance` (which
-gives 2–5 %). `--lossless-target X` enables early stop when relative MSE
+max-abs penalty, lambda = 4). Default population 8, generations 6, islands 2. The
+`direct` mode gives 12-18 % improvement per tensor over `importance` (which
+gives 2-5 %). `--lossless-target X` enables early stop when relative MSE
 falls below `X`.
 
 Two production policies are already in place:
 `/Volumes/Julian T7/runs/gemma4-12b-tessera-overnight/gemma4-12b-per-tensor.json`
-and `…-direct.json`.
+and `...-direct.json`.
 
-### Phase 5 — Spec-decoding telemetry
+### Phase 5 - Spec-decoding telemetry
 
 Built the spec-calibration telemetry path inside `llama-imatrix`:
 
-- **Unified schema** (`llama.tessera.spec.v1`) — single record per spec
+- **Unified schema** (`llama.tessera.spec.v1`) - single record per spec
   step. The cheap per-step payload (drafted, accepted, confidence[],
   draft / accepted token sequences) is always emitted; the per-position
   verifier and drafter top-k distributions are added on top when
@@ -132,23 +132,23 @@ Built the spec-calibration telemetry path inside `llama-imatrix`:
   the drafter's confidence.
 
 CLI surface:
-- `--model-draft <path>` — path to a dflash/DSpark drafter gguf.
-- `--spec-steps N` — number of spec steps to roll forward.
-- `--telemetry-out <path>` — JSONL output.
-- `--telemetry-topk K` — switch on v2 schema with K-element top-k per position.
+- `--model-draft <path>` - path to a dflash/DSpark drafter gguf.
+- `--spec-steps N` - number of spec steps to roll forward.
+- `--telemetry-out <path>` - JSONL output.
+- `--telemetry-topk K` - switch on v2 schema with K-element top-k per position.
 
 Plus: `dft.` prefix on drafter observer names to keep verifier/drafter
 tensors separated inside `IMatrixCollector::m_stats`.
 
-### Phase 6 — dspark drafter
+### Phase 6 - dspark drafter
 
 `tools/dspark-gguf-patch/` is a preprocessor for legacy dspark `.gguf` files
 because the shipped `dspark_gemma4_12b_q4pure.gguf` doesn't load directly:
 
-1. Rename arch `dspark` → `dflash` (folded-arch convention from PR #25173).
-2. Rename `markov.w{1,2}.weight` → `markov_w{1,2}.weight` and
-   `confidence.proj.{weight,bias}` → `conf_proj.{weight,bias}`.
-3. Rename hparam prefix `dspark.*` → `dflash.*` (keep `dspark.markov_*`).
+1. Rename arch `dspark` -> `dflash` (folded-arch convention from PR #25173).
+2. Rename `markov.w{1,2}.weight` -> `markov_w{1,2}.weight` and
+   `confidence.proj.{weight,bias}` -> `conf_proj.{weight,bias}`.
+3. Rename hparam prefix `dspark.*` -> `dflash.*` (keep `dspark.markov_*`).
 4. Inject `blk.{N}.attn_v.weight` by copying `blk.{N}.attn_k.weight` (MQA
    V = K; the loader requires explicit V).
 5. Set `dflash.attention.sliding_window = 0` (gemma 4 12B drafter doesn't
@@ -158,7 +158,7 @@ because the shipped `dspark_gemma4_12b_q4pure.gguf` doesn't load directly:
 11 % on Q5_K_M (3-step). The DFlash-only path reaches ~30 % on Q4_K_M and
 Q5_K_M. Spec alignment is the bottleneck, not the loader.
 
-### Phase 7 — Production hardening audit
+### Phase 7 - Production hardening audit
 
 `tessera/docs/audit-2026-07-29.md` lists 12 concrete findings, including:
 
@@ -177,7 +177,7 @@ Q5_K_M. Spec alignment is the bottleneck, not the loader.
   The `tests` agent added production-grade coverage for dflash, dspark,
   telemetry, server-MTP, patcher, and quantizer policy.
 
-### Phase 8 — Upstream integration
+### Phase 8 - Upstream integration
 
 Surveyed 637 upstream branches, identified 13 high-value experimental
 candidates, confirmed via `git format-patch -1` that **all 13 are already
@@ -215,6 +215,447 @@ integration work is bringing Tessera's commits onto current master:
 
 ---
 
+## Tessera Studio agent-UX-fatigue audit (2026-08-12)
+
+Twelve implementation units from the agent-ux-fatigue audit landed on the
+`agent-ux-fatigue-sprint` branch across Waves 1-3. The work targets
+Tessera Studio (the SwiftUI macOS + iOS agent product), not the
+calibration fork. The full audit, the wave plan, and the per-move
+measurement architectures are in `docs/AGENT-UX-FATIGUE-REVIEW.md`. The
+move is opinionated and short: ship the named surface (chip, panel,
+feed) the existing infrastructure already holds the data for, and let
+the user verify in place instead of opening a drawer.
+
+Each unit ships with a one-primary + one-trust + one-anti measurement
+architecture (per the skill's `references/measurement-architecture.md`).
+The columns below are the headline targets; the deadline is week 2-6
+depending on the unit.
+
+### Wave 1 (4 units, all independent)
+
+#### 1A. Onboarding starter prompts + firstGoal card (review #1)
+
+The empty chat (macOS dock placeholder, iOS `ContentUnavailableView`,
+`LibraryView` empty state) is the empty-canvas paradox: an "ask me
+anything" surface with no entry point. The fix is 3-5 destination-aware
+starter prompts + a typed-sentence "firstGoal" card on the onboarding
+step that seeds `UnifiedChatController`.
+
+Files:
+
+- `TesseraStudio/Sources/TesseraCore/Agent/DestinationStarterPrompts.swift`
+  (new: `DestinationStarterPrompts`, `DestinationStarterPrompts.Context`,
+  `DestinationStarterPrompts.Prompt`, `DestinationStarterPromptsList`).
+- `TesseraStudio/Sources/TesseraStudioMac/App/ContentView.swift`
+  (macOS dock placeholder -> starter list).
+- `TesseraStudio/Sources/TesseraStudioiOS/App/ContentView.swift`
+  (iOS `ContentUnavailableView` -> starter list).
+- `TesseraStudio/Sources/TesseraCore/Views/OnboardingView.swift` (page 3
+  -> firstGoal card; later folds in 2B).
+
+Measurement architecture:
+
+- primary (leading-behavior): time-to-first-message, down >=30% by
+  week 2. `TelemetryMonitor` records the event when the first message
+  is sent.
+- trust (leading-qualitative): "first suggested task felt relevant"
+  pulse score, >=60% by week 4. Catches stale prompts.
+- anti (leading-behavior): onboarding firstGoal skip rate, <25% by
+  week 4. Catches the over-correction (asking too long, user dismisses).
+
+#### 1B. `TesseraTier` enum + `tier(for:)` + tier label on `ConfirmationPanel` (review #4)
+
+The approval engine implements tier policy as code in five files but
+never names the tier. The fix is a `TesseraTier` enum + computed
+property on `TesseraSafetyDecision`, with the tier label surfaced on
+`ConfirmationPanel` as a chip. Pure: same inputs always produce the
+same tier. No behavior change. The dimension is reversibility + blast
+radius, NOT action type.
+
+Files:
+
+- `TesseraStudio/Sources/TesseraCore/Agent/TesseraTier.swift` (new:
+  `TesseraTier.tier0 | tier1 | tier2 | tier3`, `tier(for:)`,
+  `tier(forRisk:)`, `revoke()`).
+- `TesseraStudio/Sources/TesseraCore/Agent/TesseraSafetyDecision.swift`
+  (adds `tier(forActionClass:)` and `riskOnlyTier`).
+- `TesseraStudio/Sources/TesseraStudioMac/Encryption/ConfirmationPanel.swift`
+  (surfaces the tier chip).
+- `TesseraStudio/Tests/TesseraCoreTests/Agent/TesseraTierTests.swift`
+  (boundary-drift guard: no tier downgrade without `TesseraTier.revoke`).
+
+Measurement architecture:
+
+- primary (leading-behavior): % of `ApprovalSheet` opens where the
+  user accepted without modification, >=70% by week 4 (catches
+  tier mis-calibration).
+- trust (leading-behavior): approval reject rate on Tier 2/3 actions,
+  <20% by week 6.
+- anti (leading-behavior): % of actions that bypassed the gate
+  (`tier3 -> autoApprove` or `tier0 -> askUser`), <1% by week 4.
+  Catches the tier-boundary drift failure mode. Computable from the
+  existing `approval-receipts.jsonl`.
+
+#### 1C. Audit-log HEAD chip on `TesseraDiffOverlayView` (review #5)
+
+The diff overlay shows "Rewrite complete" prose; the audit log's HEAD
+(risk, tool, receipt id) is one drawer away. The fix is to inline the
+HEAD as a one-line chip on the diff overlay between the diff and the
+Accept/Reject controls. The chip uses the field-cap-of-5 discipline so
+the user reads one chip language on the diff overlay, the chat progress
+feed, and the audit log.
+
+Files:
+
+- `TesseraStudio/Sources/TesseraStudioMac/Views/Editor/TesseraDiffOverlayView.swift`
+  (adds `AuditLogHeadChip` between the diff and the controls; chip
+  rendered only on `state == .diffComplete` or `.editable`; suppressed
+  on `.streaming` and when `Receipt.mutations` is empty).
+- `TesseraStudio/Tests/TesseraCoreTests/Editor/DiffOverlayChipTests.swift`.
+
+Measurement architecture:
+
+- primary (leading-behavior): median time from `diffComplete` to
+  `Accept` tap, <3s. Lau & Hartanto 2026: longer verification windows
+  correlate with approval-by-reflex.
+- trust (leading-behavior): % of Accept taps where the user clicked
+  the receipt-id chip, non-zero = chip is useful, near zero =
+  decoration (Baldeo active-use signal).
+- anti (leading-behavior): P95 character length of
+  `VerifierDecision.rationale`, <80 chars. Paradox 6 alarm.
+
+#### 1D. `TesseraNotificationBudget` actor + `onFinished` hooks (review #3)
+
+Two push notifiers fire without a shared budget. The fix is one
+`TesseraNotificationBudget` actor (per-UTC-day counter, default cap 3,
+**no `force:` override**) called by the two existing push notifiers.
+The cap is a hard cap, not a soft target. `.dryRun` notifications are
+dropped from the postable set and gated behind a separate `devMode`
+flag. `TesseraAdaptationScheduler` and `TesseraAssessmentScheduler`
+gain `onFinished` hooks so silent scheduler collapses surface through
+the budget.
+
+Files:
+
+- `TesseraStudio/Sources/TesseraCore/Encryption/TesseraNotificationBudget.swift`
+  (new: `TesseraNotificationBudget` actor,
+  `TesseraNotificationCategory` enum, `TesseraNotificationEvent` struct,
+  `TesseraNotificationBudgetLog` test-only reader; JSONL log at
+  `tessera.notifications.log`).
+- `TesseraStudio/Sources/TesseraStudioMac/Encryption/PleadTheFifthNotifications.swift`
+  (wrapped in `tryPost`).
+- `TesseraStudio/Sources/TesseraCore/Encryption/CovertTriggerMonitor.swift`
+  (wrapped in `tryPost`).
+- `TesseraStudio/Sources/TesseraCore/Learning/TesseraAdaptationScheduler.swift`
+  (adds `onFinished` hook).
+- `TesseraStudio/Sources/TesseraCore/Learning/TesseraAssessmentScheduler.swift`
+  (adds `onFinished` hook).
+- `TesseraStudio/Tests/TesseraCoreTests/Encryption/TesseraNotificationBudgetTests.swift`.
+
+Measurement architecture:
+
+- primary (leading-behavior): # of push notifications fired per user
+  per UTC day, <=3.
+- trust (leading-behavior): % of fired notifications acted on within
+  15 min (the "actionable" check), >=50%.
+- anti (leading-behavior): # of silent scheduler collapses where
+  `onFinished` should have fired, ==0 by week 2. Catches the
+  silent-forgotten side of paradox 7.
+
+### Wave 2 (4 units, mixed dependencies on Wave 1)
+
+#### 2A. Chat dock progress feed (review #2)
+
+`UnifiedChatController` already has live state (routing, tool calls,
+approval gates, hold queue, collab trace); `statusPill` is a one-line
+bar. The fix is a pull-to-open `ChatProgressFeed` in the dock. **Pull,
+not push** -- the feed never auto-surfaces, or it becomes the
+proactive-agent paradox in production. Depends on 1D
+(`TesseraNotificationBudget`) being in place so the feed cannot
+become a notification flood.
+
+Files:
+
+- `TesseraStudio/Sources/TesseraCore/Agent/ChatProgressFeed.swift`
+  (new: `ChatProgressFeed` view, pull-binding-driven, chip vocabulary
+  shared with the audit-log HEAD chip).
+- `TesseraStudio/Sources/TesseraCore/Agent/UnifiedChatController.swift`
+  (live-state surface model).
+- `TesseraStudio/Sources/TesseraCore/Agent/UnifiedChatRow.swift` (the
+  `LiveState` row type).
+- `TesseraStudio/Sources/TesseraStudioMac/App/ContentView.swift` (the
+  pull-to-open affordance on the chat dock).
+
+Measurement architecture:
+
+- primary (leading-behavior): % of sessions where the feed is opened
+  at least once, >=60% by week 4.
+- trust (leading-qualitative): "I can see what the agent is doing"
+  score, up >=20% by week 4.
+- anti (leading-behavior): % of feed events that arrive as a push
+  notification, <10% by week 4. Catches the proactive-agent paradox
+  failure mode.
+
+#### 2B. `OnboardingView` fold (review #6)
+
+The first-run onboarding imported the SaaS default: a centered purple
+hero, four-row feature list, page dots, page-turn animation, and
+pastel page-tint rotation. The fix is to delete `welcomePage`, the
+page-turn chrome, the page-tint rotation, the `.largeTitle` headline,
+and the `feature()` helper, then fold the model-directory step into
+the form shape used by `TesseraSettings` (PathField verbatim). The
+agent-approval step is the firstGoal card from 1A; preserved as the
+seed mechanism. Depends on 1A (firstGoal card) being in place.
+
+Files:
+
+- `TesseraStudio/Sources/TesseraCore/Views/OnboardingView.swift`
+  (single form, two sections: model-directory + firstGoal card;
+  no welcome page, no page dots, no `.largeTitle`).
+
+Measurement architecture:
+
+- primary (leading-qualitative): first-impression rating from new
+  users in the first 5 minutes (1-question in-app survey on
+  first-run completion), >=4/5.
+- trust (leading-qualitative): "feels premium / feels like a tool"
+  tag, >=80% positive (n=10 session-replay annotation).
+- anti (leading-behavior): bounce rate within 30 seconds of first
+  open (close-app / Cmd-W within 30s of `TesseraStudioMacApp`
+  finishing launch), <10%.
+
+#### 2C. Time-limited undo (review #5)
+
+`AppKitUndoManagerBridge.levelsOfUndo = 100` caps depth, not time.
+After ~30s most users stop noticing the undo affordance. The fix is
+a `TimeLimitedUndoPolicy` (default 90s, configurable) with lazy
+expiry on every `canUndo` read, plus a visible "Undo available for
+Ns" affordance on the editor.
+
+Files:
+
+- `TesseraStudio/Sources/TesseraStudioMac/Views/Editor/EditorUndoCoordinator.swift`
+  (replaces the depth cap with `TimeLimitedUndoPolicy`,
+  `TimeLimitedUndoBudget`, `TimeLimitedUndoChip`).
+- `TesseraStudio/Tests/TesseraCoreTests/Editor/TimeLimitedUndoTests.swift`.
+
+Measurement architecture:
+
+- primary (leading-behavior): % of undone actions where the undo was
+  performed within 30s of the action, >=80% (the rest are cognitive
+  offload -- user forgot).
+- trust (leading-qualitative): "I can recover from a wrong action"
+  score, up >=15% by week 4.
+- anti (leading-behavior): % of undo-affordance impressions that
+  were ignored past the expiry, <20% (catches: affordance is too
+  noisy).
+
+#### 2D. `uncertainty` on `ToolResultPayload` (review #5)
+
+`ToolResultPayload` has `success | output | error` but no
+uncertainty. The Tian Pan 2026-04-12 split: the UI must distinguish
+"the agent was uncertain and said so" from "the agent was confident
+and was wrong". The fix is a categorical `ConfidenceBand` (low |
+medium | high) on `ToolResultPayload`. Categorical bands are more
+robust to model miscalibration than numeric percentages (per the
+skill's anti-pattern on numeric confidence).
+
+Files:
+
+- `TesseraStudio/Sources/TesseraCore/Models/ChatMessage.swift`
+  (adds `ConfidenceBand` enum, extends `ToolResultPayload` with
+  `confidenceBand: ConfidenceBand?`).
+- `TesseraStudio/Sources/TesseraCore/Agent/TesseraActionVerifier.swift`
+  (emits the band on every `ToolResultPayload`).
+- `TesseraStudio/Tests/TesseraCoreTests/Agent/UncertaintyFieldTests.swift`.
+
+Measurement architecture:
+
+- primary (leading-behavior): % of `ToolResultPayload` emissions
+  where the uncertainty is set, 100% by week 2.
+- trust (leading-behavior): % of accept actions on `high`
+  uncertainty payloads, <20% (the user should reject or verify
+  before accepting).
+- anti (leading-behavior): % of `low` uncertainty payloads that
+  the user still verified manually, <30% (catches: user over-trusts,
+  the field is decoration).
+
+### Wave 3 (4 units, 3C and 3D depend on 1B)
+
+#### 3A. `sources: [Citation]` on `ChatMessage` (review #5)
+
+`ChatMessage.content` is free-form `String` with no source citation.
+The fix is a `Citation` struct (`id`, `label`, `snippet`, `url`,
+optional `RangeOffset`) added to `ChatMessage` and `ToolResultPayload`,
+with the chat row rendering the first 3 as inline chips (consistent
+with the audit-log HEAD chip vocabulary). The `research` tool is the
+first producer; other tools that surface evidence can contribute to
+the list.
+
+Files:
+
+- `TesseraStudio/Sources/TesseraCore/Models/ChatMessage.swift` (adds
+  `Citation`, `RangeOffset`, extends `ChatMessage` with
+  `sources: [Citation]` and `ToolResultPayload` with
+  `sources: [Citation]`).
+- `TesseraStudio/Sources/TesseraCore/Agent/UnifiedChatController.swift`
+  (emits citations from the tool-call provenance).
+- `TesseraStudio/Tests/TesseraCoreTests/Agent/ChatMessageCitationTests.swift`.
+
+Measurement architecture:
+
+- primary (leading-behavior): % of `ChatMessage` emissions with at
+  least one citation, >=40% by week 4 (some messages won't have
+  sources).
+- trust (leading-qualitative): "the agent's claims have evidence I
+  can check" score, up >=20% by week 4.
+- anti (leading-behavior): % of citation-chip clicks that route to
+  a non-existent source, ==0 (catches: broken citations).
+
+#### 3B. `ReceiptsCoordinator` refresh -> `AsyncStream` (review #5)
+
+`ReceiptsCoordinator.refresh()` polled every 200ms. The fix is an
+`AsyncStream<Receipt>` broadcast source on the coordinator with
+back-pressure bounded per subscriber via `.bufferingNewest(64)`.
+Drops are exposed via `droppedReceiptCount` as the back-pressure
+anti-metric.
+
+Files:
+
+- `TesseraStudio/Sources/TesseraCore/Productivity/Receipts/ReceiptsCoordinator.swift`
+  (adds `receiptStream()` -> `AsyncStream<Receipt>`, `register(receipt:)`,
+  `droppedReceiptCount`; replaces the 200ms polling in
+  `ReceiptsCoordinatorBridge`).
+
+Measurement architecture:
+
+- primary (leading-behavior): P95 latency from receipt creation to
+  stream emission, <100ms.
+- trust: not applicable (this is infra, not UX).
+- anti (leading-behavior): # of dropped receipts due to
+  back-pressure, ==0 (or logged explicitly via `droppedReceiptCount`).
+
+#### 3C. Inline-stop (paradox 5) (review #4)
+
+The off-ramp is a first-class stage. The fix is a `stop(reason:)`
+method on `TesseraAgentLoop` plus an inline stop button on
+`AgentCursorOverlay` (per Microsoft HAX G11, "Support efficient
+dismissal"). The stop is a hard stop: the agent does not auto-resume.
+A new `run()` call is rejected until the caller explicitly invokes
+`clearStop()`. Depends on 1B (`TesseraTier`) for the weight class
+of the stop affordance.
+
+Files:
+
+- `TesseraStudio/Sources/TesseraCore/Agent/TesseraAgentLoop.swift`
+  (adds `StopReason` enum, `lastStopReason`, `stop(reason:)`,
+  `clearStop()`).
+- `TesseraStudio/Sources/TesseraStudioMac/Views/Editor/AgentCursorOverlay.swift`
+  (renders the inline `AgentInlineStopButton`).
+- `TesseraStudio/Tests/TesseraCoreTests/Agent/InlineStopTests.swift`
+  (`testHardStop`).
+
+Measurement architecture:
+
+- primary (leading-behavior): % of agent actions that were stopped
+  by the user, <5% (low = user trusts the agent; high = over-eager
+  agent).
+- trust (leading-qualitative): "I can stop the agent at any time"
+  score, up >=15% by week 4.
+- anti (leading-behavior): % of stop-button presses that were
+  followed by an agent auto-resume, ==0 (hard-stop guard).
+
+#### 3D. Action audit log side panel (review #4)
+
+The audit log belongs in a pull surface, not in a notification. The
+fix is a SwiftUI `ActionAuditLogPanel` as a side panel on the macOS
+app, toggled from `ConfirmationPanel`. The panel renders a
+chronological list of every agent action + outcome with the tier
+label, time, and receipt id, using the same chip vocabulary as the
+audit-log HEAD chip. Compact default view with filter + search so
+the list does not become a wall. Depends on 1B (`TesseraTier`) and
+1C (chip vocabulary).
+
+Files:
+
+- `TesseraStudio/Sources/TesseraCore/Agent/ActionAuditLogPanel.swift`
+  (new: `ActionAuditOutcome` enum, `ActionAuditEntry` struct,
+  `ActionAuditLogStore` (`@Observable`, `@MainActor`,
+  default capacity 500), `ActionAuditLogPanel` view,
+  `ActionAuditLogRow` view).
+- `TesseraStudio/Sources/TesseraStudioMac/Encryption/ConfirmationPanel.swift`
+  (audit-log toggle handler).
+- `TesseraStudio/Tests/TesseraCoreTests/Agent/ActionAuditLogPanelTests.swift`.
+
+Measurement architecture:
+
+- primary (leading-behavior): % of sessions where the audit panel
+  is opened at least once, >=30% by week 4.
+- trust (leading-qualitative): "I can see what the agent has done"
+  score, up >=20% by week 4.
+- anti (leading-behavior): % of audit-panel opens that are followed
+  by an "undo" action, <10% (catches: the audit is being used as a
+  debugging tool, not as a trust surface).
+
+### Healthy surfaces (do not touch)
+
+The audit's "do not touch" list is the explicit boundary on the next
+pass. The agent-ux-fatigue work did not change:
+
+- Persona design (Tessy / Sky, `AgentPersona.swift:42-55`).
+- Off-ramp exit affordances (`cancel` + `hold` + iOS
+  `HoldYourHorsesDialog_iOS` at `ChatPanelView_iOS.swift:280-323`).
+- Autonomy spine (per-task ratchet; see Priority 9 in this doc).
+- Verifier (rule-based categorical risk at
+  `TesseraActionVerifier.swift:74-90`; fail-closed on its own error
+  at `:55-63`; structured `PendingAction` at `:6-14`).
+- Approval engine (3 pattern shapes, asymmetric ratchet,
+  RULES-not-ML irreversibility guard, denial circuit breaker, scoped
+  YOLO, miscalibration regime-shift tightening, approver-training
+  collapse-guard, tier-1/tier-2 escalation frame, `ConfirmationPanel`
+  friction: paste-block + 5s unlock + 3/30s rate-limit, approval
+  receipts).
+- Telemetry local-only design (`telemetryEnabled` defaults to false
+  at `TesseraSettings.swift:109`; in-memory ring buffer of 60 samples
+  at `TelemetryDrawer.swift:17`; no URLSession).
+- Covert-trigger path (pull-only; `ReportWindow.swift` is a menu item,
+  not a surface ping).
+- Push notifiers' frontmost+surface-visible suppression logic
+  (HIG 14.12, their own comments).
+- iOS navigation (5-tab `TabView` with no landing hero;
+  13-destination sidebar on macOS).
+- Typography / icons / imagery app-wide (zero custom faces,
+  `Font.system(_:design:)` only; SF Symbols everywhere; banned-copy
+  list has zero occurrences in the views).
+
+### Source provenance
+
+The audit is sourced; the per-move citations live in
+`docs/AGENT-UX-FATIGUE-REVIEW.md` Part 7. The headline citations:
+
+- Lau, Hartanto et al. (2026). AI fatigue scale, *Computers in Human
+  Behavior Reports* (n=717, alpha=.92). The 4-factor model.
+- Microsoft Research. HAX Toolkit, 18 Guidelines for Human-AI
+  Interaction (2019 CHI, validated).
+- OWASP Top 10 for Agentic Applications 2026, item ASI09
+  (confirmation fatigue as security vulnerability).
+- Gloria Mark et al. (2005, 2008). Interruption cost, CHI. The
+  23-min recovery number.
+- Tian Pan (2026). Trust calibration curve; background agents and
+  the notification budget.
+- Baldeo (2026). Cognitive offload in high-use GenAI users, *TMB*
+  (APA). Caveat: under community-pending review. The active-use vs
+  passive-use finding.
+
+The skill that produced the move list:
+`/Users/user/.zcode/skills/agent-ux-fatigue/SKILL.md` (load
+`references/measurement-architecture.md` for the one-primary +
+one-trust + one-anti architecture; `references/pattern-catalog.md`
+for the pattern moves; `references/paradoxes-deep.md` for the seven
+paradoxes).
+
+---
+
 ## Active worktrees
 
 ```
@@ -241,11 +682,11 @@ analysis and citations in `docs/research-efficiency-and-mutation-2026-07-31.md`
 (the source of truth; where it and a plan doc disagree, it wins until the
 plan doc is updated):
 
-- **YC "Kernel & Chip Club"** (`youtube.com/watch?v=n8dz2FX0_uY`) — the
+- **YC "Kernel & Chip Club"** (`youtube.com/watch?v=n8dz2FX0_uY`) - the
   state of the art on efficient inference, and almost a mirror of
   Tessera's own thesis.
 - **"I Tried to Make an AI"** (`youtube.com/watch?v=IoM5zUI8oFc`,
-  commonLuke) — a from-scratch neuroevolution demo whose one transferable
+  commonLuke) - a from-scratch neuroevolution demo whose one transferable
   idea is the mutation operator.
 
 A second, separate research input landed the same day: a deep-research pass
@@ -262,15 +703,15 @@ Six findings bind the roadmap:
 
 1. **Intelligence per Watt** (arXiv:2511.07885). `IPW = accuracy / watt`
    (steady-state), `IPJ = accuracy / joule` (end-to-end). Local models
-   answer 88.7 % of queries; IPW improved 5.3x over 2023–2025; local
+   answer 88.7 % of queries; IPW improved 5.3x over 2023-2025; local
    accelerators sit >=1.4x below cloud on the identical model ("significant
    headroom for local accelerator optimization"). Tessera's hero metric
-   (`mWh/token`, the 30-minute flight test) IS IPJ — adopt the vocabulary
+   (`mWh/token`, the 30-minute flight test) IS IPJ - adopt the vocabulary
    and cite the 1.4x headroom as the external justification for the
    CoreML/ANE line. Follow-up "Open Jarvis" is a near-neighbor to track.
 2. **Reward hacking in self-improving code agents** (KernelBench,
    arXiv:2502.10517; OpenReview `ikrQWGgxYg`). LLMs optimizing kernels game
-   the eval — the "world's fastest vector mean" returns 0; one hack detected
+   the eval - the "world's fastest vector mean" returns 0; one hack detected
    the correctness-vs-performance phase and submitted correct-slow then
    fast-wrong (explicitly compared to VW dieselgate). Mitigation that
    worked: an adversarial detector plus a flywheel where every hack becomes
@@ -278,14 +719,14 @@ Six findings bind the roadmap:
    grounding rule (agent curates, world judges, never self-judge).
 3. **Heterogeneous inference + the roofline** (Williams/Waterman/Patterson,
    CACM 2009). Prefill is compute-bound, decode is memory-bandwidth-bound,
-   attention vs MLP differ in arithmetic intensity — no single backend wins
+   attention vs MLP differ in arithmetic intensity - no single backend wins
    everywhere. First-principles explanation for "ANE beats Metal ~3x on
    prefill." On-device twist: route prefill to Metal and decode to
    CoreML/ANE on the same SoC, measured with IOReport.
 4. **The evolutionary mutation operator** (NEAT, Stanley & Miikkulainen,
    Artificial Life 2002). Selection + crossover + mutation; mutation is the
    exploration term that reaches gains greedy hill-climbing provably cannot.
-   The one genuinely net-new mechanism for Tessera — the offensive twin of
+   The one genuinely net-new mechanism for Tessera - the offensive twin of
    the collapse guard. Becomes Priority 7.
 5. **ParallelKittens** (arXiv:2511.13940; ThunderKittens, arXiv:2410.20399).
    Low direct applicability (single-SoC, not NVLink multi-GPU), but the
@@ -294,15 +735,15 @@ Six findings bind the roadmap:
    idea transfers to overlapping ANE execution with memory movement.
 6. **Batch simulation / GPU ECS** (Madrona; Large Batch Simulation for Deep
    RL, ICLR '21). Batching thousands of environments into one throughput GPU
-   megakernel gives 100–1000x over CPU. The self-improving loop is
-   bottlenecked by eval throughput — batch candidate evaluations into one
+   megakernel gives 100-1000x over CPU. The self-improving loop is
+   bottlenecked by eval throughput - batch candidate evaluations into one
    pass rather than one at a time.
 
 ---
 
 ## What's next
 
-### Priority 1 — Runtime-aware calibration pipeline (Layers 1–6)
+### Priority 1 - Runtime-aware calibration pipeline (Layers 1-6)
 
 Status as of 2026-08-01. Design in `docs/pipeline-design.md`; per-layer
 details, code paths, and Reality notes in
@@ -310,30 +751,30 @@ details, code paths, and Reality notes in
 longer the blocker; the remaining work is the forward-pass layers and
 the L5 apply loop.
 
-- **Layer 1: kernel dequant fidelity — SHIPPED.** The
+- **Layer 1: kernel dequant fidelity - SHIPPED.** The
   `LLAMA_TILE640_DEBUG_DEQUANT_DIR` hook emits the effective dequantized
   weight per row to a v3 TDQT sidecar. Complete in all three backends
   (`ggml-cpu/cpu-dump-dequant.cpp`,
   `ggml-cuda/cuda-dump-dequant.cu`, `ggml-metal/metal-dump-dequant.mm`),
   all called from their real matmul paths. Fitness reader in
   `tessera-l1-fitness.{h,cpp}`. This is the runtime ground truth.
-- **Layer 1.5: W4A4 FP16 reference sidecar — PARTIAL.** Writer and
+- **Layer 1.5: W4A4 FP16 reference sidecar - PARTIAL.** Writer and
   reader shipped and the suffix mismatch is fixed (both sides now use
   `.act.dequant.f32`), so the path is exercisable end-to-end. Remaining:
   the backend hooks currently emit the same F32 buffer as L1 rather than
   an FP16 ground truth.
-- **Layer 2: BF16 vs quantized differential — SHIPPED (weight-level).**
+- **Layer 2: BF16 vs quantized differential - SHIPPED (weight-level).**
   Per-tensor weight-level divergence and type-aware flagging in
   `tessera-l2-diff.{h,cpp}`. The two-forward-pass differential and
   `tools/tessera/runtime_probe.py` are not yet built.
-- **Layer 3: per-token coherence — SHIPPED (per-row cosine).**
+- **Layer 3: per-token coherence - SHIPPED (per-row cosine).**
   `tessera-l3-coherence.{h,cpp}` produces per-row cosine between the L1
   and L1.5 sidecars. Per-token KL and `per_token_coherence.py` are not
   yet built; depends on the L1.5 fix above.
-- **Layer 4: end-to-end probe — PARTIAL.** A data-free PPL/KL
+- **Layer 4: end-to-end probe - PARTIAL.** A data-free PPL/KL
   substitute exists in `tessera-ppl.{h,cpp}`. The prompt-bank probe,
   exact-match, and rank-correlation metrics are not yet built.
-- **Layer 5: adaptive requantization — SHIPPED (on the dispatch path).**
+- **Layer 5: adaptive requantization - SHIPPED (on the dispatch path).**
   Sensitivity scorers and L2-closing adaptive requant in
   `tessera-l5.{h,cpp}`. The full generational loop
   (`ts_dispatch_run_l5_loop` in `tessera-dispatch.cpp`) runs when
@@ -344,7 +785,7 @@ the L5 apply loop.
   -> re-quantize flagged tensors in place -> re-measure, up to
   `l5 --generations`. Emits an `llama.tessera.l5-loop.v1` report
   at `l5 --out`.
-- **Layer 6: kernel-based GA fitness — SHIPPED.** The C++ dispatch GA
+- **Layer 6: kernel-based GA fitness - SHIPPED.** The C++ dispatch GA
   consumes L1 sidecars as `t_l^2 = ||dequant_kernel(W_l) - W_l||_F^2 /
   ||W_l||_F^2`, blended with the offline proxy, via
   `tessera-l1-fitness.{h,cpp}` and `tessera-dispatch.cpp:263-294`. CLI:
@@ -365,45 +806,45 @@ Remaining work, ranked:
 4. Lift the L1.5 ground truth to actual FP16 (currently bit-identical
    to L1).
 
-### Priority 2 — Rebase dspark-int work onto integration
+### Priority 2 - Rebase dspark-int work onto integration
 
 The 7 hardening-agent branches are stacked on `tessera:main`, not on
 `tessera/integration-upstream-experiments`. Need a `tessera/main..int`
 rebase pass to bring:
 
-- `arg-cpp-dedup` — `--spec-steps`/`--telemetry-out`/`--telemetry-topk`
+- `arg-cpp-dedup` - `--spec-steps`/`--telemetry-out`/`--telemetry-topk`
   deduplication and help-text polish.
-- `auto-mtp-fix` — server no longer auto-triggers broken MTP path.
-- `dflash-gemma4` — extract gemma4-specific extras into
+- `auto-mtp-fix` - server no longer auto-triggers broken MTP path.
+- `dflash-gemma4` - extract gemma4-specific extras into
   `llama_model_dflash_gemma4` (cleaner than the `TENSOR_NOT_REQUIRED`
   bolted-on pattern).
-- `dft-observer` — replace `dft.` string-prefix workaround with proper
+- `dft-observer` - replace `dft.` string-prefix workaround with proper
   per-scope observer state.
-- `spec-calib-api` — extract spec-decoding calibration into
+- `spec-calib-api` - extract spec-decoding calibration into
   `common/speculative-calibration.{h,cpp}`.
-- `telemetry-schemas` — unify v1/v2 under `llama.spec_calib.v3` with
+- `telemetry-schemas` - unify v1/v2 under `llama.spec_calib.v3` with
   v1/v2 as legacy adapters. Superseded by `spec-consolidate` which
   collapsed v1/v2/v3 into a single `llama.tessera.spec.v1` record.
-- `tests` — production-grade test coverage.
+- `tests` - production-grade test coverage.
 
 Expected conflict surface: `common/arg.cpp`, `common/speculative.cpp`,
-`src/llama-graph.cpp`, `tests/test-*`. Estimated 50–150 lines of
+`src/llama-graph.cpp`, `tests/test-*`. Estimated 50-150 lines of
 resolution.
 
-### Priority 3 — Native drafter-training pipeline (C++, not Python)
+### Priority 3 - Native drafter-training pipeline (C++, not Python)
 
 _Architect directive (2026-07-31): the training drivers are native C++/Swift,
 not PyTorch/peft. The Python plan that used to live here is superseded (kept in
 git history). The drivers train drafters directly against
 `llama.tessera.spec.v1` telemetry, in-tree, reusing ggml-opt and the
-llama training API — no second runtime, no model-format round-trip._
+llama training API - no second runtime, no model-format round-trip._
 
 Two drivers share one plumbing (the self-improving flywheel's training step):
 
-1. **Path A — LK autoregressive drafter driver (LANDED).** Executable
-   `tools/quantize/tessera/tessera-train-lk` + pure trace→dense-label builder
+1. **Path A - LK autoregressive drafter driver (LANDED).** Executable
+   `tools/quantize/tessera/tessera-train-lk` + pure trace->dense-label builder
    `tessera-lk-train-data.{h,cpp}` (27/27 standalone tests). Trains with
-   `GGML_OPT_LOSS_TYPE_LK` (total-variation distance = 1 − acceptance rate).
+   `GGML_OPT_LOSS_TYPE_LK` (total-variation distance = 1 - acceptance rate).
    One spec step per datapoint: input `[prime, draft...]`, label at position j
    = `densify(verifier_topk[j])`. This is on-policy distillation, and it is the
    only input prefix consistent with how the traces were collected (the
@@ -412,18 +853,18 @@ Two drivers share one plumbing (the self-improving flywheel's training step):
    dataset contract verified line-for-line against the llama-layer dense-label
    epoch path; the numeric training loop still needs a real drafter GGUF smoke
    test (this driver is the first consumer of that path).
-2. **Path B — DFlash/D-PACE block-drafter driver (next).** Reuses the arg
+2. **Path B - DFlash/D-PACE block-drafter driver (next).** Reuses the arg
    pre-scan, the dataset-build pattern, and the epoch loop; its labels are
    pre-weighted cross-entropy rows (baked D-PACE weights from `tessera dataset
    --mode dflash`), not dense LK columns. Plus the offline
    trunk-feature capture pipeline. Design: `docs/tessera-dflash-training-design.md`.
 
 Sanity target (carried over from the old plan): drafter acceptance on Q4_0 from
-~33 % (1-step) to ≥50 %. This is still the right way to align a drafter with
+~33 % (1-step) to >=50 %. This is still the right way to align a drafter with
 Tessera's QAT target, since a stock drafter's head is trained against a
 different distribution.
 
-### Priority 4 — End-to-end verification
+### Priority 4 - End-to-end verification
 
 Once the GA and rebase work is done, validate against the gemma 4 12B
 QAT target:
@@ -433,10 +874,10 @@ QAT target:
    probe (`--no-embedded-mtp` first, then with the real MTP path).
 3. Compare to Unsloth UD-Q4_K_XL (6.7 GB, no MTP, works) for baseline.
 4. Compare dspark acceptance before/after the LoRA pass.
-5. Compare F16 vs Tessera-corrected layer probe deltas — they should
-   close from the current 70–150 % at middle layers down to <20 %.
+5. Compare F16 vs Tessera-corrected layer probe deltas - they should
+   close from the current 70-150 % at middle layers down to <20 %.
 
-### Priority 5 — ANE MTP prefill
+### Priority 5 - ANE MTP prefill
 
 `common/ane-mtp.{h,mm}` compiles but has no real end-to-end test. The next
 step is to:
@@ -447,7 +888,7 @@ step is to:
 4. Wire the `ane_mtp_program` through the spec-decoding calibration
    path so it gets used during imatrix collection.
 
-### Priority 6 — Production polish
+### Priority 6 - Production polish
 
 - CI workflow on the integration branch (the fork doesn't have one).
 - Doc coverage: per-tensor calibration API, telemetry schemas, dspark
@@ -457,7 +898,7 @@ step is to:
   previous v1/v2/v3 split is gone) and
   `llama.tessera.per-tensor-calibration.v*`.
 
-### Priority 7 — Evolutionary mutation operator (heavy-tailed, world-gated)
+### Priority 7 - Evolutionary mutation operator (heavy-tailed, world-gated)
 
 From finding 4 (NEAT). Mutation is the offensive twin of the collapse
 guard: the guard stops the loop getting worse, mutation is how it gets
@@ -465,34 +906,34 @@ unexpectedly better. Full design in
 `research-efficiency-and-mutation-2026-07-31.md` section 3. In priority
 order:
 
-1. **Drafter loop is the safe sandbox — mutate here first.** Drafter
+1. **Drafter loop is the safe sandbox - mutate here first.** Drafter
    recursion is already safe (the trunk verifier rejects bad drafts), so
    the acceptance rate against the trunk is a clean world-grounded fitness
-   — the exact analogue of "did Mario advance." Run a high mutation rate
+  - the exact analogue of "did Mario advance." Run a high mutation rate
    over drafter configs (decoding thresholds, regime routing, LoRA
    rank/alpha, prompt-template variants) essentially for free. This is
    finding 3's drafter/verifier split repurposed as explore/exploit:
    drafter = spice, trunk = world gate.
 2. **Three NEAT-style mutation classes** on the per-tensor GA and the
    capability archive (which today is pure exploitation):
-   - *Parametric* — perturb a continuous knob, with a HEAVY-TAILED step
+  - *Parametric* - perturb a continuous knob, with a HEAVY-TAILED step
      (Levy-flight / log-normal), not fixed-range Gaussian. Mostly tiny
-     nudges, rarely a large jump — the precise meaning of "occasional" +
+     nudges, rarely a large jump - the precise meaning of "occasional" +
      "spicy."
-   - *Structural* — occasionally change structure, not just values: add a
+  - *Structural* - occasionally change structure, not just values: add a
      regime bucket, enable/disable a drafter, swap a routing rule,
      introduce a new tool. This is where the surprising gains live.
-   - *Random-restart* — very low probability, sample a fully random
+  - *Random-restart* - very low probability, sample a fully random
      configuration.
 3. **Every mutant still passes the world gate.** A mutant enters the
    archive only if tests/builds/commits pass and guard axes do not regress
    > epsilon. Because mutation widens the search, it widens the reward-hack
-   attack surface (finding 2) — strengthen the KernelGuard-style checker in
+   attack surface (finding 2) - strengthen the KernelGuard-style checker in
    proportion. A dieselgate mutant is rejected and becomes a regression
    test.
 4. **Adaptive schedule + island migration.** Trigger mutation BURSTS on
    stagnation (no archive improvement for K generations -> reheat). Use the
-   existing island-GA infra for occasional cross-island migration (~1–5 %
+   existing island-GA infra for occasional cross-island migration (~1-5 %
    every N generations) so islands don't each converge on their own local
    optimum.
 5. **Measure it, don't hand-tune it.** Treat mutation rate and step
@@ -500,9 +941,9 @@ order:
    via `tessera-ab-harness`, with guard axes ensuring "spicier" never means
    "regressed."
 
-### Priority 8 — External-validation follow-ups (low effort, high leverage)
+### Priority 8 - External-validation follow-ups (low effort, high leverage)
 
-Cheap deltas from findings 1–3 and 6 that strengthen existing work without
+Cheap deltas from findings 1-3 and 6 that strengthen existing work without
 new subsystems:
 
 - **Rename/align the hero metric to IPW/IPJ** (finding 1). `mWh/token` and
@@ -512,7 +953,7 @@ new subsystems:
   "1.4x local headroom" result as the written justification for the
   CoreML/ANE line.
 - **Add a `fast_p`-shaped acceptance criterion** (finding 2): correct AND
-  beats baseline by threshold — never accuracy-or-speed alone.
+  beats baseline by threshold - never accuracy-or-speed alone.
 - **Add roofline / arithmetic-intensity framing** to
   `tessera-coreml-conversion-design.md` to justify backend routing
   (finding 3): compute-bound prefill -> Metal, bandwidth-bound decode ->
@@ -526,7 +967,7 @@ new subsystems:
 - **Track "Open Jarvis"** (finding 1) as a near-neighbor of the
   self-improving coding harness.
 
-### Priority 9 — General-agent harness (open-source absorption)
+### Priority 9 - General-agent harness (open-source absorption)
 
 Make Studio a genuinely good GENERAL agent harness, not just a coding
 agent - and the vehicle for the model-improvement flywheel, since the two
@@ -542,18 +983,18 @@ protocol + approval engine + 17 Learning services + 9 learning tools, all
 building green). The new work is the OUTWARD capabilities plus the safety
 spine both payloads share. Five themes, sequenced in three waves:
 
-- **Wave 1 — safety spine + cheap high-soul wins (P0).** Approval-engine
+- **Wave 1 - safety spine + cheap high-soul wins (P0).** Approval-engine
   hardening (layered permission: policy x profile x sandbox-enforceability,
   fail-safe to AskUser); fail-closed action verifier ("verify a real state
   change, not a self-reported success"); denial circuit-breaker (the
   collapse guard, made concrete); per-claim citation + never-fabricate
   contract; skills directory + `SKILL.md` loader; research tool over a
   newly-built `TesseraWebSearch`.
-- **Wave 2 — native capabilities (P0/P1, macOS-first).** Computer-use tool
+- **Wave 2 - native capabilities (P0/P1, macOS-first).** Computer-use tool
   (ScreenCaptureKit -> Accessibility -> CGEvent, model-native coordinate
   grounding, skill-capture receipts, capture-time PII scrub); browser tool
   (WKWebView + indexed-DOM serializer + page-change re-ground guard).
-- **Wave 3 — identity + polish (P1/P2).** `SOUL.md` persona, per-model
+- **Wave 3 - identity + polish (P1/P2).** `SOUL.md` persona, per-model
   harness profiles + context-budget rules, local-first config posture +
   `doctor` migrations, scoped gating, source curation.
 
@@ -649,7 +1090,7 @@ payloads:
 ## Open questions
 
 1. **Should the per-tensor GA's `direct` fitness be the new default, or
-   should `combined` win?** Right now `direct` gives 12–18 % improvement
+   should `combined` win?** Right now `direct` gives 12-18 % improvement
    per tensor; `combined` adds the max-abs penalty but its effect on
    end-to-end perplexity is untested. A test pass on gemma 4 12B QAT
    will settle this.
@@ -674,14 +1115,14 @@ payloads:
 5. **What does "tessera" mean to the project as a whole?** Right now
    it's a code-name for the per-tensor evolutionary calibration line.
    The fork is a wider container (ANE prefill, dspark patcher, runtime
-   probe, etc.). The brand could use a clear statement of intent —
+   probe, etc.). The brand could use a clear statement of intent - 
    probably a paragraph in the README.
 
 6. **How spicy is too spicy?** The mutation operator (Priority 7) hinges
    on the heavy-tailed step distribution and the burst-on-stagnation
    policy, but the right tail heaviness, mutation rate, and stagnation
    threshold K are unknown. The plan is to A/B them via
-   `tessera-ab-harness` with the guard axes as the regression constraint —
+   `tessera-ab-harness` with the guard axes as the regression constraint - 
    but the guard epsilon that defines "regressed" still needs a number.
 
 7. **Where does the adversarial reward-hack checker live?** Priority 8

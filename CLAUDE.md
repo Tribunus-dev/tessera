@@ -1,1 +1,1 @@
-IMPORTANT: Ensure you’ve thoroughly reviewed the [AGENTS.md](AGENTS.md) file before beginning any work.
+IMPORTANT: Ensure you've thoroughly reviewed the [AGENTS.md](AGENTS.md) file before beginning any work. For the 2026-08-12 agent-ux-fatigue audit of Tessera Studio (the new agent types, the measurement rules, and the shipped Wave 1-3 units), also read [AGENTS.md - Tessera Studio agent surface](AGENTS.md) and [docs/AGENT-UX-FATIGUE-REVIEW.md](docs/AGENT-UX-FATIGUE-REVIEW.md).
