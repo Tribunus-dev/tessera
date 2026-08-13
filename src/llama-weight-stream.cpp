@@ -96,17 +96,30 @@ size_t llama_weight_stream_layer_bytes(const llama_weight_stream_t * s, int32_t 
     }
     return total;
 }
-llama_weight_stream_prefetch_t * llama_weight_stream_prefetch_async(
-        llama_weight_stream_t * s, int32_t l, void * d, size_t n) {
-    if (!s || !s->inner || !d) return nullptr;
+llama_weight_stream_prefetch_t * llama_weight_stream_prefetch_async_plan(
+        llama_weight_stream_t * s, int32_t l, void * dst_base,
+        const llama_weight_stream_fill_entry * entries, size_t n_entries) {
+    if (!s || !s->inner || !dst_base || !entries || n_entries == 0) return nullptr;
     auto * pre = new llama_weight_stream_prefetch_t();
-    // Capture s->inner + layer + dst + size. The inner stream is
-    // thread-safe for concurrent reads (mmap + map only reads the
-    // header map). The sync path holds no lock; we rely on the
-    // fact that stream_layer only reads the mmap.
+    // Capture the plan by pointer: the pool's layout outlives the pool, and
+    // every prefetch is waited or freed (both block) before pool teardown.
+    // The inner stream is thread-safe for concurrent reads (mmap + map only
+    // reads the header map).
     ane_weight_stream_t * inner = s->inner;
-    pre->fut = std::async(std::launch::async, [inner, l, d, n]() -> int64_t {
-        return ane_weight_stream_layer(inner, l, d, n);
+    pre->fut = std::async(std::launch::async,
+            [inner, l, dst_base, entries, n_entries]() -> int64_t {
+        int64_t total = 0;
+        for (size_t i = 0; i < n_entries; ++i) {
+            const auto & e = entries[i];
+            const int64_t wrote = ane_weight_stream_block_tensor(
+                    inner, l, e.stream_idx,
+                    (uint8_t *) dst_base + e.dst_offset, e.size);
+            if (wrote < 0 || (size_t) wrote != e.size) {
+                return -1;
+            }
+            total += wrote;
+        }
+        return total;
     });
     return pre;
 }
@@ -150,7 +163,7 @@ int64_t llama_weight_stream_block_tensor(llama_weight_stream_t *, int32_t, uint3
 int64_t llama_weight_stream_expert_slice(llama_weight_stream_t *, int32_t, uint32_t, int32_t, void *, size_t) { return -1; }
 size_t llama_weight_stream_file_size(const llama_weight_stream_t *) { return 0; }
 size_t llama_weight_stream_layer_bytes(const llama_weight_stream_t *, int32_t) { return 0; }
-llama_weight_stream_prefetch_t * llama_weight_stream_prefetch_async(llama_weight_stream_t *, int32_t, void *, size_t) { return nullptr; }
+llama_weight_stream_prefetch_t * llama_weight_stream_prefetch_async_plan(llama_weight_stream_t *, int32_t, void *, const llama_weight_stream_fill_entry *, size_t) { return nullptr; }
 int64_t llama_weight_stream_prefetch_wait(llama_weight_stream_prefetch_t * p) { delete p; return -1; }
 void    llama_weight_stream_prefetch_free(llama_weight_stream_prefetch_t * p) { delete p; }
 

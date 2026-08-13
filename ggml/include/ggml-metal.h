@@ -98,6 +98,17 @@ GGML_BACKEND_API void ggml_mtl_shared_event_wait(ggml_mtl_shared_event_t event, 
 // false otherwise.
 GGML_BACKEND_API bool ggml_mtl_shared_event_try_wait(ggml_mtl_shared_event_t event, uint64_t value);
 
+// Advance the event's epoch base by `span`. Every wait/signal value passed
+// to this API is offset by the base, so callers keep small per-graph values
+// while the raw MTLSharedEvent (which is monotonic and never resets) keeps
+// increasing. MUST only be called at a fully-drained point -- no in-flight
+// command buffers signaling this event and no blocked waiters -- or a
+// straggler wait can be stranded below the new base. The paced streamed
+// compute calls it at its drained tail; see docs/weight-streaming.md 5d.
+// Returns the new base.
+GGML_BACKEND_API uint64_t ggml_mtl_shared_event_advance_epoch(
+        ggml_mtl_shared_event_t event, uint64_t span);
+
 // Read the current signaled value (any thread).
 GGML_BACKEND_API uint64_t ggml_mtl_shared_event_get_value(ggml_mtl_shared_event_t event);
 
@@ -151,13 +162,15 @@ GGML_BACKEND_API void ggml_mtl_shared_event_encode_signal(
 // MODULE_LIBRARY, which CMake will not let another target link, so
 // callers outside ggml-metal (notably `llama`) go through these
 // forwarders in the shared library instead. Each resolves its
-// ggml_metal_device_stream_* counterpart on first call and is a no-op
-// when no Metal backend is present.
+// ggml_metal_device_stream_* counterpart on first call. Returns true when
+// the target resolved and was called; false means the Metal backend is not
+// loaded and NOTHING was attached -- callers must treat false as "weight
+// streaming pacing is off" and say so in their logs.
 //
 // Function-pointer arguments are `void *` so this header stays free of
 // the backend's private callback typedefs; callers cast their own
 // typed function pointers at the call site.
-GGML_BACKEND_API void ggml_mtl_stream_set_pool(
+GGML_BACKEND_API bool ggml_mtl_stream_set_pool(
         void * dev,
         void * pool,
         void * ensure_fn,
@@ -165,13 +178,18 @@ GGML_BACKEND_API void ggml_mtl_stream_set_pool(
         void * ensure_experts_fn,
         void * poke_experts_fn);
 
-GGML_BACKEND_API void ggml_mtl_stream_set_prefetch_fns(
+GGML_BACKEND_API bool ggml_mtl_stream_set_prefetch_fns(
         void * dev,
         void * prefetch_async_fn,
         void * prefetch_wait_fn,
         void * prefetch_cancel_fn);
 
-GGML_BACKEND_API void ggml_mtl_stream_set_fence(void * dev, void * shared_event);
+GGML_BACKEND_API bool ggml_mtl_stream_set_fence(void * dev, void * shared_event);
+
+// Register the pool's epoch-boundary callback (called by the paced streamed
+// tail once per graph, at its drained point). Required for correctness, not
+// an optimization -- see ggml_mtl_shared_event_advance_epoch.
+GGML_BACKEND_API bool ggml_mtl_stream_set_graph_end(void * dev, void * graph_end_fn);
 
 #ifdef __cplusplus
 }

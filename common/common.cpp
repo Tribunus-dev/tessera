@@ -1777,6 +1777,26 @@ struct llama_model_params common_model_params_to_llama(common_params & params) {
                 common_weight_stream_install_ffn_overrides(
                         params.tensor_buft_overrides, ffn_buft);
                 GGML_ASSERT(params.tensor_buft_overrides.back().pattern == nullptr);
+                // The pool requires a non-mapped load. With mmap, Metal wraps
+                // the mapped file range for the non-FFN tensors -- and because
+                // FFN and non-FFN tensors interleave through the file, that
+                // wrap spans the WHOLE model (measured: 22.7 GiB wrapped, a
+                // 27.7 GiB Metal working set against a 12.1 GiB limit on M1,
+                // command-buffer OOM at compute). Non-mapped load allocates
+                // only the non-FFN tensors (~6.5 GiB for the 12B trunk) and
+                // the pool streams the rest per layer. DIRECT_IO also avoids
+                // the wrap and is left alone. See docs/weight-streaming.md.
+                if (params.load_mode == LLAMA_LOAD_MODE_MMAP ||
+                    params.load_mode == LLAMA_LOAD_MODE_MLOCK) {
+                    LOG_INF("%s: weight pool engaged -- overriding load_mode %s -> none "
+                            "(mapped load would wrap the full model into the Metal working set)\n",
+                            __func__, llama_load_mode_name(params.load_mode));
+                    params.load_mode  = LLAMA_LOAD_MODE_NONE;
+                    // mparams.load_mode was copied from params above, before
+                    // this block runs -- set it too or the override is a dead
+                    // store for this very load.
+                    mparams.load_mode = LLAMA_LOAD_MODE_NONE;
+                }
             }
         }
     }

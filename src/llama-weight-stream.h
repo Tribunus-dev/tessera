@@ -71,9 +71,24 @@ size_t   llama_weight_stream_file_size(const llama_weight_stream_t * stream);
 // wrappers in llama-weight-pool.h (prefetch_async/prefetch_wait/prefetch_cancel)
 // are the recommended entry points: they add the GPU-fence guard, the slot
 // accounting publish, and the host-claim coordination with the fill thread.
-llama_weight_stream_prefetch_t * llama_weight_stream_prefetch_async(
-        llama_weight_stream_t * stream, int32_t layer_idx,
-        void * dst, size_t dst_size);
+// One entry of a fill plan: stream the block tensor at `stream_idx` (the
+// streamer's name-sorted index within the layer) to dst_base + dst_offset.
+// The POOL owns the layout; the streamer must never assume a whole-layer
+// write -- the pool's slots hold the FFN subset at subset offsets, and the
+// whole-layer form of this API is what shipped broken (see
+// docs/weight-streaming.md section 5d).
+struct llama_weight_stream_fill_entry {
+    uint32_t stream_idx;
+    size_t   dst_offset;
+    size_t   size;
+};
+
+// Async prefetch of layer `l` per the fill plan. The entries array must
+// outlive the prefetch (the pool passes its layout, which lives as long as
+// the pool). Returns a handle for prefetch_wait/free, or nullptr.
+llama_weight_stream_prefetch_t * llama_weight_stream_prefetch_async_plan(
+        llama_weight_stream_t * s, int32_t l, void * dst_base,
+        const struct llama_weight_stream_fill_entry * entries, size_t n_entries);
 int64_t  llama_weight_stream_prefetch_wait(llama_weight_stream_prefetch_t * prefetch);
 // Cancel-safe: blocks until the background memcpy completes so it does not
 // outlive its dst buffer, then frees the handle. The memcpy is not preempted

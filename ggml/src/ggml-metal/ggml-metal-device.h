@@ -325,6 +325,11 @@ void *  ggml_metal_device_stream_get_fence(ggml_metal_device_t dev);
 // poke_fn (Phase 2) non-blockingly asks the fill thread to prefetch the next
 // layer while the GPU computes the current one.
 typedef int  (*ggml_metal_stream_ensure_fn)(void * pool, int32_t layer);
+// Epoch boundary at the paced streamed tail (fully drained). The pool
+// invalidates its slots and advances the fence epoch here; skipping it
+// leaves the monotonic MTLSharedEvent pre-satisfying every guard after the
+// first graph (torn refills, garbage output).
+typedef void (*ggml_metal_stream_graph_end_fn)(void * pool);
 typedef void (*ggml_metal_stream_poke_fn) (void * pool, int32_t layer);
 // MoE: sparse-fill expert slices for a 3D weight tensor.
 typedef int  (*ggml_metal_stream_ensure_experts_fn)(void * pool, int32_t layer,
@@ -350,6 +355,9 @@ void   ggml_metal_device_stream_set_pool(ggml_metal_device_t dev,
                                          ggml_metal_stream_poke_fn  poke_fn,
                                          ggml_metal_stream_ensure_experts_fn ensure_experts_fn,
                                          ggml_metal_stream_poke_experts_fn  poke_experts_fn);
+void   ggml_metal_device_stream_set_graph_end_fn(ggml_metal_device_t dev,
+                                                 ggml_metal_stream_graph_end_fn fn);
+ggml_metal_stream_graph_end_fn ggml_metal_device_stream_get_graph_end_fn(const ggml_metal_device_t dev);
 void   ggml_metal_device_stream_set_prefetch_fns(ggml_metal_device_t dev,
                                                  ggml_metal_stream_prefetch_async_fn  prefetch_async_fn,
                                                  ggml_metal_stream_prefetch_wait_fn   prefetch_wait_fn,

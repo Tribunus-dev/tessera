@@ -41,6 +41,24 @@ struct ggml_mtl_shared_event {
     // only cache it here as a hint for the try_wait fast path. The
     // authoritative value lives in the underlying MTLSharedEvent.
     std::atomic<uint64_t> cached_value;
+    // Epoch base added to every caller-supplied wait/signal value.
+    //
+    // MTLSharedEvent is MONOTONIC: its signaledValue only ratchets up.
+    // The paced weight-streaming path signals small per-graph values
+    // (layer + 1), so after the first graph the raw event sits at
+    // ~n_layer forever and every later small-valued wait -- the pool's
+    // CPU refill guards AND the encoder's GPU-side slot-reuse waits --
+    // is pre-satisfied instantly. Refills then overwrite IOSurface
+    // slots the GPU is still reading: the model stays mechanically
+    // "working" while producing garbage. This happened; see
+    // docs/weight-streaming.md section 5d.
+    //
+    // The fix: callers keep their per-graph values, and the streamed
+    // tail advances this base past everything signaled once the graph
+    // is fully drained (ggml_mtl_shared_event_advance_epoch). Values
+    // stay monotonically increasing on the raw event, so nothing is
+    // ever reset backwards and no in-flight wait can be stranded.
+    std::atomic<uint64_t> epoch_base;
 };
 
 GGML_BACKEND_API ggml_mtl_shared_event_t ggml_mtl_shared_event_new(void) {
@@ -64,6 +82,7 @@ GGML_BACKEND_API ggml_mtl_shared_event_t ggml_mtl_shared_event_new(void) {
     auto * wrapper = new ggml_mtl_shared_event;
     wrapper->mtl_event = event;
     wrapper->cached_value.store(0);
+    wrapper->epoch_base.store(0);
     return wrapper;
 }
 
@@ -78,7 +97,21 @@ GGML_BACKEND_API void ggml_mtl_shared_event_free(ggml_mtl_shared_event_t event) 
     delete event;
 }
 
+GGML_BACKEND_API uint64_t ggml_mtl_shared_event_advance_epoch(
+        ggml_mtl_shared_event_t event, uint64_t span) {
+    if (!event) {
+        return 0;
+    }
+    // Called only at a fully-drained point (the streamed graph tail):
+    // every prior signal has landed and no waiter is blocked, so jumping
+    // the base cannot strand anyone. `span` must exceed the largest
+    // per-graph value the caller will signal (n_layer + 2 does).
+    const uint64_t nb = event->epoch_base.fetch_add(span, std::memory_order_acq_rel) + span;
+    return nb;
+}
+
 GGML_BACKEND_API void ggml_mtl_shared_event_signal(ggml_mtl_shared_event_t event, uint64_t value) {
+    value += event ? event->epoch_base.load(std::memory_order_acquire) : 0;
     if (!event) {
         return;
     }
@@ -90,6 +123,7 @@ GGML_BACKEND_API void ggml_mtl_shared_event_wait(ggml_mtl_shared_event_t event, 
     if (!event) {
         return;
     }
+    value += event->epoch_base.load(std::memory_order_acquire);
     // The single-argument `waitUntilSignaledValue:` is iOS 16.0+ /
     // macOS 13.0+. On older systems the API takes a timeout in
     // milliseconds. Use the verbose form which is portable; the
@@ -111,6 +145,7 @@ GGML_BACKEND_API bool ggml_mtl_shared_event_try_wait(ggml_mtl_shared_event_t eve
     if (!event) {
         return false;
     }
+    value += event->epoch_base.load(std::memory_order_acquire);
     // Fast path: cached value already meets the target.
     if (event->cached_value.load(std::memory_order_acquire) >= value) {
         return true;
@@ -144,6 +179,7 @@ GGML_BACKEND_API void ggml_mtl_shared_event_encode_wait(
     if (!event || !cmd_buf) {
         return;
     }
+    value += event->epoch_base.load(std::memory_order_acquire);
     id<MTLCommandBuffer> cb = (__bridge id<MTLCommandBuffer>) cmd_buf;
     [cb encodeWaitForEvent:event->mtl_event value:value];
 }
@@ -153,6 +189,7 @@ GGML_BACKEND_API void ggml_mtl_shared_event_encode_signal(
     if (!event || !cmd_buf) {
         return;
     }
+    value += event->epoch_base.load(std::memory_order_acquire);
     id<MTLCommandBuffer> cb = (__bridge id<MTLCommandBuffer>) cmd_buf;
     [cb encodeSignalEvent:event->mtl_event value:value];
 }
@@ -179,6 +216,7 @@ GGML_BACKEND_API void ggml_mtl_shared_event_encode_signal(
 //
 
 #include <dlfcn.h>
+#include <cstdio>
 
 namespace {
 
@@ -191,6 +229,14 @@ void * mtl_resolve(const char * name, void ** cache, std::atomic<bool> * tried) 
         return *cache;
     }
     void * sym = dlsym(RTLD_DEFAULT, name);
+    if (sym == nullptr) {
+        // Loud on purpose. A silent miss here disables per-layer weight
+        // streaming pacing: the pool's slots are never refilled and FFN
+        // matmuls read zeros -- fast, crash-free, and wrong. See
+        // docs/weight-streaming.md.
+        fprintf(stderr, "ggml-mtl-shared-events: dlsym could not resolve %s -- "
+                        "weight-pool pacing DISABLED (is the Metal backend loaded?)\n", name);
+    }
     *cache = sym;
     tried->store(true, std::memory_order_release);
     return sym;
@@ -198,7 +244,7 @@ void * mtl_resolve(const char * name, void ** cache, std::atomic<bool> * tried) 
 
 }  // namespace
 
-GGML_BACKEND_API void ggml_mtl_stream_set_pool(
+GGML_BACKEND_API bool ggml_mtl_stream_set_pool(
         void * dev, void * pool,
         void * ensure_fn, void * poke_fn,
         void * ensure_experts_fn, void * poke_experts_fn) {
@@ -208,10 +254,12 @@ GGML_BACKEND_API void ggml_mtl_stream_set_pool(
     auto * f = (set_pool_t) mtl_resolve("ggml_metal_device_stream_set_pool", &fn, &tried);
     if (f) {
         f(dev, pool, ensure_fn, poke_fn, ensure_experts_fn, poke_experts_fn);
+        return true;
     }
+    return false;
 }
 
-GGML_BACKEND_API void ggml_mtl_stream_set_prefetch_fns(
+GGML_BACKEND_API bool ggml_mtl_stream_set_prefetch_fns(
         void * dev,
         void * prefetch_async_fn, void * prefetch_wait_fn, void * prefetch_cancel_fn) {
     static void * fn = nullptr;
@@ -220,15 +268,31 @@ GGML_BACKEND_API void ggml_mtl_stream_set_prefetch_fns(
     auto * f = (set_prefetch_t) mtl_resolve("ggml_metal_device_stream_set_prefetch_fns", &fn, &tried);
     if (f) {
         f(dev, prefetch_async_fn, prefetch_wait_fn, prefetch_cancel_fn);
+        return true;
     }
+    return false;
 }
 
-GGML_BACKEND_API void ggml_mtl_stream_set_fence(void * dev, void * shared_event) {
+GGML_BACKEND_API bool ggml_mtl_stream_set_graph_end(void * dev, void * graph_end_fn) {
+    static void * fn = nullptr;
+    static std::atomic<bool> tried{false};
+    using set_ge_t = void (*)(void *, void *);
+    auto * f = (set_ge_t) mtl_resolve("ggml_metal_device_stream_set_graph_end_fn", &fn, &tried);
+    if (f) {
+        f(dev, graph_end_fn);
+        return true;
+    }
+    return false;
+}
+
+GGML_BACKEND_API bool ggml_mtl_stream_set_fence(void * dev, void * shared_event) {
     static void * fn = nullptr;
     static std::atomic<bool> tried{false};
     using set_fence_t = void (*)(void *, void *);
     auto * f = (set_fence_t) mtl_resolve("ggml_metal_device_stream_set_fence", &fn, &tried);
     if (f) {
         f(dev, shared_event);
+        return true;
     }
+    return false;
 }

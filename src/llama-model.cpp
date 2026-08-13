@@ -61,14 +61,15 @@ void ggml_mtl_shared_event_wait(ggml_mtl_shared_event_t event, uint64_t value);
 // the comment above and ggml/include/ggml-metal.h). Function-pointer
 // arguments are void * so this declaration stays free of the backend's
 // private callback typedefs; the trampolines are cast at the call site.
-void ggml_mtl_stream_set_pool(void * dev, void * pool,
+bool ggml_mtl_stream_set_pool(void * dev, void * pool,
                               void * ensure_fn, void * poke_fn,
                               void * ensure_experts_fn, void * poke_experts_fn);
-void ggml_mtl_stream_set_prefetch_fns(void * dev,
+bool ggml_mtl_stream_set_prefetch_fns(void * dev,
                                       void * prefetch_async_fn,
                                       void * prefetch_wait_fn,
                                       void * prefetch_cancel_fn);
-void ggml_mtl_stream_set_fence(void * dev, void * shared_event);
+bool ggml_mtl_stream_set_fence(void * dev, void * shared_event);
+bool ggml_mtl_stream_set_graph_end(void * dev, void * graph_end_fn);
 }
 #endif
 
@@ -1182,7 +1183,7 @@ llama_model::~llama_model() {
         for (const auto & dev : devices) {
             if (!dev.dev) continue;
             const char * name = ggml_backend_dev_name(dev.dev);
-            if (!name || std::strncmp(name, "Metal", 5) != 0) continue;
+            if (!name || (std::strncmp(name, "MTL", 3) != 0 && std::strncmp(name, "Metal", 5) != 0)) continue;
             auto * reg = ggml_backend_dev_backend_reg(dev.dev);
             if (!reg) continue;
             using get_metal_dev_fn = ggml_metal_device_t (*)(ggml_backend_dev_t);
@@ -1885,13 +1886,19 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
                 ggml_mtl_shared_event_wait(ev, (uint64_t)(wait_for_layer + 1));
             };
             llama_weight_pool_set_sync_fn(pimpl->weight_pool, pimpl->stream_event, sync_trampoline);
+            // Fence handle + epoch span for graph_reset. Span must exceed the
+            // largest per-graph signal value (layers signal at layer + 1, so
+            // n_layer + 2 clears it).
+            llama_weight_pool_set_fence_event(pimpl->weight_pool,
+                pimpl->stream_event, (uint64_t) n_layer_all + 2);
         }
         // Phase 2: start the background fill thread before the first compute.
         llama_weight_pool_start(pimpl->weight_pool);
+        bool attached = false;
         for (const auto & dev : devices) {
             if (!dev.dev) continue;
             const char * name = ggml_backend_dev_name(dev.dev);
-            if (!name || std::strncmp(name, "Metal", 5) != 0) continue;
+            if (!name || (std::strncmp(name, "MTL", 3) != 0 && std::strncmp(name, "Metal", 5) != 0)) continue;
             auto * reg = ggml_backend_dev_backend_reg(dev.dev);
             if (!reg) continue;
             using get_metal_dev_fn = ggml_metal_device_t (*)(ggml_backend_dev_t);
@@ -1899,16 +1906,44 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             if (!fn) continue;
             ggml_metal_device_t metal_dev = fn(dev.dev);
             if (metal_dev) {
-                ggml_mtl_stream_set_pool(metal_dev, pimpl->weight_pool,
+                const bool pool_ok = ggml_mtl_stream_set_pool(metal_dev, pimpl->weight_pool,
                     (void *) ensure_trampoline, (void *) poke_trampoline,
                     (void *) ensure_experts_trampoline, (void *) poke_experts_trampoline);
-                ggml_mtl_stream_set_prefetch_fns(metal_dev,
+                const bool pf_ok = ggml_mtl_stream_set_prefetch_fns(metal_dev,
                     (void *) prefetch_async_trampoline, (void *) prefetch_wait_trampoline,
                     (void *) prefetch_cancel_trampoline);
+                bool fence_ok = true;
                 if (pimpl->stream_event) {
-                    ggml_mtl_stream_set_fence(metal_dev, pimpl->stream_event);
+                    fence_ok = ggml_mtl_stream_set_fence(metal_dev, pimpl->stream_event);
                 }
+                // Epoch boundary: the streamed tail calls this once per graph
+                // at its drained point. Without it the monotonic fence event
+                // pre-satisfies every guard after the first graph and the
+                // model computes on torn FFN weights (see
+                // docs/weight-streaming.md 5d).
+                auto graph_end_trampoline = +[](void * pool) -> void {
+                    llama_weight_pool_graph_reset((llama_weight_pool_t *) pool);
+                };
+                const bool ge_ok = ggml_mtl_stream_set_graph_end(
+                    metal_dev, (void *) graph_end_trampoline);
+                if (pool_ok && pf_ok && fence_ok && ge_ok) {
+                    // The line that proves pacing is live. Its absence after
+                    // "weight streaming enabled" means the pool exists but the
+                    // encoder will never refill it -- FFN matmuls would read
+                    // zeros. See docs/weight-streaming.md.
+                    LLAMA_LOG_INFO("%s: weight pool attached to %s -- paced per-layer compute engaged\n",
+                        __func__, name);
+                } else {
+                    LLAMA_LOG_WARN("%s: weight pool attach FAILED on %s (pool=%d prefetch=%d fence=%d graph_end=%d) -- "
+                        "pacing disabled or unfenced, OUTPUT WILL BE WRONG\n",
+                        __func__, name, pool_ok, pf_ok, fence_ok, ge_ok);
+                }
+                attached = true;
             }
+        }
+        if (!attached) {
+            LLAMA_LOG_WARN("%s: weight pool created but no Metal device matched for attach -- "
+                "pacing disabled, FFN slots will never refill, OUTPUT WILL BE WRONG\n", __func__);
         }
     }
 #endif

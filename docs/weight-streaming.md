@@ -118,6 +118,104 @@ high-severity finding in `.zcode/alphaevolve/findings.jsonl`.
   your configuration does not enable it, a targeted
   `-DGGML_USE_ANE -fsyntax-only` on the translation unit is the minimum.
 
+## 5b. Load-mode interaction: the pool requires a non-mapped load
+
+Found empirically on the first live run (2026-08-13, 12B BF16 trunk,
+17 GB M1). With the default `mmap` load mode the pool engaged, excluded
+the FFN tensors from loading -- and the model still OOM'd at compute:
+
+    MTL0_Mapped model buffer size = 22712.94 MiB
+    allocated 27746.98 / 12124.17 MiB  (recommended max working set)
+
+The mapped path wraps the mmap'd file range containing the Metal-assigned
+tensors, and because FFN and non-FFN tensors interleave through the file
+layer by layer, `min..max` of the non-FFN tensors spans essentially the
+whole model. Metal counts every wrapped byte toward its working set, so
+the 16 GiB of FFN data the pool was built to keep out of residency gets
+dragged back in by the wrap itself.
+
+With a non-mapped load (`-lm none`), only the non-FFN tensors are
+allocated for real:
+
+    CPU  model buffer size =  1920.00 MiB
+    MTL0 model buffer size =  6512.24 MiB
+
+and the pool streams the FFN per layer from its own file handle. Both
+`common_model_params_to_llama()` and the L5 joint harness now force
+`load_mode = none` automatically whenever the pool engages (logged), so
+no caller needs to know this. `direct_io` also avoids the wrap and is
+left untouched if explicitly chosen.
+
+## 5c. Diagnosing a silent failure: the three tracer lines
+
+A correct run logs all three, in order:
+
+    load_tensors: weight streaming enabled: 2x IOSurface <N> MiB
+    load_tensors: weight pool attached to MTL0 -- paced per-layer compute engaged
+    ggml_metal_graph_compute_streamed: paced per-layer streamed compute engaged
+
+Line 1 without line 2 means the pool exists but was never attached to
+the Metal device -- the encoder will not pace, the slots are never
+refilled, and because the loader deliberately skips bulk-loading FFN
+tensors, the slots contain ZEROS. The model then runs fast, crash-free,
+and wrong. This is not hypothetical: the first live run generated at
+2.72 t/s with all-zero FFN because the attach loop matched the device
+name against "Metal" while this tree registers Metal devices as "MTL0"
+(`GGML_METAL_NAME "MTL"`, ggml-metal.cpp). A wrong-prefix string match
+produced silently wrong model output.
+
+Line 2 without line 3 means the pool is attached to a device that never
+computes -- also a bug.
+
+The attach path WARNs loudly on every failure mode now (facade dlsym
+miss, no matching device, partial attach). If you are debugging this
+subsystem, run with `-v` and find the three lines before trusting any
+output.
+
+## 5d. What the first live run surfaced (integration bugs in never-run code)
+
+The subsystem had never executed end to end before 2026-08-13, so the
+first run peeled failures one at a time. Each is fixed; they are
+recorded because each one is a place where the two halves of a seam
+were built to different assumptions and nothing could have caught it
+without running.
+
+**Fill layout mismatch.** The pool sizes and aliases its slots for the
+streamable-FFN subset at subset-packed offsets, but filled them with
+`llama_weight_stream_layer()`, which writes the WHOLE block (attention
+and norms included) at full-set offsets: "stream_layer: layer 0 total
+448329732 bytes > dst 353909760". The streamer's own comment marks the
+whole-layer helper as the test-facing API. All three fill paths
+(ensure_layer, the fill thread, async prefetch) now stream per tensor
+via `ane_weight_stream_block_tensor` from one shared plan; the
+whole-layer prefetch wrapper was deleted outright so the trap cannot be
+re-trodden.
+
+**Per-layer stream indices.** The layout builder probed layer 0 and
+assumed "the streamer uses the same name-sorted order per block" for
+every layer. False for SWA/global attention mixes: gemma-4's global
+layers (every 6th) carry different attention tensors, shifting every
+name-sorted index after them -- layer 5's idx 8 is a 15 KiB norm where
+layer 0's idx 8 was the 112.5 MiB ffn_gate. Fill plans are now resolved
+per layer BY NAME at pool open, with sizes validated against layer 0's
+layout (FFN shapes are layer-invariant; that much of the assumption
+held).
+
+**Dangling cmd_buf_last.** The paced path creates its per-layer command
+buffers unretained plus one manual retain owned by slot_cb, waits them
+inline at graph end, and releases them -- but left `ctx->cmd_buf_last`
+pointing at the final (freed) buffer. The next
+`ggml_metal_synchronize` -- prompt checkpointing calls it right after
+prefill -- did objc_msgSend on the freed object: EXC_BAD_ACCESS with a
+pointer-authentication failure. The streamed path now clears
+cmd_buf_last at exit; it drains everything inline, so there is nothing
+for a later synchronize to wait on.
+
+The general lesson repeats section 5's: none of these were visible in
+review, in unit tests, or in the build. They were all cross-component
+contract mismatches, and the only thing that finds those is running the
+composed system.
+
 ## 6. Known gap: the L5 joint calibration harness
 
 `ts_l5_joint_models_load` (`common/tessera-ppl-harness.cpp`) does **not**

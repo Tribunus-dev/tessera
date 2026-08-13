@@ -28,6 +28,7 @@
 #include "llama-weight-stream.h"
 
 #include "ggml-ane.h"
+#include "ggml-metal.h"
 #include "ggml-backend.h"
 
 #include <algorithm>
@@ -51,13 +52,27 @@
 // One entry per tensor in a layer's name-sorted layout. The stream writes
 // tensors in this order (ggml-ane.mm:968-978), so offsets are cumulative.
 struct pool_tensor_entry {
-    std::string suffix;   // e.g. "ffn_down.weight" (after "blk.L.")
-    size_t      offset;   // within slot
+    std::string suffix;     // e.g. "ffn_down.weight" (after "blk.L.")
+    size_t      offset;     // within slot (FFN-subset packing, NOT the
+                            // streamer's whole-block layout)
     size_t      size;
+    uint32_t    stream_idx; // index into the streamer's name-sorted block
+                            // tensor list, for per-tensor fills
 };
 
 struct llama_weight_pool {
     llama_weight_stream_t * stream     = nullptr;
+    // Per-LAYER fill plans: fill_plan[L] maps the pool's slot layout onto
+    // layer L's stream indices. One plan per layer, not one shared plan --
+    // the streamer's name-sorted block order is NOT identical across layers
+    // in models mixing SWA and global attention (gemma-4: every 6th layer is
+    // global, carries different attention tensors, and shifts every index
+    // after it; layer 5's idx 8 is a 15 KiB norm where layer 0's idx 8 was
+    // the 112.5 MiB ffn_gate). Slot OFFSETS are shared (FFN shapes are
+    // constant across layers -- validated at open); only the indices vary.
+    // Outer vector sized once at open; inner data pointer-stable for the
+    // pool's lifetime (prefetches capture entries by pointer).
+    std::vector<std::vector<llama_weight_stream_fill_entry>> fill_plan;
     int32_t                n_layer     = 0;
     size_t                 slot_bytes  = 0;
 
@@ -75,6 +90,16 @@ struct llama_weight_pool {
     // reading (slot reuse across layers L and L+2). Phase 2 replaces the
     // coarse sync with a shared-event wait.
     void *                 sync_ud  = nullptr;
+    // Fence event handle + per-graph span for the epoch advance in
+    // llama_weight_pool_graph_reset. Opaque (ggml_mtl_shared_event_t);
+    // set by llama-model.cpp alongside the sync callback.
+    void *                 fence_event = nullptr;
+    uint64_t               fence_span  = 0;
+    // Count of MoE hint fills currently running outside fill_mtx
+    // (the hint path unlocks around ensure_experts). graph_reset must
+    // wait for this to reach 0 -- holding fill_mtx alone does not
+    // exclude those fills.
+    int32_t                moe_inflight = 0;
     llama_weight_pool_sync_fn sync_fn = nullptr;
 
     // Per-tensor layout shared across all layers (built from layer 0).
@@ -163,12 +188,60 @@ static bool pool_build_layout(llama_weight_pool_t * pool, char * err, size_t es)
         // Only include streamable FFN tensors in the layout. This keeps the
         // slot sized for FFN weights (dense or MoE expert), not attention.
         if (!is_streamable_ffn(suffix)) continue;
-        pool->layout.push_back({suffix, cursor, sz});
+        pool->layout.push_back({suffix, cursor, sz, i});
         cursor += sz;
     }
     if (pool->layout.empty()) {
         if (err && es) std::snprintf(err, es, "no streamable FFN tensors found in layer 0");
         return false;
+    }
+
+    // Resolve each layer's stream indices by NAME. Uses the layer-0 suffix
+    // set as the contract: every layer must expose the same streamable FFN
+    // suffixes at the same sizes (shapes are layer-invariant), but may
+    // expose them at different indices (SWA vs global attention layers
+    // carry different tensor sets, shifting the name-sorted order).
+    pool->fill_plan.assign((size_t) pool->n_layer, {});
+    for (int32_t L = 0; L < pool->n_layer; ++L) {
+        const uint32_t nl = llama_weight_stream_n_block_tensors(pool->stream, L);
+        if (nl == 0) {
+            if (err && es) std::snprintf(err, es, "streamer reports 0 tensors for layer %d", L);
+            return false;
+        }
+        auto & plan = pool->fill_plan[(size_t) L];
+        plan.reserve(pool->layout.size());
+        for (const auto & entry : pool->layout) {
+            bool found = false;
+            for (uint32_t i = 0; i < nl; ++i) {
+                const char * name = nullptr;
+                size_t sz = 0;
+                if (!llama_weight_stream_block_tensor_info(pool->stream, L, i,
+                        &name, &sz, nullptr, nullptr)) {
+                    continue;
+                }
+                std::string suffix = name ? std::string(name) : std::string();
+                const std::string prefix = "blk." + std::to_string(L) + ".";
+                if (suffix.rfind(prefix, 0) == 0) {
+                    suffix = suffix.substr(prefix.size());
+                }
+                if (suffix != entry.suffix) continue;
+                if (sz != entry.size) {
+                    if (err && es) std::snprintf(err, es,
+                        "layer %d tensor %s size %zu != layer 0 size %zu -- "
+                        "slot layout cannot be shared", L, entry.suffix.c_str(), sz, entry.size);
+                    return false;
+                }
+                plan.push_back({i, entry.offset, entry.size});
+                found = true;
+                break;
+            }
+            if (!found) {
+                if (err && es) std::snprintf(err, es,
+                    "layer %d is missing streamable tensor %s (present in layer 0)",
+                    L, entry.suffix.c_str());
+                return false;
+            }
+        }
     }
     return true;
 }
@@ -299,6 +372,39 @@ int llama_weight_pool_alias_tensors(llama_weight_pool_t * pool,
     return n_aliased;
 }
 
+// Fill slot `slot` with layer `layer`'s streamable tensors, one tensor at a
+// time at the POOL's offsets.
+//
+// Do NOT replace this with llama_weight_stream_layer(): that helper writes
+// the whole block (attention + norms included) at the streamer's full-set
+// offsets. The pool's slots are sized and aliased for the FFN subset only,
+// so the whole-layer helper both overflows the slot and lands every tensor
+// at the wrong offset. That exact mismatch shipped once -- the first live
+// run of this subsystem died with "stream_layer: layer 0 total 448329732
+// bytes > dst 353909760" -- because the two halves were never integration-
+// tested while the subsystem was disconnected. See docs/weight-streaming.md
+// section 5d. The streamer's own comment says the whole-layer helper is the
+// test-facing API; this per-tensor loop is the production path.
+static int64_t pool_fill_layer(llama_weight_pool_t * pool, int32_t layer, int slot) {
+    const auto & plan = pool->fill_plan[(size_t) layer];
+    int64_t total = 0;
+    for (size_t k = 0; k < plan.size(); ++k) {
+        const auto & e = plan[k];
+        const int64_t wrote = llama_weight_stream_block_tensor(
+                pool->stream, layer, e.stream_idx,
+                (uint8_t *) pool->slot_base[slot] + e.dst_offset, e.size);
+        if (wrote < 0 || (size_t) wrote != e.size) {
+            fprintf(stderr, "weight pool: fill layer %d tensor %s (stream idx %u) failed "
+                    "(wrote %lld, want %zu)\n",
+                    layer, pool->layout[k].suffix.c_str(), e.stream_idx,
+                    (long long) wrote, e.size);
+            return -1;
+        }
+        total += wrote;
+    }
+    return total;
+}
+
 int llama_weight_pool_ensure_layer(llama_weight_pool_t * pool, int32_t layer) {
 #if LLAMA_WEIGHT_POOL_SUPPORTED
     if (!pool || layer < 0 || layer >= pool->n_layer) return -1;
@@ -343,8 +449,7 @@ int llama_weight_pool_ensure_layer(llama_weight_pool_t * pool, int32_t layer) {
         const int32_t prev = pool->slot_layer[slot].load(std::memory_order_acquire);
         pool->sync_fn(pool->sync_ud, prev);
     }
-    const int64_t wrote = llama_weight_stream_layer(
-            pool->stream, layer, pool->slot_base[slot], pool->slot_bytes);
+    const int64_t wrote = pool_fill_layer(pool, layer, slot);
     if (wrote < 0) {
         return -1;
     }
@@ -363,6 +468,52 @@ void llama_weight_pool_set_sync_fn(llama_weight_pool_t * pool,
     if (!pool) return;
     pool->sync_ud = user_data;
     pool->sync_fn = sync_fn;
+}
+
+// Epoch boundary between streamed graphs. MUST be called only at a fully
+// drained point: no command buffers in flight against the slots, encoder
+// fills finished, prefetch drained (the paced streamed tail guarantees all
+// three before calling).
+//
+// Why this exists: the fence is an MTLSharedEvent, which is MONOTONIC. The
+// paced path signals small per-graph values (layer + 1), so after the first
+// graph the raw event exceeds every future small-valued wait and BOTH refill
+// guards (CPU-side sync waits and GPU-side encode waits) become instant
+// no-ops. Refills then overwrite slots the GPU is still reading -- torn FFN
+// weights, garbage output, no crash. The first live run hit exactly this;
+// see docs/weight-streaming.md section 5d.
+//
+// The reset: park the fill thread (fill_mtx excludes its dense loop; the
+// moe_inflight counter covers the hint window it runs unlocked), invalidate
+// both slots so post-reset guards skip rather than wait for old-epoch
+// occupants (which would deadlock -- their signal values can no longer be
+// expressed), drop stale MoE hints, then advance the fence's epoch base so
+// the next graph's waits genuinely block until its own signals.
+void llama_weight_pool_graph_reset(llama_weight_pool_t * pool) {
+#if LLAMA_WEIGHT_POOL_SUPPORTED
+    if (!pool) return;
+    std::unique_lock<std::mutex> lk(pool->fill_mtx);
+    pool->fill_cv.wait(lk, [&] { return pool->moe_inflight == 0; });
+    pool->slot_layer[0].store(-1, std::memory_order_release);
+    pool->slot_layer[1].store(-1, std::memory_order_release);
+    pool->fill_ready.store(-1, std::memory_order_release);
+    pool->fill_needed = -1;
+    pool->host_claim_layer.store(-1, std::memory_order_release);
+    for (auto & h : pool->moe_hints) h.filled = true; // stale routing: drop
+    if (pool->fence_event && pool->fence_span > 0) {
+        ggml_mtl_shared_event_advance_epoch(
+            (ggml_mtl_shared_event_t) pool->fence_event, pool->fence_span);
+    }
+#else
+    GGML_UNUSED(pool);
+#endif
+}
+
+void llama_weight_pool_set_fence_event(llama_weight_pool_t * pool,
+                                       void * fence_event, uint64_t span) {
+    if (!pool) return;
+    pool->fence_event = fence_event;
+    pool->fence_span  = span;
 }
 
 void llama_weight_pool_poke_prefetch(llama_weight_pool_t * pool, int32_t layer) {
@@ -408,8 +559,14 @@ llama_weight_stream_prefetch_t * llama_weight_pool_prefetch_async(
         const int32_t prev = pool->slot_layer[slot].load(std::memory_order_acquire);
         pool->sync_fn(pool->sync_ud, prev);
     }
-    return llama_weight_stream_prefetch_async(
-            pool->stream, layer, pool->slot_base[slot], pool->slot_bytes);
+    // Plan-based: same per-tensor subset fill as pool_fill_layer, just async.
+    // The whole-layer prefetch was the second copy of the layout mismatch
+    // that killed the first live run (layers 1+ via prefetch while layer 0
+    // filled correctly inline). One layout, every fill path.
+    const auto & plan = pool->fill_plan[(size_t) layer];
+    return llama_weight_stream_prefetch_async_plan(
+            pool->stream, layer, pool->slot_base[slot],
+            plan.data(), plan.size());
 #else
     GGML_UNUSED(pool);
     GGML_UNUSED(layer);
@@ -642,8 +799,7 @@ void llama_weight_pool_start(llama_weight_pool_t * pool) {
                         pool->sync_fn(pool->sync_ud, prev);
                         lk.lock();
                     }
-                    const int64_t wrote = llama_weight_stream_layer(
-                            pool->stream, l, pool->slot_base[s], pool->slot_bytes);
+                    const int64_t wrote = pool_fill_layer(pool, l, s);
                     if (wrote < 0) {
                         fprintf(stderr, "weight pool fill thread: layer %d failed\n", l);
                         pool->fill_shutdown.store(true, std::memory_order_release);
@@ -668,10 +824,13 @@ void llama_weight_pool_start(llama_weight_pool_t * pool) {
                 std::string suffix = h.suffix;
                 std::vector<int32_t> ids = h.expert_ids;
                 h.filled = true;
+                pool->moe_inflight++;
                 lk.unlock();
                 llama_weight_pool_ensure_experts(pool, layer, suffix.c_str(),
                                                  ids.data(), (int32_t) ids.size());
                 lk.lock();
+                pool->moe_inflight--;
+                pool->fill_cv.notify_all(); // graph_reset may be waiting on this
             }
         }
     });

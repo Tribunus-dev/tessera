@@ -90,6 +90,19 @@ int llama_weight_pool_alias_tensors(llama_weight_pool_t * pool,
 // layers), ensure_layer calls the sync callback registered via
 // llama_weight_pool_set_sync_fn, which waits on the MTLSharedEvent signaled
 // at the previous occupant's command-buffer completion.
+// Epoch boundary between streamed graphs: invalidate both slots, drop
+// stale hints, and advance the fence event's epoch base. Call ONLY from a
+// fully drained point (the paced streamed tail). Without this, the
+// monotonic MTLSharedEvent pre-satisfies every guard after the first graph
+// and refills race in-flight GPU reads. See docs/weight-streaming.md 5d.
+void llama_weight_pool_graph_reset(llama_weight_pool_t * pool);
+
+// Register the fence event handle (ggml_mtl_shared_event_t, opaque here)
+// and the per-graph epoch span (must exceed the largest signaled value:
+// n_layer + 2). Set alongside the sync callback at attach time.
+void llama_weight_pool_set_fence_event(llama_weight_pool_t * pool,
+                                       void * fence_event, uint64_t span);
+
 int llama_weight_pool_ensure_layer(llama_weight_pool_t * pool, int32_t layer);
 
 // Poke the fill thread to start prefetching layer L (typically the next

@@ -550,6 +550,7 @@ struct ggml_metal_device {
     // poke_fn (Phase 2) triggers background prefetch of the next layer.
     void                          * stream_pool;       // llama_weight_pool_t, weak
     ggml_metal_stream_ensure_fn     stream_ensure_fn;  // refill callback
+    ggml_metal_stream_graph_end_fn  stream_graph_end_fn; // epoch boundary (paced tail)
     ggml_metal_stream_poke_fn       stream_poke_fn;    // prefetch poke (Phase 2)
     ggml_metal_stream_ensure_experts_fn stream_ensure_experts_fn; // MoE sparse fill
     ggml_metal_stream_poke_experts_fn   stream_poke_experts_fn;   // MoE prefetch poke
@@ -1126,6 +1127,14 @@ ggml_metal_stream_ensure_experts_fn ggml_metal_device_stream_get_ensure_experts_
 }
 ggml_metal_stream_poke_experts_fn ggml_metal_device_stream_get_poke_experts_fn(const ggml_metal_device_t dev) {
     return dev ? dev->stream_poke_experts_fn : NULL;
+}
+void ggml_metal_device_stream_set_graph_end_fn(ggml_metal_device_t dev,
+                                               ggml_metal_stream_graph_end_fn fn) {
+    if (!dev) return;
+    dev->stream_graph_end_fn = fn;
+}
+ggml_metal_stream_graph_end_fn ggml_metal_device_stream_get_graph_end_fn(const ggml_metal_device_t dev) {
+    return dev ? dev->stream_graph_end_fn : NULL;
 }
 void ggml_metal_device_stream_set_prefetch_fns(ggml_metal_device_t dev,
                                                ggml_metal_stream_prefetch_async_fn  prefetch_async_fn,

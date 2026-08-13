@@ -369,6 +369,9 @@ int ts_l5_joint_models_load(
         }
         if (s_stream_on && !s_stream_overrides.empty()) {
             mparams.tensor_buft_overrides = s_stream_overrides.data();
+            // Same rule as the common path: the pool requires a non-mapped
+            // load, or Metal wraps the whole file and blows its working set.
+            mparams.load_mode = LLAMA_LOAD_MODE_NONE;
         }
 
         llama_model * model = llama_model_load_from_file(path.c_str(), mparams);

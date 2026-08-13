@@ -477,6 +477,15 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
 //
 // Phase 1: synchronous refill (blocks the encode thread). No overlap yet.
 static enum ggml_status ggml_metal_graph_compute_streamed(ggml_metal_t ctx, struct ggml_cgraph * gf) {
+    // One-time proof that per-layer paced compute is live (the counterpart
+    // of llama-model.cpp's "weight pool attached" line). If you see the
+    // attach line but never this one, the pool is attached to a device that
+    // never computes -- also a bug.
+    static bool logged_once = false;
+    if (!logged_once) {
+        logged_once = true;
+        GGML_LOG_INFO("%s: paced per-layer streamed compute engaged (weight pool active)\n", __func__);
+    }
     @autoreleasepool {
         ctx->gf = gf;
 
@@ -838,6 +847,32 @@ static enum ggml_status ggml_metal_graph_compute_streamed(ggml_metal_t ctx, stru
                 }
                 [slot_cb[s] release];
                 slot_cb[s] = nil;
+            }
+        }
+
+        // The per-layer command buffers were fully waited above, and
+        // slot_cb held their ONLY retain (created unretained + one manual
+        // retain, released in the loop above or on slot reuse). Anything
+        // still in cmd_buf_last is a pointer to an already-released object:
+        // a later ggml_metal_synchronize would objc_msgSend the freed buffer
+        // and crash. This is not hypothetical -- the first live run of this
+        // path died exactly there, in prompt-checkpointing's
+        // llama_context::synchronize() right after a clean prefill. Nothing
+        // is left in flight at this point; clear the handoff.
+        ctx->cmd_buf_last = nil;
+
+        // Epoch boundary: everything above is drained (slot buffers waited,
+        // prefetch cancelled), which is the ONLY point this may be called.
+        // The pool invalidates its slots and advances the fence epoch so the
+        // next graph's small per-layer wait values genuinely block instead of
+        // being pre-satisfied by the monotonic MTLSharedEvent. Skipping this
+        // is not a perf bug: it makes every refill guard a no-op from the
+        // second graph on and the model computes on torn FFN weights.
+        {
+            ggml_metal_stream_graph_end_fn graph_end =
+                ggml_metal_device_stream_get_graph_end_fn(ctx->dev);
+            if (graph_end && pool) {
+                graph_end(pool);
             }
         }
 
