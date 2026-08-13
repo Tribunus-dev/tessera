@@ -172,6 +172,14 @@ miss, no matching device, partial attach). If you are debugging this
 subsystem, run with `-v` and find the three lines before trusting any
 output.
 
+There is a fourth instrument for content integrity:
+`TESSERA_STREAM_CHECKSUM=1` re-streams every tensor of a layer from
+disk at ensure-return time -- the closest CPU-observable point to
+GPU-read -- and memcmps it against the slot bytes, logging one
+clean/CORRUPT line per layer fill (raw stderr, so it is visible at any
+log level, unlike the tracer lines). It costs one extra full read of
+each layer per fill; diagnostic only.
+
 ## 5d. What the first live run surfaced (integration bugs in never-run code)
 
 The subsystem had never executed end to end before 2026-08-13, so the
@@ -210,6 +218,28 @@ prefill -- did objc_msgSend on the freed object: EXC_BAD_ACCESS with a
 pointer-authentication failure. The streamed path now clears
 cmd_buf_last at exit; it drains everything inline, so there is nothing
 for a later synchronize to wait on.
+
+**ffn_norm streamed by substring.** The streamable filter matched
+`ffn_` as a substring, which pulled `ffn_norm.weight` into the slot
+layout -- but a norm's READER (the pre-FFN RMSNorm mul) sits before the
+layer's first FFN MUL_MAT, i.e. before the segment boundary, so it
+executed in the PREVIOUS layer's command buffer, one refill early.
+Stale by construction, unfixable by fencing. The filter is now an
+explicit allowlist (236efeb18); norms stay resident.
+
+**Dropped graph preamble (the composition killer).** The segmentation
+loop reset `seg_start` on EVERY layer boundary, including the first,
+while the comment above it promised "the first segment runs from node
+0". Everything before layer 0's first FFN MUL_MAT -- the embedding
+scale, layer 0's whole attention block, layer 0's ffn_norm -- landed in
+no segment: encoded into no command buffer, never executed. Layer 0's
+FFN consumed whatever the compute buffer held, and 47 layers amplified
+it into garbage that survived every data-path fix and changed flavor
+each time one landed. Confirmed fixed by A/B: with the fix, a small
+model runs token-identical streamed vs resident (16/16 greedy tokens,
+510/510 slot fills verified byte-exact by the checksum probe), and the
+12B's paced output left the degenerate regime. seg_start now advances
+only when a segment is actually closed.
 
 The general lesson repeats section 5's: none of these were visible in
 review, in unit tests, or in the build. They were all cross-component

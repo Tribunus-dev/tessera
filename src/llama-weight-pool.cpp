@@ -36,6 +36,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <new>
@@ -429,6 +430,61 @@ static int64_t pool_fill_layer(llama_weight_pool_t * pool, int32_t layer, int sl
     return total;
 }
 
+// Diagnostic probe (TESSERA_STREAM_CHECKSUM=1): after ensure_layer decides a
+// slot is ready, re-stream every tensor of the layer into scratch and memcmp
+// against the slot bytes the GPU is about to read. This is the closest
+// CPU-observable point to "GPU-read time": ensure returns immediately before
+// the encoder commits the layer's command buffer, and the fence keeps every
+// other writer off this slot until that buffer completes. A mismatch means
+// the fill path put wrong bytes in the slot (or filled the wrong slot); a
+// clean probe alongside wrong model output exonerates slot CONTENT and moves
+// the fault to graph coverage or encode-time buffer resolution. Costs one
+// extra full read of the layer from disk per call -- diagnostic only.
+static void pool_verify_slot(llama_weight_pool_t * pool, int32_t layer, int slot) {
+    static const bool enabled = [] {
+        const char * v = getenv("TESSERA_STREAM_CHECKSUM");
+        return v && v[0] && v[0] != '0';
+    }();
+    if (!enabled) {
+        return;
+    }
+    static std::mutex mtx;
+    static std::vector<uint8_t> scratch;
+    std::lock_guard<std::mutex> lk(mtx);
+    const auto & plan = pool->fill_plan[(size_t) layer];
+    size_t  bad   = 0;
+    int64_t total = 0;
+    for (size_t k = 0; k < plan.size(); ++k) {
+        const auto & e = plan[k];
+        if (scratch.size() < e.size) {
+            scratch.resize(e.size);
+        }
+        const int64_t wrote = llama_weight_stream_block_tensor(
+                pool->stream, layer, e.stream_idx, scratch.data(), e.size);
+        if (wrote < 0 || (size_t) wrote != e.size) {
+            fprintf(stderr, "stream-checksum: layer %d %s reference re-read failed (wrote %lld, want %zu)\n",
+                    layer, pool->layout[k].suffix.c_str(), (long long) wrote, e.size);
+            bad++;
+            continue;
+        }
+        const uint8_t * s = (const uint8_t *) pool->slot_base[slot] + e.dst_offset;
+        if (std::memcmp(scratch.data(), s, e.size) != 0) {
+            size_t d = 0;
+            while (d < e.size && scratch[d] == s[d]) {
+                d++;
+            }
+            fprintf(stderr, "stream-checksum: MISMATCH layer %d slot %d %s (stream idx %u, "
+                    "dst_offset %zu, size %zu): first diff at byte %zu (want %02x got %02x)\n",
+                    layer, slot, pool->layout[k].suffix.c_str(), e.stream_idx,
+                    e.dst_offset, e.size, d, scratch[d], s[d]);
+            bad++;
+        }
+        total += (int64_t) e.size;
+    }
+    fprintf(stderr, "stream-checksum: layer %2d slot %d %s (%zu tensors, %lld bytes)\n",
+            layer, slot, bad ? "CORRUPT" : "clean", plan.size(), (long long) total);
+}
+
 int llama_weight_pool_ensure_layer(llama_weight_pool_t * pool, int32_t layer) {
 #if LLAMA_WEIGHT_POOL_SUPPORTED
     if (!pool || layer < 0 || layer >= pool->n_layer) return -1;
@@ -437,6 +493,7 @@ int llama_weight_pool_ensure_layer(llama_weight_pool_t * pool, int32_t layer) {
     // Fast path: slot already holds the requested layer (decode M=1 reuse,
     // or the fill thread got here first). Atomic load for thread safety.
     if (pool->slot_layer[slot].load(std::memory_order_acquire) == layer) {
+        pool_verify_slot(pool, layer, slot);
         return slot;
     }
 
@@ -461,6 +518,7 @@ int llama_weight_pool_ensure_layer(llama_weight_pool_t * pool, int32_t layer) {
                 layer, pool->fill_ready.load(), slot, pool->slot_layer[slot].load());
         }
         if (pool->slot_layer[slot].load(std::memory_order_acquire) == layer) {
+            pool_verify_slot(pool, layer, slot);
             return slot;
         }
         // Fall through to synchronous fill if the thread shut down or failed.
@@ -478,6 +536,7 @@ int llama_weight_pool_ensure_layer(llama_weight_pool_t * pool, int32_t layer) {
         return -1;
     }
     pool->slot_layer[slot].store(layer, std::memory_order_release);
+    pool_verify_slot(pool, layer, slot);
     return slot;
 #else
     GGML_UNUSED(pool);

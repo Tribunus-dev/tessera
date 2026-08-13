@@ -519,8 +519,17 @@ static enum ggml_status ggml_metal_graph_compute_streamed(ggml_metal_t ctx, stru
                         seg_end_arr[n_segments]   = i;
                         seg_layer[n_segments]     = cur_layer;
                         n_segments++;
+                        // Advance seg_start ONLY when a segment was closed. On
+                        // the FIRST boundary (cur_layer still -1) seg_start must
+                        // stay 0: the preamble [0, first FFN MUL_MAT) -- the
+                        // embedding scale, layer 0's attention, layer 0's
+                        // ffn_norm -- belongs to the first segment. Resetting
+                        // seg_start here unconditionally drops those nodes from
+                        // every command buffer: nothing else encodes them, and
+                        // layer 0's FFN consumes whatever the compute buffer
+                        // held before the graph ran.
+                        seg_start = i;
                     }
-                    seg_start = i;
                     cur_layer = layer;
                 }
             }
