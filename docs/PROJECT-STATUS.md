@@ -376,6 +376,11 @@ Remaining work, ranked:
    now exists, but the weights-only L5 still terminates on L2
    `relative_frobenius` and the joint L5 on PPL deltas, so the loop can
    converge on a model that fails the behavioural probe.
+2b. Eval caching, designed and deferred (see
+   `docs/tessera-eval-cache-design.md`): `eval_cache` on the existing
+   `(model_hash, model_role, name)` spine (acceptance gate first),
+   `tensor_stats` readers + quantile sketch, `alpha_l_probe` gated on
+   streaming correctness. Additions only -- no pipeline refactor.
 3. One end-to-end run on gemma-4-12B reporting drafter acceptance
    against the 0.86 % baseline plus a PPL delta. This supplies the data
    for item 1 and exercises `runtime_probe.py`.

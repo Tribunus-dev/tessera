@@ -655,6 +655,24 @@ remains, in priority order:
    baseline, plus a PPL delta. Publish it either way. This also
    supplies the data for item 1 and exercises `runtime_probe.py`.
 
+3b. **Eval caching (deferred implementation, tracked design).** The
+   audit in `docs/tessera-eval-cache-design.md` found all three needed
+   patterns already shipped once: `v2_hessian_cache` is the
+   read-before-compute exemplar, `tensor_stats` is the model-keyed
+   cross-pipeline substrate (currently write-only -- zero readers),
+   `imatrix_accum_state` the calibration accumulator. Planned, in
+   order, WITHOUT refactoring either pipeline (architect's call,
+   2026-08-13):
+   - `eval_cache` table on the shared `(model_hash, model_role, name)`
+     spine, hessian-pattern semantics; first consumer the G6
+     acceptance gate (6 experts x every tensor, pure, recomputed
+     identically each dispatch).
+   - `tensor_stats` readers: `frob2` in `ts_dispatch_forced_t2`, then
+     a `|W|` quantile sketch for byte-free outlier thresholds and GA
+     screening.
+   - `alpha_l_probe` for HIGGS perturb-and-measure via the streaming
+     slot-fill hook -- gated on the open streaming-correctness finding.
+
 4. **L3 per-token KL on real models**. The weight-level cosine is
    shipped and unblocked; the per-token KL path is the next step.
    Requires the joint forward pass harness from L5. Estimated: 3-5
