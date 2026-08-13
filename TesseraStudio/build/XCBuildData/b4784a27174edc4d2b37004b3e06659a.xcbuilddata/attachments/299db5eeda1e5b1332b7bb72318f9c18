@@ -1,4 +1,0 @@
-module NIOFoundationEssentialsCompat {
-header "NIOFoundationEssentialsCompat-Swift.h"
-export *
-}

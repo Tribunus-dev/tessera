@@ -1,4 +1,0 @@
-module Grape {
-header "Grape-Swift.h"
-export *
-}

@@ -1,4 +1,0 @@
-module CNIOFreeBSD {
-umbrella header "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/Sources/CNIOFreeBSD/include/CNIOFreeBSD.h"
-export *
-}

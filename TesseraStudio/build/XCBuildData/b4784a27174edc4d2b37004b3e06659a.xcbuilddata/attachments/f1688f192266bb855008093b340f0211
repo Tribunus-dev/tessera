@@ -1,4 +1,0 @@
-module UnixSignals {
-header "UnixSignals-Swift.h"
-export *
-}

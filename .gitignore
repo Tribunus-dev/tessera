@@ -200,3 +200,8 @@ Testing/
 
 # TesseraStudio Xcode build output (DerivedData-style; rebuilt locally).
 /TesseraStudio/build/
+
+# Tessera Studio build output. The embedded Python.framework lands here
+# (CPython stdlib + a 14.7 MB binary); it was committed once by accident
+# and is 4216 of the 4413 files in that range.
+TesseraStudio/build/

@@ -1,4 +1,0 @@
-module ConcurrencyHelpers {
-header "ConcurrencyHelpers-Swift.h"
-export *
-}

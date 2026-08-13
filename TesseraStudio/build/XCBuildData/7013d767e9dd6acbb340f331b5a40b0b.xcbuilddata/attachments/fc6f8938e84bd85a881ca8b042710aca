@@ -1,4 +1,0 @@
-module STTextViewSwiftUIAppKit {
-header "STTextViewSwiftUIAppKit-Swift.h"
-export *
-}

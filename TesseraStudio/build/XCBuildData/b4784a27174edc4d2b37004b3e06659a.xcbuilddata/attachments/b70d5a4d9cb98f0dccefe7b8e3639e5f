@@ -1,4 +1,0 @@
-module NIOSSL {
-header "NIOSSL-Swift.h"
-export *
-}
