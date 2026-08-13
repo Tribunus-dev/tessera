@@ -148,13 +148,37 @@ static bool is_sensitive_moe_tensor(const std::string & suffix) {
     return false;
 }
 
-// A tensor is streamable if its suffix contains "ffn_" (covers dense
-// ffn_gate/up/down and MoE ffn_*_exps) AND it is not a sensitive MoE tensor.
-// Attention, norms, and embeddings are not streamable — they stay resident.
+// A tensor is streamable ONLY if it is one of the FFN weight-matrix
+// families -- the exact set the buft override routes to the IOSurface pool
+// (common_weight_stream_install_ffn_overrides). Everything else stays
+// resident.
+//
+// This MUST be an explicit allowlist, not a substring match. The original
+// `suffix.find("ffn_")` also matched ffn_norm.weight, and that single extra
+// tensor was the last bug standing after the 2026-08-13 audit cleared every
+// component: the paced encoder opens a layer's segment AT its first FFN
+// MUL_MAT (ggml_metal_op_is_streamed_ffn keys on src0 being the IOSurface
+// weight), but ffn_norm's READER -- the pre-FFN RMSNorm mul -- sits BEFORE
+// that boundary in the graph, so it executed in the PREVIOUS layer's
+// command buffer, before ensure(L) refilled the slot. Every layer's norm
+// was read one refill early: stale by construction, unfixable by fencing,
+// and invisible to every component test (fills byte-correct, offsets exact,
+// kernels 109/109, fence epochs correct -- output still garbage). Norms are
+// small and belong resident; only the ~112 MiB matmul weights stream. See
+// docs/weight-streaming.md 5d.
 static bool is_streamable_ffn(const std::string & suffix) {
-    if (suffix.find("ffn_") == std::string::npos) return false;
-    if (is_sensitive_moe_tensor(suffix)) return false;
-    return true;
+    static const char * allow[] = {
+        "ffn_gate.weight",           "ffn_up.weight",           "ffn_down.weight",
+        "ffn_gate_exps.weight",      "ffn_up_exps.weight",      "ffn_down_exps.weight",
+        "ffn_gate_in_s.weight",      "ffn_up_in_s.weight",      "ffn_down_in_s.weight",
+        "ffn_gate_exps_s.weight",    "ffn_up_exps_s.weight",    "ffn_down_exps_s.weight",
+        "ffn_gate_exps_in_s.weight", "ffn_up_exps_in_s.weight", "ffn_down_exps_in_s.weight",
+        "ffn_gate_shexp.weight",
+    };
+    for (const char * a : allow) {
+        if (suffix == a) return true;
+    }
+    return false;
 }
 
 // Build the layer layout from the streamer's block_tensor_info for layer 0.
