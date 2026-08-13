@@ -46,6 +46,9 @@ public final class SheetsViewModel: ObservableObject {
     public let dataLayer: TesseraDataLayer
     public let userID: UserID
 
+    /// Calculation state lives on the editor, which owns the open sheet.
+    public var workbook: SheetWorkbook? { editor?.workbook }
+
     public init(
         store: SheetStore,
         dataLayer: TesseraDataLayer,
@@ -109,9 +112,18 @@ public final class SheetsViewModel: ObservableObject {
         selectedCell = nil
         editingCell = nil
         if let sheetID, let sheet = allSheets.first(where: { $0.id == sheetID }) {
-            editor = SheetEditorViewModel(sheet: sheet, store: store, userID: userID)
+            let editorVM = SheetEditorViewModel(sheet: sheet, store: store, userID: userID)
+            editor = editorVM
+            // The agent's sheet tools act on whatever is open; without
+            // this they have no workbook and report as much. The writer
+            // routes a tool edit through the same persistence path as a
+            // typed one, so it lands in the document with a receipt.
+            SheetToolContext.shared.install(editorVM.workbook.engine) { [weak self] row, col, text in
+                await self?.applyAgentEdit(text: text, row: row, col: col)
+            }
         } else {
             editor = nil
+            SheetToolContext.shared.install(nil)
         }
     }
 
@@ -135,6 +147,10 @@ public final class SheetsViewModel: ObservableObject {
         }
         let text = editingText
         editingCell = nil
+        // Calculate first so the grid updates immediately, then persist
+        // the SOURCE text. A rejected formula is still stored: it is what
+        // the user typed, and dropping it would look like data loss.
+        editor?.workbook.apply(text: text, row: coord.row, col: coord.col)
         do {
             let updated = try await store.setCell(row: coord.row, col: coord.col, value: text, for: sheetID)
             if let idx = allSheets.firstIndex(where: { $0.id == sheetID }) {
@@ -149,6 +165,24 @@ public final class SheetsViewModel: ObservableObject {
 
     public func cancelEditingCell() {
         editingCell = nil
+    }
+
+    /// Apply an edit made by the agent's `sheet_write` tool. Identical to
+    /// a typed edit: recalculate, persist the source text, emit the
+    /// receipt. Kept separate only so the call site reads clearly.
+    func applyAgentEdit(text: String, row: Int, col: Int) async {
+        guard let sheetID = selectedSheetID else { return }
+        editor?.workbook.apply(text: text, row: row, col: col)
+        do {
+            let updated = try await store.setCell(row: row, col: col, value: text, for: sheetID)
+            if let idx = allSheets.firstIndex(where: { $0.id == sheetID }) {
+                allSheets[idx] = updated
+                applyFilter()
+                editor?.refresh(with: updated)
+            }
+        } catch {
+            loadError = String(describing: error)
+        }
     }
 
     // MARK: - CRUD
@@ -381,6 +415,10 @@ public final class SheetEditorViewModel: ObservableObject {
     public let store: SheetStore
     public let userID: UserID
 
+    /// Calculation state for this sheet. The document stores each cell's
+    /// source text; computed values live here and are never persisted.
+    public let workbook = SheetWorkbook()
+
     private var saveDebounceTask: Task<Void, Never>?
     private let debounceDelay: TimeInterval = 2.0
 
@@ -397,6 +435,7 @@ public final class SheetEditorViewModel: ObservableObject {
         self.draftTag = ""
         self.store = store
         self.userID = userID
+        workbook.hydrate(from: sheet)
     }
 
     // MARK: - Session recovery
@@ -465,6 +504,7 @@ public final class SheetEditorViewModel: ObservableObject {
         self.sheet = sheet
         self.document = sheet.body
         self.draftTitle = sheet.title
+        workbook.hydrate(from: sheet)
     }
 
     // MARK: - Body
@@ -534,6 +574,8 @@ public final class SheetEditorViewModel: ObservableObject {
 
     public func beginEditingCell(_ coord: SheetCellCoord) {
         editingCell = coord
+        // The stored text, so editing a formula cell shows the formula
+        // rather than the number it currently evaluates to.
         editingText = sheet.cellText(row: coord.row, col: coord.col)
     }
 
@@ -543,6 +585,9 @@ public final class SheetEditorViewModel: ObservableObject {
         editingCell = nil
         isSaving = true
         defer { isSaving = false }
+        // Recalculate first so the grid reflects the edit immediately,
+        // then persist the source text.
+        workbook.apply(text: text, row: coord.row, col: coord.col)
         do {
             let updated = try await store.setCell(row: coord.row, col: coord.col, value: text, for: sheet.id)
             self.sheet = updated
@@ -554,6 +599,104 @@ public final class SheetEditorViewModel: ObservableObject {
 
     public func cancelEditingCell() {
         editingCell = nil
+    }
+
+    // MARK: - Cell format
+
+    /// The format of the cell the ribbon is acting on, so the toolbar
+    /// can show the current number format and emphasis as active.
+    public var selectedCellFormat: SheetCellFormat {
+        guard let coord = selectedCell ?? editingCell else { return .standard }
+        return sheet.cellFormat(row: coord.row, col: coord.col)
+    }
+
+    /// Restyle the selected cell. Applies to the in-memory sheet first
+    /// so the grid redraws immediately, then persists.
+    ///
+    /// No selection is a no-op rather than an error: a ribbon button
+    /// pressed with nothing selected should do nothing, not complain.
+    public func applyCellFormat(
+        _ transform: (SheetCellFormat) -> SheetCellFormat
+    ) async {
+        guard let coord = selectedCell ?? editingCell else { return }
+        let current = sheet.cellFormat(row: coord.row, col: coord.col)
+        let next = transform(current)
+        guard next != current else { return }
+
+        sheet = sheet.settingCellFormat(row: coord.row, col: coord.col, next)
+        document = sheet.body
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            let updated = try await store.setCellFormat(
+                row: coord.row,
+                col: coord.col,
+                format: next,
+                for: sheet.id
+            )
+            self.sheet = updated
+            self.document = updated.body
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
+    // MARK: - AutoSum
+
+    /// Write `=SUM(range)` into the selected cell over the contiguous
+    /// numbers immediately above it, falling back to those immediately
+    /// to its left. This is the Excel behaviour, and the reason AutoSum
+    /// is one keystroke there instead of a range drag.
+    ///
+    /// "Contiguous" stops at the first cell that is empty or holds
+    /// something non-numeric, so a total under a labelled column sums
+    /// the figures and not the header.
+    ///
+    /// Returns the formula written, or nil when there was nothing to
+    /// sum - the caller leaves the cell alone rather than writing an
+    /// empty `=SUM()` the user then has to delete.
+    @discardableResult
+    public func autoSum() async -> String? {
+        guard let coord = selectedCell ?? editingCell else { return nil }
+        guard let formula = autoSumFormula(for: coord) else { return nil }
+
+        editingCell = coord
+        editingText = formula
+        await commitEditingCell()
+        return formula
+    }
+
+    /// The range-picking half of ``autoSum()``, without the write. Split
+    /// out so the choice of range is testable without a store.
+    public func autoSumFormula(for coord: SheetCellCoord) -> String? {
+        if let range = contiguousRunAbove(coord) { return "=SUM(\(range))" }
+        if let range = contiguousRunLeft(coord) { return "=SUM(\(range))" }
+        return nil
+    }
+
+    private func contiguousRunAbove(_ coord: SheetCellCoord) -> String? {
+        var top = coord.row
+        while top > 0, isSummable(row: top - 1, col: coord.col) { top -= 1 }
+        guard top < coord.row else { return nil }
+        let start = CellAddr(col: coord.col, row: top)
+        let end = CellAddr(col: coord.col, row: coord.row - 1)
+        return "\(start.description):\(end.description)"
+    }
+
+    private func contiguousRunLeft(_ coord: SheetCellCoord) -> String? {
+        var first = coord.col
+        while first > 0, isSummable(row: coord.row, col: first - 1) { first -= 1 }
+        guard first < coord.col else { return nil }
+        let start = CellAddr(col: first, row: coord.row)
+        let end = CellAddr(col: coord.col - 1, row: coord.row)
+        return "\(start.description):\(end.description)"
+    }
+
+    /// A cell joins the run when its COMPUTED value is a number, so a
+    /// column of subtotals extends the run the same way literals do.
+    private func isSummable(row: Int, col: Int) -> Bool {
+        if case .number = workbook.value(row: row, col: col) { return true }
+        return false
     }
 
     // MARK: - Keyboard navigation (Excel muscle memory: Tab/Enter/arrows)

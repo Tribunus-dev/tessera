@@ -173,6 +173,46 @@ public struct SheetStore: Sendable {
         return sheet
     }
 
+    /// Set the presentation of the cell at (row, col). Presentation
+    /// only: the cell's text is not read or written here, so a restyle
+    /// can never disturb a formula.
+    public func setCellFormat(
+        row: Int,
+        col: Int,
+        format: SheetCellFormat,
+        for sheetID: UUID
+    ) async throws -> Sheet {
+        var sheet = try await loadOrFail(id: sheetID)
+        guard let tableDims = tableDimensions(of: sheet.body) else {
+            throw SheetStoreError.noTable(sheetID: sheetID)
+        }
+        guard row >= 0, row < tableDims.rows, col >= 0, col < tableDims.cols else {
+            throw SheetStoreError.cellOutOfBounds(row: row, col: col, rows: tableDims.rows, cols: tableDims.cols)
+        }
+        let previous = sheet.cellFormat(row: row, col: col)
+        sheet = sheet.settingCellFormat(row: row, col: col, format)
+        sheet.updatedAt = Date()
+        _ = try await upsert(sheet)
+        try await appendReceipt(
+            entityID: sheetID,
+            receiptType: SheetReceiptType.setCellFormat.rawValue,
+            payload: [
+                "row": .number(Double(row)),
+                "col": .number(Double(col)),
+                "oldFormat": previous.json,
+                "newFormat": format.json,
+            ]
+        )
+        return sheet
+    }
+
+    /// Rewrite every formula for a structural edit. Runs AFTER the grid
+    /// is restructured and BEFORE the save, so references follow the
+    /// cells they point at. See ``Sheet/adjustingFormulas(for:)``.
+    private func adjustFormulas(in sheet: Sheet, for edit: StructuralEdit) -> Sheet {
+        sheet.adjustingFormulas(for: edit)
+    }
+
     public func insertRow(at index: Int, for sheetID: UUID) async throws -> Sheet {
         var sheet = try await loadOrFail(id: sheetID)
         guard let tableID = primaryTableID(of: sheet.body),
@@ -192,6 +232,7 @@ public struct SheetStore: Sendable {
         table.children.insert(contentsOf: newCellIDs, at: insertAt)
         table.attributes["rows"] = .number(Double(rows + 1))
         sheet.body.blocks[tableID] = table
+        sheet = adjustFormulas(in: sheet, for: .insertRows(at: index, count: 1))
         sheet.updatedAt = Date()
         _ = try await upsert(sheet)
         try await appendReceipt(
@@ -222,6 +263,7 @@ public struct SheetStore: Sendable {
         table.attributes["rows"] = .number(Double(rows - 1))
         sheet.body.blocks[tableID] = table
         for id in toRemove { sheet.body.blocks.removeValue(forKey: id) }
+        sheet = adjustFormulas(in: sheet, for: .deleteRows(at: index, count: 1))
         sheet.updatedAt = Date()
         _ = try await upsert(sheet)
         try await appendReceipt(
@@ -254,6 +296,7 @@ public struct SheetStore: Sendable {
         table.attributes["cols"] = .number(Double(cols + 1))
         sheet.body.blocks[tableID] = table
         sheet.columns.insert(SheetColumn(label: "", type: .text), at: index)
+        sheet = adjustFormulas(in: sheet, for: .insertColumns(at: index, count: 1))
         sheet.updatedAt = Date()
         _ = try await upsert(sheet)
         try await appendReceipt(
@@ -290,6 +333,7 @@ public struct SheetStore: Sendable {
         if index < sheet.columns.count {
             sheet.columns.remove(at: index)
         }
+        sheet = adjustFormulas(in: sheet, for: .deleteColumns(at: index, count: 1))
         sheet.updatedAt = Date()
         _ = try await upsert(sheet)
         try await appendReceipt(

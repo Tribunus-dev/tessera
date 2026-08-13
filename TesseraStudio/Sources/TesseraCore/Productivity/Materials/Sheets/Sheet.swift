@@ -68,6 +68,11 @@ public struct Sheet: Codable, Sendable, Identifiable, Hashable {
     public var createdAt: Date
     public var updatedAt: Date
 
+    /// Where this sheet was digested from, when it came from a file.
+    /// Nil for a sheet created in the app. Optional so sheets stored
+    /// before provenance existed still decode.
+    public var provenance: SourceProvenance?
+
     public init(
         id: UUID = UUID(),
         title: String = "",
@@ -182,6 +187,79 @@ public struct Sheet: Codable, Sendable, Identifiable, Hashable {
         guard let blockID = cellID(row: row, col: col),
               let block = body.blocks[blockID] else { return "" }
         return block.content.map { $0.text }.joined()
+    }
+
+    /// A copy with the cell at (row, col) set to `text`, or the sheet
+    /// unchanged when the coordinate is outside the grid.
+    ///
+    /// The value-type counterpart of ``cellText(row:col:)``. Persisted
+    /// edits still go through ``SheetStore/setCell(row:col:value:for:)``,
+    /// which also emits the receipt; this is the in-memory half, for
+    /// callers holding a `Sheet` without a data layer.
+    public func settingCellText(row: Int, col: Int, _ text: String) -> Sheet {
+        guard let blockID = cellID(row: row, col: col),
+              var block = body.blocks[blockID] else { return self }
+        var updated = self
+        block.content = [InlineRun(text: text)]
+        updated.body.blocks[blockID] = block
+        return updated
+    }
+
+    // MARK: - Cell format
+
+    /// Presentation for the cell at (row, col). Cells written before
+    /// formats existed - and cells nobody has styled - return
+    /// ``SheetCellFormat/standard``, so every caller can treat the
+    /// result as non-optional.
+    public func cellFormat(row: Int, col: Int) -> SheetCellFormat {
+        guard let blockID = cellID(row: row, col: col),
+              let block = body.blocks[blockID],
+              let raw = block.attributes[SheetCellFormat.attributeKey],
+              let format = SheetCellFormat(json: raw) else { return .standard }
+        return format
+    }
+
+    /// A copy with the cell's format replaced, or the sheet unchanged
+    /// when the coordinate is outside the grid.
+    ///
+    /// A standard format REMOVES the attribute rather than storing an
+    /// empty object, so styling a cell and then clearing it leaves the
+    /// block byte-identical to one that was never styled. Otherwise
+    /// every touched cell would carry dead JSON forever.
+    public func settingCellFormat(row: Int, col: Int, _ format: SheetCellFormat) -> Sheet {
+        guard let blockID = cellID(row: row, col: col),
+              var block = body.blocks[blockID] else { return self }
+        var updated = self
+        if format.isStandard {
+            block.attributes.removeValue(forKey: SheetCellFormat.attributeKey)
+        } else {
+            block.attributes[SheetCellFormat.attributeKey] = format.json
+        }
+        updated.body.blocks[blockID] = block
+        return updated
+    }
+
+    /// A copy with every formula rewritten for a structural edit.
+    ///
+    /// Call this AFTER the grid has been restructured: each formula has
+    /// already moved to its new position carrying its original text, so
+    /// rewriting in place gives the right result and no cell has to be
+    /// tracked through the move.
+    ///
+    /// Without it, inserting a row above `=SUM(A1:A5)` leaves it summing
+    /// the wrong five cells - no error, just a different number.
+    public func adjustingFormulas(for edit: StructuralEdit) -> Sheet {
+        var updated = self
+        for row in 0..<updated.rowCount {
+            for col in 0..<updated.columnCount {
+                let text = updated.cellText(row: row, col: col)
+                guard SheetWorkbook.isFormula(text) else { continue }
+                let rewritten = FormulaReferenceAdjuster.adjust(text, for: edit)
+                guard rewritten != text else { continue }
+                updated = updated.settingCellText(row: row, col: col, rewritten)
+            }
+        }
+        return updated
     }
 
     private func cellID(row: Int, col: Int) -> UUID? {
