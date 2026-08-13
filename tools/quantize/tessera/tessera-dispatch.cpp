@@ -776,8 +776,16 @@ static ts_dispatch_db * ts_dispatch_db_open(
     // while the dispatch is still running (the Python side can read
     // the partial table mid-dispatch if needed).
     {
+        // Column list MUST match both the l4_plan_outcome CREATE TABLE and
+        // the 19 values ts_tessera_db_append_l4_outcome pushes, in order.
+        // Phase 16 added model_role to the struct, the append helper, and
+        // the table -- but not here: every flush became INSERT(18 cols)
+        // VALUES(19 values) and failed, silently dropping the ENTIRE L5
+        // feedback record of the run (observed: 90/90 rows dropped on the
+        // first default-on Orpheus pass, l4_plan_outcome left empty).
         std::vector<std::string> l4_cols = {
-            "model_hash", "name", "layer", "iteration", "plan_id", "strategy",
+            "model_hash", "model_role", "name", "layer", "iteration",
+            "plan_id", "strategy",
             "alpha_before", "alpha_after", "clip_before", "clip_after",
             "outlier_thresh_before", "outlier_thresh_after",
             "mse_before", "mse_after", "frob_before", "frob_after",
