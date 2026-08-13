@@ -673,6 +673,23 @@ remains, in priority order:
    - `alpha_l_probe` for HIGGS perturb-and-measure via the streaming
      slot-fill hook -- gated on the open streaming-correctness finding.
 
+3c. **Joint weight x KV-cache reconstruction (deferred implementation,
+   tracked design).** Architect requirement, 2026-08-13: ternary
+   weights AND a quantized KV cache with reconstruction data,
+   reconstructed jointly -- the runtime does math on reconstructions,
+   never on codes, so calibration must fit and certify the composed
+   reconstruction. Audit + design in
+   `docs/tessera-kv-joint-reconstruction-design.md`: L4/L5 currently
+   certify `W_hat` under an f16 cache (a runtime nobody deploys --
+   false accept); the fix is `-ctk/-ctv` through the L4 probe and L5
+   harness first, then a `kv_stats` capture substrate (post-RoPE K /
+   V outputs, sufficient statistics -- no capture point exists
+   today), then static per-channel KV scales MIGRATED into
+   `W_q`/`W_o` reconstruction data (pair-tied under RoPE), with a
+   Tessera-native ternary+outlier KV codec as the target and ggml
+   q8_0/q4_0 as bring-up scaffolding. Composed-probe runs are gated
+   on the streaming-correctness fix.
+
 4. **L3 per-token KL on real models**. The weight-level cosine is
    shipped and unblocked; the per-token KL path is the next step.
    Requires the joint forward pass harness from L5. Estimated: 3-5

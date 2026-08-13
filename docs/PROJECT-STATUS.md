@@ -381,6 +381,16 @@ Remaining work, ranked:
    `(model_hash, model_role, name)` spine (acceptance gate first),
    `tensor_stats` readers + quantile sketch, `alpha_l_probe` gated on
    streaming correctness. Additions only -- no pipeline refactor.
+2c. Joint weight x KV-cache reconstruction, designed and deferred
+   (see `docs/tessera-kv-joint-reconstruction-design.md`): math is
+   always on reconstructions, so L4/L5 must certify the composed
+   runtime (`W_hat` + reconstructed cache), not `W_hat` over the f16
+   cache nobody deploys. Order: `-ctk/-ctv` through the L4 probe and
+   L5 harness, composed baseline matrix on gemma-4 12B, `kv_stats`
+   capture (post-RoPE K / V outputs -- no capture point exists),
+   static per-channel KV scales migrated into `W_q`/`W_o`
+   reconstruction (pair-tied under RoPE), Tessera-native ternary KV
+   codec last. Additions only -- no pipeline refactor.
 3. One end-to-end run on gemma-4-12B reporting drafter acceptance
    against the 0.86 % baseline plus a PPL delta. This supplies the data
    for item 1 and exercises `runtime_probe.py`.
