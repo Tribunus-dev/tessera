@@ -393,7 +393,10 @@ Remaining work, ranked:
    codec last. Additions only -- no pipeline refactor.
 3. One end-to-end run on gemma-4-12B reporting drafter acceptance
    against the 0.86 % baseline plus a PPL delta. This supplies the data
-   for item 1 and exercises `runtime_probe.py`.
+   for item 1 and exercises `runtime_probe.py`. Artifact-level
+   (architect, 2026-08-13): gates score the produced Tessera GGUF as
+   loaded by the runtime, not pipeline-internal metrics; base logits
+   captured once via the streamed BF16 leg, candidates score resident.
 4. ~~Fix the L1.5 suffix mismatch so the W4A4 reference path is live~~
    (done 2026-08-01). ~~Lift the L1.5 ground truth to actual FP16~~
    (done 2026-08-12, at calibration time). ~~Wire `tessera-l5` into the

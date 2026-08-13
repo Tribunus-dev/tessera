@@ -654,6 +654,16 @@ remains, in priority order:
    matters is drafter acceptance recovery against the 0.86 %
    baseline, plus a PPL delta. Publish it either way. This also
    supplies the data for item 1 and exercises `runtime_probe.py`.
+   Validation is ARTIFACT-LEVEL (architect, 2026-08-13): the gates
+   run against the produced Tessera GGUF as the runtime loads it --
+   `e2e_probe.py` already takes the artifact -- never against
+   pipeline-internal metrics, which the search may have overfit.
+   The streamed BF16 reference leg captures base logits once
+   (`--kl-divergence-base`) and every candidate artifact scores
+   against that file resident (the ~1.6 bpw artifact fits the
+   working set; only the reference needs streaming). MTP acceptance
+   gates first; dflash/dspark join when their GGUF conversion is
+   fixed (`--target-model-dir`).
 
 3b. **Eval caching (deferred implementation, tracked design).** The
    audit in `docs/tessera-eval-cache-design.md` found all three needed
