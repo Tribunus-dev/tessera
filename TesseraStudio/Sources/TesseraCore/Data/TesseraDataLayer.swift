@@ -322,19 +322,49 @@ public actor TesseraDataLayer {
         try await dataStore.purgeGraphCheckpoints(threadId: threadId)
     }
 
+    /// Weights for the three RRF signals in ``hybridSearch``.
+    /// The defaults (0.2 graph / 0.5 vector / 0.3 keyword) are
+    /// the values calibrated against the seed fixture in the
+    /// migration SQL. The productivity surface can override per
+    /// query for domain-specific tuning.
+    public struct HybridSearchWeights: Sendable, Equatable {
+        public var graph: Float
+        public var vector: Float
+        public var keyword: Float
+
+        public init(graph: Float, vector: Float, keyword: Float) {
+            self.graph = graph
+            self.vector = vector
+            self.keyword = keyword
+        }
+
+        /// The calibrated defaults: graph=0.2, vector=0.5, keyword=0.3.
+        public static let `default` = HybridSearchWeights(graph: 0.2, vector: 0.5, keyword: 0.3)
+    }
+
     /// RRF over graph + vector + keyword.
     public func hybridSearch(
         anchor: UUID,
         queryText: String? = nil,
         queryEmbedding: [Float]? = nil,
-        maxDepth: Int = 3
+        maxDepth: Int = 3,
+        weights: HybridSearchWeights = .default
     ) async throws -> [HybridSearchResult] {
         try await dataStore.hybridSearch(
             anchor: anchor,
             queryText: queryText,
             queryEmbedding: queryEmbedding,
-            maxDepth: maxDepth
+            maxDepth: maxDepth,
+            weights: weights
         )
+    }
+
+    /// Run the graph analytics ETL (degree centrality + future analytics)
+    /// into DuckDB. The ETL reads from Postgres and upserts to DuckDB;
+    /// it runs in a background task so it does not block the caller.
+    public func runGraphAnalyticsETL() async throws -> Int {
+        let etl = DuckDBAnalyticsETL()
+        return try await etl.runAnalyticsETL(from: self)
     }
 
     // MARK: - Pass-through: cache

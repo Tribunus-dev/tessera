@@ -992,7 +992,8 @@ public actor TesseraDataStore {
         anchor: UUID,
         queryText: String? = nil,
         queryEmbedding: [Float]? = nil,
-        maxDepth: Int = 3
+        maxDepth: Int = 3,
+        weights: TesseraDataLayer.HybridSearchWeights = .default
     ) async throws -> [HybridSearchResult] {
         guard let client else { throw TesseraDataStoreError.closed }
         if let emb = queryEmbedding, emb.count != Self.embeddingDimension {
@@ -1009,10 +1010,57 @@ public actor TesseraDataStore {
         // default in postgres-nio's encoders, but the hybrid_search
         // function's `p_max_depth` is declared `int DEFAULT 3`.
         let maxDepth32: Int32 = Int32(maxDepth)
+
+        // Build the RRF query inline so the weights flow directly into
+        // the formula without requiring a Postgres function signature
+        // change. The subqueries mirror the migration SQL; only the
+        // weight literals differ per-call.
+        let graphWeight = weights.graph
+        let vectorWeight = weights.vector
+        let keywordWeight = weights.keyword
+
         let query: PostgresQuery = """
-            SELECT entity_id, entity_type, subtype, label, body,
-                   graph_score, vector_score, keyword_score, rrf_score
-              FROM hybrid_search(\(anchor)::uuid, \(queryText), \(embedLiteral)::vector, \(maxDepth32))
+            WITH RECURSIVE walk AS (
+                SELECT target_id AS id, 1 AS depth, link_type
+                  FROM entity_links WHERE source_id = \(anchor)
+                UNION ALL
+                SELECT el.target_id, w.depth + 1, el.link_type
+                  FROM walk w JOIN entity_links el ON el.source_id = w.id
+                 WHERE w.depth < \(maxDepth32)
+            ),
+            vector_ranked AS (
+                SELECT e.id, ROW_NUMBER() OVER (ORDER BY e.embedding <=> \(embedLiteral)::vector) AS rn
+                  FROM graph_entities e
+                 WHERE \(embedLiteral) IS NOT NULL
+            ),
+            keyword_ranked AS (
+                SELECT e.id, ROW_NUMBER() OVER (
+                    ORDER BY ts_rank_cd(e.search_tsv, plainto_tsquery('english', \(queryText))) DESC
+                ) AS rn
+                  FROM graph_entities e
+                 WHERE \(queryText) IS NOT NULL
+                   AND e.search_tsv @@ plainto_tsquery('english', \(queryText))
+            )
+            SELECT
+                e.id AS entity_id,
+                e.entity_type,
+                e.subtype,
+                e.label,
+                e.body,
+                (1.0 / (1 + 1.5 * w.depth))::real                                         AS graph_score,
+                COALESCE(1 - (e.embedding <=> \(embedLiteral)::vector), 0.0)::real         AS vector_score,
+                COALESCE(ts_rank_cd(e.search_tsv, plainto_tsquery('english', \(queryText))), 0.0)::real AS keyword_score,
+                (
+                    \(graphWeight) * COALESCE(1.0 / (60 + vr.rn), 0) +
+                    \(vectorWeight) * COALESCE(1.0 / (60 + kr.rn), 0) +
+                    \(keywordWeight) * COALESCE(1.0 / (1 + 1.5 * w.depth), 0)
+                )::real                                                                    AS rrf_score
+            FROM walk w
+            JOIN graph_entities e ON e.id = w.id
+            LEFT JOIN vector_ranked  vr ON vr.id = e.id
+            LEFT JOIN keyword_ranked kr ON kr.id = e.id
+            ORDER BY rrf_score DESC
+            LIMIT 25
             """
         let rows = try await client.query(query, logger: logger)
         var out: [HybridSearchResult] = []

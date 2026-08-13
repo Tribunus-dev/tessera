@@ -67,6 +67,11 @@ let package = Package(
         .library(name: "TesseraStudioiOS", targets: ["TesseraStudioiOS"]),
     ],
     dependencies: [
+        // DuckDB: columnar analytical database for graph analytics ETL.
+        // The analytics layer (degree centrality, future PageRank) runs against
+        // DuckDB; Postgres remains the source of truth. See
+        // docs/linux-data-contracts.md §DuckDB.
+        .package(url: "https://github.com/duckdb/duckdb-swift.git", from: "1.0.0"),
         // Pure-Swift HTML parser used by the keyless web-search providers
         // (DuckDuckGo HTML endpoint). No WebKit, works headless in tests.
         .package(url: "https://github.com/scinfu/SwiftSoup.git", from: "2.6.0"),
@@ -107,6 +112,9 @@ let package = Package(
             dependencies: [
                 "CLlama",
                 "CTesseraFFI",
+                // DuckDB: analytics ETL layer. See
+                // docs/linux-data-contracts.md §DuckDB.
+                .product(name: "DuckDB", package: "duckdb-swift"),
                 .product(name: "SwiftSoup", package: "SwiftSoup"),
                 // Data layer: Postgres (durable graph + receipts) and
                 // RediStack (Valkey/Redis cache). Only TesseraDataStore /
