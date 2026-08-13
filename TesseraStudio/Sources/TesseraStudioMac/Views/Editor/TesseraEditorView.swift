@@ -780,7 +780,13 @@ public final class TesseraSTTextView: STTextView {
     // MARK: - Writing Tools Coordinator (Phase 11 P3)
 
     /// The Writing Tools coordinator. Set up in setupWritingToolsCoordinator().
-    private var tesseraWritingToolsCoordinator: TesseraWritingToolsCoordinator?
+    ///
+    /// Typed AnyObject because TesseraWritingToolsCoordinator is
+    /// @available(macOS 15.2, *) while this package targets macOS 14
+    /// (Package.swift). A stored property cannot carry availability its
+    /// enclosing type lacks, so the concrete type only appears inside
+    /// #available-guarded scopes; cast on use.
+    private var tesseraWritingToolsCoordinator: AnyObject?
 
     // MARK: - Phase 10 P2: Scroll-based image load management
 
@@ -2020,6 +2026,8 @@ public final class TesseraSTTextView: STTextView {
 
     /// Set up Writing Tools integration once text content manager is injected.
     private func setupWritingToolsCoordinator() {
+        // Writing Tools is macOS 15.2+; on 14.x the editor simply runs without it.
+        guard #available(macOS 15.2, *) else { return }
         guard let cm = textContentManager as? TesseraTextContentManager else { return }
         let coordinator = TesseraWritingToolsCoordinator(textView: self, contentManager: cm)
         coordinator.rewriteDelegate = self
