@@ -82,6 +82,19 @@ public struct CalendarStore: Sendable {
                 : CalendarEventReceiptType.eventUpdated.rawValue,
             payload: payload
         )
+        // Fire-and-forget material receipt: failure does not block the upsert.
+        Task {
+            try? await dataLayer.appendMaterialReceipt(
+                entityID: event.id,
+                receiptType: CalendarReceiptPayload.receiptType,
+                payload: [
+                    "entityID": .string(event.id.uuidString),
+                    "action": .string(isNew ? "create" : "update"),
+                    "eventID": .string(event.id.uuidString),
+                    "title": .string(event.title),
+                ]
+            )
+        }
 
         try await syncLinks(for: event)
         return event
@@ -119,6 +132,18 @@ public struct CalendarStore: Sendable {
                 receiptType: CalendarEventReceiptType.eventDeleted.rawValue,
                 payload: payload
             )
+            // Fire-and-forget material receipt: failure does not block the deletion.
+            Task {
+                try? await dataLayer.appendMaterialReceipt(
+                    entityID: id,
+                    receiptType: CalendarReceiptPayload.receiptType,
+                    payload: [
+                        "entityID": .string(id.uuidString),
+                        "action": .string("delete"),
+                        "eventID": .string(id.uuidString),
+                    ]
+                )
+            }
         }
         return didDelete
     }
@@ -166,6 +191,20 @@ public struct CalendarStore: Sendable {
                 "status": .string(status.rawValue),
             ]
         )
+        // Fire-and-forget material receipt: failure does not block the response.
+        Task {
+            try? await dataLayer.appendMaterialReceipt(
+                entityID: eventID,
+                receiptType: CalendarReceiptPayload.receiptType,
+                payload: [
+                    "entityID": .string(eventID.uuidString),
+                    "action": .string("respond"),
+                    "eventID": .string(eventID.uuidString),
+                    "title": .string(event.title),
+                    "response": .string(status.rawValue),
+                ]
+            )
+        }
         return event
     }
 

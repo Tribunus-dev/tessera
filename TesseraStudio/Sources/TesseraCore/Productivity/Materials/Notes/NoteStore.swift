@@ -72,6 +72,18 @@ public struct NoteStore: Sendable {
                 "linkedEntityCount": .number(Double(note.linkedEntityIDs.count)),
             ]
         )
+        // Fire-and-forget material receipt: failure does not block the upsert.
+        Task {
+            try? await dataLayer.appendMaterialReceipt(
+                entityID: note.id,
+                receiptType: NoteEditReceiptPayload.receiptType,
+                payload: [
+                    "entityID": .string(note.id.uuidString),
+                    "action": .string("create"),
+                    "title": .string(label),
+                ]
+            )
+        }
         return note
     }
 
@@ -102,6 +114,17 @@ public struct NoteStore: Sendable {
                 receiptType: NoteReceiptType.delete.rawValue,
                 payload: [:]
             )
+            // Fire-and-forget material receipt: failure does not block the deletion.
+            Task {
+                try? await dataLayer.appendMaterialReceipt(
+                    entityID: id,
+                    receiptType: NoteEditReceiptPayload.receiptType,
+                    payload: [
+                        "entityID": .string(id.uuidString),
+                        "action": .string("delete"),
+                    ]
+                )
+            }
         }
         return didDelete
     }

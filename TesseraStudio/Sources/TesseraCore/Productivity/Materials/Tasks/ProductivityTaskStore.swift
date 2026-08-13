@@ -77,6 +77,18 @@ public struct ProductivityTaskStore: Sendable {
             ],
             actor: actor
         )
+        // Fire-and-forget material receipt: failure does not block the upsert.
+        Task {
+            try? await dataLayer.appendMaterialReceipt(
+                entityID: stored.id,
+                receiptType: TaskReceiptPayload.receiptType,
+                payload: [
+                    "entityID": .string(stored.id.uuidString),
+                    "action": .string("create"),
+                    "taskID": .string(stored.id.uuidString),
+                ]
+            )
+        }
         return stored
     }
 
@@ -112,6 +124,18 @@ public struct ProductivityTaskStore: Sendable {
                 payload: [:],
                 actor: actor
             )
+            // Fire-and-forget material receipt: failure does not block the deletion.
+            Task {
+                try? await dataLayer.appendMaterialReceipt(
+                    entityID: id,
+                    receiptType: TaskReceiptPayload.receiptType,
+                    payload: [
+                        "entityID": .string(id.uuidString),
+                        "action": .string("delete"),
+                        "taskID": .string(id.uuidString),
+                    ]
+                )
+            }
         }
         return didDelete
     }
@@ -130,7 +154,20 @@ public struct ProductivityTaskStore: Sendable {
         guard var task = try await get(id: id) else { return nil }
         task.completedAt = completionTime
         task.updatedAt = completionTime
-        return try await upsert(task, actor: actor)
+        let saved = try await upsert(task, actor: actor)
+        // Fire-and-forget material receipt: failure does not block the completion.
+        Task {
+            try? await dataLayer.appendMaterialReceipt(
+                entityID: id,
+                receiptType: TaskReceiptPayload.receiptType,
+                payload: [
+                    "entityID": .string(id.uuidString),
+                    "action": .string("complete"),
+                    "taskID": .string(id.uuidString),
+                ]
+            )
+        }
+        return saved
     }
 
     /// Reopen a completed task. The `completedAt` field is

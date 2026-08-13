@@ -251,6 +251,34 @@ public actor TesseraDataLayer {
         try await dataStore.receipts(forEntity: entityID)
     }
 
+    /// Append a lightweight material receipt. Simpler than ``appendReceiptToChain``:
+    /// no `receipt_chain` linkage, no priorReceiptID chain, no C2PA manifest,
+    /// no document AST snapshot. The `entityID` IS the material entity, not a
+    /// document.
+    ///
+    /// Material receipts are signed with the same ed25519 key as document
+    /// receipts. The signature is computed over the canonical JSON of the
+    /// (entityID, receiptType, payload, witnessedAt) tuple. Signing
+    /// failures do NOT block the mutation -- the receipt is written with a
+    /// null signature so the user's action completes even when the key is
+    /// unavailable.
+    ///
+    /// Use this for Notes, Email, Contacts, Tasks, Reminders, Calendar,
+    /// Sheets, and Code mutations. Use ``appendReceiptToChain`` for document
+    /// mutations (which carry block AST snapshots and chain linkage).
+    @discardableResult
+    public func appendMaterialReceipt(
+        entityID: UUID,
+        receiptType: String,
+        payload: [String: JSONValue]
+    ) async throws -> GraphReceipt {
+        try await dataStore.appendMaterialReceipt(
+            entityID: entityID,
+            receiptType: receiptType,
+            payload: payload
+        )
+    }
+
     // MARK: - Productivity surface pass-through: receipt chain + chat queue
 
     /// Append a receipt to the document's chain. The receipt is

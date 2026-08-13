@@ -58,6 +58,18 @@ public struct SlideStore: Sendable {
                 "wordCount": .number(Double(stored.wordCount)),
             ]
         )
+        // Fire-and-forget material receipt: failure does not block the upsert.
+        Task {
+            try? await dataLayer.appendMaterialReceipt(
+                entityID: stored.id,
+                receiptType: SlideReceiptPayload.receiptType,
+                payload: [
+                    "entityID": .string(stored.id.uuidString),
+                    "action": .string("create"),
+                    "deckID": .string(stored.id.uuidString),
+                ]
+            )
+        }
         return stored
     }
 
@@ -77,6 +89,18 @@ public struct SlideStore: Sendable {
                 receiptType: SlideReceiptType.delete.rawValue,
                 payload: [:]
             )
+            // Fire-and-forget material receipt: failure does not block the deletion.
+            Task {
+                try? await dataLayer.appendMaterialReceipt(
+                    entityID: id,
+                    receiptType: SlideReceiptPayload.receiptType,
+                    payload: [
+                        "entityID": .string(id.uuidString),
+                        "action": .string("delete"),
+                        "deckID": .string(id.uuidString),
+                    ]
+                )
+            }
         }
         return didDelete
     }

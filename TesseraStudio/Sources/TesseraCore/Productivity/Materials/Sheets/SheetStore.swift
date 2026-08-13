@@ -57,6 +57,18 @@ public struct SheetStore: Sendable {
                 "columnCount": .number(Double(stored.columnCount)),
             ]
         )
+        // Fire-and-forget material receipt: failure does not block the upsert.
+        Task {
+            try? await dataLayer.appendMaterialReceipt(
+                entityID: stored.id,
+                receiptType: SheetReceiptPayload.receiptType,
+                payload: [
+                    "entityID": .string(stored.id.uuidString),
+                    "action": .string("create"),
+                    "sheetID": .string(stored.id.uuidString),
+                ]
+            )
+        }
         return stored
     }
 
@@ -80,6 +92,18 @@ public struct SheetStore: Sendable {
                 receiptType: SheetReceiptType.delete.rawValue,
                 payload: [:]
             )
+            // Fire-and-forget material receipt: failure does not block the deletion.
+            Task {
+                try? await dataLayer.appendMaterialReceipt(
+                    entityID: id,
+                    receiptType: SheetReceiptPayload.receiptType,
+                    payload: [
+                        "entityID": .string(id.uuidString),
+                        "action": .string("delete"),
+                        "sheetID": .string(id.uuidString),
+                    ]
+                )
+            }
         }
         return didDelete
     }
@@ -170,6 +194,21 @@ public struct SheetStore: Sendable {
                 "newValue": .string(value),
             ]
         )
+        // Fire-and-forget material receipt: failure does not block the cell edit.
+        Task {
+            try? await dataLayer.appendMaterialReceipt(
+                entityID: sheetID,
+                receiptType: SheetReceiptPayload.receiptType,
+                payload: [
+                    "entityID": .string(sheetID.uuidString),
+                    "action": .string("cellEdit"),
+                    "sheetID": .string(sheetID.uuidString),
+                    "cell": .string("\(row+1), \(col+1)"),
+                    "oldValue": .string(oldText),
+                    "newValue": .string(value),
+                ]
+            )
+        }
         return sheet
     }
 

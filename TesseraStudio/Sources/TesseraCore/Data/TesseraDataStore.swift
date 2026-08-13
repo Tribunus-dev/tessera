@@ -716,6 +716,39 @@ public actor TesseraDataStore {
         throw TesseraDataStoreError.queryFailed(reason: "appendReceipt returned no rows")
     }
 
+    /// Append a lightweight material receipt. Unlike ``appendReceiptToChain``,
+    /// this method writes to `graph_receipts` only — no `receipt_chain`
+    /// linkage, no priorReceiptID, no C2PA manifest, no block AST snapshot.
+    /// The `entityID` is the material entity itself.
+    ///
+    /// The receipt is signed with the same ed25519 key as document receipts
+    /// (from ``TesseraKeychainVolume``). The signature is over the canonical
+    /// JSON bytes of the (entityID, receiptType, payload, witnessedAt) tuple.
+    ///
+    /// This is the "fire and forget" path for material mutations: the
+    /// signature failure is swallowed (the receipt is still written with
+    /// `signature = NULL`) so a missing signing key never blocks the user's
+    /// action.
+    public func appendMaterialReceipt(
+        entityID: UUID,
+        receiptType: String,
+        payload: [String: JSONValue],
+        signature: Data? = nil
+    ) async throws -> GraphReceipt {
+        guard let client else { throw TesseraDataStoreError.closed }
+        let payloadJSON = try Self.encodePayload(payload)
+        let query: PostgresQuery = try """
+            INSERT INTO graph_receipts (entity_id, receipt_type, payload, signature)
+            VALUES (\(entityID), \(receiptType), \(payloadJSON)::jsonb, \(signature))
+            RETURNING id, entity_id, receipt_type, payload::text, signature, witnessed_at
+            """
+        let rows = try await client.query(query, logger: logger)
+        for try await r in rows {
+            return try decodeReceipt(r)
+        }
+        throw TesseraDataStoreError.queryFailed(reason: "appendMaterialReceipt returned no rows")
+    }
+
     /// All receipts for one entity, oldest first.
     public func receipts(forEntity entityID: UUID) async throws -> [GraphReceipt] {
         guard let client else { throw TesseraDataStoreError.closed }
