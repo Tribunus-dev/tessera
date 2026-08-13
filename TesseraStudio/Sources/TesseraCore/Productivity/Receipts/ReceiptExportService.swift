@@ -4,9 +4,17 @@ import CryptoKit
 // MARK: - ReceiptExportFormat
 
 /// The format of a receipt-chain export (per spec §7.5).
-/// The user picks one of three formats; the export service
-/// builds the corresponding artifact.
-public enum ReceiptExportFormat: String, CaseIterable, Sendable, Codable, Identifiable {
+///
+/// The user picks one of four formats; the export service
+/// builds the corresponding artifact. ``.file`` carries a
+/// ``ProductivityExportFormat`` so the bridge knows which
+/// file format to emit (DOCX, XLSX, PPTX, HTML, PDF, …).
+///
+/// ``Codable`` is implemented manually so the wire format
+/// is stable: standard cases use a single-key object
+/// (`{"signedJSON": null}`), the ``.file`` case uses
+/// `{"file": {"format": "docx"}}`.
+public enum ReceiptExportFormat: Codable, Sendable, Identifiable {
     /// Signed JSON bundle — the full chain as a single
     /// JSON file, with the ed25519 signatures and C2PA
     /// manifests inline. Default export.
@@ -19,14 +27,27 @@ public enum ReceiptExportFormat: String, CaseIterable, Sendable, Codable, Identi
     /// with the C2PA manifest embedded. The document is
     /// then verifiable by any C2PA-aware tool.
     case c2paDocument
+    /// Block AST → external file via the Python format
+    /// bridge (python-docx, openpyxl, python-pptx, etc.).
+    case file(format: ProductivityExportFormat)
 
-    public var id: String { rawValue }
+    // MARK: - Identifiable
+
+    public var id: String {
+        switch self {
+        case .signedJSON: return "signedJSON"
+        case .markdown: return "markdown"
+        case .c2paDocument: return "c2paDocument"
+        case .file(let fmt): return "file_\(fmt.rawValue)"
+        }
+    }
 
     public var displayName: String {
         switch self {
         case .signedJSON: return "Signed JSON bundle"
         case .markdown: return "Markdown summary"
         case .c2paDocument: return "C2PA-signed document"
+        case .file(let fmt): return fmt.displayName
         }
     }
 
@@ -35,7 +56,46 @@ public enum ReceiptExportFormat: String, CaseIterable, Sendable, Codable, Identi
         case .signedJSON: return "json"
         case .markdown: return "md"
         case .c2paDocument: return "c2pa.txt"
+        case .file(let fmt): return fmt.fileExtension
         }
+    }
+
+    // MARK: - Codable
+
+    private enum CodingKeys: String, CodingKey {
+        case signedJSON, markdown, c2paDocument, file
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .signedJSON:
+            try container.encode(true, forKey: .signedJSON)
+        case .markdown:
+            try container.encode(true, forKey: .markdown)
+        case .c2paDocument:
+            try container.encode(true, forKey: .c2paDocument)
+        case .file(let fmt):
+            try container.encode(fmt, forKey: .file)
+        }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let _ = try? container.decode(Bool.self, forKey: .signedJSON) {
+            self = .signedJSON
+            return
+        }
+        if let _ = try? container.decode(Bool.self, forKey: .markdown) {
+            self = .markdown
+            return
+        }
+        if let _ = try? container.decode(Bool.self, forKey: .c2paDocument) {
+            self = .c2paDocument
+            return
+        }
+        let fmt = try container.decode(ProductivityExportFormat.self, forKey: .file)
+        self = .file(format: fmt)
     }
 }
 
@@ -44,7 +104,7 @@ public enum ReceiptExportFormat: String, CaseIterable, Sendable, Codable, Identi
 /// The output of a receipt-chain export. The artifact is
 /// in-memory; the host view is expected to write it to
 /// disk (via NSSavePanel on macOS, fileExporter on iOS).
-public struct ExportArtifact: Codable, Sendable, Hashable, Identifiable {
+public struct ExportArtifact: Codable, Sendable, Identifiable {
     public let id: UUID
     public let documentID: UUID
     public let format: ReceiptExportFormat
@@ -130,17 +190,28 @@ public struct ReceiptExportService: Sendable {
     public let dataLayer: TesseraDataLayer
     public let signer: ReceiptSigner
     public let egressPolicy: any EgressPolicy
+    /// Lazily-created bridge to the Python format subprocess.
+    /// Created on first use of ``.file`` exports.
+    private let _bridge: TesseraFormatBridge?
 
     public init(
         documentStore: DocumentStore,
         dataLayer: TesseraDataLayer,
         signer: ReceiptSigner,
-        egressPolicy: any EgressPolicy = AllowAllEgressPolicy()
+        egressPolicy: any EgressPolicy = AllowAllEgressPolicy(),
+        bridge: TesseraFormatBridge? = nil
     ) {
         self.documentStore = documentStore
         self.dataLayer = dataLayer
         self.signer = signer
         self.egressPolicy = egressPolicy
+        self._bridge = bridge
+    }
+
+    /// The format bridge actor. Lazily created so the service
+    /// can be constructed in tests without a Python subprocess.
+    private var bridge: TesseraFormatBridge {
+        _bridge ?? TesseraFormatBridge()
     }
 
     // MARK: - Build + sign + log
@@ -201,6 +272,10 @@ public struct ReceiptExportService: Sendable {
                 chain: chain,
                 ast: ast
             )
+        case .file(let targetFormat):
+            let ast = try await documentStore.loadDocument(id: documentID)
+            let astData = try ast.jsonData()
+            payload = try await bridge.exportFile(blocks: astData, format: targetFormat.rawValue)
         }
 
         // 4. Build the export receipt directly with the
@@ -222,7 +297,14 @@ public struct ReceiptExportService: Sendable {
         // 5. Persist the export receipt to the chain. We
         //    use a separate receipt type so the data
         //    layer can filter exports.
-        try await persistExportReceipt(logged)
+        let receiptType: String
+        switch format {
+        case .file:
+            receiptType = "export_file"
+        default:
+            receiptType = "export"
+        }
+        try await persistExportReceipt(logged, receiptType: receiptType)
 
         return ExportArtifact(
             documentID: documentID,
@@ -404,6 +486,8 @@ public struct ReceiptExportService: Sendable {
             return "\(slug)-audit-\(dateStr).\(ext)"
         case .c2paDocument:
             return "\(slug)-c2pa.\(ext)"
+        case .file(let fmt):
+            return "\(slug).\(fmt.fileExtension)"
         }
     }
 
@@ -595,16 +679,16 @@ public struct ReceiptExportService: Sendable {
     // MARK: - Persistence
 
     /// Persist the export receipt to the data layer. We
-    /// use a separate receipt type (`"export"`) so the
-    /// data layer can filter exports for the audit
-    /// inspector. The receipt's payload is the standard
-    /// ``Receipt`` shape (so the chain is uniform); the
-    /// type is in the row's `receipt_type` column.
-    private func persistExportReceipt(_ receipt: Receipt) async throws {
+    /// use a separate receipt type so the data layer can
+    /// filter exports for the audit inspector. The receipt's
+    /// payload is the standard ``Receipt`` shape (so the
+    /// chain is uniform); the type is in the row's
+    /// `receipt_type` column.
+    private func persistExportReceipt(_ receipt: Receipt, receiptType: String) async throws {
         let payload = try Self.encodeReceiptPayload(receipt)
         _ = try await dataLayer.appendReceiptToChain(
             documentID: receipt.documentID,
-            receiptType: "export",
+            receiptType: receiptType,
             payload: payload,
             signature: receipt.signature
         )

@@ -19,9 +19,20 @@ import Foundation
 public struct DocStore: Sendable {
 
     private let dataLayer: TesseraDataLayer
+    /// Optional bridge to the Python format subprocess.
+    /// ``importFromFile`` uses this to convert external formats
+    /// (DOCX, XLSX, HTML, …) to Block AST. Lazily constructed
+    /// so tests can run without a Python subprocess.
+    private let _formatBridge: TesseraFormatBridge?
 
-    public init(dataLayer: TesseraDataLayer) {
+    public init(dataLayer: TesseraDataLayer, formatBridge: TesseraFormatBridge? = nil) {
         self.dataLayer = dataLayer
+        self._formatBridge = formatBridge
+    }
+
+    /// The format bridge actor. Lazily created.
+    private var formatBridge: TesseraFormatBridge {
+        _formatBridge ?? TesseraFormatBridge()
     }
 
     // MARK: - CRUD
@@ -435,6 +446,56 @@ public struct DocStore: Sendable {
             receiptType: DocReceiptType.import.rawValue,
             payload: ["sourceFormat": .string(sourceFormat)]
         )
+    }
+
+    // MARK: - File import
+
+    /// Import a file's bytes into a new doc. The bridge converts
+    /// the external format to a Block AST; the doc is persisted
+    /// via ``upsert`` and a ``DocReceiptType.import`` receipt
+    /// is appended to the chain.
+    ///
+    /// - Parameters:
+    ///   - data: the raw file bytes
+    ///   - format: the source format (e.g. `"docx"`, `"html"`)
+    ///   - title: optional display title; defaults to the first
+    ///     heading text in the AST, or `"Imported Document"` if
+    ///     the AST has no headings
+    /// - Returns: the newly-created doc
+    public func importFromFile(
+        data: Data,
+        format: String,
+        title: String? = nil
+    ) async throws -> Doc {
+        // 1. Convert to Block AST via the Python bridge
+        let astData = try await formatBridge.importFile(data: data, format: format)
+        let ast = try DocumentAST.from(jsonData: astData)
+
+        // 2. Create the doc
+        let resolvedTitle: String
+        if let title, !title.isEmpty {
+            resolvedTitle = title
+        } else if let firstHeading = Doc.firstHeadingText(in: ast) {
+            resolvedTitle = firstHeading
+        } else {
+            resolvedTitle = "Imported Document"
+        }
+
+        let doc = Doc(
+            id: UUID(),
+            title: resolvedTitle,
+            body: ast,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+
+        // 3. Persist
+        let stored = try await upsert(doc)
+
+        // 4. Record the import receipt
+        try await recordImport(docID: stored.id, sourceFormat: format)
+
+        return stored
     }
 
     // MARK: - Receipts
