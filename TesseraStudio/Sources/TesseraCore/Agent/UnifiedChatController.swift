@@ -372,7 +372,16 @@ public final class UnifiedChatController {
             onToolCall: { [weak self] persona, name, args in
                 self?.appendToolCall(persona: persona, name: name, arguments: args)
             },
-            onFinalize: { [weak self] persona in self?.finalizeRow(persona: persona) }
+            onFinalize: { [weak self] persona in self?.finalizeRow(persona: persona) },
+            // Wave 3A (review #5): lift structured tool-result data
+            // (e.g. `data["sources"]` from the research tool) onto
+            // the row's tool-call result. The hook fires after every
+            // tool call completes; the controller extracts citations
+            // and writes the populated `ToolResultPayload` back to
+            // the row.
+            onToolResult: { [weak self] persona, name, result in
+                self?.recordToolResult(persona: persona, name: name, result: result)
+            }
         )
         let runExecutor = StateGraphExecutor(graph: graph, checkpointer: checkpointer)
         self.runExecutor = runExecutor
@@ -438,6 +447,105 @@ public final class UnifiedChatController {
             toolName: name,
             argumentsSummary: argsSummary
         )))
+    }
+
+    /// Record a tool result on the matching row's tool call. Wave 3A
+    /// (review #5): the chat graph's `onToolResult` hook fires here so
+    /// the controller can lift the tool's structured data (e.g.
+    /// `data["sources"]` from the research tool) onto the row. The
+    /// matched tool call is the most-recent call for the persona with
+    /// a `nil` result; older already-populated calls are left alone.
+    ///
+    /// The hook is the only place citations enter the row: `appendToolCall`
+    /// only sees the call (name + args), and the agent loop's stream
+    /// is consumed by the graph builder, not by the controller
+    /// directly. Without this hop, the chat row would never see a
+    /// `Citation` chip.
+    public func recordToolResult(persona: AgentPersona, name: String, result: ToolResult) {
+        guard let id = streamingRowsByPersona[persona],
+              let idx = rows.firstIndex(where: { $0.id == id }) else { return }
+        let toolCallIdx = rows[idx].toolCalls.lastIndex(where: { record in
+            record.toolName == name && record.result == nil
+        })
+        guard let callIdx = toolCallIdx else { return }
+        let citations = Self.extractCitations(from: result)
+        let payload = ToolResultPayload(
+            success: result.success,
+            output: result.output,
+            error: result.error,
+            confidenceBand: result.confidenceBand,
+            sources: citations
+        )
+        let existing = rows[idx].toolCalls[callIdx]
+        rows[idx].toolCalls[callIdx] = ToolCallRecord(
+            id: existing.id,
+            toolName: existing.toolName,
+            arguments: existing.arguments,
+            result: payload,
+            timestamp: existing.timestamp
+        )
+    }
+
+    /// Extract `Citation` values from a tool result's `data["sources"]`
+    /// array. Each element is expected to be a JSON object with the
+    /// shape `{url, title, content}` -- the same shape the `research`
+    /// tool emits at `TesseraResearchTool.swift:99-105`. Unknown
+    /// shapes are skipped. Empty input -> empty output.
+    ///
+    /// **URL normalization.** The `id` is the URL with trailing
+    /// slashes stripped, matching `TesseraResearchTool.normalizeURL`
+    /// (K1 verifier key). Two tools that emit the same URL with and
+    /// without a trailing slash collapse to one citation.
+    public nonisolated static func extractCitations(from result: ToolResult) -> [Citation] {
+        guard let data = result.data,
+              let sourcesValue = data["sources"],
+              case .array(let entries) = sourcesValue else {
+            return []
+        }
+        var seen = Set<String>()
+        var out: [Citation] = []
+        for entry in entries {
+            guard case .object(let fields) = entry else { continue }
+            let url = fields["url"]?.stringValue ?? ""
+            let title = fields["title"]?.stringValue ?? ""
+            let content = fields["content"]?.stringValue ?? ""
+            let baseID = url.isEmpty ? "title:\(title)" : url
+            let id = Self.normalizeCitationID(baseID)
+            if id.isEmpty { continue }
+            if seen.insert(id).inserted == false { continue }
+            out.append(Citation(
+                id: id,
+                label: title,
+                snippet: Self.truncate(content, to: Self.snippetCap),
+                url: url.isEmpty ? nil : url
+            ))
+        }
+        return out
+    }
+
+    /// Default cap on the snippet surfaced in a chip. The chip is the
+    /// headline; longer content routes to the source via tap. Mirrors
+    /// the audit-log HEAD chip's `fieldCap` discipline (review #5):
+    /// keep the chip one line, push the rest behind a tap.
+    public nonisolated static let snippetCap: Int = 140
+
+    /// URL normalization for citation ids. Trailing slashes are
+    /// stripped so the same page with and without a trailing slash
+    /// collapses to one id. Matches `TesseraResearchTool.normalizeURL`
+    /// (K1 verifier key).
+    nonisolated static func normalizeCitationID(_ id: String) -> String {
+        var out = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        while out.hasSuffix("/") { out.removeLast() }
+        return out
+    }
+
+    /// Truncate a string to a character cap without breaking in the
+    /// middle of a grapheme cluster. The cap is the chip-friendly
+    /// headline limit; the row never wants the full paragraph here.
+    private nonisolated static func truncate(_ s: String, to cap: Int) -> String {
+        guard s.count > cap else { return s }
+        let endIdx = s.index(s.startIndex, offsetBy: cap)
+        return String(s[..<endIdx])
     }
 
     /// Render up to `maxKeys` of a tool-call args dict as a short

@@ -18,15 +18,23 @@ public enum ChatGraphBuilder {
     public struct Hooks: Sendable {
         public let onText: @Sendable @MainActor (AgentPersona, String) -> Void
         public let onToolCall: @Sendable @MainActor (AgentPersona, String, [String: JSONValue]) -> Void
+        /// Fires when a tool call completes. Added in Wave 3A so the
+        /// controller can extract the tool's structured `data["sources"]`
+        /// and lift it onto the row as a `Citation` set. The hook is
+        /// optional (default no-op) so the call site that has no
+        /// use for tool results (e.g. tests) can omit it.
+        public let onToolResult: @Sendable @MainActor (AgentPersona, String, ToolResult) -> Void
         public let onFinalize: @Sendable @MainActor (AgentPersona) -> Void
 
         public init(
             onText: @escaping @Sendable @MainActor (AgentPersona, String) -> Void,
             onToolCall: @escaping @Sendable @MainActor (AgentPersona, String, [String: JSONValue]) -> Void,
-            onFinalize: @escaping @Sendable @MainActor (AgentPersona) -> Void
+            onFinalize: @escaping @Sendable @MainActor (AgentPersona) -> Void,
+            onToolResult: @escaping @Sendable @MainActor (AgentPersona, String, ToolResult) -> Void = { _, _, _ in }
         ) {
             self.onText = onText
             self.onToolCall = onToolCall
+            self.onToolResult = onToolResult
             self.onFinalize = onFinalize
         }
     }
@@ -41,7 +49,8 @@ public enum ChatGraphBuilder {
         skyLoop: TesseraAgentLoop,
         onText: @escaping @Sendable @MainActor (AgentPersona, String) -> Void,
         onToolCall: @escaping @Sendable @MainActor (AgentPersona, String, [String: JSONValue]) -> Void,
-        onFinalize: @escaping @Sendable @MainActor (AgentPersona) -> Void
+        onFinalize: @escaping @Sendable @MainActor (AgentPersona) -> Void,
+        onToolResult: @escaping @Sendable @MainActor (AgentPersona, String, ToolResult) -> Void = { _, _, _ in }
     ) -> StateGraph {
         let g = StateGraph(name: "tessy-sky-chat")
 
@@ -74,6 +83,7 @@ public enum ChatGraphBuilder {
                 history: chatHistory(from: state),
                 onText: onText,
                 onToolCall: onToolCall,
+                onToolResult: onToolResult,
                 onFinalize: onFinalize
             )
             return .init(updates: ["tessy_done": .bool(true)])
@@ -88,6 +98,7 @@ public enum ChatGraphBuilder {
                 history: chatHistory(from: state),
                 onText: onText,
                 onToolCall: onToolCall,
+                onToolResult: onToolResult,
                 onFinalize: onFinalize
             )
             return .init(updates: ["sky_done": .bool(true)])
@@ -144,6 +155,7 @@ public enum ChatGraphBuilder {
         history: [ChatMessage],
         onText: @escaping @Sendable @MainActor (AgentPersona, String) -> Void,
         onToolCall: @escaping @Sendable @MainActor (AgentPersona, String, [String: JSONValue]) -> Void,
+        onToolResult: @escaping @Sendable @MainActor (AgentPersona, String, ToolResult) -> Void,
         onFinalize: @escaping @Sendable @MainActor (AgentPersona) -> Void
     ) async {
         let stream = await MainActor.run { loop.run(userMessage: prompt, history: history) }
@@ -153,11 +165,18 @@ public enum ChatGraphBuilder {
                 await onText(persona, chunk)
             case .toolCall(let name, let arguments):
                 await onToolCall(persona, name, arguments)
+            case .toolResult(let name, let result):
+                // Forward tool results to the controller so it can lift
+                // structured data (e.g. `data["sources"]` from the
+                // research tool) onto the row. Without this hook the
+                // controller never sees the tool's return value and
+                // can only record the call, not its provenance.
+                await onToolResult(persona, name, result)
             case .error(let message):
                 await onText(persona, "[error: \(message)]")
             case .done:
                 break
-            case .thinking, .toolResult:
+            case .thinking:
                 break
             }
         }
