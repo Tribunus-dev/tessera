@@ -27,13 +27,18 @@ public final class Evaluator {
 
     /// Evaluate a formula AST at a given cell address.
     public func evaluate(_ ast: FormulaAST, at addr: CellAddr, engine: SheetEngineCore) throws -> Value {
-        try recursiveEvaluate(ast, at: addr, depth: 0, engine: engine)
+        try recursiveEvaluate(ast, at: addr, depth: 0, engine: engine, env: [:])
     }
+
+    /// Names bound by `LET` (and LAMBDA parameters at call time). Looked
+    /// up before named ranges, so an inner binding shadows an outer one.
+    public typealias Environment = [String: Value]
 
     // MARK: - Recursive Evaluation
 
     private func recursiveEvaluate(_ ast: FormulaAST, at addr: CellAddr,
-                                  depth: Int, engine: SheetEngineCore) throws -> Value {
+                                  depth: Int, engine: SheetEngineCore,
+                                  env: Environment) throws -> Value {
         if depth > config.maxCallDepth {
             return .error(.numberInvalid)
         }
@@ -59,6 +64,9 @@ public final class Evaluator {
             if ref.addr.col < 0 && ref.addr.row < 0 {
                 // Named range marker — resolve at evaluation time
                 let name = String(ref.sheet?.dropFirst() ?? "")
+                // A LET binding shadows a workbook named range, so an
+                // inner name always wins over an outer one.
+                if let bound = env[name.uppercased()] { return bound }
                 return try engine.resolveNamedRange(name, at: addr)
             }
             return try engine.getCellValue(ref.addr, sheet: ref.sheet)
@@ -69,19 +77,19 @@ public final class Evaluator {
             return .array(rows: range.height, cols: range.width, flat: values)
 
         case .binary(let op, let left, let right):
-            return try evalBinary(op: op, left: left, right: right, at: addr, depth: depth, engine: engine)
+            return try evalBinary(op: op, left: left, right: right, at: addr, depth: depth, engine: engine, env: env)
 
         case .unary(let op, let operand):
-            return try evalUnary(op: op, operand: operand, at: addr, depth: depth, engine: engine)
+            return try evalUnary(op: op, operand: operand, at: addr, depth: depth, engine: engine, env: env)
 
         case .function(let name, let args):
-            return try evalFunction(name: name, args: args, at: addr, depth: depth, engine: engine)
+            return try evalFunction(name: name, args: args, at: addr, depth: depth, engine: engine, env: env)
 
         case .arrayLiteral(let rows):
             var flat: [Value] = []
             for row in rows {
                 for cell in row {
-                    flat.append(try recursiveEvaluate(cell, at: addr, depth: depth + 1, engine: engine))
+                    flat.append(try recursiveEvaluate(cell, at: addr, depth: depth + 1, engine: engine, env: env))
                 }
             }
             return .array(rows: rows.count, cols: rows.first?.count ?? 0, flat: flat)
@@ -92,9 +100,9 @@ public final class Evaluator {
 
     private func evalBinary(op: BinaryOp, left: FormulaAST, right: FormulaAST,
                             at addr: CellAddr, depth: Int,
-                            engine: SheetEngineCore) throws -> Value {
-        let l = try recursiveEvaluate(left, at: addr, depth: depth + 1, engine: engine)
-        let r = try recursiveEvaluate(right, at: addr, depth: depth + 1, engine: engine)
+                            engine: SheetEngineCore, env: Environment) throws -> Value {
+        let l = try recursiveEvaluate(left, at: addr, depth: depth + 1, engine: engine, env: env)
+        let r = try recursiveEvaluate(right, at: addr, depth: depth + 1, engine: engine, env: env)
 
         switch op {
         case .add:
@@ -127,26 +135,39 @@ public final class Evaluator {
     }
 
     private func evalArithmetic(_ lhs: Value, _ rhs: Value, op: (Double, Double) -> Double) -> Value {
-        if let l = lhs.asNumber, let r = rhs.asNumber {
-            return .number(op(l, r))
+        if let e = propagatedError(lhs, rhs) { return .error(e) }
+        guard let l = arithmeticOperand(lhs), let r = arithmeticOperand(rhs) else {
+            return .error(.notAvailable)
         }
-        if let l = lhs.asNumber, let r = rhs.asNumber {
-            return .number(op(l, r))
-        }
-        // String + number coercion
-        if case .string(let s) = lhs, let r = rhs.asNumber {
-            if let l = Double(s) { return .number(op(l, r)) }
-        }
-        if case .string(let s) = rhs, let l = lhs.asNumber {
-            if let r = Double(s) { return .number(op(l, r)) }
-        }
-        return .error(.notAvailable)
+        return .number(op(l, r))
     }
 
     private func evalDivide(_ lhs: Value, _ rhs: Value) -> Value {
-        guard let l = lhs.asNumber, let r = rhs.asNumber else { return .error(.notAvailable) }
+        if let e = propagatedError(lhs, rhs) { return .error(e) }
+        guard let l = arithmeticOperand(lhs), let r = arithmeticOperand(rhs) else {
+            return .error(.notAvailable)
+        }
         if r == 0 { return .error(.divisionByZero) }
         return .number(l / r)
+    }
+
+    /// An error in either operand is the result of the whole expression.
+    /// Without this a precedent's `#DIV/0!` reached a dependent cell as a
+    /// bare non-numeric operand and was reported as `#N/A`, losing the
+    /// original cause the user needs in order to find the broken cell.
+    private func propagatedError(_ lhs: Value, _ rhs: Value) -> ValueError? {
+        if case .error(let e) = lhs { return e }
+        if case .error(let e) = rhs { return e }
+        return nil
+    }
+
+    /// Numeric coercion for arithmetic operands. An empty cell counts as
+    /// 0, matching Excel: `=A1+A2` over two blank cells is 0, not `#N/A`.
+    /// `asNumber` already coerces numbers, booleans, dates, and numeric
+    /// strings.
+    private func arithmeticOperand(_ v: Value) -> Double? {
+        if case .null = v { return 0 }
+        return v.asNumber
     }
 
     private func evalPower(_ lhs: Value, _ rhs: Value) -> Value {
@@ -157,8 +178,9 @@ public final class Evaluator {
     // MARK: - Unary Operations
 
     private func evalUnary(op: UnaryOp, operand: FormulaAST, at addr: CellAddr,
-                           depth: Int, engine: SheetEngineCore) throws -> Value {
-        let v = try recursiveEvaluate(operand, at: addr, depth: depth + 1, engine: engine)
+                           depth: Int, engine: SheetEngineCore,
+                           env: Environment) throws -> Value {
+        let v = try recursiveEvaluate(operand, at: addr, depth: depth + 1, engine: engine, env: env)
 
         switch op {
         case .negate:
@@ -176,11 +198,32 @@ public final class Evaluator {
     // MARK: - Function Calls
 
     private func evalFunction(name: String, args: [FormulaAST], at addr: CellAddr,
-                               depth: Int, engine: SheetEngineCore) throws -> Value {
+                               depth: Int, engine: SheetEngineCore,
+                               env: Environment) throws -> Value {
+        let upper = name.uppercased()
+
+        // LET and LAMBDA bind NAMES, so they have to be handled before
+        // the arguments are evaluated - evaluating `x` in `LET(x, 5, ...)`
+        // would try to resolve it as a named range and fail.
+        if upper == "LET" {
+            return try evalLet(args: args, at: addr, depth: depth, engine: engine, env: env)
+        }
+        if upper == "LAMBDA" {
+            return evalLambdaDefinition(args: args)
+        }
+        // A name bound to a LAMBDA is callable, which is how a LAMBDA is
+        // actually used: LET(dbl, LAMBDA(x, x*2), dbl(21)).
+        if case .lambda(let params, let body)? = env[upper] {
+            return try applyLambda(
+                params: params, body: body, args: args,
+                at: addr, depth: depth, engine: engine, env: env
+            )
+        }
+
         // Evaluate arguments first
         var evaluatedArgs: [Value] = []
         for arg in args {
-            let v = try recursiveEvaluate(arg, at: addr, depth: depth + 1, engine: engine)
+            let v = try recursiveEvaluate(arg, at: addr, depth: depth + 1, engine: engine, env: env)
             evaluatedArgs.append(v)
         }
 
@@ -198,6 +241,79 @@ public final class Evaluator {
 
         // Call
         return try fn.call(evaluatedArgs)
+    }
+
+    // MARK: - LET / LAMBDA
+
+    /// The NAME a binding argument introduces.
+    ///
+    /// A bare identifier parses to a named-range marker (a `.cell` whose
+    /// address is negative and whose sheet carries `$name`). For a
+    /// binding we want that name, not whatever it would resolve to.
+    /// Returns nil when the argument is not a plain identifier - e.g.
+    /// `LET(A1, ...)`, which Excel also rejects because the name would
+    /// be ambiguous with a cell reference.
+    private func bindingName(_ ast: FormulaAST) -> String? {
+        guard case .cell(let ref) = ast,
+              ref.addr.col < 0, ref.addr.row < 0,
+              let marker = ref.sheet else { return nil }
+        let name = String(marker.dropFirst())
+        return name.isEmpty ? nil : name.uppercased()
+    }
+
+    /// `LET(name1, value1, [name2, value2, ...], calculation)`.
+    ///
+    /// Each value is evaluated in the scope built so far, so a later
+    /// binding can refer to an earlier one. The final argument is the
+    /// expression the whole call returns.
+    private func evalLet(args: [FormulaAST], at addr: CellAddr, depth: Int,
+                         engine: SheetEngineCore, env: Environment) throws -> Value {
+        // (name, value) pairs plus one calculation: an odd count, >= 3.
+        guard args.count >= 3, args.count % 2 == 1 else { return .error(.notAvailable) }
+
+        var scope = env
+        var index = 0
+        while index + 2 < args.count {
+            guard let name = bindingName(args[index]) else { return .error(.nameInvalid) }
+            scope[name] = try recursiveEvaluate(
+                args[index + 1], at: addr, depth: depth + 1, engine: engine, env: scope
+            )
+            index += 2
+        }
+        return try recursiveEvaluate(
+            args[args.count - 1], at: addr, depth: depth + 1, engine: engine, env: scope
+        )
+    }
+
+    /// `LAMBDA(param1, ..., calculation)` - builds the function value.
+    /// The body stays unevaluated until the LAMBDA is applied.
+    private func evalLambdaDefinition(args: [FormulaAST]) -> Value {
+        guard let body = args.last, args.count >= 1 else { return .error(.notAvailable) }
+        var params: [String] = []
+        for parameter in args.dropLast() {
+            guard let name = bindingName(parameter) else { return .error(.nameInvalid) }
+            params.append(name)
+        }
+        return .lambda(params: params, body: body)
+    }
+
+    /// Apply a LAMBDA. Arguments are evaluated in the CALLER's scope,
+    /// then bound to the parameter names for the body.
+    ///
+    /// Recursion is bounded by `config.maxCallDepth`, so a LAMBDA that
+    /// calls itself without a base case returns `#NUM!` rather than
+    /// running away.
+    private func applyLambda(params: [String], body: FormulaAST, args: [FormulaAST],
+                             at addr: CellAddr, depth: Int,
+                             engine: SheetEngineCore, env: Environment) throws -> Value {
+        guard params.count == args.count else { return .error(.notAvailable) }
+        var scope = env
+        for (i, parameter) in params.enumerated() {
+            scope[parameter] = try recursiveEvaluate(
+                args[i], at: addr, depth: depth + 1, engine: engine, env: env
+            )
+        }
+        return try recursiveEvaluate(body, at: addr, depth: depth + 1, engine: engine, env: scope)
     }
 }
 

@@ -16,10 +16,27 @@ struct CellData: Sendable {
     var formula: Formula?
     var numberFormat: String?
 
+    /// Non-nil when this cell holds part of ANOTHER cell's spilled array.
+    /// The value is the anchor - the cell whose formula produced it. A
+    /// spilled cell has no formula of its own and cannot be edited
+    /// directly; the anchor owns the whole block.
+    var spillOrigin: CellAddr?
+
+    /// Set on the ANCHOR: the extent its array result currently occupies,
+    /// so the previous spill can be cleared before the next one is
+    /// written. Nil for an ordinary single-value cell.
+    var spillSize: SpillSize?
+
     init(value: Value = .null, formula: Formula? = nil) {
         self.rawValue = value
         self.formula = formula
     }
+}
+
+/// Dimensions of a spilled array result.
+struct SpillSize: Sendable, Equatable {
+    let rows: Int
+    let cols: Int
 }
 
 // MARK: - Sheet
@@ -80,6 +97,14 @@ public final class SheetEngine: @unchecked Sendable, SheetEngineCore {
     private var _activeSheet: String = "Sheet1"
 
     private let lock = NSLock()
+
+    /// Unlocked view of this engine, handed to the evaluator.
+    ///
+    /// Evaluation runs with `lock` already held, so it must NOT re-enter
+    /// the locked public accessors. Passing `self` here (this engine also
+    /// conforms to `SheetEngineCore` for external callers) deadlocks on
+    /// any formula that reads a cell.
+    private lazy var evaluatorBridge: EvaluatorBridge = EvaluatorBridge(engine: self)
 
     // MARK: - Init
 
@@ -195,7 +220,27 @@ public final class SheetEngine: @unchecked Sendable, SheetEngineCore {
         return withLock {
             guard let idx = _sheetOrder.firstIndex(of: effectiveSheet) else { return [] }
             _ = idx // suppress warning
+
+            // You cannot change part of a spilled array. Refuse rather
+            // than tear a hole in someone else's result; the anchor is
+            // the only cell that owns this block.
+            if isSpilledInto(addr, sheet: effectiveSheet) { return [] }
+
+            // Replacing an anchor's own formula with a plain value drops
+            // whatever it had spilled, and retires the formula itself so
+            // the next recalculation does not resurrect it.
+            clearSpill(anchor: addr, sheet: effectiveSheet)
+            graph.clearFormula(addr)
+
+            // Snapshot before the write: value edits were not recorded at
+            // all, so undo/redo silently did nothing for anything typed
+            // straight into a cell.
+            let previous = _sheets[effectiveSheet]?.cells[addr]?.rawValue ?? .null
             _sheets[effectiveSheet]?.cells[addr] = CellData(value: value)
+            undoStack.push(Edit(change: .setValue(
+                addr: addr, sheet: effectiveSheet,
+                old: previous, new: value
+            )))
 
             // Mark dependents dirty and recalculate
             let dirty = markDirty(sheet: effectiveSheet, addr: addr)
@@ -228,23 +273,36 @@ public final class SheetEngine: @unchecked Sendable, SheetEngineCore {
                 return dirty
 
             case .formula(let formula):
+                // Snapshot the previous formula BEFORE the write below
+                // replaces it; reading it afterwards recorded old == new,
+                // so every formula undo step was a no-op.
+                let previousFormula = _sheets[effectiveSheet]?.cells[addr]?.formula
+
                 // Cycle-safe graph insertion
                 try graph.setFormula(addr, ast: formula.ast)
 
-                // Evaluate and cache
-                let evaluated = try evaluator.evaluate(formula.ast, at: addr, engine: self)
-                _sheets[effectiveSheet]?.cells[addr] = CellData(value: evaluated, formula: formula)
+                // Evaluate and cache, spilling an array result into the
+                // cells below/right of the anchor.
+                let evaluated = try evaluator.evaluate(formula.ast, at: addr, engine: evaluatorBridge)
+                let spilled = writeResult(
+                    anchor: addr, sheet: effectiveSheet,
+                    result: evaluated, formula: formula
+                )
 
                 // Push undo step
                 let edit = Edit(change: .setFormula(
                     addr: addr, sheet: effectiveSheet,
-                    old: _sheets[effectiveSheet]?.cells[addr]?.formula,
+                    old: previousFormula,
                     new: formula
                 ))
                 undoStack.push(edit)
 
-                // Recalculate downstream
-                let dirty = markDirty(sheet: effectiveSheet, addr: addr)
+                // Recalculate downstream. Spilled addresses are dirty
+                // too: a cell reading one of them must see the new value.
+                var dirty = markDirty(sheet: effectiveSheet, addr: addr)
+                for target in spilled {
+                    dirty.formUnion(graph.dirtySubgraph(from: [target]))
+                }
                 recalculateInternal(dirty: dirty, sheet: effectiveSheet)
                 return dirty
             }
@@ -284,6 +342,8 @@ public final class SheetEngine: @unchecked Sendable, SheetEngineCore {
     public func deleteCell(sheet: String?, addr: CellAddr) {
         let effectiveSheet = sheet ?? _activeSheet
         withLock {
+            // Deleting an anchor takes its spilled block with it.
+            clearSpill(anchor: addr, sheet: effectiveSheet)
             _sheets[effectiveSheet]?.cells.removeValue(forKey: addr)
             graph.removeCell(addr)
         }
@@ -291,17 +351,49 @@ public final class SheetEngine: @unchecked Sendable, SheetEngineCore {
 
     // MARK: - Range API
 
-    /// Get all values in a range as a flat array (row-major).
-    public func getRangeValues(sheet: String?, range: RangeRef) -> [Value] {
+    /// The bounding box of the non-empty cells on a sheet - the
+    /// spreadsheet "used range" - or nil when the sheet is empty.
+    /// Lets a caller find where the data is without scanning blindly.
+    public func usedExtent(sheet: String?) -> RangeRef? {
         let effectiveSheet = sheet ?? _activeSheet
         return withLock {
-            guard let sheetData = _sheets[effectiveSheet] else { return [] }
-            var result: [Value] = []
-            for addr in range.cells() {
-                result.append(sheetData.cells[addr]?.rawValue ?? .null)
+            guard let cells = _sheets[effectiveSheet]?.cells else { return nil }
+            var minCol = Int.max, minRow = Int.max
+            var maxCol = Int.min, maxRow = Int.min
+            var found = false
+            for (addr, data) in cells {
+                // A cell holding only a cleared value is not "used".
+                if data.rawValue == .null && data.formula == nil { continue }
+                found = true
+                minCol = Swift.min(minCol, addr.col)
+                maxCol = Swift.max(maxCol, addr.col)
+                minRow = Swift.min(minRow, addr.row)
+                maxRow = Swift.max(maxRow, addr.row)
             }
-            return result
+            guard found else { return nil }
+            return RangeRef(
+                sheet: effectiveSheet,
+                topLeft: CellAddr(col: minCol, row: minRow),
+                bottomRight: CellAddr(col: maxCol, row: maxRow)
+            )
         }
+    }
+
+    /// Get all values in a range as a flat array (row-major).
+    public func getRangeValues(sheet: String?, range: RangeRef) -> [Value] {
+        withLock { getRangeValuesUnlocked(sheet: sheet, range: range) }
+    }
+
+    /// Range read without taking the lock. The caller MUST already hold
+    /// it. See ``getCellValueUnlocked(_:sheet:)`` for why these exist.
+    fileprivate func getRangeValuesUnlocked(sheet: String?, range: RangeRef) -> [Value] {
+        let effectiveSheet = sheet ?? _activeSheet
+        guard let sheetData = _sheets[effectiveSheet] else { return [] }
+        var result: [Value] = []
+        for addr in range.cells() {
+            result.append(sheetData.cells[addr]?.rawValue ?? .null)
+        }
+        return result
     }
 
     /// Get a 2D array of values for a range.
@@ -351,14 +443,18 @@ public final class SheetEngine: @unchecked Sendable, SheetEngineCore {
 
     /// Resolve a named range to its value (called by the evaluator).
     private func namedRangeResolver(_ name: String, at context: CellAddr) throws -> Value {
-        withLock {
-            guard let nr = _namedRanges[name] else { return .error(.nameInvalid) }
-            let effectiveSheet = nr.sheet ?? _activeSheet
-            guard let sheetData = _sheets[effectiveSheet] else { return .error(.referenceInvalid) }
-            let vals = nr.range.cells().map { sheetData.cells[$0]?.rawValue ?? .null }
-            if vals.count == 1 { return vals[0] }
-            return .array(rows: nr.range.height, cols: nr.range.width, flat: vals)
-        }
+        withLock { resolveNamedRangeUnlocked(name, at: context) }
+    }
+
+    /// Named-range read without taking the lock. The caller MUST already
+    /// hold it. See ``getCellValueUnlocked(_:sheet:)``.
+    fileprivate func resolveNamedRangeUnlocked(_ name: String, at context: CellAddr) -> Value {
+        guard let nr = _namedRanges[name] else { return .error(.nameInvalid) }
+        let effectiveSheet = nr.sheet ?? _activeSheet
+        guard let sheetData = _sheets[effectiveSheet] else { return .error(.referenceInvalid) }
+        let vals = nr.range.cells().map { sheetData.cells[$0]?.rawValue ?? .null }
+        if vals.count == 1 { return vals[0] }
+        return .array(rows: nr.range.height, cols: nr.range.width, flat: vals)
     }
 
     // MARK: - Recalculation
@@ -410,7 +506,11 @@ public final class SheetEngine: @unchecked Sendable, SheetEngineCore {
 
         guard let edits = undoStack.undo() else { return nil }
         for edit in edits {
-            applyEdit(edit, isUndo: true)
+            // `undo()` already returns each edit INVERTED, so these are
+            // applied forward. Applying them with `isUndo: true` inverted
+            // a second time and landed back on the new value, which made
+            // undo a no-op for every cell edit.
+            applyEdit(edit, isUndo: false)
         }
         return edits.first.map { (_: Edit) -> String? in undoStack.lastEditDescription } ?? nil
     }
@@ -446,10 +546,23 @@ public final class SheetEngine: @unchecked Sendable, SheetEngineCore {
     // evaluator's `inout` access is safe across threads.
 
     public func getCellValue(_ addr: CellAddr, sheet: String?) throws -> Value {
+        withLock { getCellValueUnlocked(addr, sheet: sheet) }
+    }
+
+    /// Cell read without taking the lock. The caller MUST already hold it.
+    ///
+    /// `lock` is a plain `NSLock`, so re-entering it deadlocks. Evaluation
+    /// runs inside `withLock` (from `setFormula`, `setValue`, and the
+    /// `recalculate*` family), and the evaluator reads cells back through
+    /// `SheetEngineCore` - so routing that read through the locked public
+    /// method self-deadlocked on any formula that referenced a cell.
+    /// These unlocked readers are what `EvaluatorBridge` calls instead.
+    ///
+    /// Same split the editor uses: the computation layer stays pure and
+    /// lock-free (`TextEditReducer`), and isolation lives at the boundary.
+    fileprivate func getCellValueUnlocked(_ addr: CellAddr, sheet: String?) -> Value {
         let effectiveSheet = sheet ?? _activeSheet
-        return withLock {
-            _sheets[effectiveSheet]?.cells[addr]?.rawValue ?? .null
-        }
+        return _sheets[effectiveSheet]?.cells[addr]?.rawValue ?? .null
     }
 
     public func getRangeValues(_ range: RangeRef) throws -> [Value] {
@@ -550,15 +663,117 @@ public final class SheetEngine: @unchecked Sendable, SheetEngineCore {
         guard let cell = _sheets[_activeSheet]?.cells[addr] else { return }
 
         do {
-            let result = try evaluator.evaluate(ast, at: addr, engine: self)
-            _sheets[_activeSheet]?.cells[addr] = CellData(value: result, formula: cell.formula)
+            let result = try evaluator.evaluate(ast, at: addr, engine: evaluatorBridge)
+            // Re-spill on every recalculation: the array's shape can
+            // change when its inputs do (a FILTER matching fewer rows).
+            writeResult(anchor: addr, sheet: _activeSheet, result: result, formula: cell.formula)
         } catch {
+            clearSpill(anchor: addr, sheet: _activeSheet)
             _sheets[_activeSheet]?.cells[addr] = CellData(value: .error(.referenceInvalid), formula: cell.formula)
         }
     }
 
     private func currentCellData(_ addr: CellAddr) -> CellData? {
         _sheets[_activeSheet]?.cells[addr]
+    }
+
+    // MARK: - Dynamic arrays (spill)
+
+    /// Store a formula's result at `anchor`, spilling an array result
+    /// into the cells below/right of it.
+    ///
+    /// Returns every address written, so the caller can fold them into
+    /// the dirty set - a cell reading a spilled address has to recalc
+    /// when the anchor's array changes shape or contents.
+    ///
+    /// Spilling refuses to overwrite occupied cells: the anchor gets
+    /// `#SPILL!` and nothing is written, matching Excel. The blocking
+    /// cell is left untouched so the user can see what is in the way.
+    @discardableResult
+    private func writeResult(
+        anchor: CellAddr,
+        sheet: String,
+        result: Value,
+        formula: Formula?
+    ) -> Set<CellAddr> {
+        var touched = clearSpill(anchor: anchor, sheet: sheet)
+        touched.insert(anchor)
+
+        // A 1x1 array is a scalar; unwrap so `=SEQUENCE(1)` behaves like
+        // any other single value rather than claiming a spill range.
+        var value = result
+        if case .array(let rows, let cols, let flat) = result, rows <= 1, cols <= 1 {
+            value = flat.first ?? .null
+        }
+
+        guard case .array(let rows, let cols, let flat) = value, rows * cols > 1 else {
+            var data = CellData(value: value, formula: formula)
+            data.spillSize = nil
+            _sheets[sheet]?.cells[anchor] = data
+            return touched
+        }
+
+        // Collision check before writing anything.
+        for r in 0..<rows {
+            for c in 0..<cols {
+                let target = CellAddr(col: anchor.col + c, row: anchor.row + r)
+                if target == anchor { continue }
+                guard let occupant = _sheets[sheet]?.cells[target] else { continue }
+                let isOwnedByThisAnchor = occupant.spillOrigin == anchor
+                let isBlank = occupant.rawValue == .null && occupant.formula == nil
+                if !isOwnedByThisAnchor && !isBlank {
+                    var blocked = CellData(value: .error(.spill), formula: formula)
+                    blocked.spillSize = nil
+                    _sheets[sheet]?.cells[anchor] = blocked
+                    return touched
+                }
+            }
+        }
+
+        for r in 0..<rows {
+            for c in 0..<cols {
+                let target = CellAddr(col: anchor.col + c, row: anchor.row + r)
+                let index = r * cols + c
+                let element = index < flat.count ? flat[index] : .null
+                if target == anchor {
+                    var data = CellData(value: element, formula: formula)
+                    data.spillSize = SpillSize(rows: rows, cols: cols)
+                    _sheets[sheet]?.cells[target] = data
+                } else {
+                    var data = CellData(value: element)
+                    data.spillOrigin = anchor
+                    _sheets[sheet]?.cells[target] = data
+                }
+                touched.insert(target)
+            }
+        }
+        return touched
+    }
+
+    /// Remove the cells previously spilled by `anchor`. Returns the
+    /// addresses cleared so they can be marked dirty.
+    @discardableResult
+    private func clearSpill(anchor: CellAddr, sheet: String) -> Set<CellAddr> {
+        guard let size = _sheets[sheet]?.cells[anchor]?.spillSize else { return [] }
+        var cleared = Set<CellAddr>()
+        for r in 0..<size.rows {
+            for c in 0..<size.cols {
+                let target = CellAddr(col: anchor.col + c, row: anchor.row + r)
+                if target == anchor { continue }
+                if _sheets[sheet]?.cells[target]?.spillOrigin == anchor {
+                    _sheets[sheet]?.cells.removeValue(forKey: target)
+                    cleared.insert(target)
+                }
+            }
+        }
+        _sheets[sheet]?.cells[anchor]?.spillSize = nil
+        return cleared
+    }
+
+    /// True when `addr` holds part of another cell's spill. Writing to
+    /// one is refused: in Excel you cannot change part of an array.
+    private func isSpilledInto(_ addr: CellAddr, sheet: String) -> Bool {
+        _sheets[sheet]?.cells[addr]?.spillOrigin != nil
     }
 
     /// Apply an undo/redo edit to the engine state.
@@ -661,6 +876,7 @@ extension ColumnSlice {
             case .string(let s): strings[i] = s
             case .bool(let b): bools[i] = b
             case .error(let e): errors[i] = e
+            case .lambda: break  // not a column value
             case .null, .date, .array: break
             }
         }
@@ -670,24 +886,32 @@ extension ColumnSlice {
 
 // MARK: - SheetEngineCore wrapper for evaluation isolation
 
-/// Adapts SheetEngine to `inout SheetEngineCore` for safe evaluator access.
-/// The evaluator requires `inout` access; this wrapper locks on each access.
+/// Adapts SheetEngine to `inout SheetEngineCore` for evaluator access.
+///
+/// Reads go through the engine's UNLOCKED accessors. Evaluation only ever
+/// runs with the lock already held (every `evaluator.evaluate` call sits
+/// inside a `withLock` body), so taking it again here is both unnecessary
+/// and fatal: `lock` is a non-recursive `NSLock`, and the previous version
+/// of this wrapper - which called the locked public methods - deadlocked
+/// on every formula that read a cell.
 private final class EvaluatorBridge: SheetEngineCore {
-    private let engine: SheetEngine
+    // Unowned: the engine owns this bridge for its whole lifetime, so a
+    // strong reference back would be a cycle.
+    private unowned let engine: SheetEngine
 
     init(engine: SheetEngine) {
         self.engine = engine
     }
 
     func getCellValue(_ addr: CellAddr, sheet: String?) throws -> Value {
-        try engine.getCellValue(addr, sheet: sheet)
+        engine.getCellValueUnlocked(addr, sheet: sheet)
     }
 
     func getRangeValues(_ range: RangeRef) throws -> [Value] {
-        try engine.getRangeValues(sheet: nil, range: range)
+        engine.getRangeValuesUnlocked(sheet: nil, range: range)
     }
 
     func resolveNamedRange(_ name: String, at context: CellAddr) throws -> Value {
-        try engine.resolveNamedRange(name, at: context)
+        engine.resolveNamedRangeUnlocked(name, at: context)
     }
 }

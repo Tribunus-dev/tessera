@@ -146,13 +146,15 @@ public final class UndoRedoStack: @unchecked Sendable {
 
         guard !undoStack.isEmpty else { return nil }
 
-        // Collect the top group (all edits with the same groupID)
-        var groupID = undoStack.last?.groupID
+        // Collect the top group (all edits with the same groupID).
+        // Test membership BEFORE popping: appending first pulled one edit
+        // from the previous group into this undo step.
+        let groupID = undoStack.last?.groupID
         var edits: [Edit] = []
 
-        while let edit = undoStack.popLast() {
-            edits.append(edit.inverse)
-            if edit.groupID != groupID { break }
+        while let last = undoStack.last, last.groupID == groupID {
+            undoStack.removeLast()
+            edits.append(last.inverse)
             if groupID == nil { break } // Individual edit
         }
 
@@ -173,12 +175,13 @@ public final class UndoRedoStack: @unchecked Sendable {
 
         guard !redoStack.isEmpty else { return nil }
 
-        var groupID = redoStack.last?.groupID
+        // Same group-boundary rule as `undo()`.
+        let groupID = redoStack.last?.groupID
         var edits: [Edit] = []
 
-        while let edit = redoStack.popLast() {
-            edits.append(edit)
-            if edit.groupID != groupID { break }
+        while let last = redoStack.last, last.groupID == groupID {
+            redoStack.removeLast()
+            edits.append(last)
             if groupID == nil { break }
         }
 

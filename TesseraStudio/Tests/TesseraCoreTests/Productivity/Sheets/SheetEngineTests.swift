@@ -116,12 +116,12 @@ final class SheetEngineTests: XCTestCase {
         let a1 = CellAddr(col: 0, row: 0)
         let a2 = CellAddr(col: 0, row: 1)
 
+        // A1 reads A2; closing the loop with A2 reading A1 must throw.
+        // (The setup used to be written twice, so the first pair threw
+        // outside the do-block and the assertion never ran.)
         try engine.setFormula(sheet: nil, addr: a1, source: "=A2+1")
-        try engine.setFormula(sheet: nil, addr: a2, source: "=A1+1")
 
-        // Break the cycle by setting a direct value
         do {
-            try engine.setFormula(sheet: nil, addr: a1, source: "=A2+1")
             try engine.setFormula(sheet: nil, addr: a2, source: "=A1+1")
             XCTFail("Expected CycleError")
         } catch is CycleError {
@@ -144,11 +144,15 @@ final class SheetEngineTests: XCTestCase {
     }
 
     func testSetFormula_constantsDoNotTrackDependencies() throws {
-        // Setting a constant expression (=42) should NOT add a dependency graph entry
+        // `=42` IS a formula cell (Excel shows it in the formula bar, and
+        // testSetFormula_simpleNumber / testDeleteCell_removesFromGraph
+        // both rely on that). What a constant must not do is create
+        // dependency edges - it reads no cells, so nothing depends on it.
         let addr = CellAddr(col: 0, row: 0)
         let dirty = try engine.setFormula(sheet: nil, addr: addr, source: "=42")
-        XCTAssertTrue(dirty.isEmpty)  // No cells depend on A1
-        XCTAssertEqual(engine.graph.formulaCells, [])
+        // Only the cell itself is recalculated; it has no dependents.
+        XCTAssertEqual(dirty, [addr])
+        XCTAssertTrue(engine.graph.allDependents(of: addr).subtracting([addr]).isEmpty)
     }
 
     // MARK: - Named Ranges
@@ -315,17 +319,19 @@ final class SheetEngineTests: XCTestCase {
         XCTAssertEqual(engine.getValue(sheet: nil, addr: addr2), .null)
     }
 
+    /// Undo availability is read off `undoStack`; the engine forwards the
+    /// verbs (`undo()`/`redo()`) but not the predicates.
     func testCanUndo_canRedo() throws {
-        XCTAssertFalse(engine.canUndo)
-        XCTAssertFalse(engine.canRedo)
+        XCTAssertFalse(engine.undoStack.canUndo)
+        XCTAssertFalse(engine.undoStack.canRedo)
 
         engine.setValue(sheet: nil, addr: CellAddr(col: 0, row: 0), value: .number(1))
-        XCTAssertTrue(engine.canUndo)
-        XCTAssertFalse(engine.canRedo)
+        XCTAssertTrue(engine.undoStack.canUndo)
+        XCTAssertFalse(engine.undoStack.canRedo)
 
-        engine.undo()
-        XCTAssertFalse(engine.canUndo)
-        XCTAssertTrue(engine.canRedo)
+        _ = engine.undo()
+        XCTAssertFalse(engine.undoStack.canUndo)
+        XCTAssertTrue(engine.undoStack.canRedo)
     }
 
     // MARK: - Serialization
@@ -532,8 +538,11 @@ final class SheetEngineTests: XCTestCase {
     }
 
     func testNonVolatileCell_notMarkedVolatile() throws {
+        // A1 must not sum a range containing A1 - that is a genuine
+        // circular reference (Excel reports one too), and the engine
+        // correctly throws. Sum a different column.
         let addr = CellAddr(col: 0, row: 0)
-        try engine.setFormula(sheet: nil, addr: addr, source: "=SUM(A1:A10)")
+        try engine.setFormula(sheet: nil, addr: addr, source: "=SUM(B1:B10)")
         XCTAssertFalse(engine.graph.isVolatile(addr))
     }
 }

@@ -12,6 +12,11 @@ public final class FormulaParser {
     private var tokens: [Token]
     private var pos: Int = 0
 
+    /// The text the user typed, kept verbatim so `getFormula` round-trips
+    /// it. Reconstructing from tokens is lossy - it re-prints numbers in
+    /// their parsed form ("1" becomes "1.0") and drops the leading "=".
+    private var originalSource: String?
+
     public enum ParseError: Error, LocalizedError {
         case unexpectedToken(Token, expected: String)
         case unexpectedEndOfInput
@@ -43,6 +48,7 @@ public final class FormulaParser {
     public convenience init(source: String) throws {
         let lexer = Lexer(source: source)
         self.init(tokens: try lexer.tokenize())
+        self.originalSource = source
     }
 
     // MARK: - Public API
@@ -55,7 +61,10 @@ public final class FormulaParser {
             return .formula(Formula(source: sourceFor(tokens), ast: expr))
         }
 
-        // "=" marker → formula
+        // "=" marker → formula. The lexer strips a leading "=" in its
+        // initializer and never emits `.formulaMarker`, so the source
+        // string is the only place that marker survives.
+        let hasFormulaMarker = tokens[pos] == .formulaMarker || sourceStartsWithEquals
         if tokens[pos] == .formulaMarker {
             pos += 1
         }
@@ -66,16 +75,19 @@ public final class FormulaParser {
             // Might be a comparison at top level
             if let op = comparisonOp(for: tokens[pos]) {
                 let right = try parseComparisonRest(expr, minPrec: op.precedence)
-                return .formula(Formula(source: sourceFor(tokens), ast: right))
+                return .formula(Formula(source: formulaSource(), ast: right))
             }
         }
 
-        // Check if it's a constant (no cells/ranges/functions)
-        if let const = constantValue(expr) {
+        // A leading "=" makes this a formula even when it evaluates to a
+        // constant: `=42` is a formula cell in Excel, shows "=42" in the
+        // formula bar, and is undoable as a formula edit. Only input with
+        // no "=" folds to a bare value.
+        if !hasFormulaMarker, let const = constantValue(expr) {
             return .value(const)
         }
 
-        return .formula(Formula(source: sourceFor(tokens), ast: expr))
+        return .formula(Formula(source: formulaSource(), ast: expr))
     }
 
     /// Parse expecting a formula (not a constant)
@@ -130,7 +142,11 @@ public final class FormulaParser {
             // Binary arithmetic
             if let op = arithmeticOp(for: tokens[pos]) {
                 if op.precedence < minPrec { break }
-                let nextPrec = op.precedence // left-associative
+                // Left-associative operators must parse their right side
+                // at precedence + 1, or an equal-precedence operator gets
+                // pulled into it and the expression silently becomes
+                // right-associative: `=10-4-3` returned 9, not 3.
+                let nextPrec = op.isRightAssociative ? op.precedence : op.precedence + 1
                 _ = advance()
                 let right = try parseExpression(minPrec: nextPrec)
                 left = .binary(op: op, left: left, right: right)
@@ -193,6 +209,12 @@ public final class FormulaParser {
             return try parseArrayLiteral()
 
         case .funcName(let name):
+            // The lexer folds the '(' into this token, so consuming it
+            // here satisfies parseFunctionCall's precondition. Without
+            // the advance, parseFunctionCall re-reads this same token
+            // through parseExpression -> parsePrimary and recurses until
+            // the stack overflows: every `=FUNC(...)` crashed the app.
+            _ = advance()
             return try parseFunctionCall(name)
 
         case .lparen:
@@ -212,10 +234,16 @@ public final class FormulaParser {
 
         case .namedRange(let name):
             _ = advance()
-            // Defer named range resolution to evaluation time
-            // The parser creates a cell ref with the name as sheet (null sheet = local named range)
-            // We use a special marker: cell ref with empty sheet → named range
-            return .cell(CellRef(sheet: "$\(name)", addr: CellAddr(col: -1, row: -1)))
+            // The lexer cannot tell `A1` from a named range, so it emits
+            // .namedRange for both and defers the decision here. Try the
+            // A1 form first: without this every bare cell reference was
+            // treated as a named range and resolved to #NAME?.
+            if let ref = try? AddressParser.parseCell(name) {
+                return .cell(ref)
+            }
+            // A real named range. Resolution is deferred to evaluation
+            // time; the marker address is what the evaluator keys on.
+            return .cell(CellRef(sheet: "$\(name)", addr: .namedRangeMarker))
 
         case .eof:
             throw ParseError.unexpectedEndOfInput
@@ -334,11 +362,30 @@ public final class FormulaParser {
             return ref
         case .namedRange(let name):
             _ = advance()
+            // Same deferral as parsePrimary: an A1-form name here is a
+            // real cell reference (the right-hand side of `A1:B5`), not
+            // a named range.
+            if let ref = try? AddressParser.parseCell(name) {
+                return ref
+            }
             // Treat named range as a single-cell ref (deferred to evaluation)
-            return CellRef(sheet: "$\(name)", addr: CellAddr(col: -1, row: -1))
+            return CellRef(sheet: "$\(name)", addr: .namedRangeMarker)
         default:
             throw ParseError.unexpectedToken(tok, expected: "cell reference")
         }
+    }
+
+    /// The formula's source text: the user's own string when we have it,
+    /// otherwise a best-effort reconstruction from the tokens.
+    private func formulaSource() -> String {
+        originalSource ?? sourceFor(tokens)
+    }
+
+    /// Whether the user's input opened with "=". Only meaningful when the
+    /// parser was built from a source string.
+    private var sourceStartsWithEquals: Bool {
+        guard let originalSource else { return false }
+        return originalSource.trimmingCharacters(in: .whitespaces).hasPrefix("=")
     }
 
     private func sourceFor(_ tokens: [Token]) -> String {
