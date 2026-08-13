@@ -56,6 +56,7 @@ public struct NoteEditorColumn: View {
                     .transition(.opacity)
             }
         }
+        .animation(reduceMotion ? nil : .default, value: isFocusMode)
         .background(.background)
         .toolbar { editorToolbar }
         .sheet(isPresented: $showDeleteConfirm) {

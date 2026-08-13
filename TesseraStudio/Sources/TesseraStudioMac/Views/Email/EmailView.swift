@@ -91,6 +91,9 @@ public struct EmailView: View {
     /// (1.2s) so a stray `g` doesn't leave
     /// the user stuck.
     @State private var pendingG: Date?
+    /// HIG 2.7 / 3.6: under Reduce Motion the import-status
+    /// banner appears / disappears instantly.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     // Computed
     private var filteredEmails: [EmailMessage] {
@@ -249,6 +252,7 @@ public struct EmailView: View {
                     .transition(.opacity)
             }
         }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: importStatus)
         // The list has the focusable container so
         // the keyboard shortcuts are global within
         // the email view.

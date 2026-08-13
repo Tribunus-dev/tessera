@@ -40,6 +40,11 @@ final class WorkflowEditorStore {
     /// indicator - a derived value, not a flag that could desync.
     private(set) var savedDocument: WorkflowDocument
 
+    /// The URL the document was last saved to. `nil` when the
+    /// document has never been saved (first Save triggers the
+    /// picker; subsequent Save writes here directly).
+    private(set) var savedURL: URL?
+
     let registry: WorkflowNodeRegistry = .default
 
     init(
@@ -85,6 +90,7 @@ final class WorkflowEditorStore {
         positions = [:]
         selectedNodeId = nil
         documentName = "untitled"
+        savedURL = nil
         // A fresh document starts clean, not "Edited".
         savedDocument = document
     }
@@ -109,6 +115,7 @@ final class WorkflowEditorStore {
         // the bare base name without the `.tessera-workflow`
         // suffix.
         documentName = url.deletingPathExtension().lastPathComponent
+        savedURL = url
         // The freshly loaded file is the saved baseline.
         savedDocument = document
     }
@@ -116,6 +123,7 @@ final class WorkflowEditorStore {
     /// Record a successful save: the written file becomes the
     /// saved baseline and the title drops "- Edited".
     func markSaved(at url: URL) {
+        savedURL = url
         savedDocument = document
         documentName = url.deletingPathExtension().lastPathComponent
     }

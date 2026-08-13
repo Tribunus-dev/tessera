@@ -40,6 +40,9 @@ public struct ContactsView: View {
     @State private var loadError: String?
     @State private var showImportSheet: Bool = false
     @State private var importStatus: String = ""
+    /// HIG 2.7 / 3.6: under Reduce Motion the banner appears
+    /// / disappears instantly.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     public var body: some View {
         NavigationSplitView {
@@ -131,6 +134,7 @@ public struct ContactsView: View {
                     .transition(.opacity)
             }
         }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: importStatus)
     }
 
     private var filteredContacts: [Contact] {
