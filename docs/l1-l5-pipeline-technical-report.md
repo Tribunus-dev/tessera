@@ -737,6 +737,30 @@ remains, in priority order:
      shared experts / router-adjacent / first-last layers.
    Each conclusion is one-small-model, pre-fix-scorer evidence;
    validate against the Orpheus DB before hard-coding constants.
+   UPDATE (2026-08-13, Orpheus run 2): validated and shipped. The
+   generation fix + patience-2 gate + auto layer parallelism landed;
+   measured 200 evals/tensor (was 2,040), 30-minute full pass, all
+   197 tensors patience-stopped at gen 2, L2 fitted baseline
+   confirmed on the second model (median norm-ratio 0.447 vs fitted
+   0.45).
+
+3e. **G6's novelty prong is structurally dead (measured 2026-08-13,
+   Orpheus run 2).** The acceptance panel's per-method scores are
+   cheap proxies that cannot disagree: rotation and Hessian
+   bit-identical to AWQ across 197/197 tensors, low-rank within
+   6e-5. Kendall tau is therefore always 1.0, ranking disagreement
+   0.0, novelty null -- G6 can only ever pass via
+   composite-beats-best-single, and on plateau models the composite
+   equals AWQ, so the gate fails everywhere, uninformatively. The
+   composite's kernel-direct t2 is real (fixed 2026-08-12); the
+   PANEL was never actually measured -- the regime router
+   differentiates (DartQuant 143 / AWQ 34 / CHAMP-Q 20 on real
+   kurtosis), but the gate cannot see it. Fix options: run each
+   expert's REAL quantization on the held-out set (Tier-2 on the
+   39-tensor holdout -- bounded cost, honest novelty), or retire
+   the novelty prong in favor of a different second criterion.
+   Until then, treat every G6 verdict as measuring only
+   composite-vs-AWQ.
 
 4. **L3 per-token KL on real models**. The weight-level cosine is
    shipped and unblocked; the per-token KL path is the next step.

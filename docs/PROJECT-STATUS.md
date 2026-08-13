@@ -405,7 +405,17 @@ Remaining work, ranked:
    escalation to flagged/improving tensors, family/expert
    statistical stops, per-expert-slot warm-start for MoE. Validate
    every constant against the Orpheus DB before hard-coding. See
-   technical report 12.3d.
+   technical report 12.3d. SHIPPED 2026-08-13 (generation fix +
+   patience-2 + auto layer parallelism): 200 evals/tensor measured
+   (was 2,040), 30-minute Orpheus pass, fitted L2 baseline
+   confirmed on the second model.
+2e. G6 novelty prong structurally dead (measured, Orpheus run 2):
+   the panel's per-method scores are proxies that cannot disagree
+   (rotation/Hessian bit-identical to AWQ, 197/197; low-rank within
+   6e-5), so tau=1.0 and novelty=null always. The router
+   differentiates (DartQuant 143 / AWQ 34 / CHAMP-Q 20); the gate
+   cannot see it. Fix: real per-expert quantization on the held-out
+   set, or replace the novelty prong. See technical report 12.3e.
 3. One end-to-end run on gemma-4-12B reporting drafter acceptance
    against the 0.86 % baseline plus a PPL delta. This supplies the data
    for item 1 and exercises `runtime_probe.py`. Artifact-level
