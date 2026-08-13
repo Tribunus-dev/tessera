@@ -29,9 +29,18 @@
     {
       "name": "Gemma 4 12B DFlash",
       "namespace": "draft.dflash",
-      "path": "/Users/user/Downloads",
+      "path": "/Volumes/Julian T7/models/gemma4-12B-it-DFlash-bf16-src",
       "upstream_repo": "z-lab/gemma4-12B-it-DFlash",
       "upstream_revision": "541d351de6dc9cd698fc348612bd5cdf03c636d0",
+      "license": "UNRESOLVED",
+      "redistribution": false
+    },
+    {
+      "name": "Gemma 4 12B DSpark",
+      "namespace": "draft.dspark",
+      "path": "/Volumes/Julian T7/models/dspark_gemma4_12b_block7-bf16-src",
+      "upstream_repo": "deepseek-ai/dspark_gemma4_12b_block7",
+      "upstream_revision": "2fa72e765eec2965fc4d86a8663ce6769eba6218",
       "license": "UNRESOLVED",
       "redistribution": false
     },
