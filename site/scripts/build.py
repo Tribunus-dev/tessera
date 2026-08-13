@@ -190,7 +190,7 @@ def render_page(page: dict) -> str:
     # Per-page head extras (title, canonical, og). head_partial is shared shell without those.
     # Build full <head> content. Order matches original hand-authored files:
     # charset, viewport, title, canonical, icon, generator, build-id,
-    # robots (if), og:title, og:desc, og:type, og:url, twitter:card, stylesheet, inline script, theme.js
+    # robots (if), og:title, og:desc, og:type, og:url, twitter:card, stylesheet, inline script, boot.js
     robots = '<meta name="robots" content="noindex">\n' if page.get("noindex") else ""
     og_url_line = f'<meta property="og:url" content="{page["og_url"]}">\n' if page["og_url"] and page["route"] != "/404/" else ""
     # Editorial OG image — PNG for Twitter/X unfurl, SVG as fallback.
@@ -211,7 +211,7 @@ def render_page(page: dict) -> str:
     feed_link = '<link rel="alternate" type="application/rss+xml" title="Tessera Changelog" href="/feed.xml">\n'
     head = (
         "<!doctype html>\n"
-        '<html lang="en" data-theme="dark">\n'
+        '<html lang="en" data-theme="dark" data-ent="root" data-has="theme">\n'
         "<head>\n"
         '<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width,initial-scale=1">\n'
