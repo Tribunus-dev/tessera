@@ -16,14 +16,14 @@ struct WorkflowsView: View {
 
     @State private var pendingConnection: PendingConnection?
     @State private var connectionError: String?
-    @State private var isExporting = false
-    /// Save As presents its own exporter so the two save paths
-    /// stay distinct presentation states (Save may later write
-    /// back to a remembered URL without touching Save As).
-    @State private var isSavingAs = false
+    /// Save: when the document has never been saved (savedURL is nil),
+    /// presents the picker; otherwise writes directly to the stored URL.
+    @State private var _isSaving = false
+    /// Save As: always presents the picker so the user picks a new URL.
+    @State private var _isSavingAs = false
     /// Save launched from the unsaved-changes alert (New / Open
-    /// guard). Distinct from Save / Save As so the follow-up
-    /// replacement only runs on THIS save's success.
+    /// guard). Presents the picker regardless of savedURL (the user
+    /// confirmed they want to overwrite or the document is clean).
     @State private var isSavingBeforeReplace = false
     /// The New / Open that triggered the unsaved-changes alert,
     /// held until Save succeeds, Discard is chosen, or Cancel
@@ -125,25 +125,7 @@ struct WorkflowsView: View {
             .toolbar(removing: .sidebarToggle)
         }
         .fileExporter(
-            isPresented: $isExporting,
-            document: editor.document,
-            contentType: .tesseraWorkflow,
-            defaultFilename: editor.documentName
-        ) { result in
-            switch result {
-            case .success(let url):
-                // Save succeeded: the store records the new
-                // baseline and the title drops "- Edited".
-                editor.markSaved(at: url)
-            case .failure(let err):
-                connectionError = "Save failed: \(err.localizedDescription)"
-            }
-        }
-        // Save As: same live document, prefilled with the current
-        // name, but its own panel presentation; the chosen URL
-        // becomes the new saved baseline.
-        .fileExporter(
-            isPresented: $isSavingAs,
+            isPresented: $_isSavingAs,
             document: editor.document,
             contentType: .tesseraWorkflow,
             defaultFilename: editor.documentName
@@ -211,8 +193,8 @@ struct WorkflowsView: View {
         .focusedSceneValue(\.workflowMenuActions, WorkflowMenuActions(
             new: requestNewDocument,
             open: { isImporting = true },
-            save: { isExporting = true },
-            saveAs: { isSavingAs = true },
+            save: performSave,
+            saveAs: { _isSavingAs = true },
             canSave: { editor.canSave },
             togglePalette: togglePalette,
             paletteVisible: { paletteVisibility != .detailOnly },
@@ -252,7 +234,7 @@ struct WorkflowsView: View {
             .accessibilityLabel("Open workflow")
             .accessibilityHint("Choose a workflow file to open")
 
-            Button(action: { isExporting = true }) {
+            Button(action: performSave) {
                 Label("Save", systemImage: "square.and.arrow.down")
             }
             .help("Save the current workflow to disk")
@@ -626,6 +608,32 @@ struct WorkflowsView: View {
             undoManager?.removeAllActions()
         } catch {
             connectionError = "Open failed: \(error.localizedDescription)"
+        }
+    }
+
+    /// Save: if the document has been saved before, write directly to
+    /// the stored URL; otherwise present the picker (first-save path).
+    /// Save As always presents the picker (T1-5 fix).
+    private func performSave() {
+        if let url = editor.savedURL {
+            do {
+                let doc = editor.document
+                let envelope = WorkflowDocument.Envelope(
+                    workflow: doc.workflow,
+                    positions: doc.positions.isEmpty ? nil : doc.positions
+                )
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                let data = try encoder.encode(envelope)
+                let didStart = url.startAccessingSecurityScopedResource()
+                defer { if didStart { url.stopAccessingSecurityScopedResource() } }
+                try data.write(to: url, options: .atomic)
+                editor.markSaved(at: url)
+            } catch {
+                connectionError = "Save failed: \(error.localizedDescription)"
+            }
+        } else {
+            _isSavingAs = true
         }
     }
 

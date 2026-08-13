@@ -42,6 +42,9 @@ public struct RemindersView: View {
     @StateObject private var viewModel: ReminderListViewModel
 
     @State private var authorizationStatus: UNAuthorizationStatus = .notDetermined
+    /// HIG 2.7 / 3.6: under Reduce Motion the banner appears
+    /// / disappears instantly.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     public var body: some View {
         NavigationSplitView {
@@ -87,6 +90,7 @@ public struct RemindersView: View {
                 notificationsDisabledBanner
             }
         }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: authorizationStatus.rawValue)
         .task {
             await viewModel.load()
             await refreshAuthorization()

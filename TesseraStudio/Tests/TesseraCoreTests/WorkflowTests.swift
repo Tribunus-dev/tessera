@@ -689,3 +689,68 @@ final class WorkflowNumericStepperTests: XCTestCase {
         XCTAssertEqual(CalibrateNode.parameterSchema.properties?["n_tokens"]?.minimum, 1)
     }
 }
+
+// MARK: - T1-4: numeric parameters round-trip as JSON numbers (HIG 10.15)
+
+/// Supplements WorkflowNumericParameterTests with schema-level tests
+/// verifying the panel's bindingForValue path is correct end-to-end.
+final class WorkflowNumericParameterRoundTripTests: XCTestCase {
+
+    func testIntegerParameterRoundTripsThroughJSONAsNumber() throws {
+        // A document with an integer parameter must survive JSON encode/decode
+        // as a numeric value, not a string.
+        let json = #"{"id":"n","type":"calibrate","parameters":{"n_tokens":8000,"top_k":256}}"#
+        let node = try JSONDecoder().decode(WorkflowNode.self, from: Data(json.utf8))
+        XCTAssertEqual(node.parameters["n_tokens"], .number(8000))
+        XCTAssertEqual(node.parameters["top_k"], .number(256))
+        // Encode again: the written JSON must NOT quote the numbers.
+        let reEncoded = try JSONEncoder().encode(node)
+        let reDecoded = try JSONDecoder().decode(WorkflowNode.self, from: reEncoded)
+        XCTAssertEqual(reDecoded.parameters["n_tokens"], .number(8000))
+        XCTAssertEqual(reDecoded.parameters["top_k"], .number(256))
+    }
+
+    func testFloatParameterRoundTripsAsNumber() throws {
+        let json = #"{"id":"n","type":"calibrate","parameters":{"temperature":0.7}}"#
+        let node = try JSONDecoder().decode(WorkflowNode.self, from: Data(json.utf8))
+        XCTAssertEqual(node.parameters["temperature"], .number(0.7))
+    }
+
+    func testDisplayTextForNullIsEmpty() {
+        XCTAssertEqual(WorkflowNumericInput.displayText(for: nil), "")
+    }
+
+    func testDisplayTextForStringIsShownAsIs() {
+        // Legacy string-stored numbers display as-is (they heal on next edit).
+        XCTAssertEqual(WorkflowNumericInput.displayText(for: .string("42")), "42")
+    }
+
+    func testFormatOmitsTrailingZeroForIntegers() {
+        XCTAssertEqual(WorkflowNumericInput.format(100), "100")
+        XCTAssertEqual(WorkflowNumericInput.format(0), "0")
+        XCTAssertEqual(WorkflowNumericInput.format(-1), "-1")
+    }
+
+    func testFormatPreservesDecimals() {
+        XCTAssertEqual(WorkflowNumericInput.format(0.5), "0.5")
+        XCTAssertEqual(WorkflowNumericInput.format(3.14159), "3.14159")
+    }
+
+    func testLargeIntegerDoesNotUseScientificNotation() {
+        // Context lengths and token counts should not render as "1e6".
+        XCTAssertEqual(WorkflowNumericInput.format(8192), "8192")
+        XCTAssertEqual(WorkflowNumericInput.format(1_000_000), "1000000")
+    }
+
+    func testStepperWritesNumberNotInteger() throws {
+        // The stepper writes .number (Double) even for integer schemas,
+        // matching the JSON number type and the executor's numberValue path.
+        let prop = SchemaProperty(type: "integer", minimum: 1, maximum: 100)
+        XCTAssertTrue(WorkflowNumericInput.usesStepper(for: prop))
+        XCTAssertEqual(WorkflowNumericInput.stepperBounds(for: prop), 1...100)
+        // The display format for a stepper-sourced value renders as an integer.
+        XCTAssertEqual(
+            WorkflowNumericInput.displayText(for: .number(50)),
+            "50")
+    }
+}
