@@ -306,7 +306,7 @@ The weight-level differential has landed in
 `tools/quantize/tessera/tessera-l2-diff.{h,cpp}`: per-tensor
 `max_abs` / `mean_abs` / `relative_frobenius` / `per_layer_norm`, the
 type-aware tolerance table (2.3), the 1.5x flag decision, and a JSON
-report reader/writer using schema `llama.tessera.runtime-probe.v1`.
+report reader/writer using schema `llama.tessera.runtime-probe.v2`.
 Test: `test_l2l5.cpp::test_l2()`.
 
 The quantize tool itself cannot run full forwards (its header comment
@@ -315,7 +315,7 @@ is explicit about this), so the two-forward-pass differential lives in
 `--tessera-matmul-output-dir`, joins the two `.matmul-output.f32`
 sidecar directories on tensor name, and emits `max_abs` / `mean_abs` /
 `relative_frobenius` / `top1_mismatch` / `top5_mismatch` per tensor as
-JSONL under the same `llama.tessera.runtime-probe.v1` schema. Capture
+JSONL under the same `llama.tessera.runtime-probe.v2` schema. Capture
 is audit-bounded (stride 32, 4096-row cap, tensor allowlist).
 
 Gap versus the spec above: `runtime_probe.py` has never been run

@@ -185,7 +185,7 @@ The `ts_l2_tensor_divergence` core computes the four metrics per
 tensor; `ts_l2_expected_frob` is the type-aware baseline table (F16
 < 1e-5, Q8_0 < 1e-3, Q4_K < 5e-2, Tessera-T640 < 2e-2, Tessera-T640
 per-tensor GA < 1e-2); `ts_l2_run` aggregates the per-tensor inputs
-into a `ts_l2_report`. The schema is `llama.tessera.runtime-probe.v1`
+into a `ts_l2_report`. The schema is `llama.tessera.runtime-probe.v2`
 so the L5 adaptive requantizer (`ts_l5_adaptive_requant`) can read
 the report back.
 
@@ -214,7 +214,7 @@ measured number holds on a real model, every T640 tensor exceeds the
 tensors that exceed their type's expected divergence" step selects
 everything -- the loop still runs and still emits a well-formed
 receipt, it just is not choosing. Refitting this table against a real
-`runtime-probe.v1` report is item 1 of section 12.
+`runtime-probe.v2` report is item 1 of section 12.
 
 ### 4.3 Acceptance state
 
@@ -637,7 +637,7 @@ remains, in priority order:
    every generation and L5's tensor selection degenerates into
    "requantize everything" while still emitting a well-formed
    receipt. Dump the `relative_frobenius` distribution from a
-   `llama.tessera.runtime-probe.v1` report on a real model and refit
+   `llama.tessera.runtime-probe.v2` report on a real model and refit
    the table. Estimated: 1 day once a model pair is available; this
    gates the meaning of every L5 receipt produced so far.
 
@@ -683,7 +683,7 @@ none of the shipped layers substitutes for.
 
 Every dispatch run is deterministic via `--tessera-evolve-seed`.
 The sidecar files are append-only; the JSON reports
-(`llama.tessera.runtime-probe.v1`, `llama.tessera.l5-loop.v1`,
+(`llama.tessera.runtime-probe.v2`, `llama.tessera.l5-loop.v1`,
 `llama.tessera.l5-joint-loop.v1`) carry provenance: model paths,
 corpus hash, kernel version, main tip, GA seed. The DuckDB store
 records one row per run / tensor / GA result / L4 plan outcome and

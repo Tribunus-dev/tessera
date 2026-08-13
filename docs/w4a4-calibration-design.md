@@ -767,7 +767,7 @@ per-layer changes are:
 - `tools/tessera/runtime_probe.py` is extended to report a
   per-tensor W4A16 PPL delta and a per-tensor W4A4 PPL delta as
   two columns in the L2 report (schema
-  `llama.tessera.runtime-probe.v1`). The differential is computed
+  `llama.tessera.runtime-probe.v2`). The differential is computed
   identically for both modes; the only difference is which
   quantized model is loaded (weight-only or W4A4). The L2
   report's `divergence` block gains `w4a4_max_abs`,

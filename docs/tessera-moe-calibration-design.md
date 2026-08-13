@@ -382,7 +382,7 @@ Non-MoE tensors (router, shared expert, dense lead, attention) keep the current 
 Changes:
 
 - **Scorer:** `tools/quantize/tessera/tessera-l2-diff.{h,cpp}` already scores a pair `(W_src_2d, W_recon_2d)` via `ts_l2_tensor_diff`. For MoE, call it per slice `W_src + e*out_dim*in_dim` vs the L1 sidecar for that expert. No new math.
-- **Report shape:** schema `llama.tessera.runtime-probe.v1` gains no new top-level field — each per-expert entry is a regular per-tensor row keyed by the suffix name. A logical with 128 experts thus contributes 128 rows. Downstream consumers that group by family already call `ts_regime_infer_family`, which returns `routed_expert` for all `*_exps` fragments (§3.3 fix).
+- **Report shape:** schema `llama.tessera.runtime-probe.v2` gains no new top-level field — each per-expert entry is a regular per-tensor row keyed by the suffix name. A logical with 128 experts thus contributes 128 rows. Downstream consumers that group by family already call `ts_regime_infer_family`, which returns `routed_expert` for all `*_exps` fragments (§3.3 fix).
 - **Thresholds:** type-aware table unchanged. T640 target remains `<2e-2` per expert. A MoE layer is flagged only if `median(expert rel_frob) > threshold` OR `p95(expert rel_frob) > 1.5*threshold` — this avoids flagging a layer because a single under-sampled expert is noisy.
 - **Imatrix coupling:** when L2 runs with `--imatrix`, `per_expert_max_abs` influences the outlier budget (see W4A4 §9.4). L2 itself does not change.
 
