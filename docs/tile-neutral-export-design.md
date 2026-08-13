@@ -31,7 +31,39 @@ NOT per-page. So the trits + outliers are invariant to the tile geometry. Only s
 The outlier CSR (step 6) is indexed by absolute (row, col) and stores f16 scaled weights —
 also tile-neutral. It travels with the trits unchanged across tile geometries.
 
-## The tile-neutral artifact (.tn640 / safetensors)
+## The tile-neutral artifact (safetensors)
+
+> **Naming constraint (architect, 2026-08-12).** The artifact must not
+> reference a tile geometry anywhere -- not in the extension, not in a
+> tensor key, not in a metadata field. The `.tn640` extension used
+> earlier in this document is therefore wrong: `640` is a property of
+> one packing, and the whole point of this format is that it predates
+> the packing choice. Use `.tsq` (Tessera quantized) or a bare
+> `.safetensors`. The same rule applies to the C++ surface that writes
+> it: name the functions after what they produce (neutral / unpacked),
+> never after T640.
+>
+> Concretely, the artifact carries the quantized weights plus every
+> input needed to reconstruct them, and nothing about how they will be
+> grouped for a GPU.
+
+### Component namespacing
+
+The bundle is one safetensors file holding all five components, using
+the namespaces `source-epoch.py` already defines (it does namespaced
+multi-component assembly today, streaming one tensor at a time into
+bounded shards -- reuse it rather than writing a second assembler):
+
+    gemma.<tensor>.<field>             the unified trunk
+    draft.mtp.<tensor>.<field>         MTP assistant head
+    draft.dflash.<tensor>.<field>      DFlash drafter
+    draft.dspark.<tensor>.<field>      DSpark drafter
+    speech.qwen3_tts.<tensor>.<field>  talker
+
+`draft.dspark` is the one namespace missing from
+`source-manifest.example.json` today and needs adding.
+
+### Per-tensor fields
 
 For each weight matrix W[out_dim, in_dim]:
 
@@ -70,7 +102,7 @@ No imatrix, no AWQ search, no forward passes. Pure regrouping + arithmetic.
 1. tools/quantize/tessera/tessera-quant.h
    - Add ts_quant_result_neutral struct (trits, outlier CSR, AWQ scales, global_amp)
    - Add ts_quantize_2d_neutral() — runs steps 1-3 + 6 of ts_quantize_2d, skips 4-5
-   - Add ts_export_neutral_safetensors() — writes the .tn640 safetensors
+   - Add ts_export_neutral_safetensors() — writes the neutral safetensors
 
 2. tools/quantize/tessera/tessera-quant.cpp
    - Refactor ts_quantize_2d to call ts_quantize_2d_neutral then ts_pack_neutral_to_tile640
@@ -82,7 +114,7 @@ No imatrix, no AWQ search, no forward passes. Pure regrouping + arithmetic.
    - Add ts_export_neutral() entry point that iterates tensors and calls the safetensors writer
 
 4. tools/quantize/quantize.cpp (or llama-tessera)
-   - Add --export-tile-neutral flag: produces .tn640 safetensors instead of GGUF
+   - Add --export-neutral flag: produces the neutral safetensors bundle instead of GGUF
    - Routes to ts_quantize_2d_neutral + ts_export_neutral_safetensors
 
 ### Phase 2: runtime tile-config struct
@@ -109,9 +141,9 @@ No imatrix, no AWQ search, no forward passes. Pure regrouping + arithmetic.
      -> select tile_config
 
 8. tools/quantize/quantize.cpp (or a new llama-tessera subcommand: pack)
-   - `llama-tessera pack --in model.tn640 --out model-t640.gguf --tile t640`
-   - `llama-tessera pack --in model.tn640 --out model-t512.gguf --tile t512`
-   - `llama-tessera pack --in model.tn640 --out model.gguf --tile auto` (detect GPU)
+   - `llama-tessera pack --in model.tsq --out model-t640.gguf --tile t640`
+   - `llama-tessera pack --in model.tsq --out model-t512.gguf --tile t512`
+   - `llama-tessera pack --in model.tsq --out model.gguf --tile auto` (detect GPU)
    - This is what Tessera Studio invokes at download time
 
 ### Phase 4: loader support for non-640 tiles (if Phase 2/3 produce them)
@@ -154,8 +186,8 @@ the same); only throughput/memory-access-pattern differs.
 
 ## What this enables
 
-- tribunus-dev HuggingFace repo ships ONE .tn640 artifact per model (tile-neutral)
-- Tessera Studio downloads the .tn640, detects the GPU, packs to the optimal GGUF tile
+- tribunus-dev HuggingFace repo ships ONE neutral .tsq artifact per model
+- Tessera Studio downloads the .tsq, detects the GPU, packs to the optimal GGUF tile
 - No client-side imatrix calibration, no AWQ search, no forward passes
 - Per-GPU-family tile optimization (Apple T640, Intel T512/T1024, future Apple variants)
 - The packing step is seconds-to-minutes, not the hours calibration takes
@@ -163,7 +195,7 @@ the same); only throughput/memory-access-pattern differs.
 
 ## Scope for initial implementation
 
-Phase 1-3 (export + packer) is the minimum viable feature: ship .tn640, pack to T640 on
+Phase 1-3 (export + packer) is the minimum viable feature: ship .tsq, pack to T640 on
 the client. This validates the round-trip (export -> safetensors -> pack -> GGUF -> load
 -> inference) without yet supporting multiple tile geometries (the packer produces T640
 from the neutral artifact, same as today, just split into two steps).
@@ -177,11 +209,11 @@ Phase 5 (regime router) is the runtime polish.
 
 ## Verification
 
-1. Round-trip test: BF16 -> ts_quantize_2d_neutral -> .tn640 -> ts_pack_neutral_to_gguf(T640)
+1. Round-trip test: BF16 -> ts_quantize_2d_neutral -> .tsq -> ts_pack_neutral_to_gguf(T640)
    -> load -> inference logits. Compare against the current single-step ts_quantize_2d ->
    GGUF -> load -> inference. Logits must match bit-for-bit (same trits, same scales, same
    outliers — only the code path differs).
-2. Multi-tile test: once Phase 2 lands, .tn640 -> T640 GGUF vs .tn640 -> T512 GGUF. Both
+2. Multi-tile test: once Phase 2 lands, .tsq -> T640 GGUF vs .tsq -> T512 GGUF. Both
    load and run; quality is identical (same trits); throughput may differ.
 3. The existing test-tessera-quants.cpp asserts T640 round-trip error bounds; the
    tile-neutral path must satisfy the same bounds.
