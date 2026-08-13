@@ -662,6 +662,12 @@ if (APPLE)
     # matmul matches the L0.5 reference (CPU dequant + matmul)
     # within 1e-2 abs / 1e-1 rel. The fixture is
     # tools/ane-mtp/fixtures/tile640-matmul-256x256x1/.
+    # Needs ggml-ane's symbols at link time, so it can only be built when
+    # that backend is a linkable library. Under GGML_BACKEND_DL it is a
+    # MODULE_LIBRARY, which CMake refuses to link into another target --
+    # attempting it failed the whole configure, not just this test.
+    ggml_backend_is_linkable(ggml-ane _ane_linkable)
+    if (_ane_linkable)
     llama_build(test-ane-tile640-matmul.cpp)
     if (TARGET test-ane-tile640-matmul)
         target_link_libraries(test-ane-tile640-matmul PRIVATE
@@ -670,6 +676,7 @@ if (APPLE)
                                    ${PROJECT_SOURCE_DIR}/tools/quantize/tessera
                                    ${PROJECT_SOURCE_DIR}/ggml/src)
     endif()
+    endif() # _ane_linkable
 endif()
 llama_build_and_test(test-autorelease.cpp       LABEL "model")
 llama_build_and_test(test-backend-sampler.cpp   LABEL "model")
@@ -760,12 +767,16 @@ if (NOT GGML_BACKEND_DL)
     # The real-12B end-to-end test is gated on the
     # TEST_TESSERA_UNIFIED_GGUF_PATH env var; this unit test
     # runs unconditionally and runs in <100 ms.
-    llama_build_and_test(test-ane-gguf-stream.cpp)
-    if (TARGET test-ane-gguf-stream)
-        target_include_directories(test-ane-gguf-stream PRIVATE
-            ${PROJECT_SOURCE_DIR}/ggml/src
-            ${PROJECT_SOURCE_DIR}/ggml/src/ggml-ane)
-        target_link_libraries(test-ane-gguf-stream PRIVATE ggml-ane)
+    # Same MODULE_LIBRARY constraint as test-ane-tile640-matmul above.
+    ggml_backend_is_linkable(ggml-ane _ane_linkable)
+    if (_ane_linkable)
+        llama_build_and_test(test-ane-gguf-stream.cpp)
+        if (TARGET test-ane-gguf-stream)
+            target_include_directories(test-ane-gguf-stream PRIVATE
+                ${PROJECT_SOURCE_DIR}/ggml/src
+                ${PROJECT_SOURCE_DIR}/ggml/src/ggml-ane)
+            target_link_libraries(test-ane-gguf-stream PRIVATE ggml-ane)
+        endif()
     endif()
     # Regime router test. With the empty .gen.h baseline
     # the test asserts the FALLBACK CONTRACT: every

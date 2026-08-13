@@ -44,19 +44,12 @@ typedef void (*ggml_metal_stream_poke_experts_fn)(void * pool, int32_t layer,
 typedef void * (*ggml_metal_stream_prefetch_async_fn)(void * pool, int32_t layer);
 typedef int64_t (*ggml_metal_stream_prefetch_wait_fn) (void * pool, void * prefetch_handle, int32_t layer);
 typedef void    (*ggml_metal_stream_prefetch_cancel_fn)(void * pool, void * prefetch_handle, int32_t layer);
-extern "C" {
-void ggml_metal_device_stream_set_pool(ggml_metal_device_t dev,
-                                       void * pool,
-                                       ggml_metal_stream_ensure_fn ensure_fn,
-                                       ggml_metal_stream_poke_fn  poke_fn,
-                                       ggml_metal_stream_ensure_experts_fn ensure_experts_fn,
-                                       ggml_metal_stream_poke_experts_fn  poke_experts_fn);
-void ggml_metal_device_stream_set_prefetch_fns(ggml_metal_device_t dev,
-                                               ggml_metal_stream_prefetch_async_fn  prefetch_async_fn,
-                                               ggml_metal_stream_prefetch_wait_fn   prefetch_wait_fn,
-                                               ggml_metal_stream_prefetch_cancel_fn prefetch_cancel_fn);
-void ggml_metal_device_stream_set_fence(ggml_metal_device_t dev, void * shared_event);
-}
+// The setters themselves live in the metal backend (they mutate its
+// opaque device struct), which is a MODULE_LIBRARY under
+// GGML_BACKEND_DL and therefore not linkable into `llama`. We call the
+// ggml_mtl_stream_* forwarders in the ggml-mtl-shared-events shared
+// library instead; they resolve the backend symbol on first call. See
+// ggml/include/ggml-metal.h.
 // Forward-declare the MTLSharedEvent helpers (ggml-metal-event.mm).
 struct ggml_mtl_shared_event;
 typedef struct ggml_mtl_shared_event * ggml_mtl_shared_event_t;
@@ -64,6 +57,18 @@ extern "C" {
 ggml_mtl_shared_event_t ggml_mtl_shared_event_new(void);
 void ggml_mtl_shared_event_free(ggml_mtl_shared_event_t event);
 void ggml_mtl_shared_event_wait(ggml_mtl_shared_event_t event, uint64_t value);
+// Weight-stream pool attachment, via the shared library's facade (see
+// the comment above and ggml/include/ggml-metal.h). Function-pointer
+// arguments are void * so this declaration stays free of the backend's
+// private callback typedefs; the trampolines are cast at the call site.
+void ggml_mtl_stream_set_pool(void * dev, void * pool,
+                              void * ensure_fn, void * poke_fn,
+                              void * ensure_experts_fn, void * poke_experts_fn);
+void ggml_mtl_stream_set_prefetch_fns(void * dev,
+                                      void * prefetch_async_fn,
+                                      void * prefetch_wait_fn,
+                                      void * prefetch_cancel_fn);
+void ggml_mtl_stream_set_fence(void * dev, void * shared_event);
 }
 #endif
 
@@ -1185,7 +1190,7 @@ llama_model::~llama_model() {
             if (!fn) continue;
             ggml_metal_device_t metal_dev = fn(dev.dev);
             if (metal_dev) {
-                ggml_metal_device_stream_set_pool(metal_dev, nullptr, nullptr, nullptr, nullptr, nullptr);
+                ggml_mtl_stream_set_pool(metal_dev, nullptr, nullptr, nullptr, nullptr, nullptr);
             }
         }
     }
@@ -1894,13 +1899,14 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             if (!fn) continue;
             ggml_metal_device_t metal_dev = fn(dev.dev);
             if (metal_dev) {
-                ggml_metal_device_stream_set_pool(metal_dev, pimpl->weight_pool,
-                    ensure_trampoline, poke_trampoline,
-                    ensure_experts_trampoline, poke_experts_trampoline);
-                ggml_metal_device_stream_set_prefetch_fns(metal_dev,
-                    prefetch_async_trampoline, prefetch_wait_trampoline, prefetch_cancel_trampoline);
+                ggml_mtl_stream_set_pool(metal_dev, pimpl->weight_pool,
+                    (void *) ensure_trampoline, (void *) poke_trampoline,
+                    (void *) ensure_experts_trampoline, (void *) poke_experts_trampoline);
+                ggml_mtl_stream_set_prefetch_fns(metal_dev,
+                    (void *) prefetch_async_trampoline, (void *) prefetch_wait_trampoline,
+                    (void *) prefetch_cancel_trampoline);
                 if (pimpl->stream_event) {
-                    ggml_metal_device_stream_set_fence(metal_dev, pimpl->stream_event);
+                    ggml_mtl_stream_set_fence(metal_dev, pimpl->stream_event);
                 }
             }
         }

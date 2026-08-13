@@ -143,6 +143,36 @@ GGML_BACKEND_API void ggml_mtl_shared_event_encode_signal(
         void * cmd_buf,
         uint64_t value);
 
+//
+// Weight-stream pool attachment (linkable facade).
+//
+// The real setters live in the metal backend and mutate its opaque
+// device struct. Under GGML_BACKEND_DL that backend is a
+// MODULE_LIBRARY, which CMake will not let another target link, so
+// callers outside ggml-metal (notably `llama`) go through these
+// forwarders in the shared library instead. Each resolves its
+// ggml_metal_device_stream_* counterpart on first call and is a no-op
+// when no Metal backend is present.
+//
+// Function-pointer arguments are `void *` so this header stays free of
+// the backend's private callback typedefs; callers cast their own
+// typed function pointers at the call site.
+GGML_BACKEND_API void ggml_mtl_stream_set_pool(
+        void * dev,
+        void * pool,
+        void * ensure_fn,
+        void * poke_fn,
+        void * ensure_experts_fn,
+        void * poke_experts_fn);
+
+GGML_BACKEND_API void ggml_mtl_stream_set_prefetch_fns(
+        void * dev,
+        void * prefetch_async_fn,
+        void * prefetch_wait_fn,
+        void * prefetch_cancel_fn);
+
+GGML_BACKEND_API void ggml_mtl_stream_set_fence(void * dev, void * shared_event);
+
 #ifdef __cplusplus
 }
 #endif

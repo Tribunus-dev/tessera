@@ -56,3 +56,22 @@ function(llama_add_compile_flags)
         endif()
     endif()
 endfunction()
+
+# Set `out_var` to TRUE when the ggml backend target `name` exists and can be
+# linked into another target. Backends become MODULE_LIBRARYs under
+# GGML_BACKEND_DL (they are dlopen'd at runtime), and CMake errors out if a
+# MODULE is named in target_link_libraries -- which fails the whole configure,
+# not just the target that asked for it. Callers that need a backend's symbols
+# at link time must guard on this.
+function(ggml_backend_is_linkable name out_var)
+    if (NOT TARGET ${name})
+        set(${out_var} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    get_target_property(_type ${name} TYPE)
+    if (_type STREQUAL "MODULE_LIBRARY")
+        set(${out_var} FALSE PARENT_SCOPE)
+    else()
+        set(${out_var} TRUE PARENT_SCOPE)
+    endif()
+endfunction()

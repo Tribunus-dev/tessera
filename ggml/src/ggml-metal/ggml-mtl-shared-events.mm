@@ -156,3 +156,79 @@ GGML_BACKEND_API void ggml_mtl_shared_event_encode_signal(
     id<MTLCommandBuffer> cb = (__bridge id<MTLCommandBuffer>) cmd_buf;
     [cb encodeSignalEvent:event->mtl_event value:value];
 }
+
+//
+// Weight-stream pool attachment facade.
+//
+// The setters below live in ggml-metal-device.m because they mutate the
+// opaque ggml_metal_device struct, whose layout is private to that file.
+// But `llama` needs to call them, and under GGML_BACKEND_DL the metal
+// backend is a MODULE_LIBRARY that cannot be linked into another target
+// (CMake refuses). Linking it anyway is what broke the default macOS
+// configure.
+//
+// So the shared library carries a linkable facade instead: `llama` links
+// these symbols normally, and each one resolves its ggml-metal
+// counterpart at first call. RTLD_DEFAULT finds the symbol whether the
+// backend was dlopen'd (GGML_BACKEND_DL=ON) or linked statically (OFF),
+// so one implementation covers both builds.
+//
+// The facade names are deliberately distinct from the ggml_metal_*
+// symbols they forward to: identical names would let dlsym resolve back
+// into this library and recurse forever.
+//
+
+#include <dlfcn.h>
+
+namespace {
+
+// Resolve `name` from the process image once and cache it. Returns null
+// when the metal backend is not loaded, in which case the forwarders
+// below are no-ops -- the correct behavior for a build or run with no
+// Metal device.
+void * mtl_resolve(const char * name, void ** cache, std::atomic<bool> * tried) {
+    if (tried->load(std::memory_order_acquire)) {
+        return *cache;
+    }
+    void * sym = dlsym(RTLD_DEFAULT, name);
+    *cache = sym;
+    tried->store(true, std::memory_order_release);
+    return sym;
+}
+
+}  // namespace
+
+GGML_BACKEND_API void ggml_mtl_stream_set_pool(
+        void * dev, void * pool,
+        void * ensure_fn, void * poke_fn,
+        void * ensure_experts_fn, void * poke_experts_fn) {
+    static void * fn = nullptr;
+    static std::atomic<bool> tried{false};
+    using set_pool_t = void (*)(void *, void *, void *, void *, void *, void *);
+    auto * f = (set_pool_t) mtl_resolve("ggml_metal_device_stream_set_pool", &fn, &tried);
+    if (f) {
+        f(dev, pool, ensure_fn, poke_fn, ensure_experts_fn, poke_experts_fn);
+    }
+}
+
+GGML_BACKEND_API void ggml_mtl_stream_set_prefetch_fns(
+        void * dev,
+        void * prefetch_async_fn, void * prefetch_wait_fn, void * prefetch_cancel_fn) {
+    static void * fn = nullptr;
+    static std::atomic<bool> tried{false};
+    using set_prefetch_t = void (*)(void *, void *, void *, void *);
+    auto * f = (set_prefetch_t) mtl_resolve("ggml_metal_device_stream_set_prefetch_fns", &fn, &tried);
+    if (f) {
+        f(dev, prefetch_async_fn, prefetch_wait_fn, prefetch_cancel_fn);
+    }
+}
+
+GGML_BACKEND_API void ggml_mtl_stream_set_fence(void * dev, void * shared_event) {
+    static void * fn = nullptr;
+    static std::atomic<bool> tried{false};
+    using set_fence_t = void (*)(void *, void *);
+    auto * f = (set_fence_t) mtl_resolve("ggml_metal_device_stream_set_fence", &fn, &tried);
+    if (f) {
+        f(dev, shared_event);
+    }
+}

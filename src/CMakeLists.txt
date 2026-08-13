@@ -62,7 +62,13 @@ if (GGML_METAL AND BUILD_SHARED_LIBS)
     # in llama-model.cpp and used directly. On macOS shared-library builds,
     # ggml-metal and ggml-mtl-shared-events are separate dylibs, so the link
     # must be direct — transitive propagation via ggml does not reach llama.
-    target_link_libraries(llama PRIVATE ggml-metal ggml-mtl-shared-events)
+    #
+    # Only the shared lib is linked. ggml-metal is a MODULE_LIBRARY under
+    # GGML_BACKEND_DL and CMake refuses to link those into another target,
+    # which broke the default macOS configure outright. The device
+    # stream-pool setters llama needs are reached through the
+    # ggml_mtl_stream_* facade in ggml-mtl-shared-events instead.
+    target_link_libraries(llama PRIVATE ggml-mtl-shared-events)
 endif()
 
 if (BUILD_SHARED_LIBS)

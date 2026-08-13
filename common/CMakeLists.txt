@@ -124,7 +124,12 @@ add_library(${TARGET}
     jinja/caps.h
     )
 
-if (APPLE)
+# The ANE surface depends on the Metal shared-event library for the W7
+# MTLSharedEvent handoff, so it is gated on GGML_METAL rather than APPLE
+# alone. A macOS build with GGML_METAL=OFF is not a supported
+# configuration; without this guard it fails at link with
+# "library 'ggml-mtl-shared-events' not found".
+if (APPLE AND GGML_METAL)
     target_sources(${TARGET} PRIVATE
         ane-mtp.mm ane-mtp.h
         ane-pump.mm ane-pump.h)
