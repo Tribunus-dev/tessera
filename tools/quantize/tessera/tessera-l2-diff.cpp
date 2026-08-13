@@ -10,10 +10,12 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <map>
 #include <vector>
 #include <sstream>
 
@@ -37,7 +39,8 @@ void ts_l2_default_config(ts_l2_config * cfg) {
     cfg->quant_model_path[0]  = '\0';
     cfg->corpus_path[0]       = '\0';
     cfg->output_json_path[0]  = '\0';
-    cfg->flag_multiplier      = 1.5f;
+    cfg->flag_multiplier      = 1.0f;
+    cfg->flag_quantile        = 0.85f;
 }
 
 float ts_l2_expected_frob(const char * qtype) {
@@ -57,7 +60,13 @@ float ts_l2_expected_frob(const char * qtype) {
         return 2.2361e-1f;   // was 5e-2
     }
     if (strcmp(qtype, "tessera_t640") == 0 || strcmp(qtype, "t640") == 0) {
-        return 1.4142e-1f;   // was 2e-2
+        // FITTED 2026-08-13: qwen3-tts talker T640 run, 267 tensors,
+        // best-candidate relative_frob median 0.452 (p10 0.447, p90
+        // 0.468, max 0.485) in norm-ratio units. This is the measured
+        // TYPICAL achieved ratio, so overshoot (observed/expected)
+        // means "worse than typical", not "worse than a guess 3.2x
+        // below reality".
+        return 4.5e-1f;      // was 1.4142e-1 (spec estimate; v1 2e-2)
     }
     return 2.2361e-1f;       // was 5e-2
 }
@@ -179,12 +188,14 @@ int ts_l2_run(const ts_l2_config * cfg,
         return -1;
     }
 
-    const float mult = cfg->flag_multiplier > 0.0f ? cfg->flag_multiplier : 1.5f;
+    const float mult = cfg->flag_multiplier > 0.0f ? cfg->flag_multiplier : 1.0f;
+    const float q    = cfg->flag_quantile;
 
     report->tensors.clear();
     report->tensors.reserve((size_t)n_tensors);
     report->n_flagged = 0;
 
+    // Pass 1: metrics only. Flagging needs the whole run's distribution.
     for (int64_t i = 0; i < n_tensors; i++) {
         const ts_l2_tensor_input & in = inputs[i];
         const int64_t n = in.rows * in.cols;
@@ -196,13 +207,45 @@ int ts_l2_run(const ts_l2_config * cfg,
         r.cols        = in.cols;
         r.divergence  = ts_l2_tensor_divergence(in.bf16, in.quant, n);
         r.expected_frob  = ts_l2_expected_frob(in.qtype);
-        r.flag_threshold = mult * r.expected_frob;
-        r.flagged        = r.divergence.relative_frobenius > r.flag_threshold;
+        r.flag_threshold = 0.0f;
+        r.flagged        = false;
+        report->tensors.push_back(std::move(r));
+    }
 
+    // Pass 2: flag above max(floor, run quantile), per qtype. The floor
+    // (mult * expected) says "worse than typical for the type" -- the
+    // fitted baseline IS the typical value, so the floor alone would
+    // flag ~half of any healthy run. The quantile picks THIS model's
+    // actual tail. A fixed threshold alone cannot do both jobs: the old
+    // spec-estimate baseline sat 3.2x below measured reality and flagged
+    // 267/267 talker tensors, and an all-flagged report carries no
+    // selection information (L5 pinned every knob at its minimum clamp).
+    // Groups with fewer than 8 tensors skip the quantile leg: too few
+    // values to call a distribution.
+    std::map<std::string, std::vector<float>> by_qtype;
+    for (const auto & r : report->tensors) {
+        by_qtype[r.qtype].push_back(r.divergence.relative_frobenius);
+    }
+    std::map<std::string, float> qcut;
+    for (auto & kv : by_qtype) {
+        if (q <= 0.0f || q >= 1.0f || kv.second.size() < 8) {
+            continue;
+        }
+        std::sort(kv.second.begin(), kv.second.end());
+        const size_t idx = (size_t)((double)q * (double)(kv.second.size() - 1));
+        qcut[kv.first] = kv.second[idx];
+    }
+    for (auto & r : report->tensors) {
+        float thr = mult * r.expected_frob;
+        const auto it = qcut.find(r.qtype);
+        if (it != qcut.end() && it->second > thr) {
+            thr = it->second;
+        }
+        r.flag_threshold = thr;
+        r.flagged        = r.divergence.relative_frobenius > thr;
         if (r.flagged) {
             report->n_flagged++;
         }
-        report->tensors.push_back(std::move(r));
     }
 
     if (cfg->output_json_path[0] != '\0') {

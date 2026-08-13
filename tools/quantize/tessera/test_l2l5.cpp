@@ -120,9 +120,10 @@ static void test_l2() {
         bf16[(size_t)i] = 1.0f + 0.1f * (float)(i % 5);
     }
 
-    // t640 flags above 1.5 * 1.4142e-1 = 2.1213e-1.
-    const float eps_bad  = 0.3f;   // rel_frob = 0.30 > 2.12e-1 -> flagged
-    const float eps_good = 0.1f;   // rel_frob = 0.10 < 2.12e-1 -> ok
+    // t640 floor (fitted baseline, 2 tensors < 8 so the quantile leg is
+    // off): flags above 1.0 * 4.5e-1.
+    const float eps_bad  = 0.5f;   // rel_frob = 0.50 > 4.5e-1 -> flagged
+    const float eps_good = 0.1f;   // rel_frob = 0.10 < 4.5e-1 -> ok
     std::vector<float> quant_bad((size_t)n);
     std::vector<float> quant_good((size_t)n);
     for (int64_t i = 0; i < n; i++) {
@@ -146,11 +147,13 @@ static void test_l2() {
     check_close("l2 tol f16",  ts_l2_expected_frob("f16"),          3.1623e-3f, 1e-7f);
     check_close("l2 tol q8_0", ts_l2_expected_frob("q8_0"),         3.1623e-2f, 1e-6f);
     check_close("l2 tol q4_k", ts_l2_expected_frob("q4_k"),         2.2361e-1f, 1e-5f);
-    check_close("l2 tol t640", ts_l2_expected_frob("tessera_t640"), 1.4142e-1f, 1e-5f);
-    // Each entry must be the sqrt of its v1 value, so a tensor at a given
-    // underlying error flags identically before and after the units fix.
-    check_close("l2 tol t640 == sqrt(v1)", ts_l2_expected_frob("tessera_t640"),
-                std::sqrt(2e-2f), 1e-5f);
+    // t640 is FITTED (talker run, 267 tensors, median 0.452) -- no longer
+    // the sqrt of a v1 spec estimate.
+    check_close("l2 tol t640", ts_l2_expected_frob("tessera_t640"), 4.5e-1f, 1e-5f);
+    // The unfitted entries remain the sqrt of their v1 values, so a tensor
+    // at a given underlying error flags identically across the units fix.
+    check_close("l2 tol q4_k == sqrt(v1)", ts_l2_expected_frob("q4_k"),
+                std::sqrt(5e-2f), 1e-5f);
 
     // --- L2 activation-space differential (v3.1 spec §4) ---
     // Synthetic matmul outputs: 4 samples x 8 out_dim. Each row is a
@@ -718,7 +721,8 @@ static void test_l2() {
     ts_l2_default_config(&cfg);
     std::snprintf(cfg.output_json_path, sizeof(cfg.output_json_path),
                   "%s/l2_report.json", TEST_DIR);
-    check("l2 default multiplier", cfg.flag_multiplier == 1.5f);
+    check("l2 default multiplier", cfg.flag_multiplier == 1.0f);
+    check("l2 default quantile",   cfg.flag_quantile   == 0.85f);
 
     ts_l2_tensor_input inputs[2];
     inputs[0] = { "blk.0.attn_q.weight", "tessera_t640", 8, 8, bf16.data(), quant_bad.data() };
@@ -731,7 +735,7 @@ static void test_l2() {
     check("l2 bad tensor flagged", report.tensors[0].flagged);
     check("l2 good tensor not flagged", !report.tensors[1].flagged);
     check_close("l2 flag threshold", report.tensors[0].flag_threshold,
-                1.5f * 1.4142e-1f, 1e-5f);
+                1.0f * 4.5e-1f, 1e-5f);
 
     // --- JSON round-trip ---
     ts_l2_report loaded;
@@ -759,24 +763,54 @@ static void test_l2() {
     check("l5 generation", plan.generation == 1);
     check("l5 spec name", plan.specs[0].tensor_name == "blk.0.attn_q.weight");
 
-    // overshoot = 0.30 / 1.4142e-1 = 2.1213 -> new_alpha = 0.5 / 2.1213
-    // In v1 units this same tensor overshot by 2.0; the ratio of a norm
-    // to a norm is the sqrt of the ratio of the energies, so tightening
-    // is gentler than it was. That is the intended reading: the driver
-    // is now an error ratio rather than an energy ratio.
-    check_close("l5 overshoot", plan.specs[0].overshoot, 2.1213f, 1e-3f);
-    check_close("l5 new_alpha tightened", plan.specs[0].new_alpha, 0.5f / 2.1213f, 1e-3f);
-    check_close("l5 new_clip tightened", plan.specs[0].new_clip, 0.5f / 2.1213f, 1e-3f);
+    // overshoot = 0.50 / 4.5e-1 = 1.1111 -> new_alpha = 0.5 / 1.1111.
+    // With the FITTED baseline, overshoot reads "worse than typical":
+    // a tensor 11% past the measured median gets an 11% tightening,
+    // not the pinned-at-minimum clamp the 3.2x-low guess produced.
+    check_close("l5 overshoot", plan.specs[0].overshoot, 1.1111f, 1e-3f);
+    check_close("l5 new_alpha tightened", plan.specs[0].new_alpha, 0.5f / 1.1111f, 1e-3f);
+    check_close("l5 new_clip tightened", plan.specs[0].new_clip, 0.5f / 1.1111f, 1e-3f);
     check("l5 alpha reduced", plan.specs[0].new_alpha < ap.alpha_scale);
 
     // larger overshoot -> smaller alpha (monotonic tightening)
     ts_l2_report worse = loaded;
-    worse.tensors[0].divergence.relative_frobenius = 0.70710f;  // overshoot 5.0
+    worse.tensors[0].divergence.relative_frobenius = 2.25f;  // overshoot 5.0
     ts_l5_adaptive_plan plan2;
     ts_l5_adaptive_requant(&worse, &ap, 2, &plan2);
     check("l5 worse -> smaller alpha",
           plan2.specs[0].new_alpha < plan.specs[0].new_alpha);
     check_close("l5 worse alpha == 0.5/5", plan2.specs[0].new_alpha, 0.1f, 1e-4f);
+
+    // --- quantile leg: a healthy-but-above-baseline run flags only its tail ---
+    // 10 t640 tensors, nine at rel_frob 0.46 and one at 0.49. All ten sit
+    // above the fitted floor (0.45), which alone would flag the entire run
+    // -- the exact all-flagged degeneracy the quantile leg exists to stop.
+    // q85 over 10 values lands on the 0.46 cluster, so only the tail flags.
+    {
+        std::vector<std::vector<float>> qbufs;
+        qbufs.reserve(10);
+        for (int t = 0; t < 10; t++) {
+            const float eps = (t == 9) ? 0.49f : 0.46f;
+            std::vector<float> qb((size_t)n);
+            for (int64_t i = 0; i < n; i++) {
+                qb[(size_t)i] = bf16[(size_t)i] * (1.0f + eps);
+            }
+            qbufs.push_back(std::move(qb));
+        }
+        std::vector<ts_l2_tensor_input> qin;
+        for (int t = 0; t < 10; t++) {
+            qin.push_back({ "blk.q.weight", "tessera_t640", 8, 8,
+                            bf16.data(), qbufs[(size_t)t].data() });
+        }
+        ts_l2_config qcfg;
+        ts_l2_default_config(&qcfg);
+        ts_l2_report qrep;
+        const int qflag = ts_l2_run(&qcfg, qin.data(), 10, &qrep);
+        check("l2 quantile: only the tail flags", qflag == 1);
+        check("l2 quantile: tail is the flagged one", qrep.tensors[9].flagged);
+        check("l2 quantile: threshold lifted above floor",
+              qrep.tensors[0].flag_threshold > 1.0f * 4.5e-1f);
+    }
 
     // null report -> empty plan, not an error
     ts_l5_adaptive_plan empty;

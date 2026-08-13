@@ -47,7 +47,9 @@ struct common_tessera_params {
     // iteration runs.
     bool        adaptive_requantize = true;
     int         l5_max_generations  = 3;
-    float       l5_flag_multiplier  = 1.5f;
+    float       l5_flag_multiplier  = 1.0f;  // floor leg of the L2 flag threshold;
+                                             // effective = max(mult * baseline,
+                                             // run's per-qtype flag quantile)
     float       l5_alpha_min        = 0.1f;
     float       l5_clip_min         = 0.1f;
     float       l5_outlier_overshoot_scale = 0.5f;

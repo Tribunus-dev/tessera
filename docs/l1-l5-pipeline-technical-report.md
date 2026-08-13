@@ -628,18 +628,24 @@ The L1.5 FP16 ground truth (was item 1) and the L6 acceptance verdict
 path (was item 4) have shipped; see sections 3.3 and 8.3. What
 remains, in priority order:
 
-1. **Fit the L2 flag thresholds to a real model**. `ts_l2_expected_frob`
-   returns `1.4142e-1` for T640 (v2 norm-ratio units) and L5 flags at
-   `1.5x` that, but `docs/per-tensor-calibration.md` reports a median
-   relative MSE of `0.18` across the 48 calibrated tensors -- `0.42` in
-   v2 units, roughly 3x the T640 entry.
-   If the measured value is right, every T640 tensor is flagged in
-   every generation and L5's tensor selection degenerates into
-   "requantize everything" while still emitting a well-formed
-   receipt. Dump the `relative_frobenius` distribution from a
-   `llama.tessera.runtime-probe.v2` report on a real model and refit
-   the table. Estimated: 1 day once a model pair is available; this
-   gates the meaning of every L5 receipt produced so far.
+1. **Fit the L2 flag thresholds to a real model** -- DONE for T640
+   (2026-08-13). Fitted against the qwen3-tts talker T640 run in
+   DuckDB: 267 tensors, best-candidate `relative_frobenius` p10
+   `0.447` / median `0.452` / p90 `0.468` / max `0.485` in v2
+   norm-ratio units -- confirming this item's `0.42` prediction from
+   `docs/per-tensor-calibration.md`. `ts_l2_expected_frob(t640)` is
+   now `4.5e-1` (was `1.4142e-1`, a spec estimate 3.2x below
+   reality that flagged 267/267 tensors and pinned every L5 knob at
+   its minimum clamp). Flagging is now two-legged:
+   `max(multiplier x baseline, the run's per-qtype 0.85 quantile)`
+   with the multiplier default dropped to `1.0` -- the floor says
+   "worse than typical for the type", the quantile picks the run's
+   own tail, so a healthy run flags ~15% instead of everything (old
+   baseline) or nothing (fitted baseline with the old 1.5x). The
+   other qtype baselines remain UNFITTED spec estimates; refit each
+   as measured distributions land (DB recording is default-on now,
+   so every run leaves one). L5 receipts produced before this fit
+   carry all-flagged selections and should be re-read accordingly.
 
 2. **Wire L4 into the L5 termination criterion.** The prompt bank and
    `e2e_probe.py` now exist (section 6.3), but L5 still terminates on

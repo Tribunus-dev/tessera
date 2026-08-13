@@ -366,12 +366,15 @@ thresholds are unfitted and the L6 fidelity claim is undemonstrated.
 
 Remaining work, ranked:
 
-1. Fit the L2 flag thresholds against a real model. `ts_l2_expected_frob`
-   returns `2e-2` for T640 and L5 flags at `1.5x`, but
-   `docs/per-tensor-calibration.md` reports a median relative MSE of
-   `0.18` in the same squared convention. If the measured figure is
-   right, every T640 tensor is flagged every generation and L5's
-   selection step is a no-op that still emits a well-formed receipt.
+1. ~~Fit the L2 flag thresholds against a real model~~ (done
+   2026-08-13 for T640: fitted to the talker DuckDB run -- 267
+   tensors, median `relative_frobenius` 0.452 in v2 norm-ratio
+   units, confirming the 0.18-squared prediction.
+   `ts_l2_expected_frob(t640)` = 4.5e-1 and flagging is two-legged:
+   `max(1.0 x baseline, run's per-qtype 0.85 quantile)`, so a
+   healthy run flags its own tail instead of everything or nothing.
+   Other qtype baselines remain unfitted; refit per type as
+   measured distributions land -- DB recording is default-on now.)
 2. Wire L4 into the L5 termination criterion. The prompt-bank probe
    now exists, but the weights-only L5 still terminates on L2
    `relative_frobenius` and the joint L5 on PPL deltas, so the loop can

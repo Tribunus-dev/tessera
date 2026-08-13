@@ -201,7 +201,7 @@ int main() {
     // Enable the L5 adaptive requantize loop under test.
     params.adaptive_requantize        = true;
     params.l5_max_generations         = 2;
-    params.l5_flag_multiplier         = 1.5f;
+    params.l5_flag_multiplier         = 1.0f;
     params.l5_alpha_min               = 0.1f;
     params.l5_clip_min                = 0.1f;
     params.l5_outlier_overshoot_scale = 0.5f;

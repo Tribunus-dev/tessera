@@ -71,7 +71,9 @@ struct ts_dispatch_params {
     // PPL harness (l5_joint_mode). Kept as a fallback for --no-tessera-l5-joint.
     bool        adaptive_requantize = true;
     int         l5_max_generations  = 3;     // generational cap
-    float       l5_flag_multiplier  = 1.5f;  // L2 flag threshold = multiplier * type baseline
+    float       l5_flag_multiplier  = 1.0f;  // floor leg: L2 flag threshold =
+                                             // max(multiplier * type baseline,
+                                             // run's per-qtype flag quantile)
     float       l5_alpha_min        = 0.1f;  // floor for the Stage A alpha multiplier
     float       l5_clip_min         = 0.1f;  // floor for the Stage A clip multiplier
     float       l5_outlier_overshoot_scale = 0.5f;  // Stage B outlier_frac bump per unit overshoot

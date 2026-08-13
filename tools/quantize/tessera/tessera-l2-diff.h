@@ -162,7 +162,16 @@ struct ts_l2_config {
     char  quant_model_path[1024];
     char  corpus_path[1024];
     char  output_json_path[1024];   // when non-empty, ts_l2_run writes here
-    float flag_multiplier;          // default 1.5
+    float flag_multiplier;          // absolute floor = multiplier * type
+                                    // baseline (default 1.0: "worse than
+                                    // typical for the type")
+    float flag_quantile;            // run-distribution leg: flag only above
+                                    // this quantile of the run's own
+                                    // per-qtype relative_frobenius values
+                                    // (default 0.85). Effective threshold is
+                                    // max(floor, quantile). <=0 or >=1
+                                    // disables the leg; qtype groups smaller
+                                    // than 8 tensors use the floor alone.
 };
 
 void ts_l2_default_config(ts_l2_config * cfg);
@@ -176,14 +185,17 @@ void ts_l2_default_config(ts_l2_config * cfg);
 // their v1 values, so the flag decision is unchanged at equal underlying
 // error.
 //
-// UNFITTED: the v1 numbers came from the design spec's estimates, not
-// from measurement, and converting units does not make them measured.
-// docs/per-tensor-calibration.md reports a median relative MSE of 0.18
-// across the calibrated tensors -- 0.42 in v2 units, ~3x the T640 entry
-// here. If that holds on a real model, every T640 tensor trips the flag
-// in every L5 generation and the loop's tensor selection is vacuous
-// while still emitting a well-formed receipt. Refit against a real
-// runtime-probe report before trusting an L5 receipt. See
+// FITTED (t640 only, 2026-08-13): measured against the qwen3-tts talker
+// T640 run in DuckDB (267 tensors; best-candidate relative_frob p10
+// 0.447, median 0.452, p90 0.468, max 0.485 in norm-ratio units). The
+// previous entry (1.4142e-1, a spec estimate) sat 3.2x below reality:
+// all 267 tensors flagged, every overshoot pinned the L5 knobs at their
+// minimum clamps, and the selection step carried no information --
+// exactly the pathology the old comment here predicted from
+// docs/per-tensor-calibration.md's 0.18 median. The remaining entries
+// are still UNFITTED spec estimates; refit each the same way once a
+// measured distribution exists for that type (recording is default-on
+// now, so every run leaves one). See
 // docs/l1-l5-pipeline-technical-report.md section 12 item 1.
 float ts_l2_expected_frob(const char * qtype);
 
