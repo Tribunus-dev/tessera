@@ -2717,15 +2717,31 @@ int imatrix_main(int argc, char ** argv) {
         return 1;
     }
 
-    // Phase imatrix-crash-safe: open DuckDB when --tessera-db is given.
+    // Phase imatrix-crash-safe: open DuckDB for the run. DEFAULT-ON: an
+    // unset --tessera-db derives <out_file>.tessera.duckdb next to the
+    // imatrix output ("none" is the explicit opt-out; an explicit path
+    // wins). An unset flag used to silently discard the accum-state
+    // record; losing the data was the default and nobody chose it.
     // The buffer is opened on the imatrix_accum_state table. The flusher
     // thread is started below (after model load, to avoid spawning a thread
     // before confirming the run can proceed). Writes are best-effort: a
     // corrupt DB or flush failure never blocks the imatrix pass.
     const common_tessera_params & tp = common_get_tessera_params();
-    if (!tp.tessera_db.empty()) {
+    std::string tessera_db_path = tp.tessera_db;
+    if (tessera_db_path == "none") {
+        tessera_db_path.clear();
+    } else if (tessera_db_path.empty()) {
+        std::string stem = params.out_file;
+        if (stem.size() > 5 && stem.compare(stem.size() - 5, 5, ".gguf") == 0) {
+            stem.resize(stem.size() - 5);
+        }
+        tessera_db_path = stem + ".tessera.duckdb";
+        LOG_INF("%s: recording run to %s (pass --tessera-db none to disable)\n",
+                __func__, tessera_db_path.c_str());
+    }
+    if (!tessera_db_path.empty()) {
         std::string db_err;
-        g_imatrix_db = ts_tessera_db_open(tp.tessera_db, &db_err);
+        g_imatrix_db = ts_tessera_db_open(tessera_db_path, &db_err);
         if (g_imatrix_db == nullptr) {
             LOG_ERR("%s: --tessera-db open failed: %s (continuing without DB)\n",
                     __func__, db_err.c_str());
@@ -2745,7 +2761,7 @@ int imatrix_main(int argc, char ** argv) {
                 g_imatrix_db = nullptr;
             } else {
                 LOG_INF("%s: --tessera-db=%s, imatrix_accum_state buffer ready\n",
-                        __func__, tp.tessera_db.c_str());
+                        __func__, tessera_db_path.c_str());
             }
         }
     }

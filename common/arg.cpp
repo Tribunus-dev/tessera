@@ -4291,7 +4291,10 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
     add_opt(common_arg(
         {"--tessera-db"}, "PATH",
         "Tessera: unified tessera.duckdb file for persistent GA results, family warm-start, "
-        "crash-resumable runs, cross-pipeline tensor_stats, and the L5 feedback loop",
+        "crash-resumable runs, cross-pipeline tensor_stats, and the L5 feedback loop. "
+        "DEFAULT-ON: unset derives <output>.tessera.duckdb next to the run's output "
+        "(llama-tessera and llama-imatrix); pass 'none' to disable recording. "
+        "Resume-from-db engages by default on re-runs; --force-requantize overrides",
         [](common_params &, const std::string & value) {
             tessera_params.tessera_db = value;
         }
@@ -4970,7 +4973,8 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
     ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_L5}));
     add_opt(common_arg(
         {"--flag-multiplier"}, "F",
-        "Tessera: L2 flag threshold = F * type baseline (default: 1.5)",
+        "Tessera: floor leg of the L2 flag threshold = F * type baseline; the effective "
+        "threshold is max(floor, the run's per-qtype flag quantile) (default: 1.0)",
         [](common_params &, const std::string & value) {
             float f = std::stof(value);
             if (f <= 0.0f) {

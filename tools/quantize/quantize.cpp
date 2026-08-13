@@ -2124,7 +2124,29 @@ int llama_quantize(int argc, char ** argv) {
         tparams.l5_joint_calibration_path    = tp.l5_joint_calibration;
         tparams.l5_joint_out_path            = tp.l5_joint_out;
         tparams.l5_scorer                    = tp.l5_scorer;
-        tparams.tessera_db_path              = tp.tessera_db;
+        // DuckDB recording is DEFAULT-ON. An unset --tessera-db used to
+        // silently discard the run's entire GA/acceptance/tensor_stats
+        // record; losing the data was the default and nobody chose it.
+        // Unset now derives <output>.tessera.duckdb next to the artifact;
+        // --tessera-db none is the explicit opt-out; an explicit path
+        // still wins. Consequence: resume-from-db (keyed by model_hash)
+        // also engages on re-runs by default -- --force-requantize is the
+        // escape after changing search parameters. Open failures were
+        // already best-effort (dispatch warns and continues without DB),
+        // so an unwritable location degrades, never breaks.
+        if (tp.tessera_db == "none") {
+            tparams.tessera_db_path = "";
+        } else if (!tp.tessera_db.empty()) {
+            tparams.tessera_db_path = tp.tessera_db;
+        } else {
+            std::string stem = fname_out;
+            if (stem.size() > 5 && stem.compare(stem.size() - 5, 5, ".gguf") == 0) {
+                stem.resize(stem.size() - 5);
+            }
+            tparams.tessera_db_path = stem + ".tessera.duckdb";
+            fprintf(stderr, "tessera: recording run to %s (pass --tessera-db none to disable)\n",
+                    tparams.tessera_db_path.c_str());
+        }
         tparams.force_requantize             = tp.force_requantize;
         tparams.verbose                     = tp.verbose;
         tparams.runtime_probe                = tp.runtime_probe;
