@@ -203,6 +203,128 @@ final class ReceiptExportServiceTests: XCTestCase {
         XCTAssertEqual(parsed?["documentID"] as? String, docID.uuidString)
     }
 
+    /// buildC2PADocument works end-to-end with a real (non-empty)
+    /// DocumentAST. The output must be valid JSON with a flattened body
+    /// and an embedded C2PA manifest from the last receipt.
+    func testBuildC2PADocumentWithRealAST() throws {
+        let key = Curve25519.Signing.PrivateKey()
+        let signer = ReceiptSigner(signingKey: key)
+        let docID = UUID()
+
+        // Build a non-trivial AST: heading + paragraph + list.
+        let heading = Block(
+            type: .heading,
+            attributes: ["level": .number(1)],
+            content: [InlineRun(text: "My Document")]
+        )
+        let para = Block(
+            type: .paragraph,
+            content: [InlineRun(text: "This is a paragraph.")]
+        )
+        let listItem = Block(
+            type: .listItem,
+            content: [InlineRun(text: "List item one")]
+        )
+        let ast = DocumentAST(
+            blocks: [
+                heading.id: heading,
+                para.id: para,
+                listItem.id: listItem
+            ],
+            rootChildren: [heading.id, para.id, listItem.id]
+        )
+
+        let receipt = (try? signer.sign(
+            documentID: docID,
+            mutations: [.setDocumentTitle(title: "My Document")],
+            priorReceiptID: nil,
+            actor: .user(UUID()),
+            preMutationSnapshot: [:]
+        ))!
+        let service = makeService()
+        let data = try service.buildC2PADocument(
+            documentID: docID,
+            documentTitle: "My Document",
+            chain: [receipt],
+            ast: ast
+        )
+
+        // The output must be valid JSON.
+        let parsed = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        XCTAssertNotNil(parsed, "output must be valid JSON")
+        XCTAssertEqual(parsed?["format"] as? String, "tessera.c2pa.doc.v1")
+        XCTAssertEqual(parsed?["documentID"] as? String, docID.uuidString)
+        XCTAssertEqual(parsed?["receiptCount"] as? Int, 1)
+
+        // The body must contain the flattened AST content.
+        let body = parsed?["body"] as? String
+        XCTAssertNotNil(body, "body must be present")
+        XCTAssertTrue(body!.contains("My Document"), "heading must appear in body")
+        XCTAssertTrue(body!.contains("paragraph"), "paragraph must appear in body")
+        XCTAssertTrue(body!.contains("List item one"), "list item must appear in body")
+
+        // The embedded manifest must be present (last receipt has a manifest).
+        let manifestData = parsed?["embeddedManifest"]
+        XCTAssertNotNil(manifestData, "embeddedManifest must be present")
+        if let manifestBase64 = manifestData as? String {
+            let manifestBytes = Data(base64Encoded: manifestBase64)
+            XCTAssertNotNil(manifestBytes, "manifest must be base64-decodable")
+            let manifestParsed = try JSONSerialization.jsonObject(
+                with: manifestBytes!
+            ) as? [String: Any]
+            XCTAssertNotNil(manifestParsed, "manifest must be valid JSON")
+            XCTAssertEqual(manifestParsed?["format"] as? String, "c2pa.v2")
+            XCTAssertTrue(
+                (manifestParsed?["signature"] as? String)?.hasPrefix("ed25519:") == true
+            )
+        }
+    }
+
+    /// The flattened body is valid Markdown regardless of document content.
+    func testC2PADocumentBodyIsMarkdown() throws {
+        let heading = Block(
+            type: .heading,
+            attributes: ["level": .number(2)],
+            content: [InlineRun(text: "A Heading")]
+        )
+        let code = Block(
+            type: .codeBlock,
+            content: [InlineRun(text: "let x = 42")]
+        )
+        let quote = Block(
+            type: .quote,
+            content: [InlineRun(text: "A famous quote")]
+        )
+        let ast = DocumentAST(
+            blocks: [heading.id: heading, code.id: code, quote.id: quote],
+            rootChildren: [heading.id, code.id, quote.id]
+        )
+        let key = Curve25519.Signing.PrivateKey()
+        let signer = ReceiptSigner(signingKey: key)
+        let docID = UUID()
+        let receipt = (try? signer.sign(
+            documentID: docID,
+            mutations: [],
+            priorReceiptID: nil,
+            actor: .user(UUID()),
+            preMutationSnapshot: [:]
+        ))!
+        let service = makeService()
+        let data = try service.buildC2PADocument(
+            documentID: docID,
+            documentTitle: "Code Doc",
+            chain: [receipt],
+            ast: ast
+        )
+        let parsed = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let body = parsed?["body"] as? String ?? ""
+
+        // Verify markdown markers are present for each block type.
+        XCTAssertTrue(body.contains("## A Heading"), "level-2 heading prefixed with ##")
+        XCTAssertTrue(body.contains("```"), "code block has fence markers")
+        XCTAssertTrue(body.contains("> A famous quote"), "quote prefixed with >")
+    }
+
     // MARK: - Egress policy
 
     func testDenialEgressPolicyBlocks() async {

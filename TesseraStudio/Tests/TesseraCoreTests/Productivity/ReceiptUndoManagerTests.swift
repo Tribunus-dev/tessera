@@ -367,4 +367,167 @@ final class ReceiptUndoManagerTests: XCTestCase {
         )
         XCTAssertNotNil(result.inverseReceipt)
     }
+
+    // MARK: - Chain walking
+
+    /// The inverse receipt's `priorReceiptID` is the original receipt's ID.
+    /// This is the property that makes the chain walkable: each receipt
+    /// points at the one that preceded it, so the full history can be
+    /// reconstructed by following `priorReceiptID` links.
+    func testInverseReceiptChainsToOriginal() throws {
+        let manager = ReceiptUndoManager(documentID: documentID)
+        let heading = Block(
+            type: .heading,
+            content: [InlineRun(text: "v0")]
+        )
+        var doc = DocumentAST(blocks: [heading.id: heading], rootChildren: [heading.id])
+
+        // Receipt r1 sets "v0" -> "v1".
+        let r1 = try applyAndSign(
+            [.setBlockContent(
+                blockID: heading.id,
+                content: [InlineRun(text: "v1")]
+            )],
+            to: &doc
+        )
+        manager.register(r1)
+
+        // Undo r1: the inverse should chain to r1.
+        let undo1 = try manager.undo(
+            document: doc,
+            actor: .user(UUID()),
+            signer: signer
+        )
+        XCTAssertEqual(undo1.inverseReceipt.priorReceiptID, r1.id)
+        XCTAssertEqual(undo1.inverseReceipt.documentID, documentID)
+        XCTAssertEqual(undo1.inverseReceipt.signature.count, 64)
+    }
+
+    /// Undo/redo correctly walks the chain in reverse order. Three
+    /// sequential edits (r1, r2, r3) can be undone in LIFO order
+    /// (r3, r2, r1), and each undo creates a new receipt chained to
+    /// the previous one.
+    func testUndoManagerWalksChainBackward() throws {
+        let manager = ReceiptUndoManager(documentID: documentID)
+        let heading = Block(
+            type: .heading,
+            content: [InlineRun(text: "v0")]
+        )
+        var doc = DocumentAST(blocks: [heading.id: heading], rootChildren: [heading.id])
+
+        // r1: v0 -> v1
+        let r1 = try applyAndSign(
+            [.setBlockContent(
+                blockID: heading.id,
+                content: [InlineRun(text: "v1")]
+            )],
+            to: &doc
+        )
+        manager.register(r1)
+
+        // r2: v1 -> v2
+        let r2 = try applyAndSign(
+            [.setBlockContent(
+                blockID: heading.id,
+                content: [InlineRun(text: "v2")]
+            )],
+            to: &doc,
+            priorReceiptID: r1.id
+        )
+        manager.register(r2)
+
+        // r3: v2 -> v3
+        let r3 = try applyAndSign(
+            [.setBlockContent(
+                blockID: heading.id,
+                content: [InlineRun(text: "v3")]
+            )],
+            to: &doc,
+            priorReceiptID: r2.id
+        )
+        manager.register(r3)
+
+        XCTAssertEqual(doc.blocks[heading.id]?.content.first?.text, "v3")
+
+        // Undo r3: should restore v2.
+        let undo3 = try manager.undo(
+            document: doc,
+            actor: .user(UUID()),
+            signer: signer
+        )
+        XCTAssertEqual(
+            undo3.updatedDocument.blocks[heading.id]?.content.first?.text,
+            "v2"
+        )
+        XCTAssertEqual(undo3.inverseReceipt.priorReceiptID, r3.id)
+        XCTAssertEqual(undo3.voidedReceiptID, r3.id)
+
+        // Undo r2: should restore v1. The inverse of r2 should
+        // have the original's mutations, chained to the inverse of r3.
+        let undo2 = try manager.undo(
+            document: undo3.updatedDocument,
+            actor: .user(UUID()),
+            signer: signer
+        )
+        XCTAssertEqual(
+            undo2.updatedDocument.blocks[heading.id]?.content.first?.text,
+            "v1"
+        )
+        XCTAssertEqual(undo2.inverseReceipt.priorReceiptID, r2.id)
+
+        // The two inverse receipts (undo3, undo2) have different IDs.
+        XCTAssertNotEqual(undo3.inverseReceipt.id, undo2.inverseReceipt.id)
+
+        // Both originals are in the voided log.
+        let voided = manager.snapshotVoidedReceipts()
+        let voidedIDs = Set(voided.map { $0.id })
+        XCTAssertTrue(voidedIDs.contains(r3.id))
+        XCTAssertTrue(voidedIDs.contains(r2.id))
+        XCTAssertFalse(voidedIDs.contains(r1.id))
+    }
+
+    /// Redo correctly re-applies the original mutations. After
+    /// undo( r3) -> v2, redo should restore v3.
+    func testRedoRestoresOriginalState() throws {
+        let manager = ReceiptUndoManager(documentID: documentID)
+        let heading = Block(
+            type: .heading,
+            content: [InlineRun(text: "v0")]
+        )
+        var doc = DocumentAST(blocks: [heading.id: heading], rootChildren: [heading.id])
+
+        let r1 = try applyAndSign(
+            [.setBlockContent(
+                blockID: heading.id,
+                content: [InlineRun(text: "v1")]
+            )],
+            to: &doc
+        )
+        manager.register(r1)
+
+        // Undo r1 -> v0.
+        let undo1 = try manager.undo(
+            document: doc,
+            actor: .user(UUID()),
+            signer: signer
+        )
+        XCTAssertEqual(
+            undo1.updatedDocument.blocks[heading.id]?.content.first?.text,
+            "v0"
+        )
+
+        // Redo should bring us back to v1.
+        let redo1 = try manager.redo(
+            document: undo1.updatedDocument,
+            actor: .user(UUID()),
+            signer: signer
+        )
+        XCTAssertEqual(
+            redo1.updatedDocument.blocks[heading.id]?.content.first?.text,
+            "v1"
+        )
+        // The redo receipt voids r1 and is itself undoable.
+        XCTAssertEqual(redo1.inverseReceipt.priorReceiptID, r1.id)
+        XCTAssertEqual(redo1.voidedReceiptID, r1.id)
+    }
 }

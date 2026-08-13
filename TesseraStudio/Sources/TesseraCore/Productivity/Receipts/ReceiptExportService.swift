@@ -19,6 +19,13 @@ public enum ReceiptExportFormat: String, CaseIterable, Sendable, Codable, Identi
     /// with the C2PA manifest embedded. The document is
     /// then verifiable by any C2PA-aware tool.
     case c2paDocument
+    /// es256 JUMBF manifest — the last receipt's C2PA
+    /// manifest, re-signed with ECDSA P-256 (es256) so
+    /// external tools (`c2patool`, Adobe Content
+    /// Authenticity) can parse and verify it. The
+    /// original Tessera ed25519 signature is preserved in
+    /// the output for Tessera-aware verification.
+    case es256JUMBF
 
     public var id: String { rawValue }
 
@@ -27,6 +34,7 @@ public enum ReceiptExportFormat: String, CaseIterable, Sendable, Codable, Identi
         case .signedJSON: return "Signed JSON bundle"
         case .markdown: return "Markdown summary"
         case .c2paDocument: return "C2PA-signed document"
+        case .es256JUMBF: return "es256 JUMBF manifest (for c2patool)"
         }
     }
 
@@ -35,6 +43,7 @@ public enum ReceiptExportFormat: String, CaseIterable, Sendable, Codable, Identi
         case .signedJSON: return "json"
         case .markdown: return "md"
         case .c2paDocument: return "c2pa.txt"
+        case .es256JUMBF: return "c2pa.json"
         }
     }
 }
@@ -201,6 +210,19 @@ public struct ReceiptExportService: Sendable {
                 chain: chain,
                 ast: ast
             )
+        case .es256JUMBF:
+            // Find the last receipt that has a C2PA manifest.
+            guard let lastWithManifest = chain.last(where: { $0.c2paManifest != nil }) else {
+                throw ExportError.buildFailed("no C2PA manifest in receipt chain")
+            }
+            guard let jumbf = C2PAToolCompatibility.transform(
+                lastWithManifest.c2paManifest,
+                documentID: documentID,
+                receiptID: lastWithManifest.id
+            ) else {
+                throw ExportError.buildFailed("es256 JUMBF transform failed")
+            }
+            payload = jumbf
         }
 
         // 4. Build the export receipt directly with the
@@ -404,6 +426,8 @@ public struct ReceiptExportService: Sendable {
             return "\(slug)-audit-\(dateStr).\(ext)"
         case .c2paDocument:
             return "\(slug)-c2pa.\(ext)"
+        case .es256JUMBF:
+            return "\(slug)-es256.\(ext)"
         }
     }
 
