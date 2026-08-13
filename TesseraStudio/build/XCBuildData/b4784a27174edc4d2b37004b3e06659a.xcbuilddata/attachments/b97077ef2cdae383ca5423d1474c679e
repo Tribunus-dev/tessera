@@ -1,0 +1,4 @@
+module ServiceLifecycle {
+header "ServiceLifecycle-Swift.h"
+export *
+}

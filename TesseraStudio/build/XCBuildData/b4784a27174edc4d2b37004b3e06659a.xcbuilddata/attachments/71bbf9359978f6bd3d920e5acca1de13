@@ -1,0 +1,4 @@
+module CTesseraFFI {
+umbrella "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/CTesseraFFI/include"
+export *
+}

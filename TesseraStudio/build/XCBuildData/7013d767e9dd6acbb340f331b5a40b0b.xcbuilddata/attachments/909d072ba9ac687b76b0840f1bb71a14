@@ -1,0 +1,39 @@
+{
+  "" : {
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOEmbedded.build/Objects-normal/arm64/NIOEmbedded-primary.dia",
+    "emit-module-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOEmbedded.build/Objects-normal/arm64/NIOEmbedded-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOEmbedded.build/Objects-normal/arm64/NIOEmbedded-primary-emit-module.dia",
+    "pch" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOEmbedded.build/Objects-normal/arm64/NIOEmbedded-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOEmbedded.build/Objects-normal/arm64/NIOEmbedded-primary.swiftdeps"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/Sources/NIOEmbedded/AsyncTestingChannel.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOEmbedded.build/Objects-normal/arm64/AsyncTestingChannel.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOEmbedded.build/Objects-normal/arm64/AsyncTestingChannel.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOEmbedded.build/Objects-normal/arm64/AsyncTestingChannel.dia",
+    "index-unit-output-path" : "/swift-nio.build/Debug/NIOEmbedded.build/Objects-normal/arm64/AsyncTestingChannel.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOEmbedded.build/Objects-normal/arm64/AsyncTestingChannel.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOEmbedded.build/Objects-normal/arm64/AsyncTestingChannel.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOEmbedded.build/Objects-normal/arm64/AsyncTestingChannel.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOEmbedded.build/Objects-normal/arm64/AsyncTestingChannel~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/Sources/NIOEmbedded/AsyncTestingEventLoop.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOEmbedded.build/Objects-normal/arm64/AsyncTestingEventLoop.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOEmbedded.build/Objects-normal/arm64/AsyncTestingEventLoop.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOEmbedded.build/Objects-normal/arm64/AsyncTestingEventLoop.dia",
+    "index-unit-output-path" : "/swift-nio.build/Debug/NIOEmbedded.build/Objects-normal/arm64/AsyncTestingEventLoop.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOEmbedded.build/Objects-normal/arm64/AsyncTestingEventLoop.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOEmbedded.build/Objects-normal/arm64/AsyncTestingEventLoop.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOEmbedded.build/Objects-normal/arm64/AsyncTestingEventLoop.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOEmbedded.build/Objects-normal/arm64/AsyncTestingEventLoop~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/Sources/NIOEmbedded/Embedded.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOEmbedded.build/Objects-normal/arm64/Embedded.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOEmbedded.build/Objects-normal/arm64/Embedded.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOEmbedded.build/Objects-normal/arm64/Embedded.dia",
+    "index-unit-output-path" : "/swift-nio.build/Debug/NIOEmbedded.build/Objects-normal/arm64/Embedded.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOEmbedded.build/Objects-normal/arm64/Embedded.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOEmbedded.build/Objects-normal/arm64/Embedded.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOEmbedded.build/Objects-normal/arm64/Embedded.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOEmbedded.build/Objects-normal/arm64/Embedded~partial.swiftmodule"
+  }
+}

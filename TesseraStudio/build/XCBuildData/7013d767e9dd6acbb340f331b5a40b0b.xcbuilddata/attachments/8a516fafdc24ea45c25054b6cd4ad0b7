@@ -1,0 +1,29 @@
+{
+  "" : {
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/UnixSignals.build/Objects-normal/x86_64/UnixSignals-primary.dia",
+    "emit-module-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/UnixSignals.build/Objects-normal/x86_64/UnixSignals-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/UnixSignals.build/Objects-normal/x86_64/UnixSignals-primary-emit-module.dia",
+    "pch" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/UnixSignals.build/Objects-normal/x86_64/UnixSignals-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/UnixSignals.build/Objects-normal/x86_64/UnixSignals-primary.swiftdeps"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/Sources/UnixSignals/UnixSignal.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/UnixSignals.build/Objects-normal/x86_64/UnixSignal.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/UnixSignals.build/Objects-normal/x86_64/UnixSignal.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/UnixSignals.build/Objects-normal/x86_64/UnixSignal.dia",
+    "index-unit-output-path" : "/swift-service-lifecycle.build/Debug/UnixSignals.build/Objects-normal/x86_64/UnixSignal.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/UnixSignals.build/Objects-normal/x86_64/UnixSignal.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/UnixSignals.build/Objects-normal/x86_64/UnixSignal.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/UnixSignals.build/Objects-normal/x86_64/UnixSignal.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/UnixSignals.build/Objects-normal/x86_64/UnixSignal~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/Sources/UnixSignals/UnixSignalsSequence.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/UnixSignals.build/Objects-normal/x86_64/UnixSignalsSequence.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/UnixSignals.build/Objects-normal/x86_64/UnixSignalsSequence.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/UnixSignals.build/Objects-normal/x86_64/UnixSignalsSequence.dia",
+    "index-unit-output-path" : "/swift-service-lifecycle.build/Debug/UnixSignals.build/Objects-normal/x86_64/UnixSignalsSequence.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/UnixSignals.build/Objects-normal/x86_64/UnixSignalsSequence.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/UnixSignals.build/Objects-normal/x86_64/UnixSignalsSequence.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/UnixSignals.build/Objects-normal/x86_64/UnixSignalsSequence.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/UnixSignals.build/Objects-normal/x86_64/UnixSignalsSequence~partial.swiftmodule"
+  }
+}

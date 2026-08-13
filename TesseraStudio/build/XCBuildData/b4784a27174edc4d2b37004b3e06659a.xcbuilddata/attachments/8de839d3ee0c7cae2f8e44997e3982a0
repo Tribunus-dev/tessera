@@ -1,0 +1,4 @@
+module CNIOPosix {
+umbrella header "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/Sources/CNIOPosix/include/CNIOPosix.h"
+export *
+}

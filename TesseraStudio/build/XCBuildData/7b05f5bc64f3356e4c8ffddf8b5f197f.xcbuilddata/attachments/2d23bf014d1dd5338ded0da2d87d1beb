@@ -1,0 +1,39 @@
+{
+  "" : {
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOFoundationCompat.build/Objects-normal/arm64/NIOFoundationCompat-primary.dia",
+    "emit-module-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOFoundationCompat.build/Objects-normal/arm64/NIOFoundationCompat-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOFoundationCompat.build/Objects-normal/arm64/NIOFoundationCompat-primary-emit-module.dia",
+    "pch" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOFoundationCompat.build/Objects-normal/arm64/NIOFoundationCompat-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOFoundationCompat.build/Objects-normal/arm64/NIOFoundationCompat-primary.swiftdeps"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/Sources/NIOFoundationCompat/Exports.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOFoundationCompat.build/Objects-normal/arm64/Exports.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOFoundationCompat.build/Objects-normal/arm64/Exports.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOFoundationCompat.build/Objects-normal/arm64/Exports.dia",
+    "index-unit-output-path" : "/swift-nio.build/Debug/NIOFoundationCompat.build/Objects-normal/arm64/Exports.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOFoundationCompat.build/Objects-normal/arm64/Exports.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOFoundationCompat.build/Objects-normal/arm64/Exports.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOFoundationCompat.build/Objects-normal/arm64/Exports.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOFoundationCompat.build/Objects-normal/arm64/Exports~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/Sources/NIOFoundationCompat/JSONSerialization+ByteBuffer.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOFoundationCompat.build/Objects-normal/arm64/JSONSerialization+ByteBuffer.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOFoundationCompat.build/Objects-normal/arm64/JSONSerialization+ByteBuffer.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOFoundationCompat.build/Objects-normal/arm64/JSONSerialization+ByteBuffer.dia",
+    "index-unit-output-path" : "/swift-nio.build/Debug/NIOFoundationCompat.build/Objects-normal/arm64/JSONSerialization+ByteBuffer.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOFoundationCompat.build/Objects-normal/arm64/JSONSerialization+ByteBuffer.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOFoundationCompat.build/Objects-normal/arm64/JSONSerialization+ByteBuffer.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOFoundationCompat.build/Objects-normal/arm64/JSONSerialization+ByteBuffer.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOFoundationCompat.build/Objects-normal/arm64/JSONSerialization+ByteBuffer~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/Sources/NIOFoundationCompat/WaitSpinningRunLoop.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOFoundationCompat.build/Objects-normal/arm64/WaitSpinningRunLoop.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOFoundationCompat.build/Objects-normal/arm64/WaitSpinningRunLoop.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOFoundationCompat.build/Objects-normal/arm64/WaitSpinningRunLoop.dia",
+    "index-unit-output-path" : "/swift-nio.build/Debug/NIOFoundationCompat.build/Objects-normal/arm64/WaitSpinningRunLoop.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOFoundationCompat.build/Objects-normal/arm64/WaitSpinningRunLoop.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOFoundationCompat.build/Objects-normal/arm64/WaitSpinningRunLoop.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOFoundationCompat.build/Objects-normal/arm64/WaitSpinningRunLoop.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOFoundationCompat.build/Objects-normal/arm64/WaitSpinningRunLoop~partial.swiftmodule"
+  }
+}

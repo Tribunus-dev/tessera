@@ -58,7 +58,8 @@ public struct ToolCallRecord: Codable, Sendable, Identifiable {
 /// this is the source URL, normalized via
 /// `TesseraResearchTool.normalizeURL` so trailing-slash variants
 /// collapse to one citation. Tools that produce non-URL citations
-/// (e.g. a local file path) synthesize a stable key from the title.
+/// (e.g. a local file path) synthesize a stable key from
+/// `(tool, path)`.
 ///
 /// **Label.** The visible text the chat row renders. For research
 /// citations this is the page title; long titles are truncated by
@@ -168,19 +169,20 @@ public enum ConfidenceBand: String, Codable, Sendable, CaseIterable {
 /// has not yet wired a per-tool confidence source). The field is set on
 /// every emission: a non-nil band is a positive claim about the agent's
 /// confidence, `nil` is the documented "no uncertainty available" path.
+///
+/// `sources` is the per-tool-call citation set (Wave 3A,
+/// agent-ux-fatigue review #5). The `research` tool emits one
+/// `Citation` per curated source; other tools that surface evidence
+/// (e.g. a `read_file` over a doc with citations) may add to the list.
+/// `[]` is the documented "no citations" path; non-empty is a positive
+/// claim that the tool produced a cited answer. The field is additive
+/// on top of the `confidenceBand` wave (2D): both are independent
+/// optional claims and the UI can render them side-by-side.
 public struct ToolResultPayload: Codable, Sendable {
     public let success: Bool
     public let output: String
     public let error: String?
     public let confidenceBand: ConfidenceBand?
-    /// Per-tool-call citation set (Wave 3A, review #5). The
-    /// `research` tool emits one `Citation` per curated source;
-    /// other tools that surface evidence may add to the list. `[]`
-    /// is the documented "no citations" path; non-empty is a
-    /// positive claim that the tool produced a cited answer. The
-    /// field is additive on top of the `confidenceBand` field
-    /// (Wave 2D): both are independent optional claims and the UI
-    /// renders them side-by-side.
     public let sources: [Citation]
 
     public init(

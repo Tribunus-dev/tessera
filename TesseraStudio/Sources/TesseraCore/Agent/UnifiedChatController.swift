@@ -372,6 +372,7 @@ public final class UnifiedChatController {
             onToolCall: { [weak self] persona, name, args in
                 self?.appendToolCall(persona: persona, name: name, arguments: args)
             },
+            onFinalize: { [weak self] persona in self?.finalizeRow(persona: persona) },
             // Wave 3A (review #5): lift structured tool-result data
             // (e.g. `data["sources"]` from the research tool) onto
             // the row's tool-call result. The hook fires after every
@@ -380,8 +381,7 @@ public final class UnifiedChatController {
             // the row.
             onToolResult: { [weak self] persona, name, result in
                 self?.recordToolResult(persona: persona, name: name, result: result)
-            },
-            onFinalize: { [weak self] persona in self?.finalizeRow(persona: persona) }
+            }
         )
         let runExecutor = StateGraphExecutor(graph: graph, checkpointer: checkpointer)
         self.runExecutor = runExecutor
@@ -464,19 +464,10 @@ public final class UnifiedChatController {
     public func recordToolResult(persona: AgentPersona, name: String, result: ToolResult) {
         guard let id = streamingRowsByPersona[persona],
               let idx = rows.firstIndex(where: { $0.id == id }) else { return }
-        // Find the most recent tool call for this persona that has
-        // no result yet AND matches the name. In practice the loop
-        // yields `.toolCall(name:)` then `.toolResult(name:result:)`
-        // in pairs, so we look from the tail.
         let toolCallIdx = rows[idx].toolCalls.lastIndex(where: { record in
             record.toolName == name && record.result == nil
         })
         guard let callIdx = toolCallIdx else { return }
-        // Extract citations from the result's `data["sources"]` array
-        // (the shape emitted by the `research` tool). Other tools that
-        // produce citations would need their own extraction; the helper
-        // is the single seam so adding a new citation-bearing tool
-        // does not require controller changes.
         let citations = Self.extractCitations(from: result)
         let payload = ToolResultPayload(
             success: result.success,
@@ -485,9 +476,6 @@ public final class UnifiedChatController {
             confidenceBand: result.confidenceBand,
             sources: citations
         )
-        // ToolCallRecord is a struct with a `let` `id`; we replace the
-        // element in the array rather than mutating in place. SwiftUI
-        // observes the array; replacement keeps the id stable.
         let existing = rows[idx].toolCalls[callIdx]
         rows[idx].toolCalls[callIdx] = ToolCallRecord(
             id: existing.id,
@@ -502,14 +490,12 @@ public final class UnifiedChatController {
     /// array. Each element is expected to be a JSON object with the
     /// shape `{url, title, content}` -- the same shape the `research`
     /// tool emits at `TesseraResearchTool.swift:99-105`. Unknown
-    /// shapes are skipped (the helper is the single seam for adding
-    /// new citation-bearing tools). Empty input -> empty output.
+    /// shapes are skipped. Empty input -> empty output.
     ///
     /// **URL normalization.** The `id` is the URL with trailing
     /// slashes stripped, matching `TesseraResearchTool.normalizeURL`
     /// (K1 verifier key). Two tools that emit the same URL with and
-    /// without a trailing slash collapse to one citation; the row
-    /// never shows duplicates of the same source.
+    /// without a trailing slash collapse to one citation.
     public nonisolated static func extractCitations(from result: ToolResult) -> [Citation] {
         guard let data = result.data,
               let sourcesValue = data["sources"],
@@ -523,9 +509,6 @@ public final class UnifiedChatController {
             let url = fields["url"]?.stringValue ?? ""
             let title = fields["title"]?.stringValue ?? ""
             let content = fields["content"]?.stringValue ?? ""
-            // Tools without a URL field (e.g. local-file citations)
-            // synthesize an id from the title so the chip stays
-            // unique. URL-cited tools use the normalized URL.
             let baseID = url.isEmpty ? "title:\(title)" : url
             let id = Self.normalizeCitationID(baseID)
             if id.isEmpty { continue }
@@ -549,9 +532,7 @@ public final class UnifiedChatController {
     /// URL normalization for citation ids. Trailing slashes are
     /// stripped so the same page with and without a trailing slash
     /// collapses to one id. Matches `TesseraResearchTool.normalizeURL`
-    /// (K1 verifier key) -- the K1 verifier uses this same key, so a
-    /// citation emitted by `research` and re-derived by the chat
-    /// controller always have the same id and dedupe correctly.
+    /// (K1 verifier key).
     nonisolated static func normalizeCitationID(_ id: String) -> String {
         var out = id.trimmingCharacters(in: .whitespacesAndNewlines)
         while out.hasSuffix("/") { out.removeLast() }

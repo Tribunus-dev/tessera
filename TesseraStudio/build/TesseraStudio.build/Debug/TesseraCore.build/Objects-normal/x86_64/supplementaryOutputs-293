@@ -1,0 +1,170 @@
+{
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Contacts/CardDAVImporter.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CardDAVImporter.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CardDAVImporter.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CardDAVImporter.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CardDAVImporter.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CardDAVImporter.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Contacts/Contact.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/Contact.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/Contact.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/Contact.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/Contact.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/Contact.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Contacts/ContactStore.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ContactStore.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ContactStore.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ContactStore.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ContactStore.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ContactStore.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Contacts/GoogleContactsAdapter.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/GoogleContactsAdapter.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/GoogleContactsAdapter.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/GoogleContactsAdapter.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/GoogleContactsAdapter.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/GoogleContactsAdapter.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Contacts/VCardImporter.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/VCardImporter.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/VCardImporter.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/VCardImporter.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/VCardImporter.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/VCardImporter.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/DocumentExporter.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/DocumentExporter.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/DocumentExporter.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/DocumentExporter.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/DocumentExporter.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/DocumentExporter.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/DocumentStore.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/DocumentStore.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/DocumentStore.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/DocumentStore.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/DocumentStore.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/DocumentStore.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Graph/GraphModel.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/GraphModel.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/GraphModel.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/GraphModel.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/GraphModel.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/GraphModel.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Graph/GraphStore.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/GraphStore.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/GraphStore.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/GraphStore.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/GraphStore.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/GraphStore.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Graph/GraphView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/GraphView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/GraphView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/GraphView.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/GraphView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/GraphView.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Graph/GraphViewModel.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/GraphViewModel.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/GraphViewModel.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/GraphViewModel.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/GraphViewModel.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/GraphViewModel.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/ImportExport/KeychainStorage.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/KeychainStorage.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/KeychainStorage.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/KeychainStorage.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/KeychainStorage.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/KeychainStorage.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/ImportExport/PythonSubprocessRunner.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/PythonSubprocessRunner.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/PythonSubprocessRunner.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/PythonSubprocessRunner.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/PythonSubprocessRunner.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/PythonSubprocessRunner.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/ImportExport/ShareSheetCoordinator.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ShareSheetCoordinator.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ShareSheetCoordinator.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ShareSheetCoordinator.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ShareSheetCoordinator.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ShareSheetCoordinator.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/ImportExport/TesseraExporter.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraExporter.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraExporter.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraExporter.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraExporter.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraExporter.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/ImportExport/TesseraImporter.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraImporter.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraImporter.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraImporter.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraImporter.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraImporter.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Calendar/CalendarChatHandler.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarChatHandler.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarChatHandler.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarChatHandler.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarChatHandler.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarChatHandler.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Calendar/CalendarEvent.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarEvent.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarEvent.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarEvent.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarEvent.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarEvent.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Calendar/CalendarGraphConnector.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarGraphConnector.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarGraphConnector.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarGraphConnector.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarGraphConnector.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarGraphConnector.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Calendar/CalendarNLUParser.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarNLUParser.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarNLUParser.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarNLUParser.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarNLUParser.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarNLUParser.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Calendar/CalendarResolvers.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarResolvers.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarResolvers.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarResolvers.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarResolvers.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarResolvers.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Calendar/CalendarStore.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarStore.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarStore.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarStore.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarStore.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarStore.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Calendar/CalendarViewModel.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarViewModel.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarViewModel.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarViewModel.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarViewModel.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarViewModel.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Calendar/EventKitAdapter.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EventKitAdapter.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EventKitAdapter.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EventKitAdapter.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EventKitAdapter.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EventKitAdapter.swiftdeps"
+  }
+}

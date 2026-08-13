@@ -1,0 +1,170 @@
+{
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Calendar/RecurrenceRule.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/RecurrenceRule.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/RecurrenceRule.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/RecurrenceRule.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/RecurrenceRule.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/RecurrenceRule.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Calendar/Views/CalendarEventDetailView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarEventDetailView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarEventDetailView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarEventDetailView.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarEventDetailView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarEventDetailView.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Calendar/Views/CalendarGridViews.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarGridViews.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarGridViews.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarGridViews.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarGridViews.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CalendarGridViews.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Code/CodeFile.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeFile.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeFile.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeFile.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeFile.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeFile.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Code/CodeFileTree.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeFileTree.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeFileTree.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeFileTree.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeFileTree.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeFileTree.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Code/CodeFileWatcher.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeFileWatcher.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeFileWatcher.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeFileWatcher.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeFileWatcher.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeFileWatcher.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Code/CodeMutation.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeMutation.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeMutation.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeMutation.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeMutation.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeMutation.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Code/CodeOutline.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeOutline.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeOutline.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeOutline.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeOutline.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeOutline.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Code/CodeReceiptType.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeReceiptType.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeReceiptType.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeReceiptType.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeReceiptType.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeReceiptType.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Code/CodeSearchIndex.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeSearchIndex.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeSearchIndex.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeSearchIndex.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeSearchIndex.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeSearchIndex.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Code/CodeStore.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeStore.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeStore.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeStore.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeStore.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeStore.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Code/CodeSurfaceViewModel.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeSurfaceViewModel.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeSurfaceViewModel.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeSurfaceViewModel.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeSurfaceViewModel.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CodeSurfaceViewModel.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Code/GitReadOnly.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/GitReadOnly.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/GitReadOnly.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/GitReadOnly.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/GitReadOnly.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/GitReadOnly.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Docs/Doc.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/Doc.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/Doc.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/Doc.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/Doc.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/Doc.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Docs/DocReceiptType.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/DocReceiptType.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/DocReceiptType.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/DocReceiptType.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/DocReceiptType.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/DocReceiptType.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Docs/DocStore.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/DocStore.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/DocStore.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/DocStore.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/DocStore.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/DocStore.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Docs/DocsGraphConnector.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/DocsGraphConnector.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/DocsGraphConnector.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/DocsGraphConnector.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/DocsGraphConnector.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/DocsGraphConnector.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Docs/DocsViewModel.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/DocsViewModel.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/DocsViewModel.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/DocsViewModel.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/DocsViewModel.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/DocsViewModel.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Email/EmailChatAdapter.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EmailChatAdapter.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EmailChatAdapter.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EmailChatAdapter.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EmailChatAdapter.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EmailChatAdapter.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Email/EmailComposer.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EmailComposer.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EmailComposer.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EmailComposer.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EmailComposer.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EmailComposer.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Email/EmailContextExtractor.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EmailContextExtractor.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EmailContextExtractor.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EmailContextExtractor.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EmailContextExtractor.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EmailContextExtractor.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Email/EmailImporter.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EmailImporter.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EmailImporter.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EmailImporter.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EmailImporter.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EmailImporter.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Email/EmailMessage.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EmailMessage.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EmailMessage.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EmailMessage.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EmailMessage.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EmailMessage.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Materials/Email/EmailSender.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EmailSender.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EmailSender.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EmailSender.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EmailSender.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/EmailSender.swiftdeps"
+  }
+}

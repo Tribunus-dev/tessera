@@ -1,0 +1,49 @@
+{
+  "" : {
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/CoreMetrics-primary.dia",
+    "emit-module-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/CoreMetrics-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/CoreMetrics-primary-emit-module.dia",
+    "pch" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/CoreMetrics-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/CoreMetrics-primary.swiftdeps"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/Sources/CoreMetrics/Locks.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/Locks.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/Locks.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/Locks.dia",
+    "index-unit-output-path" : "/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/Locks.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/Locks.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/Locks.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/Locks.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/Locks~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/Sources/CoreMetrics/MappingMetricsFactory.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/MappingMetricsFactory.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/MappingMetricsFactory.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/MappingMetricsFactory.dia",
+    "index-unit-output-path" : "/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/MappingMetricsFactory.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/MappingMetricsFactory.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/MappingMetricsFactory.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/MappingMetricsFactory.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/MappingMetricsFactory~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/Sources/CoreMetrics/Metrics.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/Metrics.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/Metrics.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/Metrics.dia",
+    "index-unit-output-path" : "/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/Metrics.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/Metrics.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/Metrics.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/Metrics.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/Metrics~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/Sources/CoreMetrics/WithMetricsFactory.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/WithMetricsFactory.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/WithMetricsFactory.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/WithMetricsFactory.dia",
+    "index-unit-output-path" : "/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/WithMetricsFactory.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/WithMetricsFactory.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/WithMetricsFactory.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/WithMetricsFactory.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-metrics/build/swift-metrics.build/Debug/CoreMetrics.build/Objects-normal/x86_64/WithMetricsFactory~partial.swiftmodule"
+  }
+}

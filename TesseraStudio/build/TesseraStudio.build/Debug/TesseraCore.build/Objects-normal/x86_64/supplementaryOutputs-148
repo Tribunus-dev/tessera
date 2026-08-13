@@ -1,0 +1,177 @@
+{
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Learning/TesseraWorldOutcomeContracts.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraWorldOutcomeContracts.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraWorldOutcomeContracts.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraWorldOutcomeContracts.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraWorldOutcomeContracts.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraWorldOutcomeContracts.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Learning/TesseraWorldSignalObserver.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraWorldSignalObserver.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraWorldSignalObserver.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraWorldSignalObserver.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraWorldSignalObserver.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraWorldSignalObserver.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/MoE/TesseraMoEBench.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraMoEBench.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraMoEBench.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraMoEBench.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraMoEBench.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraMoEBench.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Models/AnalyticsModels.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/AnalyticsModels.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/AnalyticsModels.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/AnalyticsModels.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/AnalyticsModels.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/AnalyticsModels.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Models/ChatMessage.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ChatMessage.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ChatMessage.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ChatMessage.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ChatMessage.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ChatMessage.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Models/Conversation.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/Conversation.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/Conversation.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/Conversation.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/Conversation.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/Conversation.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Models/InterfaceLevel.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/InterfaceLevel.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/InterfaceLevel.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/InterfaceLevel.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/InterfaceLevel.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/InterfaceLevel.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Models/ModelInfo.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ModelInfo.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ModelInfo.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ModelInfo.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ModelInfo.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ModelInfo.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Models/QuantizationReceipt.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/QuantizationReceipt.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/QuantizationReceipt.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/QuantizationReceipt.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/QuantizationReceipt.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/QuantizationReceipt.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Models/SidecarInfo.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/SidecarInfo.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/SidecarInfo.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/SidecarInfo.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/SidecarInfo.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/SidecarInfo.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Models/TelemetrySample.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TelemetrySample.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TelemetrySample.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TelemetrySample.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TelemetrySample.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TelemetrySample.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Models/TesseraRuntime.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraRuntime.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraRuntime.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraRuntime.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraRuntime.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraRuntime.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Ops/TesseraCapacity.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraCapacity.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraCapacity.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraCapacity.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraCapacity.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/TesseraCapacity.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Block.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/Block.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/Block.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/Block.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/Block.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/Block.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Chat/AgentContext.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/AgentContext.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/AgentContext.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/AgentContext.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/AgentContext.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/AgentContext.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Chat/ChatPanelStateMachine.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ChatPanelStateMachine.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ChatPanelStateMachine.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ChatPanelStateMachine.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ChatPanelStateMachine.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ChatPanelStateMachine.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Chat/ChatPanelViewModel.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ChatPanelViewModel.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ChatPanelViewModel.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ChatPanelViewModel.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ChatPanelViewModel.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ChatPanelViewModel.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Chat/ChatQueueItemStyle.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ChatQueueItemStyle.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ChatQueueItemStyle.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ChatQueueItemStyle.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ChatQueueItemStyle.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ChatQueueItemStyle.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Chat/ChatQueueStoring.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ChatQueueStoring.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ChatQueueStoring.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ChatQueueStoring.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ChatQueueStoring.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ChatQueueStoring.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Chat/CrossDocumentChatRegistry.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CrossDocumentChatRegistry.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CrossDocumentChatRegistry.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CrossDocumentChatRegistry.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CrossDocumentChatRegistry.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/CrossDocumentChatRegistry.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Chat/HoldMode.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/HoldMode.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/HoldMode.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/HoldMode.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/HoldMode.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/HoldMode.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Chat/MatchAndSupersedeEngine.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/MatchAndSupersedeEngine.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/MatchAndSupersedeEngine.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/MatchAndSupersedeEngine.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/MatchAndSupersedeEngine.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/MatchAndSupersedeEngine.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/ChatQueueItem.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ChatQueueItem.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ChatQueueItem.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ChatQueueItem.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ChatQueueItem.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/ChatQueueItem.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Comments.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/Comments.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/Comments.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/Comments.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/Comments.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/Comments.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraCore/Productivity/Contacts/AppleContactsAdapter.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/AppleContactsAdapter.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/AppleContactsAdapter.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/AppleContactsAdapter.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/AppleContactsAdapter.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraCore.build/Objects-normal/x86_64/AppleContactsAdapter.swiftdeps"
+  }
+}

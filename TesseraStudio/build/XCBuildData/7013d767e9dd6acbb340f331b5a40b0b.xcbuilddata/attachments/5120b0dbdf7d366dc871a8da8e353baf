@@ -1,0 +1,869 @@
+{
+  "" : {
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraStudioMac-primary.dia",
+    "emit-module-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraStudioMac-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraStudioMac-primary-emit-module.dia",
+    "pch" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraStudioMac-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraStudioMac-primary.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/API/DataLayerHTTPClient.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DataLayerHTTPClient.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DataLayerHTTPClient.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DataLayerHTTPClient.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DataLayerHTTPClient.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DataLayerHTTPClient.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DataLayerHTTPClient.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DataLayerHTTPClient.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DataLayerHTTPClient~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/API/ImportExportAPI.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ImportExportAPI.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ImportExportAPI.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ImportExportAPI.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ImportExportAPI.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ImportExportAPI.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ImportExportAPI.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ImportExportAPI.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ImportExportAPI~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/App/ChatFocusCoordinator.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ChatFocusCoordinator.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ChatFocusCoordinator.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ChatFocusCoordinator.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ChatFocusCoordinator.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ChatFocusCoordinator.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ChatFocusCoordinator.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ChatFocusCoordinator.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ChatFocusCoordinator~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/App/ContentView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ContentView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ContentView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ContentView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ContentView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ContentView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ContentView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ContentView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ContentView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/App/PleadTheFifthComposition.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/PleadTheFifthComposition.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/PleadTheFifthComposition.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/PleadTheFifthComposition.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/PleadTheFifthComposition.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/PleadTheFifthComposition.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/PleadTheFifthComposition.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/PleadTheFifthComposition.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/PleadTheFifthComposition~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/App/ProductivityBootstraps.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ProductivityBootstraps.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ProductivityBootstraps.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ProductivityBootstraps.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ProductivityBootstraps.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ProductivityBootstraps.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ProductivityBootstraps.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ProductivityBootstraps.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ProductivityBootstraps~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/App/SidebarGroup.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SidebarGroup.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SidebarGroup.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SidebarGroup.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SidebarGroup.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SidebarGroup.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SidebarGroup.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SidebarGroup.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SidebarGroup~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/App/TesseraAppLifecycle.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraAppLifecycle.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraAppLifecycle.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraAppLifecycle.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraAppLifecycle.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraAppLifecycle.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraAppLifecycle.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraAppLifecycle.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraAppLifecycle~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/App/TesseraStudioMacApp.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraStudioMacApp.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraStudioMacApp.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraStudioMacApp.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraStudioMacApp.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraStudioMacApp.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraStudioMacApp.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraStudioMacApp.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraStudioMacApp~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Encryption/ConfirmationPanel.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ConfirmationPanel.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ConfirmationPanel.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ConfirmationPanel.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ConfirmationPanel.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ConfirmationPanel.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ConfirmationPanel.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ConfirmationPanel.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ConfirmationPanel~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Encryption/PleadTheFifthMenuItem.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/PleadTheFifthMenuItem.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/PleadTheFifthMenuItem.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/PleadTheFifthMenuItem.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/PleadTheFifthMenuItem.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/PleadTheFifthMenuItem.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/PleadTheFifthMenuItem.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/PleadTheFifthMenuItem.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/PleadTheFifthMenuItem~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Encryption/PleadTheFifthNotifications.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/PleadTheFifthNotifications.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/PleadTheFifthNotifications.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/PleadTheFifthNotifications.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/PleadTheFifthNotifications.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/PleadTheFifthNotifications.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/PleadTheFifthNotifications.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/PleadTheFifthNotifications.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/PleadTheFifthNotifications~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Encryption/ReportWindow.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReportWindow.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReportWindow.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReportWindow.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReportWindow.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReportWindow.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReportWindow.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReportWindow.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReportWindow~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Calendar/CalendarEventNotesEditorView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CalendarEventNotesEditorView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CalendarEventNotesEditorView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CalendarEventNotesEditorView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CalendarEventNotesEditorView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CalendarEventNotesEditorView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CalendarEventNotesEditorView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CalendarEventNotesEditorView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CalendarEventNotesEditorView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Calendar/CalendarSurfaceView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CalendarSurfaceView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CalendarSurfaceView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CalendarSurfaceView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CalendarSurfaceView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CalendarSurfaceView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CalendarSurfaceView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CalendarSurfaceView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CalendarSurfaceView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Capacity/CapacityView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CapacityView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CapacityView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CapacityView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CapacityView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CapacityView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CapacityView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CapacityView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CapacityView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/ChatPanel/UnifiedChatDock.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/UnifiedChatDock.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/UnifiedChatDock.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/UnifiedChatDock.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/UnifiedChatDock.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/UnifiedChatDock.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/UnifiedChatDock.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/UnifiedChatDock.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/UnifiedChatDock~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Code/CodeDetailView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeDetailView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeDetailView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeDetailView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeDetailView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeDetailView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeDetailView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeDetailView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeDetailView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Code/CodeEditorPaneView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeEditorPaneView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeEditorPaneView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeEditorPaneView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeEditorPaneView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeEditorPaneView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeEditorPaneView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeEditorPaneView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeEditorPaneView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Code/CodeEditorView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeEditorView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeEditorView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeEditorView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeEditorView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeEditorView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeEditorView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeEditorView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeEditorView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Code/CodeFileTreeView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeFileTreeView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeFileTreeView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeFileTreeView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeFileTreeView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeFileTreeView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeFileTreeView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeFileTreeView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeFileTreeView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Code/CodeGitPanelView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeGitPanelView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeGitPanelView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeGitPanelView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeGitPanelView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeGitPanelView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeGitPanelView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeGitPanelView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeGitPanelView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Code/CodeOutlineView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeOutlineView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeOutlineView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeOutlineView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeOutlineView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeOutlineView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeOutlineView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeOutlineView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeOutlineView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Code/CodeSearchPanelView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeSearchPanelView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeSearchPanelView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeSearchPanelView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeSearchPanelView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeSearchPanelView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeSearchPanelView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeSearchPanelView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeSearchPanelView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Code/CodeSurfaceView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeSurfaceView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeSurfaceView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeSurfaceView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeSurfaceView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeSurfaceView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeSurfaceView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeSurfaceView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CodeSurfaceView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Contacts/ContactsView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ContactsView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ContactsView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ContactsView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ContactsView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ContactsView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ContactsView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ContactsView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ContactsView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Docs/DocDetailView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DocDetailView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DocDetailView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DocDetailView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DocDetailView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DocDetailView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DocDetailView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DocDetailView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DocDetailView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Docs/DocEditorView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DocEditorView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DocEditorView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DocEditorView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DocEditorView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DocEditorView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DocEditorView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DocEditorView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DocEditorView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Docs/DocsListView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DocsListView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DocsListView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DocsListView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DocsListView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DocsListView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DocsListView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DocsListView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DocsListView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Docs/VersionHistorySheet.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/VersionHistorySheet.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/VersionHistorySheet.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/VersionHistorySheet.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/VersionHistorySheet.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/VersionHistorySheet.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/VersionHistorySheet.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/VersionHistorySheet.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/VersionHistorySheet~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/DualAgent/CollabTraceView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CollabTraceView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CollabTraceView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CollabTraceView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CollabTraceView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CollabTraceView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CollabTraceView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CollabTraceView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CollabTraceView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/DualAgent/DualAgentChatView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DualAgentChatView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DualAgentChatView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DualAgentChatView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DualAgentChatView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DualAgentChatView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DualAgentChatView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DualAgentChatView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/DualAgentChatView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Editor/AgentCursorOverlay.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/AgentCursorOverlay.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/AgentCursorOverlay.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/AgentCursorOverlay.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/AgentCursorOverlay.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/AgentCursorOverlay.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/AgentCursorOverlay.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/AgentCursorOverlay.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/AgentCursorOverlay~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Editor/CommentsSidebarView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CommentsSidebarView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CommentsSidebarView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CommentsSidebarView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CommentsSidebarView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CommentsSidebarView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CommentsSidebarView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CommentsSidebarView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/CommentsSidebarView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Editor/EditorUndoCoordinator.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/EditorUndoCoordinator.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/EditorUndoCoordinator.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/EditorUndoCoordinator.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/EditorUndoCoordinator.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/EditorUndoCoordinator.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/EditorUndoCoordinator.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/EditorUndoCoordinator.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/EditorUndoCoordinator~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Editor/FindReplaceBar.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/FindReplaceBar.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/FindReplaceBar.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/FindReplaceBar.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/FindReplaceBar.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/FindReplaceBar.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/FindReplaceBar.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/FindReplaceBar.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/FindReplaceBar~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Editor/LayoutInspectorView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/LayoutInspectorView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/LayoutInspectorView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/LayoutInspectorView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/LayoutInspectorView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/LayoutInspectorView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/LayoutInspectorView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/LayoutInspectorView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/LayoutInspectorView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Editor/TesseraDiffOverlayView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraDiffOverlayView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraDiffOverlayView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraDiffOverlayView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraDiffOverlayView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraDiffOverlayView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraDiffOverlayView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraDiffOverlayView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraDiffOverlayView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Editor/TesseraEditorToolbar.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraEditorToolbar.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraEditorToolbar.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraEditorToolbar.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraEditorToolbar.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraEditorToolbar.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraEditorToolbar.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraEditorToolbar.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraEditorToolbar~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Editor/TesseraEditorView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraEditorView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraEditorView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraEditorView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraEditorView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraEditorView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraEditorView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraEditorView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraEditorView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Editor/TesseraStreamingDiffView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraStreamingDiffView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraStreamingDiffView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraStreamingDiffView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraStreamingDiffView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraStreamingDiffView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraStreamingDiffView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraStreamingDiffView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraStreamingDiffView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Editor/TesseraTableEditorView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraTableEditorView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraTableEditorView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraTableEditorView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraTableEditorView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraTableEditorView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraTableEditorView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraTableEditorView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TesseraTableEditorView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Email/EmailSurfaceBootstrap.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/EmailSurfaceBootstrap.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/EmailSurfaceBootstrap.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/EmailSurfaceBootstrap.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/EmailSurfaceBootstrap.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/EmailSurfaceBootstrap.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/EmailSurfaceBootstrap.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/EmailSurfaceBootstrap.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/EmailSurfaceBootstrap~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Email/EmailView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/EmailView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/EmailView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/EmailView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/EmailView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/EmailView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/EmailView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/EmailView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/EmailView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Graph/GraphWindowView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/GraphWindowView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/GraphWindowView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/GraphWindowView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/GraphWindowView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/GraphWindowView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/GraphWindowView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/GraphWindowView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/GraphWindowView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Intelligence/AdvancedSection.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/AdvancedSection.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/AdvancedSection.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/AdvancedSection.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/AdvancedSection.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/AdvancedSection.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/AdvancedSection.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/AdvancedSection.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/AdvancedSection~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Intelligence/IntelligenceView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/IntelligenceView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/IntelligenceView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/IntelligenceView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/IntelligenceView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/IntelligenceView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/IntelligenceView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/IntelligenceView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/IntelligenceView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Learning/LearningTrainingSection.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/LearningTrainingSection.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/LearningTrainingSection.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/LearningTrainingSection.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/LearningTrainingSection.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/LearningTrainingSection.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/LearningTrainingSection.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/LearningTrainingSection.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/LearningTrainingSection~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Learning/TrainingNotifier.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TrainingNotifier.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TrainingNotifier.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TrainingNotifier.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TrainingNotifier.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TrainingNotifier.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TrainingNotifier.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TrainingNotifier.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TrainingNotifier~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/LearningDashboardView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/LearningDashboardView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/LearningDashboardView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/LearningDashboardView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/LearningDashboardView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/LearningDashboardView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/LearningDashboardView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/LearningDashboardView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/LearningDashboardView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Notes/FlowLayout.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/FlowLayout.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/FlowLayout.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/FlowLayout.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/FlowLayout.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/FlowLayout.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/FlowLayout.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/FlowLayout.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/FlowLayout~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Notes/NoteDetailView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/NoteDetailView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/NoteDetailView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/NoteDetailView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/NoteDetailView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/NoteDetailView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/NoteDetailView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/NoteDetailView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/NoteDetailView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Notes/NoteEditorView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/NoteEditorView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/NoteEditorView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/NoteEditorView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/NoteEditorView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/NoteEditorView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/NoteEditorView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/NoteEditorView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/NoteEditorView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Notes/NotesView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/NotesView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/NotesView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/NotesView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/NotesView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/NotesView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/NotesView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/NotesView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/NotesView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Providers/ProvidersSettingsView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ProvidersSettingsView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ProvidersSettingsView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ProvidersSettingsView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ProvidersSettingsView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ProvidersSettingsView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ProvidersSettingsView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ProvidersSettingsView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ProvidersSettingsView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Receipts/C2PAManifestSheet.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/C2PAManifestSheet.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/C2PAManifestSheet.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/C2PAManifestSheet.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/C2PAManifestSheet.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/C2PAManifestSheet.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/C2PAManifestSheet.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/C2PAManifestSheet.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/C2PAManifestSheet~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Receipts/ReceiptDetailView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptDetailView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptDetailView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptDetailView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptDetailView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptDetailView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptDetailView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptDetailView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptDetailView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Receipts/ReceiptExportView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptExportView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptExportView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptExportView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptExportView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptExportView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptExportView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptExportView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptExportView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Receipts/ReceiptRowView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptRowView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptRowView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptRowView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptRowView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptRowView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptRowView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptRowView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptRowView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Receipts/ReceiptsDrawerView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptsDrawerView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptsDrawerView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptsDrawerView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptsDrawerView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptsDrawerView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptsDrawerView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptsDrawerView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReceiptsDrawerView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Reminders/ReminderDetailView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReminderDetailView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReminderDetailView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReminderDetailView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReminderDetailView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReminderDetailView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReminderDetailView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReminderDetailView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/ReminderDetailView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Reminders/RemindersView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/RemindersView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/RemindersView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/RemindersView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/RemindersView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/RemindersView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/RemindersView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/RemindersView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/RemindersView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/SettingsView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SettingsView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SettingsView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SettingsView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SettingsView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SettingsView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SettingsView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SettingsView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SettingsView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Shared/SurfaceFocusStatusBar.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceFocusStatusBar.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceFocusStatusBar.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceFocusStatusBar.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceFocusStatusBar.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceFocusStatusBar.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceFocusStatusBar.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceFocusStatusBar.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceFocusStatusBar~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Shared/SurfaceLinkedEntityChip.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceLinkedEntityChip.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceLinkedEntityChip.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceLinkedEntityChip.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceLinkedEntityChip.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceLinkedEntityChip.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceLinkedEntityChip.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceLinkedEntityChip.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceLinkedEntityChip~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Shared/SurfaceMetadataRow.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceMetadataRow.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceMetadataRow.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceMetadataRow.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceMetadataRow.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceMetadataRow.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceMetadataRow.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceMetadataRow.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceMetadataRow~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Shared/SurfaceTagBar.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceTagBar.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceTagBar.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceTagBar.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceTagBar.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceTagBar.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceTagBar.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceTagBar.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SurfaceTagBar~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Sheets/SheetDetailView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetDetailView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetDetailView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetDetailView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetDetailView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetDetailView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetDetailView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetDetailView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetDetailView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Sheets/SheetEditorView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetEditorView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetEditorView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetEditorView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetEditorView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetEditorView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetEditorView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetEditorView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetEditorView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Sheets/SheetGridView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetGridView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetGridView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetGridView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetGridView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetGridView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetGridView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetGridView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetGridView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Sheets/SheetsListView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetsListView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetsListView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetsListView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetsListView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetsListView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetsListView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetsListView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SheetsListView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Slides/SlideCanvasView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlideCanvasView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlideCanvasView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlideCanvasView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlideCanvasView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlideCanvasView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlideCanvasView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlideCanvasView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlideCanvasView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Slides/SlideDeckDetailView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlideDeckDetailView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlideDeckDetailView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlideDeckDetailView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlideDeckDetailView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlideDeckDetailView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlideDeckDetailView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlideDeckDetailView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlideDeckDetailView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Slides/SlideDeckEditorView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlideDeckEditorView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlideDeckEditorView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlideDeckEditorView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlideDeckEditorView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlideDeckEditorView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlideDeckEditorView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlideDeckEditorView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlideDeckEditorView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Slides/SlidesListView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlidesListView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlidesListView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlidesListView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlidesListView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlidesListView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlidesListView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlidesListView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/SlidesListView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Tasks/TasksView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TasksView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TasksView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TasksView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TasksView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TasksView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TasksView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TasksView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/TasksView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Workflows/WorkflowCanvasView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowCanvasView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowCanvasView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowCanvasView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowCanvasView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowCanvasView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowCanvasView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowCanvasView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowCanvasView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Workflows/WorkflowDocument.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowDocument.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowDocument.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowDocument.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowDocument.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowDocument.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowDocument.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowDocument.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowDocument~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Workflows/WorkflowEditorStore.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowEditorStore.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowEditorStore.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowEditorStore.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowEditorStore.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowEditorStore.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowEditorStore.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowEditorStore.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowEditorStore~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Workflows/WorkflowMenuActions.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowMenuActions.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowMenuActions.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowMenuActions.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowMenuActions.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowMenuActions.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowMenuActions.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowMenuActions.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowMenuActions~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Workflows/WorkflowNodeView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowNodeView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowNodeView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowNodeView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowNodeView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowNodeView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowNodeView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowNodeView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowNodeView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Workflows/WorkflowPaletteView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowPaletteView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowPaletteView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowPaletteView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowPaletteView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowPaletteView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowPaletteView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowPaletteView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowPaletteView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Workflows/WorkflowParameterPanelView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowParameterPanelView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowParameterPanelView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowParameterPanelView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowParameterPanelView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowParameterPanelView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowParameterPanelView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowParameterPanelView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowParameterPanelView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Workflows/WorkflowRunNotifier.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowRunNotifier.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowRunNotifier.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowRunNotifier.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowRunNotifier.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowRunNotifier.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowRunNotifier.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowRunNotifier.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowRunNotifier~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Workflows/WorkflowsView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowsView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowsView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowsView.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowsView.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowsView.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowsView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowsView.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/WorkflowsView~partial.swiftmodule"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/DerivedSources/GeneratedAssetSymbols.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/GeneratedAssetSymbols.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/GeneratedAssetSymbols.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/GeneratedAssetSymbols.dia",
+    "index-unit-output-path" : "/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/GeneratedAssetSymbols.o",
+    "llvm-bc" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/GeneratedAssetSymbols.bc",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/GeneratedAssetSymbols.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/GeneratedAssetSymbols.swiftdeps",
+    "swiftmodule" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/arm64/GeneratedAssetSymbols~partial.swiftmodule"
+  }
+}

@@ -54,7 +54,7 @@ final class InlineStopTests: XCTestCase {
         }
     }
 
-    /// A single-error error type so `.error(StopReasonError)` is
+    /// A single-error error type so `.error(SyntheticError)` is
     /// distinguishable from a generic CancellationError in tests.
     private struct SyntheticError: Error, CustomStringConvertible {
         let label: String
@@ -74,8 +74,8 @@ final class InlineStopTests: XCTestCase {
     ///   6. Try a second run() WITHOUT calling clearStop(); assert
     ///      the new stream returns immediately with a stop signal
     ///      and the loop did NOT execute any tool call.
-    ///   7. Call clearStop() and assert the next run() executes
-    ///      (the loop is back to a normal state).
+    ///   7. Call clearStop() and assert the next run() is back to
+    ///      a normal state (not a stop-rejection stream).
     func testHardStop() async throws {
         // 5 seconds is long enough to be confident the tool call is
         // still in flight when stop() fires, and short enough that
@@ -179,21 +179,15 @@ final class InlineStopTests: XCTestCase {
             try? await Task.sleep(nanoseconds: 50_000_000)
             loop.cancel()
         }
-        var thirdSawError = false
-        for await event in thirdStream {
-            if case .error = event { thirdSawError = true }
-        }
+        for await _ in thirdStream { }
         canceller.cancel()
-        // The third run was a real run (not a stop-rejection); it
-        // either saw a cancellation error or a normal completion.
-        // The acceptance is that it is NOT a stop-rejection stream.
-        XCTAssertFalse(
-            loop.lastStopReason != nil,
+        // The third run was a real run (not a stop-rejection).
+        // The acceptance is that it is NOT a stop-rejection stream:
+        // lastStopReason stays nil after clearStop().
+        XCTAssertNil(
+            loop.lastStopReason,
             "third run did not enter the stop-rejection path"
         )
-        // Use thirdSawError to avoid an unused-warning failure when
-        // the third run completes normally before the canceller.
-        _ = thirdSawError
     }
 
     // MARK: - Stop reason description is stable + ASCII

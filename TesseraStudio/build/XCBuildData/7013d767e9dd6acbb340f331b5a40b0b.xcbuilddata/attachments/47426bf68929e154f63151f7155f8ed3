@@ -1,0 +1,189 @@
+{
+  "" : {
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/SwiftASN1-primary.dia",
+    "emit-module-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/SwiftASN1-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/SwiftASN1-primary-emit-module.dia",
+    "pch" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/SwiftASN1-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/SwiftASN1-primary.swiftdeps"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/Sources/SwiftASN1/ASN1.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1.dia",
+    "index-unit-output-path" : "/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/Sources/SwiftASN1/BER.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/BER.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/BER.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/BER.dia",
+    "index-unit-output-path" : "/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/BER.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/BER.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/BER.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/BER.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/BER~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/Sources/SwiftASN1/Basic ASN1 Types/ASN1Any.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Any.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Any.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Any.dia",
+    "index-unit-output-path" : "/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Any.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Any.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Any.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Any.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Any~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/Sources/SwiftASN1/Basic ASN1 Types/ASN1BitString.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1BitString.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1BitString.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1BitString.dia",
+    "index-unit-output-path" : "/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1BitString.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1BitString.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1BitString.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1BitString.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1BitString~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/Sources/SwiftASN1/Basic ASN1 Types/ASN1Boolean.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Boolean.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Boolean.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Boolean.dia",
+    "index-unit-output-path" : "/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Boolean.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Boolean.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Boolean.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Boolean.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Boolean~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/Sources/SwiftASN1/Basic ASN1 Types/ASN1Identifier.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Identifier.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Identifier.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Identifier.dia",
+    "index-unit-output-path" : "/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Identifier.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Identifier.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Identifier.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Identifier.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Identifier~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/Sources/SwiftASN1/Basic ASN1 Types/ASN1Integer.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Integer.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Integer.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Integer.dia",
+    "index-unit-output-path" : "/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Integer.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Integer.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Integer.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Integer.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Integer~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/Sources/SwiftASN1/Basic ASN1 Types/ASN1Null.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Null.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Null.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Null.dia",
+    "index-unit-output-path" : "/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Null.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Null.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Null.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Null.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Null~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/Sources/SwiftASN1/Basic ASN1 Types/ASN1OctetString.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1OctetString.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1OctetString.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1OctetString.dia",
+    "index-unit-output-path" : "/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1OctetString.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1OctetString.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1OctetString.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1OctetString.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1OctetString~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/Sources/SwiftASN1/Basic ASN1 Types/ASN1Strings.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Strings.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Strings.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Strings.dia",
+    "index-unit-output-path" : "/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Strings.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Strings.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Strings.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Strings.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ASN1Strings~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/Sources/SwiftASN1/Basic ASN1 Types/ArraySliceBigint.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ArraySliceBigint.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ArraySliceBigint.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ArraySliceBigint.dia",
+    "index-unit-output-path" : "/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ArraySliceBigint.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ArraySliceBigint.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ArraySliceBigint.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ArraySliceBigint.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ArraySliceBigint~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/Sources/SwiftASN1/Basic ASN1 Types/GeneralizedTime.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/GeneralizedTime.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/GeneralizedTime.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/GeneralizedTime.dia",
+    "index-unit-output-path" : "/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/GeneralizedTime.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/GeneralizedTime.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/GeneralizedTime.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/GeneralizedTime.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/GeneralizedTime~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/Sources/SwiftASN1/Basic ASN1 Types/ObjectIdentifier.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ObjectIdentifier.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ObjectIdentifier.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ObjectIdentifier.dia",
+    "index-unit-output-path" : "/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ObjectIdentifier.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ObjectIdentifier.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ObjectIdentifier.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ObjectIdentifier.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/ObjectIdentifier~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/Sources/SwiftASN1/Basic ASN1 Types/PEMDocument.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/PEMDocument.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/PEMDocument.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/PEMDocument.dia",
+    "index-unit-output-path" : "/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/PEMDocument.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/PEMDocument.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/PEMDocument.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/PEMDocument.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/PEMDocument~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/Sources/SwiftASN1/Basic ASN1 Types/TimeUtilities.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/TimeUtilities.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/TimeUtilities.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/TimeUtilities.dia",
+    "index-unit-output-path" : "/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/TimeUtilities.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/TimeUtilities.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/TimeUtilities.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/TimeUtilities.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/TimeUtilities~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/Sources/SwiftASN1/Basic ASN1 Types/UTCTime.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/UTCTime.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/UTCTime.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/UTCTime.dia",
+    "index-unit-output-path" : "/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/UTCTime.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/UTCTime.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/UTCTime.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/UTCTime.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/UTCTime~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/Sources/SwiftASN1/DER.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/DER.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/DER.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/DER.dia",
+    "index-unit-output-path" : "/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/DER.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/DER.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/DER.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/DER.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/DER~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/Sources/SwiftASN1/Errors.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/Errors.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/Errors.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/Errors.dia",
+    "index-unit-output-path" : "/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/Errors.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/Errors.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/Errors.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/Errors.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-asn1/build/swift-asn1.build/Debug/SwiftASN1.build/Objects-normal/arm64/Errors~partial.swiftmodule"
+  }
+}

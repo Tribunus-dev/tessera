@@ -1,0 +1,4 @@
+module RediStack {
+header "RediStack-Swift.h"
+export *
+}

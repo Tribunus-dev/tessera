@@ -1,0 +1,19 @@
+{
+  "" : {
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/STTextView/build/STTextView.build/Debug/STTextView.build/Objects-normal/x86_64/STTextView-primary.dia",
+    "emit-module-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/STTextView/build/STTextView.build/Debug/STTextView.build/Objects-normal/x86_64/STTextView-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/STTextView/build/STTextView.build/Debug/STTextView.build/Objects-normal/x86_64/STTextView-primary-emit-module.dia",
+    "pch" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/STTextView/build/STTextView.build/Debug/STTextView.build/Objects-normal/x86_64/STTextView-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/STTextView/build/STTextView.build/Debug/STTextView.build/Objects-normal/x86_64/STTextView-primary.swiftdeps"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/STTextView/Sources/STTextView/module.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/STTextView/build/STTextView.build/Debug/STTextView.build/Objects-normal/x86_64/module.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/STTextView/build/STTextView.build/Debug/STTextView.build/Objects-normal/x86_64/module.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/STTextView/build/STTextView.build/Debug/STTextView.build/Objects-normal/x86_64/module.dia",
+    "index-unit-output-path" : "/STTextView.build/Debug/STTextView.build/Objects-normal/x86_64/module.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/STTextView/build/STTextView.build/Debug/STTextView.build/Objects-normal/x86_64/module.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/STTextView/build/STTextView.build/Debug/STTextView.build/Objects-normal/x86_64/module.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/STTextView/build/STTextView.build/Debug/STTextView.build/Objects-normal/x86_64/module.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/STTextView/build/STTextView.build/Debug/STTextView.build/Objects-normal/x86_64/module~partial.swiftmodule"
+  }
+}

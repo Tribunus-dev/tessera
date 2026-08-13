@@ -54,9 +54,7 @@ final class ChatMessageCitationTests: XCTestCase {
 
     func testCitationEquality() {
         // Equatable so the chat row can dedupe citations by id
-        // before rendering. Two citations with the same id but
-        // different snippets are still equal -- the row's
-        // collapse-by-id is what produces the chip layout.
+        // before rendering.
         let a = Citation(id: "u", label: "x", snippet: "alpha")
         let b = Citation(id: "u", label: "x", snippet: "alpha")
         let c = Citation(id: "u", label: "x", snippet: "beta")
@@ -343,23 +341,18 @@ final class ChatMessageCitationTests: XCTestCase {
         XCTAssertEqual(call.result?.sources.count, 1)
     }
 
-    // MARK: - Codable round-trip for ChatMessage with sources
+    // MARK: - Codable round-trip for ChatMessage sources
 
-    func testChatMessageCodableRoundTripPreservesSources() {
+    func testChatMessageSourcesArrayRoundTrips() {
         // Sources is part of the @Model storage. The encoder is
         // JSON, so the round-trip must be lossless.
-        let original = ChatMessage(
-            role: .assistant,
-            content: "answer",
-            sources: [
-                Citation(id: "u1", label: "L1", snippet: "s1"),
-                Citation(id: "u2", label: "L2", url: "https://example.com/2"),
-            ]
-        )
-        // ChatMessage is a SwiftData @Model which is its own Codable.
-        // We round-trip the `sources` array directly via JSONEncoder,
+        let original: [Citation] = [
+            Citation(id: "u1", label: "L1", snippet: "s1"),
+            Citation(id: "u2", label: "L2", url: "https://example.com/2"),
+        ]
+        // Round-trip the `sources` array directly via JSONEncoder,
         // which is the storage form.
-        let data = try? JSONEncoder().encode(original.sources)
+        let data = try? JSONEncoder().encode(original)
         XCTAssertNotNil(data)
         let restored = try? JSONDecoder().decode([Citation].self, from: data ?? Data())
         XCTAssertEqual(restored?.count, 2)

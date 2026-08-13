@@ -33,6 +33,20 @@ public final class ConfirmationPanel: NSObject, NSWindowDelegate {
     private let rateLimitWindow: TimeInterval = 30
     private let rateLimitCap = 3
     private let tier: TesseraTier
+    /// 4B (review #4 follow-up, agent-ux-fatigue): the structural
+    /// action class the user is about to confirm, surfaced as
+    /// the `tool:` chip on the panel. Optional so existing call
+    /// sites that do not supply one still compile and the chip
+    /// row stays hidden. When nil, only the existing TierChip
+    /// is shown.
+    private let actionClass: String?
+    /// 4B (review #4 follow-up, agent-ux-fatigue): the risk
+    /// level (`low | medium | high | forbidden`) of the action
+    /// the user is about to confirm, surfaced as the `risk:`
+    /// chip. Optional; same nil = no chip row convention as
+    /// `actionClass`. The two new parameters travel together:
+    /// the row renders only when both are present.
+    private let risk: TesseraActionRisk?
     /// 3D (review #4 follow-up, agent-ux-fatigue): the
     /// audit-log toggle handler. The host wires this to
     /// the `ActionAuditLogPanelPresenter`'s
@@ -45,6 +59,8 @@ public final class ConfirmationPanel: NSObject, NSWindowDelegate {
     public init(
         onResult: @escaping (Result) -> Void,
         tier: TesseraTier = .tier3,
+        actionClass: String? = nil,
+        risk: TesseraActionRisk? = nil,
         onToggleAuditLog: (() -> Void)? = nil
     ) {
         self.onResult = onResult
@@ -52,6 +68,11 @@ public final class ConfirmationPanel: NSObject, NSWindowDelegate {
         // the caller can override (e.g. for a lower-stakes confirmation
         // that reuses the same panel) but the default is the safe one.
         self.tier = tier
+        // 4B: the new detail chips are gated on both actionClass and
+        // risk being supplied. Either nil suppresses the new chip row
+        // so the existing TierChip + title layout is preserved.
+        self.actionClass = actionClass
+        self.risk = risk
         self.onToggleAuditLog = onToggleAuditLog
     }
 
@@ -62,6 +83,8 @@ public final class ConfirmationPanel: NSObject, NSWindowDelegate {
         }
         let view = ConfirmationView(
             tier: tier,
+            actionClass: actionClass,
+            risk: risk,
             expectedPhrase: confirmationPhrase,
             unlockDelaySeconds: unlockDelaySeconds,
             onSubmit: { [weak self] text in
@@ -160,6 +183,14 @@ private struct ConfirmationView: View {
     }
 
     let tier: TesseraTier
+    /// 4B (review #4 follow-up, agent-ux-fatigue): the action class
+    /// string surfaced on the `tool:` chip. When nil, the detail chip
+    /// row is suppressed and only the existing TierChip renders.
+    let actionClass: String?
+    /// 4B (review #4 follow-up, agent-ux-fatigue): the risk level
+    /// surfaced on the `risk:` chip. Same nil = no-row convention as
+    /// `actionClass`.
+    let risk: TesseraActionRisk?
     let expectedPhrase: String
     let unlockDelaySeconds: TimeInterval
     let onSubmit: (String) -> SubmitResult
@@ -188,6 +219,41 @@ private struct ConfirmationView: View {
                     .font(.headline)
                 Spacer()
                 TierChip(tier: tier)
+            }
+            // 4B (review #4 follow-up, agent-ux-fatigue): surface
+            // the action class, risk, and irreversibility flag on
+            // the panel so the user reads the action's full
+            // identity at the moment of confirmation (paradox 1:
+            // verification cost; pattern-catalog.md sec. Structured
+            // Presentation). The three new chips use the same
+            // `field: value` vocabulary as 1C's AuditLogHeadChip
+            // (Editor/AuditLogHead.swift:145-159) and 3D's
+            // ActionAuditEntry.displayString
+            // (Agent/ActionAuditLogPanel.swift:152-170), so the
+            // user reads one chip language on the diff overlay,
+            // the chat progress feed, the audit log, and the
+            // approval sheet. The row is hidden when either
+            // `actionClass` or `risk` is nil so the existing
+            // TierChip-only layout is preserved.
+            if let actionClass = actionClass, let risk = risk {
+                HStack(alignment: .center, spacing: 6) {
+                    DetailChip(
+                        label: "tool",
+                        value: actionClass,
+                        color: .secondary
+                    )
+                    DetailChip(
+                        label: "risk",
+                        value: risk.rawValue,
+                        color: riskColor(risk)
+                    )
+                    DetailChip(
+                        label: "reversible",
+                        value: TesseraActionClass.isIrreversible(actionClass, risk: risk) ? "no" : "yes",
+                        color: reversibleColor(actionClass: actionClass, risk: risk)
+                    )
+                    Spacer()
+                }
             }
             Text("Type the phrase below to confirm. Paste is disabled. The button unlocks after a short delay.")
                 .font(.caption)
@@ -265,6 +331,32 @@ private struct ConfirmationView: View {
             lastFailure = "Phrase does not match. Attempt \(n) of \(cap)."
             text = ""
         }
+    }
+
+    // MARK: - 4B chip color helpers
+
+    /// Tint for the `risk:` chip. Mirrors the audit-log
+    /// `ActionAuditOutcome.tintName` palette vocabulary
+    /// (Agent/ActionAuditLogPanel.swift:74-81) so the user
+    /// reads the same color language for risk + outcome
+    /// across surfaces. Green / yellow / orange / red maps
+    /// to the four `TesseraActionRisk` cases.
+    private func riskColor(_ risk: TesseraActionRisk) -> Color {
+        switch risk {
+        case .low:       return .green
+        case .medium:    return .yellow
+        case .high:      return .orange
+        case .forbidden: return .red
+        }
+    }
+
+    /// Tint for the `reversible:` chip. Reversible actions
+    /// (the user can take them back) render green; irreversible
+    /// actions (destructive verbs, high-risk + irreversible,
+    /// external-path writes) render orange so the irreversibility
+    /// is visually distinct from the high-risk red.
+    private func reversibleColor(actionClass: String, risk: TesseraActionRisk) -> Color {
+        TesseraActionClass.isIrreversible(actionClass, risk: risk) ? .orange : .green
     }
 }
 
@@ -359,6 +451,37 @@ private struct TierChip: View {
         case .tier2: return .orange
         case .tier3: return .red
         }
+    }
+}
+
+/// 4B (review #4 follow-up, agent-ux-fatigue): detail chip for the
+/// action class, risk, and reversibility fields on the
+/// confirmation panel. Reuses the visual vocabulary of the
+/// existing `TierChip` (caption monospaced, capsule background
+/// + outline, color tint at 0.18 / 0.45 opacity) so the panel
+/// reads as one chip language. The text is the same
+/// `field: value` format used by 1C's `AuditLogHeadChip`
+/// (Editor/AuditLogHead.swift:145-159) and 3D's
+/// `ActionAuditEntry.displayString`
+/// (Agent/ActionAuditLogPanel.swift:152-170) so the user reads
+/// the same chip dialect on the diff overlay, the chat progress
+/// feed, the audit log, and the approval sheet.
+private struct DetailChip: View {
+    let label: String
+    let value: String
+    let color: Color
+
+    var body: some View {
+        Text("\(label): \(value)")
+            .font(.caption.monospaced())
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(color.opacity(0.18), in: Capsule())
+            .foregroundStyle(color)
+            .overlay(
+                Capsule().stroke(color.opacity(0.45), lineWidth: 0.5)
+            )
+            .accessibilityLabel("\(label): \(value)")
     }
 }
 #endif

@@ -1,0 +1,79 @@
+{
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/App/ChatFocusCoordinator.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/ChatFocusCoordinator.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/ChatFocusCoordinator.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/ChatFocusCoordinator.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/ChatFocusCoordinator.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/ChatFocusCoordinator.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Calendar/CalendarEventNotesEditorView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CalendarEventNotesEditorView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CalendarEventNotesEditorView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CalendarEventNotesEditorView.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CalendarEventNotesEditorView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CalendarEventNotesEditorView.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Calendar/CalendarSurfaceView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CalendarSurfaceView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CalendarSurfaceView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CalendarSurfaceView.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CalendarSurfaceView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CalendarSurfaceView.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Capacity/CapacityView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CapacityView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CapacityView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CapacityView.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CapacityView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CapacityView.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Code/CodeDetailView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CodeDetailView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CodeDetailView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CodeDetailView.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CodeDetailView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CodeDetailView.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Code/CodeEditorPaneView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CodeEditorPaneView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CodeEditorPaneView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CodeEditorPaneView.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CodeEditorPaneView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CodeEditorPaneView.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Code/CodeEditorView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CodeEditorView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CodeEditorView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CodeEditorView.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CodeEditorView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CodeEditorView.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Code/CodeFileTreeView.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CodeFileTreeView.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CodeFileTreeView.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CodeFileTreeView.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CodeFileTreeView.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/CodeFileTreeView.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Editor/AgentCursorOverlay.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/AgentCursorOverlay.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/AgentCursorOverlay.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/AgentCursorOverlay.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/AgentCursorOverlay.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/AgentCursorOverlay.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Intelligence/AdvancedSection.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/AdvancedSection.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/AdvancedSection.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/AdvancedSection.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/AdvancedSection.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/AdvancedSection.swiftdeps"
+  },
+  "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/TesseraStudioMac/Views/Receipts/C2PAManifestSheet.swift" : {
+    "const-values" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/C2PAManifestSheet.swiftconstvalues",
+    "dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/C2PAManifestSheet.d",
+    "diagnostics" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/C2PAManifestSheet.dia",
+    "object" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/C2PAManifestSheet.o",
+    "swift-dependencies" : "/Users/user/Developer/GitHub/tessera/TesseraStudio/build/TesseraStudio.build/Debug/TesseraStudioMac.build/Objects-normal/x86_64/C2PAManifestSheet.swiftdeps"
+  }
+}

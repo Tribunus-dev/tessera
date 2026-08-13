@@ -1,0 +1,4 @@
+module _ConnectionPoolModule {
+header "_ConnectionPoolModule-Swift.h"
+export *
+}

@@ -1,0 +1,4 @@
+module CPythonBridge {
+umbrella "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/CPythonBridge/include"
+export *
+}

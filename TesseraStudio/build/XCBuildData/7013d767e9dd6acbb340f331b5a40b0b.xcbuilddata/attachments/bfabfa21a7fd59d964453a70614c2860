@@ -1,0 +1,379 @@
+{
+  "" : {
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RediStack-primary.dia",
+    "emit-module-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RediStack-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RediStack-primary-emit-module.dia",
+    "pch" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RediStack-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RediStack-primary.swiftdeps"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/ChannelHandlers/RedisByteDecoder.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisByteDecoder.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisByteDecoder.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisByteDecoder.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisByteDecoder.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisByteDecoder.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisByteDecoder.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisByteDecoder.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisByteDecoder~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/ChannelHandlers/RedisCommandHandler.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisCommandHandler.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisCommandHandler.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisCommandHandler.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisCommandHandler.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisCommandHandler.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisCommandHandler.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisCommandHandler.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisCommandHandler~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/ChannelHandlers/RedisMessageEncoder.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisMessageEncoder.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisMessageEncoder.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisMessageEncoder.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisMessageEncoder.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisMessageEncoder.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisMessageEncoder.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisMessageEncoder.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisMessageEncoder~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/ChannelHandlers/RedisPubSubHandler.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisPubSubHandler.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisPubSubHandler.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisPubSubHandler.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisPubSubHandler.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisPubSubHandler.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisPubSubHandler.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisPubSubHandler.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisPubSubHandler~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/Cluster/RedisClusterNodeDescriptionProtocol.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClusterNodeDescriptionProtocol.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClusterNodeDescriptionProtocol.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClusterNodeDescriptionProtocol.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClusterNodeDescriptionProtocol.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClusterNodeDescriptionProtocol.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClusterNodeDescriptionProtocol.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClusterNodeDescriptionProtocol.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClusterNodeDescriptionProtocol~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/Cluster/RedisClusterNodeID.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClusterNodeID.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClusterNodeID.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClusterNodeID.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClusterNodeID.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClusterNodeID.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClusterNodeID.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClusterNodeID.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClusterNodeID~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/Cluster/RedisClusterShardDescriptionProtocol.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClusterShardDescriptionProtocol.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClusterShardDescriptionProtocol.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClusterShardDescriptionProtocol.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClusterShardDescriptionProtocol.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClusterShardDescriptionProtocol.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClusterShardDescriptionProtocol.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClusterShardDescriptionProtocol.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClusterShardDescriptionProtocol~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/Cluster/RedisHashSlot.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisHashSlot.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisHashSlot.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisHashSlot.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisHashSlot.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisHashSlot.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisHashSlot.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisHashSlot.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisHashSlot~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/Cluster/SwiftPolyfill.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SwiftPolyfill.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SwiftPolyfill.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SwiftPolyfill.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SwiftPolyfill.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SwiftPolyfill.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SwiftPolyfill.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SwiftPolyfill.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SwiftPolyfill~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/Commands/BasicCommands.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/BasicCommands.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/BasicCommands.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/BasicCommands.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/BasicCommands.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/BasicCommands.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/BasicCommands.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/BasicCommands.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/BasicCommands~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/Commands/HashCommands.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/HashCommands.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/HashCommands.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/HashCommands.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/HashCommands.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/HashCommands.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/HashCommands.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/HashCommands.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/HashCommands~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/Commands/ListCommands.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/ListCommands.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/ListCommands.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/ListCommands.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/ListCommands.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/ListCommands.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/ListCommands.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/ListCommands.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/ListCommands~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/Commands/PubSubCommands.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/PubSubCommands.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/PubSubCommands.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/PubSubCommands.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/PubSubCommands.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/PubSubCommands.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/PubSubCommands.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/PubSubCommands.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/PubSubCommands~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/Commands/SetCommands.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SetCommands.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SetCommands.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SetCommands.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SetCommands.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SetCommands.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SetCommands.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SetCommands.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SetCommands~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/Commands/SortedSetCommands.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SortedSetCommands.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SortedSetCommands.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SortedSetCommands.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SortedSetCommands.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SortedSetCommands.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SortedSetCommands.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SortedSetCommands.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SortedSetCommands~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/Commands/StringCommands.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/StringCommands.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/StringCommands.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/StringCommands.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/StringCommands.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/StringCommands.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/StringCommands.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/StringCommands.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/StringCommands~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/ConnectionPool/ConnectionPool.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/ConnectionPool.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/ConnectionPool.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/ConnectionPool.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/ConnectionPool.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/ConnectionPool.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/ConnectionPool.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/ConnectionPool.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/ConnectionPool~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/ConnectionPool/RedisConnectionPool+Configuration.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnectionPool+Configuration.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnectionPool+Configuration.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnectionPool+Configuration.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnectionPool+Configuration.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnectionPool+Configuration.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnectionPool+Configuration.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnectionPool+Configuration.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnectionPool+Configuration~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/ConnectionPool/RedisConnectionPool.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnectionPool.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnectionPool.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnectionPool.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnectionPool.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnectionPool.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnectionPool.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnectionPool.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnectionPool~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/ConnectionPool/RedisConnectionPoolError.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnectionPoolError.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnectionPoolError.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnectionPoolError.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnectionPoolError.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnectionPoolError.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnectionPoolError.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnectionPoolError.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnectionPoolError~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/Extensions/StandardLibrary.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/StandardLibrary.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/StandardLibrary.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/StandardLibrary.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/StandardLibrary.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/StandardLibrary.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/StandardLibrary.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/StandardLibrary.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/StandardLibrary~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/Extensions/SwiftNIO.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SwiftNIO.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SwiftNIO.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SwiftNIO.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SwiftNIO.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SwiftNIO.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SwiftNIO.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SwiftNIO.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/SwiftNIO~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/RESP/RESPTranslator.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RESPTranslator.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RESPTranslator.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RESPTranslator.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RESPTranslator.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RESPTranslator.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RESPTranslator.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RESPTranslator.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RESPTranslator~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/RESP/RESPValue.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RESPValue.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RESPValue.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RESPValue.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RESPValue.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RESPValue.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RESPValue.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RESPValue.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RESPValue~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/RESP/RESPValueConvertible.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RESPValueConvertible.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RESPValueConvertible.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RESPValueConvertible.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RESPValueConvertible.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RESPValueConvertible.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RESPValueConvertible.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RESPValueConvertible.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RESPValueConvertible~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/RedisChannelName.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisChannelName.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisChannelName.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisChannelName.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisChannelName.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisChannelName.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisChannelName.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisChannelName.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisChannelName~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/RedisClient.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClient.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClient.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClient.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClient.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClient.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClient.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClient.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisClient~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/RedisCommandEncoder-multi-encode.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisCommandEncoder-multi-encode.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisCommandEncoder-multi-encode.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisCommandEncoder-multi-encode.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisCommandEncoder-multi-encode.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisCommandEncoder-multi-encode.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisCommandEncoder-multi-encode.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisCommandEncoder-multi-encode.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisCommandEncoder-multi-encode~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/RedisCommandEncoder.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisCommandEncoder.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisCommandEncoder.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisCommandEncoder.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisCommandEncoder.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisCommandEncoder.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisCommandEncoder.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisCommandEncoder.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisCommandEncoder~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/RedisConnection+Configuration.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnection+Configuration.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnection+Configuration.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnection+Configuration.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnection+Configuration.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnection+Configuration.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnection+Configuration.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnection+Configuration.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnection+Configuration~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/RedisConnection.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnection.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnection.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnection.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnection.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnection.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnection.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnection.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisConnection~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/RedisError.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisError.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisError.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisError.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisError.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisError.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisError.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisError.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisError~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/RedisKey+TTL.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisKey+TTL.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisKey+TTL.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisKey+TTL.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisKey+TTL.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisKey+TTL.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisKey+TTL.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisKey+TTL.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisKey+TTL~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/RedisKey.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisKey.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisKey.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisKey.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisKey.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisKey.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisKey.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisKey.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisKey~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/RedisLogging.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisLogging.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisLogging.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisLogging.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisLogging.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisLogging.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisLogging.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisLogging.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisLogging~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/RedisMetrics.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisMetrics.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisMetrics.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisMetrics.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisMetrics.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisMetrics.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisMetrics.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisMetrics.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/RedisMetrics~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/Sources/RediStack/_Deprecations.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/_Deprecations.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/_Deprecations.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/_Deprecations.dia",
+    "index-unit-output-path" : "/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/_Deprecations.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/_Deprecations.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/_Deprecations.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/_Deprecations.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/RediStack/build/RediStack.build/Debug/RediStack.build/Objects-normal/x86_64/_Deprecations~partial.swiftmodule"
+  }
+}

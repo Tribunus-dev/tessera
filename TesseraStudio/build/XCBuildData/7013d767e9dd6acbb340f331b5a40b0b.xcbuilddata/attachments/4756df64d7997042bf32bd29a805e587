@@ -1,0 +1,489 @@
+{
+  "" : {
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/Grape-primary.dia",
+    "emit-module-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/Grape-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/Grape-primary-emit-module.dia",
+    "pch" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/Grape-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/Grape-primary.swiftdeps"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Contents/AnyGraphContent.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/AnyGraphContent.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/AnyGraphContent.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/AnyGraphContent.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/AnyGraphContent.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/AnyGraphContent.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/AnyGraphContent.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/AnyGraphContent.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/AnyGraphContent~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Contents/GraphContent.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContent.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContent.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContent.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContent.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContent.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContent.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContent.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContent~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Contents/GraphContentBuilder.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContentBuilder.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContentBuilder.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContentBuilder.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContentBuilder.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContentBuilder.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContentBuilder.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContentBuilder.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContentBuilder~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Contents/LinkMark.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/LinkMark.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/LinkMark.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/LinkMark.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/LinkMark.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/LinkMark.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/LinkMark.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/LinkMark.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/LinkMark~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Contents/ModifiedGraphContent.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ModifiedGraphContent.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ModifiedGraphContent.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ModifiedGraphContent.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ModifiedGraphContent.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ModifiedGraphContent.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ModifiedGraphContent.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ModifiedGraphContent.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ModifiedGraphContent~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Contents/NodeMark.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/NodeMark.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/NodeMark.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/NodeMark.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/NodeMark.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/NodeMark.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/NodeMark.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/NodeMark.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/NodeMark~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Contents/Series.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/Series.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/Series.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/Series.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/Series.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/Series.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/Series.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/Series.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/Series~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Contents/_ArrayGraphContent.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_ArrayGraphContent.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_ArrayGraphContent.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_ArrayGraphContent.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_ArrayGraphContent.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_ArrayGraphContent.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_ArrayGraphContent.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_ArrayGraphContent.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_ArrayGraphContent~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Contents/_ConditionalGraphContent.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_ConditionalGraphContent.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_ConditionalGraphContent.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_ConditionalGraphContent.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_ConditionalGraphContent.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_ConditionalGraphContent.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_ConditionalGraphContent.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_ConditionalGraphContent.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_ConditionalGraphContent~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Contents/_EmptyGraphContent.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_EmptyGraphContent.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_EmptyGraphContent.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_EmptyGraphContent.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_EmptyGraphContent.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_EmptyGraphContent.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_EmptyGraphContent.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_EmptyGraphContent.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_EmptyGraphContent~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Contents/_IdentifiableNever.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_IdentifiableNever.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_IdentifiableNever.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_IdentifiableNever.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_IdentifiableNever.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_IdentifiableNever.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_IdentifiableNever.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_IdentifiableNever.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_IdentifiableNever~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Contents/_OptionalGraphContent.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_OptionalGraphContent.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_OptionalGraphContent.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_OptionalGraphContent.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_OptionalGraphContent.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_OptionalGraphContent.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_OptionalGraphContent.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_OptionalGraphContent.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_OptionalGraphContent~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Contents/_PairedGraphContent.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_PairedGraphContent.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_PairedGraphContent.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_PairedGraphContent.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_PairedGraphContent.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_PairedGraphContent.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_PairedGraphContent.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_PairedGraphContent.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/_PairedGraphContent~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Descriptors/ForceDescriptor.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDescriptor.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDescriptor.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDescriptor.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDescriptor.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDescriptor.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDescriptor.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDescriptor.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDescriptor~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Gestures/GraphDragGesture.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphDragGesture.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphDragGesture.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphDragGesture.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphDragGesture.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphDragGesture.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphDragGesture.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphDragGesture.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphDragGesture~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Gestures/GraphMagnifyGesture.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphMagnifyGesture.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphMagnifyGesture.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphMagnifyGesture.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphMagnifyGesture.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphMagnifyGesture.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphMagnifyGesture.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphMagnifyGesture.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphMagnifyGesture~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Gestures/GraphTapGesture.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphTapGesture.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphTapGesture.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphTapGesture.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphTapGesture.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphTapGesture.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphTapGesture.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphTapGesture.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphTapGesture~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Modifiers/AnyGraphContentModifier.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/AnyGraphContentModifier.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/AnyGraphContentModifier.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/AnyGraphContentModifier.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/AnyGraphContentModifier.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/AnyGraphContentModifier.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/AnyGraphContentModifier.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/AnyGraphContentModifier.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/AnyGraphContentModifier~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Modifiers/Effects/GrapeEffect.ForegroundStyle.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.ForegroundStyle.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.ForegroundStyle.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.ForegroundStyle.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.ForegroundStyle.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.ForegroundStyle.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.ForegroundStyle.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.ForegroundStyle.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.ForegroundStyle~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Modifiers/Effects/GrapeEffect.Label.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Label.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Label.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Label.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Label.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Label.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Label.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Label.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Label~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Modifiers/Effects/GrapeEffect.Opacity.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Opacity.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Opacity.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Opacity.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Opacity.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Opacity.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Opacity.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Opacity.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Opacity~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Modifiers/Effects/GrapeEffect.Stroke.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Stroke.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Stroke.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Stroke.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Stroke.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Stroke.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Stroke.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Stroke.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Stroke~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Modifiers/Effects/GrapeEffect.Symbol.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Symbol.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Symbol.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Symbol.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Symbol.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Symbol.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Symbol.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Symbol.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.Symbol~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Modifiers/Effects/GrapeEffect.SymbolSize.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.SymbolSize.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.SymbolSize.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.SymbolSize.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.SymbolSize.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.SymbolSize.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.SymbolSize.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.SymbolSize.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.SymbolSize~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Modifiers/Effects/GrapeEffect._LinkShape.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect._LinkShape.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect._LinkShape.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect._LinkShape.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect._LinkShape.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect._LinkShape.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect._LinkShape.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect._LinkShape.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect._LinkShape~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Modifiers/Effects/GrapeEffect.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GrapeEffect~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Modifiers/GraphContent+GraphContentModifiers.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContent+GraphContentModifiers.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContent+GraphContentModifiers.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContent+GraphContentModifiers.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContent+GraphContentModifiers.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContent+GraphContentModifiers.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContent+GraphContentModifiers.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContent+GraphContentModifiers.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContent+GraphContentModifiers~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Modifiers/GraphContentModifier.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContentModifier.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContentModifier.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContentModifier.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContentModifier.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContentModifier.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContentModifier.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContentModifier.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphContentModifier~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Modifiers/GraphForegroundScale.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphForegroundScale.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphForegroundScale.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphForegroundScale.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphForegroundScale.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphForegroundScale.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphForegroundScale.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphForegroundScale.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphForegroundScale~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Modifiers/GraphProxy.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphProxy.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphProxy.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphProxy.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphProxy.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphProxy.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphProxy.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphProxy.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphProxy~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Utils/CoreGraphics+SIMD.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/CoreGraphics+SIMD.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/CoreGraphics+SIMD.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/CoreGraphics+SIMD.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/CoreGraphics+SIMD.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/CoreGraphics+SIMD.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/CoreGraphics+SIMD.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/CoreGraphics+SIMD.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/CoreGraphics+SIMD~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Utils/GraphProtocol.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphProtocol.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphProtocol.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphProtocol.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphProtocol.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphProtocol.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphProtocol.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphProtocol.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphProtocol~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Utils/KeyFrame.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/KeyFrame.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/KeyFrame.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/KeyFrame.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/KeyFrame.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/KeyFrame.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/KeyFrame.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/KeyFrame.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/KeyFrame~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Utils/LinkShape.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/LinkShape.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/LinkShape.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/LinkShape.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/LinkShape.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/LinkShape.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/LinkShape.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/LinkShape.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/LinkShape~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Utils/RasterizedViewStore.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/RasterizedViewStore.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/RasterizedViewStore.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/RasterizedViewStore.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/RasterizedViewStore.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/RasterizedViewStore.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/RasterizedViewStore.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/RasterizedViewStore.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/RasterizedViewStore~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Utils/Transform.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/Transform.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/Transform.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/Transform.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/Transform.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/Transform.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/Transform.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/Transform.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/Transform~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Utils/View+CGImage.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/View+CGImage.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/View+CGImage.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/View+CGImage.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/View+CGImage.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/View+CGImage.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/View+CGImage.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/View+CGImage.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/View+CGImage~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Views/ForceDirectedGraph+View.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraph+View.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraph+View.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraph+View.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraph+View.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraph+View.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraph+View.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraph+View.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraph+View~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Views/ForceDirectedGraph.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraph.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraph.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraph.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraph.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraph.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraph.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraph.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraph~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Views/ForceDirectedGraphModel+Observation.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphModel+Observation.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphModel+Observation.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphModel+Observation.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphModel+Observation.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphModel+Observation.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphModel+Observation.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphModel+Observation.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphModel+Observation~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Views/ForceDirectedGraphModel.findNode.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphModel.findNode.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphModel.findNode.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphModel.findNode.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphModel.findNode.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphModel.findNode.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphModel.findNode.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphModel.findNode.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphModel.findNode~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Views/ForceDirectedGraphModel.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphModel.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphModel.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphModel.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphModel.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphModel.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphModel.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphModel.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphModel~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Views/ForceDirectedGraphState.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphState.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphState.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphState.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphState.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphState.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphState.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphState.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/ForceDirectedGraphState~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Views/GraphLayoutInputs.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphLayoutInputs.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphLayoutInputs.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphLayoutInputs.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphLayoutInputs.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphLayoutInputs.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphLayoutInputs.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphLayoutInputs.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphLayoutInputs~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Views/GraphRenderingContext.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphRenderingContext.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphRenderingContext.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphRenderingContext.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphRenderingContext.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphRenderingContext.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphRenderingContext.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphRenderingContext.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphRenderingContext~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Views/GraphRenderingStates.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphRenderingStates.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphRenderingStates.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphRenderingStates.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphRenderingStates.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphRenderingStates.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphRenderingStates.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphRenderingStates.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/GraphRenderingStates~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Views/RenderOperation.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/RenderOperation.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/RenderOperation.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/RenderOperation.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/RenderOperation.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/RenderOperation.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/RenderOperation.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/RenderOperation.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/RenderOperation~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/Sources/Grape/Views/SimulationContext.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/SimulationContext.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/SimulationContext.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/SimulationContext.dia",
+    "index-unit-output-path" : "/Grape.build/Debug/Grape.build/Objects-normal/x86_64/SimulationContext.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/SimulationContext.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/SimulationContext.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/SimulationContext.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Grape/build/Grape.build/Debug/Grape.build/Objects-normal/x86_64/SimulationContext~partial.swiftmodule"
+  }
+}

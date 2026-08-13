@@ -1,0 +1,4 @@
+framework module tessera {
+    header "tessera_ffi.h"
+    export *
+}
