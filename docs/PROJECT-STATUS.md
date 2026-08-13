@@ -394,6 +394,18 @@ Remaining work, ranked:
    static per-channel KV scales migrated into `W_q`/`W_o`
    reconstruction (pair-tied under RoPE), Tessera-native ternary KV
    codec last. Additions only -- no pipeline refactor.
+2d. Adaptive search budget (architect, 2026-08-13): the pipeline is
+   sized for Nemotron-class MoE but must not beat dead horses --
+   spend proportional to observed marginal value. Talker-DB
+   evidence: winner found at initialization (8 generations bought
+   zero), islands identical, clip dimension dead, 77% of duplicate
+   evals within-generation. Order: within-gen unique-genes filter
+   (-62% evals, ~10 lines, ahead of eval_cache), plateau early-stop
+   (wire the existing `converged` signal to actually gate spending),
+   escalation to flagged/improving tensors, family/expert
+   statistical stops, per-expert-slot warm-start for MoE. Validate
+   every constant against the Orpheus DB before hard-coding. See
+   technical report 12.3d.
 3. One end-to-end run on gemma-4-12B reporting drafter acceptance
    against the 0.86 % baseline plus a PPL delta. This supplies the data
    for item 1 and exercises `runtime_probe.py`. Artifact-level

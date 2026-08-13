@@ -706,6 +706,38 @@ remains, in priority order:
    q8_0/q4_0 as bring-up scaffolding. Composed-probe runs are gated
    on the streaming-correctness fix.
 
+3d. **Adaptive search budget (architect requirement, 2026-08-13):
+   spend proportional to observed marginal value, in both
+   directions.** The machinery is sized for Nemotron-class MoE
+   architectures; it must not pay full price on models where the
+   search plateaus. Evidence from the talker DB (267 tensors,
+   601,920 evals): best-so-far identical from gen -1 through gen 7
+   (winner found at initialization, evolution bought zero), island
+   spread 0.000 (all four islands find the same optimum), winning
+   clip pinned at ~1.0 everywhere (a dead search dimension), and 77%
+   of the 480k duplicate evals are WITHIN-generation (population
+   proposing identical genes in one batch). Mechanisms, in order:
+   - Within-generation unique-genes filter (~10 lines; -62% of all
+     evals on the talker; unconditional at any scale). Outranks the
+     eval_cache layer in 3b's order of work.
+   - Per-tensor plateau early-stop: halt the GA after `patience`
+     generations without > eps improvement; the `converged` flag in
+     ga_results already detects this but does not gate spending.
+   - Escalation to the tail: still-improving-at-cap or flagged by
+     the two-legged L2 quantile -> more generations / wider
+     population / full expert panel. Compute drains from plateaued
+     tensors and pools on anomalous ones.
+   - Family/expert-level statistical stops with periodic probe
+     tensors (post-fix only: the Aug 7 expert t2 columns are all
+     EXACTLY 1.000x AWQ -- the proxy bug meant the panel has never
+     been genuinely measured; Orpheus is its first real test).
+   - MoE specifics: warm-start expert slot e+1 from slot e's winner
+     (extend the l5_weights spine per expert slot), screen sibling
+     experts with sufficient statistics, concentrate search on
+     shared experts / router-adjacent / first-last layers.
+   Each conclusion is one-small-model, pre-fix-scorer evidence;
+   validate against the Orpheus DB before hard-coding constants.
+
 4. **L3 per-token KL on real models**. The weight-level cosine is
    shipped and unblocked; the per-token KL path is the next step.
    Requires the joint forward pass harness from L5. Estimated: 3-5
