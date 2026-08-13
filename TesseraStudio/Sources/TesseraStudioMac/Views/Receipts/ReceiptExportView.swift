@@ -135,6 +135,7 @@ public struct ReceiptExportView: View {
         case .markdown: return "Human-readable Markdown. Suitable for non-technical reviewers."
         case .c2paDocument: return "The document itself, with the C2PA manifest embedded. Verifiable by any C2PA-aware tool."
         case .es256JUMBF: return "es256 (ECDSA P-256) JUMBF manifest for c2patool and Adobe Content Authenticity."
+        case .file(let fmt): return "Export the document as \(fmt.displayName) via the Python format bridge."
         }
     }
 
@@ -210,6 +211,7 @@ public struct ReceiptExportView: View {
         case .markdown: return UTType(filenameExtension: "md") ?? .plainText
         case .c2paDocument: return .plainText
         case .es256JUMBF: return .json
+        case .file(let fmt): return UTType(filenameExtension: fmt.fileExtension) ?? .data
         }
     }
 }

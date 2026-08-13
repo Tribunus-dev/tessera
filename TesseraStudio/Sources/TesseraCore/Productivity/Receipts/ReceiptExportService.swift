@@ -14,7 +14,7 @@ import CryptoKit
 /// is stable: standard cases use a single-key object
 /// (`{"signedJSON": null}`), the ``.file`` case uses
 /// `{"file": {"format": "docx"}}`.
-public enum ReceiptExportFormat: Codable, Sendable, Identifiable {
+public enum ReceiptExportFormat: Codable, Sendable, Identifiable, Equatable, CaseIterable {
     /// Signed JSON bundle — the full chain as a single
     /// JSON file, with the ed25519 signatures and C2PA
     /// manifests inline. Default export.
@@ -38,6 +38,16 @@ public enum ReceiptExportFormat: Codable, Sendable, Identifiable {
     /// bridge (python-docx, openpyxl, python-pptx, etc.).
     case file(format: ProductivityExportFormat)
 
+    // MARK: - CaseIterable
+
+    /// Hand-written because `.file(format:)` carries an associated value,
+    /// which blocks synthesis. Enumerates the fixed cases plus one entry per
+    /// ProductivityExportFormat so the export UI can list every option.
+    public static var allCases: [ReceiptExportFormat] {
+        [.signedJSON, .markdown, .c2paDocument, .es256JUMBF]
+            + ProductivityExportFormat.allCases.map { .file(format: $0) }
+    }
+
     // MARK: - Identifiable
 
     public var id: String {
@@ -45,6 +55,7 @@ public enum ReceiptExportFormat: Codable, Sendable, Identifiable {
         case .signedJSON: return "signedJSON"
         case .markdown: return "markdown"
         case .c2paDocument: return "c2paDocument"
+        case .es256JUMBF: return "es256JUMBF"
         case .file(let fmt): return "file_\(fmt.rawValue)"
         }
     }
@@ -72,7 +83,7 @@ public enum ReceiptExportFormat: Codable, Sendable, Identifiable {
     // MARK: - Codable
 
     private enum CodingKeys: String, CodingKey {
-        case signedJSON, markdown, c2paDocument, file
+        case signedJSON, markdown, c2paDocument, es256JUMBF, file
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -84,6 +95,8 @@ public enum ReceiptExportFormat: Codable, Sendable, Identifiable {
             try container.encode(true, forKey: .markdown)
         case .c2paDocument:
             try container.encode(true, forKey: .c2paDocument)
+        case .es256JUMBF:
+            try container.encode(true, forKey: .es256JUMBF)
         case .file(let fmt):
             try container.encode(fmt, forKey: .file)
         }
@@ -101,6 +114,10 @@ public enum ReceiptExportFormat: Codable, Sendable, Identifiable {
         }
         if let _ = try? container.decode(Bool.self, forKey: .c2paDocument) {
             self = .c2paDocument
+            return
+        }
+        if let _ = try? container.decode(Bool.self, forKey: .es256JUMBF) {
+            self = .es256JUMBF
             return
         }
         let fmt = try container.decode(ProductivityExportFormat.self, forKey: .file)

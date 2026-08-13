@@ -326,20 +326,23 @@ public actor TesseraFormatBridge {
     }
 }
 
-// MARK: - ProcessRunner
+// MARK: - FormatBridgeProcessRunner
 
 /// A thin wrapper around ``Process`` for synchronous subprocess execution.
 /// Exists so we can inject a mock in tests.
-public protocol ProcessRunner: Sendable {
+/// Process abstraction local to the format bridge. Distinct from
+/// TesseraCore's Engine/ProcessRunner: this one carries timeout
+/// semantics (`timedOut`) the engine runner does not model.
+public protocol FormatBridgeProcessRunner: Sendable {
     func run(
         executable: String,
         arguments: [String],
         input: String,
         timeoutSeconds: Int
-    ) throws -> ProcessResult
+    ) throws -> FormatBridgeProcessResult
 }
 
-public struct ProcessResult: Sendable {
+public struct FormatBridgeProcessResult: Sendable {
     public let stdout: String
     public let stderr: String
     public let exitCode: Int32
@@ -354,7 +357,7 @@ public struct ProcessResult: Sendable {
 }
 
 /// The default process runner used by ``TesseraFormatBridge``.
-public struct DefaultProcessRunner: ProcessRunner {
+public struct DefaultFormatBridgeProcessRunner: FormatBridgeProcessRunner {
     public init() {}
 
     public func run(
@@ -362,7 +365,7 @@ public struct DefaultProcessRunner: ProcessRunner {
         arguments: [String],
         input: String,
         timeoutSeconds: Int
-    ) throws -> ProcessResult {
+    ) throws -> FormatBridgeProcessResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
@@ -406,7 +409,7 @@ public struct DefaultProcessRunner: ProcessRunner {
         let outData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
         let errData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
 
-        return ProcessResult(
+        return FormatBridgeProcessResult(
             stdout: String(data: outData, encoding: .utf8) ?? "",
             stderr: String(data: errData, encoding: .utf8) ?? "",
             exitCode: process.terminationStatus,
