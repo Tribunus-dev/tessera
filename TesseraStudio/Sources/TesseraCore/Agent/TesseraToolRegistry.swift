@@ -55,6 +55,13 @@ public final class TesseraToolRegistry: Sendable {
         QuantizeTool(),
         ConvertTool(),
         EvaluateTool(),
+        // Sheets. Reads run unprompted; sheet_write is `.prompt` and the
+        // safety spine rates it medium, so a cell change reaches the
+        // approval sheet before it lands. Inert until the Sheets surface
+        // installs a workbook on `SheetToolContext.shared`.
+        SheetDescribeTool(),
+        SheetReadTool(),
+        SheetWriteTool(),
         // General-agent harness: cited web research. Keyless DuckDuckGo search
         // by default, SearXNG/Tavily opt-in (docs/tessera-studio-design.md 5.4).
         // Egresses the query to a search engine, so it runs at approval .prompt.

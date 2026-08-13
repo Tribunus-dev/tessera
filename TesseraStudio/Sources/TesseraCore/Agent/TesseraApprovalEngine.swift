@@ -24,6 +24,16 @@ public final class TesseraApprovalEngine {
     /// Pending approval request (drives the ApprovalSheet presentation).
     public private(set) var pendingRequest: PendingApproval?
 
+    /// Fired whenever ``pendingRequest`` changes: non-nil when a gate is
+    /// waiting on the user, nil once it resolves. The owner bridges this
+    /// to the surface that presents the sheet.
+    ///
+    /// Load-bearing, not decoration: `requestApprovalForced` parks a
+    /// continuation that only ``resolvePending`` can resume, so an engine
+    /// whose pending request never reaches a surface blocks its agent
+    /// loop forever.
+    public var onPendingChange: (@MainActor (PendingApproval?) -> Void)?
+
     /// Callback continuation for the pending request.
     private var continuation: CheckedContinuation<Bool, Never>?
 
@@ -70,14 +80,7 @@ public final class TesseraApprovalEngine {
         case .denied:
             return false
         case .prompt:
-            return await withCheckedContinuation { cont in
-                self.continuation = cont
-                self.pendingRequest = PendingApproval(
-                    toolName: toolName,
-                    arguments: arguments,
-                    level: level
-                )
-            }
+            return await park(toolName: toolName, arguments: arguments, level: level)
         }
     }
 
@@ -88,21 +91,68 @@ public final class TesseraApprovalEngine {
     /// for a tool the user generally sets to auto/notify. Routing this through
     /// `requestApproval` would silently auto-approve and defeat the gate.
     public func requestApprovalForced(toolName: String, arguments: [String: JSONValue]) async -> Bool {
-        await withCheckedContinuation { cont in
-            self.continuation = cont
-            self.pendingRequest = PendingApproval(
-                toolName: toolName,
-                arguments: arguments,
-                level: .prompt
-            )
-        }
+        await park(toolName: toolName, arguments: arguments, level: .prompt)
     }
 
     /// Called by the ApprovalSheet when the user responds.
     public func resolvePending(approved: Bool) {
-        pendingRequest = nil
-        continuation?.resume(returning: approved)
+        let cont = continuation
         continuation = nil
+        pendingRequest = nil
+        cont?.resume(returning: approved)
+        onPendingChange?(nil)
+    }
+
+    /// Suspend the caller until `resolvePending` runs, publishing the
+    /// request first. The single path that sets ``pendingRequest``, so
+    /// every parked continuation has a matching observer notification.
+    ///
+    /// A request arriving while one is already parked denies the older
+    /// one rather than dropping its continuation: one agent loop awaits
+    /// its gate before issuing the next, so this is unreachable today,
+    /// but leaking a continuation here would hang the loop with no way
+    /// back.
+    private func park(
+        toolName: String,
+        arguments: [String: JSONValue],
+        level: ApprovalLevel
+    ) async -> Bool {
+        if let stale = continuation {
+            continuation = nil
+            stale.resume(returning: false)
+        }
+        // Cancellation must resolve the gate. A `CheckedContinuation` is
+        // not cancellation-aware, so without this a run stopped while an
+        // approval is pending stays suspended forever: `isRunning` sticks
+        // true, the stream never finishes, and the caller's for-await
+        // never returns. That is exactly what the inline stop button
+        // does - cancel the task mid-run.
+        //
+        // Cancelling denies: a stopped run must not go on to execute the
+        // action the user was still being asked about.
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
+                // Already cancelled before we parked - resume at once
+                // rather than install a continuation nothing will
+                // resume.
+                guard !Task.isCancelled else {
+                    cont.resume(returning: false)
+                    return
+                }
+                self.continuation = cont
+                let request = PendingApproval(
+                    toolName: toolName,
+                    arguments: arguments,
+                    level: level
+                )
+                self.pendingRequest = request
+                self.onPendingChange?(request)
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.resolvePending(approved: false)
+            }
+        }
     }
 
     // MARK: - Safety spine
@@ -122,10 +172,17 @@ public final class TesseraApprovalEngine {
     /// the decision is deferred to the user, so the loop records the user's
     /// verdict instead. This keeps each action to exactly one breaker outcome
     /// and stops a premature "not denied" from masking a later user denial.
+    /// - Parameter toolDefaultLevel: the level the TOOL declares. A user
+    ///   override still wins; this is only the fallback. Passing the
+    ///   declared level is what makes `defaultApprovalLevel` mean
+    ///   anything: hardcoding `.prompt` here gated every tool that had
+    ///   no explicit override, so a headless run (no UI, no responder)
+    ///   parked on the gate forever.
     public func safetyCheck(
         for action: PendingAction,
         permissionProfile: TesseraPermissionProfile = .standard,
         sandboxEnforceable: Bool,
+        toolDefaultLevel: ApprovalLevel = .prompt,
         verifier: any ActionVerifying = TesseraActionVerifier()
     ) -> TesseraSafetyCheck {
         if circuitBreaker.isTripped {
@@ -133,7 +190,7 @@ public final class TesseraApprovalEngine {
         }
         let decision = verifier.verify(action)
         let check = TesseraSafetyDecision(
-            approvalPolicy: level(for: action.toolName, default: .prompt),
+            approvalPolicy: level(for: action.toolName, default: toolDefaultLevel),
             permissionProfile: permissionProfile,
             sandboxEnforceable: sandboxEnforceable,
             actionRisk: decision.riskLevel
@@ -153,12 +210,14 @@ public final class TesseraApprovalEngine {
         permissionProfile: TesseraPermissionProfile = .standard,
         sandboxEnforceable: Bool,
         sessionID: String = "",
+        toolDefaultLevel: ApprovalLevel = .prompt,
         verifier: any ActionVerifying = TesseraActionVerifier()
     ) -> TesseraGateResolution {
         let base = safetyCheck(
             for: action,
             permissionProfile: permissionProfile,
             sandboxEnforceable: sandboxEnforceable,
+            toolDefaultLevel: toolDefaultLevel,
             verifier: verifier
         )
         let risk = (try? TesseraActionVerifier.ruleBasedRisk(for: action)) ?? .medium

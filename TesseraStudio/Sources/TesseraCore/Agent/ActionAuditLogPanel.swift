@@ -162,11 +162,14 @@ public struct ActionAuditEntry: Identifiable, Sendable, Hashable, Codable {
         if let shortReceiptID = shortReceiptID {
             fields.append("receipt: \(shortReceiptID)...")
         }
-        // Cap at AuditLogHead.fieldCap so the chip language stays
-        // consistent across the diff overlay, the chat progress
-        // feed, and the audit log.
-        let capped = Array(fields.prefix(AuditLogHead.fieldCap))
-        return capped.joined(separator: " | ")
+        // The panel row shares the chip VOCABULARY but not the chip's
+        // field budget. `AuditLogHead.fieldCap` exists because the diff
+        // overlay's chip is "the headline, not the article" - an inline
+        // strip with no room. A side-panel row has room, and applying
+        // the cap here dropped `receipt:` from every row that had a
+        // summary, which is the one field the row exists to carry: it
+        // is what routes to the receipts drawer.
+        return fields.joined(separator: " | ")
     }
 }
 

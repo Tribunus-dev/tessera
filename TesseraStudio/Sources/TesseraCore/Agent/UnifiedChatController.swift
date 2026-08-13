@@ -91,6 +91,39 @@ public final class UnifiedChatController {
         self.firstGoal = storedGoal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : storedGoal
         let completedRaw = UserDefaults.standard.double(forKey: TesseraSettingsKey.onboardingCompletedAt)
         self.onboardingCompletedAt = completedRaw > 0 ? Date(timeIntervalSince1970: completedRaw) : nil
+        // Bridge both loops' approval gates onto `pendingApproval`. The
+        // loop's `requestApprovalForced` parks a continuation that only
+        // `resolvePending` resumes, so a gate with no surface hangs the
+        // turn; this is the wiring that makes the sheet reachable.
+        bridgeApprovals(from: tessy, persona: .tessy)
+        bridgeApprovals(from: sky, persona: .sky)
+    }
+
+    /// Forward one loop's approval gate to ``pendingApproval``. Weak on
+    /// self: the controller owns the loop, which owns the engine holding
+    /// this closure.
+    private func bridgeApprovals(from loop: TesseraAgentLoop, persona: AgentPersona) {
+        let engine = loop.approvalEngine
+        engine.onPendingChange = { [weak self] request in
+            guard let self else { return }
+            guard let request else {
+                // Resolved, or superseded by a newer gate on the other
+                // loop. Only retract our own row.
+                if self.pendingApproval?.speaker == persona { self.pendingApproval = nil }
+                return
+            }
+            self.recordPendingApproval(PendingApprovalUnion(
+                id: request.id,
+                speaker: persona,
+                toolName: request.toolName,
+                arguments: request.arguments,
+                approve: { approved in
+                    // Hop to the main actor: the union's closure is not
+                    // isolated, and the engine is @MainActor.
+                    Task { @MainActor in engine.resolvePending(approved: approved) }
+                }
+            ))
+        }
     }
 
     // MARK: - Document context (queue-frontier seam)
@@ -717,27 +750,17 @@ public final class UnifiedChatController {
         // buffer (the feed's job is the history, not the current
         // state).
         pendingApproval = approval
-        let toolName = approval.toolName
-        let actionClass = TesseraActionClass.classify(
-            PendingAction(toolName: toolName, arguments: approval.arguments)
+        // One derivation, shared with the sheet, so the feed and the
+        // gate never disagree about a tier.
+        let facts = ApprovalSafetyFacts(
+            toolName: approval.toolName,
+            arguments: approval.arguments
         )
-        // Default risk to medium when the verifier is unavailable;
-        // the verifier is the load-bearing source per the
-        // TesseraActionVerifier fail-closed contract, but it is not
-        // called on the chat-thread path (it gates document mutations
-        // in the editor). medium is the safe default that maps to
-        // tier1 in the worst case and tier2 with a destructive verb.
-        let risk = (try? TesseraActionVerifier.ruleBasedRisk(
-            for: PendingAction(toolName: toolName, arguments: approval.arguments)
-        )) ?? .medium
-        let irreversible = TesseraActionClass.isIrreversible(actionClass, risk: risk)
-        let tier = TesseraTier.tier(for: actionClass, risk: risk)
-        let reason = irreversible ? "irreversible" : "reversible"
         appendLiveState(.approvalPending(LiveApprovalPendingEntry(
-            toolName: toolName,
-            tierLabel: tier.shortLabel,
-            riskLabel: risk.rawValue,
-            reason: reason
+            toolName: facts.toolName,
+            tierLabel: facts.tier.shortLabel,
+            riskLabel: facts.risk.rawValue,
+            reason: facts.reversibilityLabel
         )))
     }
 

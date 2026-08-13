@@ -23,6 +23,14 @@ struct UnifiedChatDock: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.regularMaterial)
+        // The tool-approval gate. The agent loop is parked on a
+        // continuation until this resolves, so the sheet is the only
+        // thing that lets a gated turn finish either way.
+        .sheet(item: $controller.pendingApproval) { approval in
+            ApprovalSheet(request: approval) { approved in
+                controller.resolveApproval(approval, approved: approved)
+            }
+        }
     }
 
     // MARK: - Time-travel scrubber
