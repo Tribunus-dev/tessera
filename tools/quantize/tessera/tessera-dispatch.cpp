@@ -2308,13 +2308,30 @@ int ts_dispatch_run(const ts_dispatch_params * params,
             // sibling finishes -- the one-shot accept still fires on
             // whatever has completed.
             if (std::getenv("TESSERA_QUANTIZE_LAYERS") == nullptr) {
-                int64_t largest = 1;
+                // Size from REALISTIC co-residency, not the global max: the
+                // first version divided the budget by the largest tensor,
+                // and one ~1.9 GiB embedding-class outlier vetoed pipelining
+                // for the other 196 tensors (p90 ~100 MiB) -- run 3 stayed
+                // serial and saved nothing. Realistic peak with k layers in
+                // flight is ONE giant plus (k-1) typical tensors, so:
+                //   k = 1 + (budget - top1) / p90   (1 when top1 > budget)
+                // clamped to [1, 4] and half the cores. p90 (not max) is the
+                // "typical" size; the transient where two giants co-schedule
+                // is bounded by them being rare by construction (p90 cap).
+                std::vector<int64_t> sizes;
+                sizes.reserve(ga_layers.size());
                 for (const auto & gl : ga_layers) {
-                    const int64_t b = gl.out_dim * gl.in_dim * (int64_t)sizeof(float);
-                    if (b > largest) largest = b;
+                    sizes.push_back(gl.out_dim * gl.in_dim * (int64_t)sizeof(float));
                 }
-                const int64_t budget = (int64_t)1536 * 1024 * 1024;
-                int32_t auto_layers = (int32_t)std::min<int64_t>(4, std::max<int64_t>(1, budget / largest));
+                std::sort(sizes.begin(), sizes.end());
+                const int64_t top1 = sizes.empty() ? 1 : sizes.back();
+                const int64_t p90  = sizes.empty() ? 1
+                    : std::max<int64_t>(1, sizes[(size_t)((double)0.90 * (double)(sizes.size() - 1))]);
+                const int64_t budget = (int64_t)3 * 1024 * 1024 * 1024;
+                int32_t auto_layers = 1;
+                if (top1 < budget) {
+                    auto_layers = (int32_t)std::min<int64_t>(4, 1 + (budget - top1) / p90);
+                }
                 const unsigned int hw = std::thread::hardware_concurrency();
                 const int32_t half_cores = hw > 1 ? (int32_t)(hw / 2) : 1;
                 auto_layers = std::min(auto_layers, half_cores);
@@ -2323,9 +2340,9 @@ int ts_dispatch_run(const ts_dispatch_params * params,
                     evolve_params.n_threads      = auto_layers;
                     evolve_params.n_eval_threads = std::max(1, evolve_params.n_eval_threads / auto_layers);
                     printf("tessera-dispatch: layer parallelism auto-sized to %d "
-                           "(largest tensor %lld MiB, %d eval threads per layer; "
+                           "(top tensor %lld MiB, p90 %lld MiB, %d eval threads per layer; "
                            "TESSERA_QUANTIZE_LAYERS overrides)\n",
-                           auto_layers, (long long)(largest >> 20),
+                           auto_layers, (long long)(top1 >> 20), (long long)(p90 >> 20),
                            evolve_params.n_eval_threads);
                 }
             }
