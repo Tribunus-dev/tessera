@@ -1046,6 +1046,31 @@ bool tty_can_use_colors();
 struct common_sampler;
 
 // note: defines the model, context, samplers, ets. lifetimes
+//
+// Weight streaming (per-layer residency). See docs/weight-streaming.md.
+//
+// Routing FFN weight tensors to the ANE IOSurface buffer type is what makes
+// llama-model.cpp open the 2-slot weight pool and stream layers on demand.
+// A 23 GiB unified GGUF trips recommendedMaxWorkingSetSize (12.4 GiB on M1),
+// so without this the model cannot be allocated at all.
+//
+// common_init_from_params() does this for you. These are for callers that
+// build llama_model_params by hand and would otherwise silently miss it --
+// as the L5 joint calibration harness did.
+//
+
+// Install the FFN -> ffn_buft overrides into `overrides` (which must already
+// end in a {nullptr, nullptr} terminator, or be empty). No-op if ffn_buft is
+// null. The regex list is defined once, in common.cpp.
+void common_weight_stream_install_ffn_overrides(
+        std::vector<llama_model_tensor_buft_override> & overrides,
+        ggml_backend_buffer_type_t ffn_buft);
+
+// Detect Metal + ANE and install the overrides. Returns true when streaming
+// is engaged, false when it is unavailable (non-Apple, ANE off, no Metal
+// device) -- in which case the caller runs unstreamed, as before.
+bool common_weight_stream_enable(std::vector<llama_model_tensor_buft_override> & overrides);
+
 struct common_init_result {
     common_init_result(common_params & params, bool model_only = false);
     ~common_init_result();

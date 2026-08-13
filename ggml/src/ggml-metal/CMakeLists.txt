@@ -64,11 +64,17 @@ target_link_libraries(ggml-metal PRIVATE
 
 # Cross-backend zero-copy: with ANE enabled, Metal accepts the ANE IOSurface
 # buffer type and consumes it at encode time (ggml_metal_get_buffer_id).
-# GGML_USE_ANE is PUBLIC on the ggml umbrella target, but ggml-metal links
-# ggml-base, so it needs its own private definition and link dependency on
-# ggml-ane for the IOSurface helpers. Dynamic backend loading is not
-# supported by this wiring: as a MODULE, ggml-metal could not resolve the
-# ggml-ane symbols.
+# ggml-metal links ggml-base rather than ggml, so the PUBLIC GGML_USE_ANE
+# that ggml/src/CMakeLists.txt puts on the ggml target does not reach here;
+# this private definition plus the ggml-ane link dependency is how ggml-metal
+# gets the IOSurface helpers. Dynamic backend loading is not supported by
+# this wiring: as a MODULE, ggml-metal could not resolve the ggml-ane symbols.
+#
+# NOTE: this definition covers ggml-metal ONLY. The one that turns on the
+# weight-streaming subsystem in `llama` lives in ggml/src/CMakeLists.txt and
+# is PUBLIC on `ggml`. Both are required; neither substitutes for the other.
+# An earlier version of this comment claimed the PUBLIC one already existed
+# when it did not, which left the subsystem dead in every build.
 if (GGML_ANE AND NOT GGML_BACKEND_DL)
     target_compile_definitions(ggml-metal PRIVATE GGML_USE_ANE)
     target_link_libraries(ggml-metal PRIVATE ggml-ane)

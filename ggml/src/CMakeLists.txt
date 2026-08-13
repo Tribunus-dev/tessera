@@ -522,14 +522,53 @@ ggml_add_backend(OPENVINO)
 # ggml_backend_ane_graph_compute) can reach it.
 ggml_add_backend(ANE)
 
-# ANE's public header (ggml/include/ggml-ane.h) includes the private
-# gguf_weight_stream.h from ggml/src/ggml-ane/. Export that path via
-# the ggml target so consumers of the public header (e.g. llama) can
-# resolve the include.
+# ANE's public header (ggml/include/ggml-ane.h) is self-contained; this
+# export remains so consumers that reach for the backend's private headers
+# directly (tests, the weight streamer) can resolve them.
 if (TARGET ggml-ane)
     target_include_directories(ggml PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/ggml-ane>
         $<INSTALL_INTERFACE:include/ggml-ane>)
+endif()
+
+# ---------------------------------------------------------------------------
+# GGML_USE_ANE: the switch that turns on per-layer weight streaming.
+# ---------------------------------------------------------------------------
+#
+# THIS DEFINITION IS LOAD-BEARING. Do not narrow it to PRIVATE, and do not
+# delete it because "nothing in ggml uses it" -- ggml itself does not, which
+# is exactly the point. It is PUBLIC so it propagates to `llama` and
+# `llama-common`, where it gates the entire weight-streaming subsystem:
+#
+#   src/llama-weight-pool.{h,cpp}    2-slot IOSurface pool, per-layer residency
+#   src/llama-weight-stream.{h,cpp}  mmap'd GGUF -> slot refill
+#   src/llama-model.cpp              pool open/alias/prefetch + Metal attach
+#   src/llama-model-loader.cpp       streamed tensor load path
+#   common/common.cpp                CLI surface
+#
+# Without it every one of those blocks compiles to nothing and a model larger
+# than the GPU's working-set limit simply cannot be run: the 23 GiB unified
+# GGUF trips recommendedMaxWorkingSetSize (12.4 GiB on M1). See
+# docs/weight-streaming.md.
+#
+# History: this was previously defined only as
+# `target_compile_definitions(ggml-metal PRIVATE GGML_USE_ANE)` in
+# ggml/src/ggml-metal/CMakeLists.txt, with a comment claiming it was "PUBLIC
+# on the ggml umbrella target". It was not, and had not been for some time --
+# PRIVATE never reaches another target, so the whole subsystem was dead code
+# in every build that shipped. Recorded as a high-severity finding in
+# .zcode/alphaevolve/findings.jsonl (2026-08-13).
+#
+# The NOT GGML_BACKEND_DL condition is also load-bearing: the streaming code
+# calls ane_weight_stream_* and ggml_backend_ane_iosurface_buffer_alloc
+# directly, so ggml-ane must be a linkable library. Under GGML_BACKEND_DL it
+# is a MODULE_LIBRARY, which CMake refuses to link into another target.
+# ggml_add_backend() already does target_link_libraries(ggml PUBLIC ggml-ane)
+# in that configuration, so the symbols reach llama transitively; only this
+# define was missing.
+if (TARGET ggml-ane AND NOT GGML_BACKEND_DL)
+    target_compile_definitions(ggml PUBLIC GGML_USE_ANE)
+    message(STATUS "ANE weight streaming enabled (GGML_USE_ANE propagated to ggml consumers)")
 endif()
 
 foreach (target ggml-base ggml)

@@ -15,6 +15,7 @@
 // existing ts_ppl_perplexity helper in tessera-ppl.h.
 //
 
+#include "common.h"
 #include "tessera-ppl-harness.h"
 #include "tessera-ppl.h"
 
@@ -343,6 +344,33 @@ int ts_l5_joint_models_load(
         }
         llama_model_params mparams = llama_model_default_params();
         mparams.n_gpu_layers = 0;  // CPU-only for the calibration forward
+
+        // WEIGHT STREAMING -- see docs/weight-streaming.md.
+        //
+        // This loader builds llama_model_params by hand instead of going
+        // through common_init_from_params(), so it does not inherit the
+        // FFN -> IOSurface buffer-type overrides that trigger the per-layer
+        // weight pool. Without them the joint search holds every model fully
+        // resident: a 12B BF16 trunk plus three drafters is a ~29 GB working
+        // set, which thrashes on any machine that cannot hold it.
+        //
+        // common_weight_stream_enable() installs the same overrides the
+        // common path uses (one shared pattern list, so the two cannot
+        // drift) and reports whether streaming actually engaged. It returns
+        // false on non-Apple builds, with ANE off, or with no Metal device --
+        // all of which are fine, they just mean the model loads unstreamed
+        // exactly as before.
+        static std::vector<llama_model_tensor_buft_override> s_stream_overrides;
+        static bool s_stream_ready = false;
+        static bool s_stream_on    = false;
+        if (!s_stream_ready) {
+            s_stream_on    = common_weight_stream_enable(s_stream_overrides);
+            s_stream_ready = true;
+        }
+        if (s_stream_on && !s_stream_overrides.empty()) {
+            mparams.tensor_buft_overrides = s_stream_overrides.data();
+        }
+
         llama_model * model = llama_model_load_from_file(path.c_str(), mparams);
         if (!model) {
             if (err_msg) *err_msg = "failed to load model: " + path;

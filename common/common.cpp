@@ -1569,6 +1569,92 @@ bool ts_pool_will_engage() {
 #endif
 }
 
+//
+// WEIGHT STREAMING -- first-class subsystem, see docs/weight-streaming.md.
+//
+// Routing the FFN weight tensors to the ANE IOSurface buffer type is what
+// causes llama-model.cpp to open the 2-slot weight pool and stream layers
+// on demand. Without it, a >12.4 GiB model cannot be allocated on Apple
+// Silicon at all -- this is not an optimization, it is what makes the
+// model loadable.
+//
+// The pattern list lives here, once. Both common_model_params_to_llama()
+// and callers outside the common path (the L5 joint calibration harness)
+// go through these helpers so the two can never drift.
+//
+void common_weight_stream_install_ffn_overrides(
+        std::vector<llama_model_tensor_buft_override> & overrides,
+        ggml_backend_buffer_type_t ffn_buft) {
+    if (ffn_buft == nullptr) {
+        return;
+    }
+    // Backing store for the pattern strings: the override struct holds a
+    // const char *, so the std::string must outlive the model. Function-local
+    // static, appended to and never cleared.
+    static std::list<std::string> s_heterog_patterns;
+
+    // Explicitly lists the known FFN weight suffixes so ffn_gate_inp and
+    // ffn_norm are never accidentally matched by a greedy "ffn_.*" pattern.
+    // Covers dense, shared, MoE expert, and per-expert scale/in_scale variants
+    // across all model families (Qwen, DeepSeek, Gemma, Cohere, etc.). The
+    // pool's is_sensitive_moe_tensor() guards the router tensors that must
+    // stay resident (exp_probs_b, ffn_gate_tid2eid).
+    const char * ffn_suffixes[] = {
+        "ffn_gate\\b", "ffn_up\\b", "ffn_down\\b",
+        "ffn_gate_exps\\b", "ffn_up_exps\\b", "ffn_down_exps\\b",
+        "ffn_gate_in_s\\b", "ffn_up_in_s\\b", "ffn_down_in_s\\b",
+        "ffn_gate_exps_s\\b", "ffn_up_exps_s\\b", "ffn_down_exps_s\\b",
+        "ffn_gate_exps_in_s\\b", "ffn_up_exps_in_s\\b", "ffn_down_exps_in_s\\b",
+        "ffn_gate_shexp\\b",
+    };
+    const size_t n_suffixes = sizeof(ffn_suffixes)/sizeof(ffn_suffixes[0]);
+    const size_t need = n_suffixes + 1; // +1 for the experts namespace
+    if (overrides.size() < need + 1) {
+        overrides.resize(need + 1, {nullptr, nullptr});
+    }
+    for (size_t i = 0; i < n_suffixes; ++i) {
+        s_heterog_patterns.push_back("blk\\.[0-9]+\\." + std::string(ffn_suffixes[i]) + "\\..*");
+        overrides[i] = {s_heterog_patterns.back().c_str(), ffn_buft};
+    }
+    // Catch the experts.* namespace (any future model naming FFN tensors there).
+    s_heterog_patterns.push_back("blk\\.[0-9]+\\.experts\\..*");
+    overrides[n_suffixes] = {s_heterog_patterns.back().c_str(), ffn_buft};
+}
+
+bool common_weight_stream_enable(std::vector<llama_model_tensor_buft_override> & overrides) {
+#if defined(__APPLE__) && defined(GGML_USE_ANE)
+    bool has_metal = false;
+    const size_t ndev = ggml_backend_dev_count();
+    for (size_t i = 0; i < ndev; ++i) {
+        ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+        if (!dev) continue;
+        const char * name = ggml_backend_dev_name(dev);
+        if ((name && std::strncmp(name, "MTL", 3) == 0) ||
+            ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_GPU ||
+            ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_IGPU) {
+            has_metal = true;
+            break;
+        }
+    }
+    if (!has_metal) {
+        return false;
+    }
+    auto * iosurface_buft = ggml_backend_ane_iosurface_buffer_type();
+    if (iosurface_buft == nullptr) {
+        return false;
+    }
+    if (overrides.empty()) {
+        overrides.resize(1, {nullptr, nullptr});
+    }
+    common_weight_stream_install_ffn_overrides(overrides, iosurface_buft);
+    GGML_ASSERT(overrides.back().pattern == nullptr);
+    return true;
+#else
+    (void) overrides;
+    return false;
+#endif
+}
+
 struct llama_model_params common_model_params_to_llama(common_params & params) {
     auto mparams = llama_model_default_params();
 
@@ -1688,36 +1774,8 @@ struct llama_model_params common_model_params_to_llama(common_params & params) {
                 // The arg parser already padded tensor_buft_overrides to
                 // ntbo = 4096 with nullptr terminators. Reuse the leading
                 // slots so the existing terminator stays at the back.
-                static std::list<std::string> s_heterog_patterns;
-                // Route FFN weight tensors to the IOSurface pool. Explicitly lists the
-                // known FFN weight suffixes so ffn_gate_inp and ffn_norm are never
-                // accidentally matched by a greedy "ffn_.*" pattern. Covers dense,
-                // shared, MoE expert, and per-expert scale/in_scale variants across
-                // all model families (Qwen, DeepSeek, Gemma, Cohere, etc.). The pool's
-                // is_sensitive_moe_tensor() guards the router tensors that must stay
-                // resident (exp_probs_b, ffn_gate_tid2eid).
-                const char * ffn_suffixes[] = {
-                    "ffn_gate\\b", "ffn_up\\b", "ffn_down\\b",
-                    "ffn_gate_exps\\b", "ffn_up_exps\\b", "ffn_down_exps\\b",
-                    "ffn_gate_in_s\\b", "ffn_up_in_s\\b", "ffn_down_in_s\\b",
-                    "ffn_gate_exps_s\\b", "ffn_up_exps_s\\b", "ffn_down_exps_s\\b",
-                    "ffn_gate_exps_in_s\\b", "ffn_up_exps_in_s\\b", "ffn_down_exps_in_s\\b",
-                    "ffn_gate_shexp\\b",
-                };
-                const size_t n_suffixes = sizeof(ffn_suffixes)/sizeof(ffn_suffixes[0]);
-                const size_t need = n_suffixes + 1; // +1 for experts namespace
-                if (params.tensor_buft_overrides.size() < need + 1) {
-                    params.tensor_buft_overrides.resize(need + 1, {nullptr, nullptr});
-                }
-                for (size_t i = 0; i < n_suffixes; ++i) {
-                    s_heterog_patterns.push_back("blk\\.[0-9]+\\." + std::string(ffn_suffixes[i]) + "\\..*");
-                    params.tensor_buft_overrides[i] = {s_heterog_patterns.back().c_str(), ffn_buft};
-                }
-                // Catch experts.* namespace (any future model that names FFN tensors here).
-                s_heterog_patterns.push_back("blk\\.[0-9]+\\.experts\\..*");
-                params.tensor_buft_overrides[n_suffixes] = {s_heterog_patterns.back().c_str(), ffn_buft};
-                // terminator already at back from padding; if we grew the
-                // vector above, the new last entry is also a terminator.
+                common_weight_stream_install_ffn_overrides(
+                        params.tensor_buft_overrides, ffn_buft);
                 GGML_ASSERT(params.tensor_buft_overrides.back().pattern == nullptr);
             }
         }

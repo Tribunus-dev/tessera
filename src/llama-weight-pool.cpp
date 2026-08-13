@@ -1,5 +1,23 @@
 // llama-weight-pool.cpp - 2-slot IOSurface weight pool implementation
 //
+// WEIGHT STREAMING -- FIRST-CLASS SUBSYSTEM. NOT DEAD CODE.
+//
+// The GGML_USE_ANE blocks below are how Tessera runs models larger than
+// the GPU working-set limit (a 23 GiB unified GGUF trips
+// recommendedMaxWorkingSetSize, 12.4 GiB on M1). The macro is defined
+// PUBLIC on the `ggml` target in ggml/src/CMakeLists.txt and propagates
+// here; ggml itself does not use it.
+//
+// If your build does not compile these blocks, streaming is OFF -- that
+// is a build configuration problem, not evidence the code is unused.
+// Configure with -DGGML_ANE=ON -DGGML_BACKEND_DL=OFF and look for
+// "ANE weight streaming enabled" in the configure output.
+//
+// This subsystem was silently disabled for an extended period because
+// the definition was PRIVATE on the wrong target. See
+// docs/weight-streaming.md section 5 before changing any guard here.
+//
+//
 // Phase 1 (synchronous fill): ensure_layer blocks on the memcpy.
 // Phase 2 (background fill thread): a fill thread runs ahead of the encoder,
 // refilling slot[(L+1)%2] while the GPU computes layer L. ensure_layer
