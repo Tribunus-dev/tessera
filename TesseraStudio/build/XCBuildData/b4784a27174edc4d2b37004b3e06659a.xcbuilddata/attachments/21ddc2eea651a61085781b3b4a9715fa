@@ -1,0 +1,4 @@
+module TesseraCore {
+header "TesseraCore-Swift.h"
+export *
+}

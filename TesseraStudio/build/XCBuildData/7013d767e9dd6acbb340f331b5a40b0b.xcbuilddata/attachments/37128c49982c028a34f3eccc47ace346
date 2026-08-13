@@ -1,0 +1,119 @@
+{
+  "" : {
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Logging-primary.dia",
+    "emit-module-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Logging-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Logging-primary-emit-module.dia",
+    "pch" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Logging-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Logging-primary.swiftdeps"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/Sources/Logging/Handlers/MultiplexLogHandler.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/MultiplexLogHandler.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/MultiplexLogHandler.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/MultiplexLogHandler.dia",
+    "index-unit-output-path" : "/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/MultiplexLogHandler.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/MultiplexLogHandler.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/MultiplexLogHandler.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/MultiplexLogHandler.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/MultiplexLogHandler~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/Sources/Logging/Handlers/StreamLogHandler.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/StreamLogHandler.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/StreamLogHandler.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/StreamLogHandler.dia",
+    "index-unit-output-path" : "/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/StreamLogHandler.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/StreamLogHandler.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/StreamLogHandler.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/StreamLogHandler.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/StreamLogHandler~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/Sources/Logging/Handlers/SwiftLogNoOpLogHandler.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/SwiftLogNoOpLogHandler.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/SwiftLogNoOpLogHandler.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/SwiftLogNoOpLogHandler.dia",
+    "index-unit-output-path" : "/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/SwiftLogNoOpLogHandler.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/SwiftLogNoOpLogHandler.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/SwiftLogNoOpLogHandler.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/SwiftLogNoOpLogHandler.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/SwiftLogNoOpLogHandler~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/Sources/Logging/Locks.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Locks.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Locks.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Locks.dia",
+    "index-unit-output-path" : "/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Locks.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Locks.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Locks.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Locks.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Locks~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/Sources/Logging/LogEvent.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/LogEvent.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/LogEvent.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/LogEvent.dia",
+    "index-unit-output-path" : "/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/LogEvent.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/LogEvent.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/LogEvent.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/LogEvent.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/LogEvent~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/Sources/Logging/LogHandler.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/LogHandler.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/LogHandler.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/LogHandler.dia",
+    "index-unit-output-path" : "/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/LogHandler.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/LogHandler.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/LogHandler.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/LogHandler.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/LogHandler~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/Sources/Logging/Logger+Attributes.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Logger+Attributes.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Logger+Attributes.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Logger+Attributes.dia",
+    "index-unit-output-path" : "/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Logger+Attributes.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Logger+Attributes.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Logger+Attributes.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Logger+Attributes.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Logger+Attributes~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/Sources/Logging/Logger+With.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Logger+With.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Logger+With.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Logger+With.dia",
+    "index-unit-output-path" : "/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Logger+With.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Logger+With.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Logger+With.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Logger+With.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Logger+With~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/Sources/Logging/Logger.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Logger.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Logger.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Logger.dia",
+    "index-unit-output-path" : "/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Logger.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Logger.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Logger.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Logger.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/Logger~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/Sources/Logging/LoggingSystem.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/LoggingSystem.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/LoggingSystem.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/LoggingSystem.dia",
+    "index-unit-output-path" : "/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/LoggingSystem.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/LoggingSystem.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/LoggingSystem.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/LoggingSystem.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/LoggingSystem~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/Sources/Logging/MetadataProvider.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/MetadataProvider.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/MetadataProvider.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/MetadataProvider.dia",
+    "index-unit-output-path" : "/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/MetadataProvider.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/MetadataProvider.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/MetadataProvider.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/MetadataProvider.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-log/build/swift-log.build/Debug/Logging.build/Objects-normal/x86_64/MetadataProvider~partial.swiftmodule"
+  }
+}

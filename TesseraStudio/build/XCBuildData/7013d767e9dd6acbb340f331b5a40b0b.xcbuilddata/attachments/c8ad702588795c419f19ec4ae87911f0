@@ -1,0 +1,269 @@
+{
+  "" : {
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Splash-primary.dia",
+    "emit-module-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Splash-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Splash-primary-emit-module.dia",
+    "pch" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Splash-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Splash-primary.swiftdeps"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/Sources/Splash/Extensions/CharacterSet/CharacterSet+Contains.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/CharacterSet+Contains.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/CharacterSet+Contains.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/CharacterSet+Contains.dia",
+    "index-unit-output-path" : "/Splash.build/Debug/Splash.build/Objects-normal/x86_64/CharacterSet+Contains.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/CharacterSet+Contains.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/CharacterSet+Contains.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/CharacterSet+Contains.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/CharacterSet+Contains~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/Sources/Splash/Extensions/Equatable/Equatable+AnyOf.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Equatable+AnyOf.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Equatable+AnyOf.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Equatable+AnyOf.dia",
+    "index-unit-output-path" : "/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Equatable+AnyOf.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Equatable+AnyOf.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Equatable+AnyOf.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Equatable+AnyOf.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Equatable+AnyOf~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/Sources/Splash/Extensions/Int/Int+IsOdd.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Int+IsOdd.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Int+IsOdd.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Int+IsOdd.dia",
+    "index-unit-output-path" : "/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Int+IsOdd.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Int+IsOdd.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Int+IsOdd.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Int+IsOdd.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Int+IsOdd~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/Sources/Splash/Extensions/Sequence/Sequence+AnyOf.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Sequence+AnyOf.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Sequence+AnyOf.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Sequence+AnyOf.dia",
+    "index-unit-output-path" : "/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Sequence+AnyOf.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Sequence+AnyOf.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Sequence+AnyOf.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Sequence+AnyOf.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Sequence+AnyOf~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/Sources/Splash/Extensions/Sequence/Sequence+Occurrences.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Sequence+Occurrences.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Sequence+Occurrences.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Sequence+Occurrences.dia",
+    "index-unit-output-path" : "/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Sequence+Occurrences.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Sequence+Occurrences.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Sequence+Occurrences.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Sequence+Occurrences.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Sequence+Occurrences~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/Sources/Splash/Extensions/Strings/String+HTMLEntities.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+HTMLEntities.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+HTMLEntities.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+HTMLEntities.dia",
+    "index-unit-output-path" : "/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+HTMLEntities.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+HTMLEntities.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+HTMLEntities.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+HTMLEntities.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+HTMLEntities~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/Sources/Splash/Extensions/Strings/String+IsNumber.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+IsNumber.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+IsNumber.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+IsNumber.dia",
+    "index-unit-output-path" : "/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+IsNumber.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+IsNumber.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+IsNumber.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+IsNumber.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+IsNumber~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/Sources/Splash/Extensions/Strings/String+PrefixChecking.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+PrefixChecking.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+PrefixChecking.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+PrefixChecking.dia",
+    "index-unit-output-path" : "/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+PrefixChecking.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+PrefixChecking.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+PrefixChecking.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+PrefixChecking.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+PrefixChecking~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/Sources/Splash/Extensions/Strings/String+Removing.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+Removing.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+Removing.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+Removing.dia",
+    "index-unit-output-path" : "/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+Removing.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+Removing.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+Removing.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+Removing.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/String+Removing~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/Sources/Splash/Extensions/Strings/Substring+HasSuffix.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Substring+HasSuffix.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Substring+HasSuffix.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Substring+HasSuffix.dia",
+    "index-unit-output-path" : "/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Substring+HasSuffix.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Substring+HasSuffix.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Substring+HasSuffix.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Substring+HasSuffix.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Substring+HasSuffix~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/Sources/Splash/Grammar/Grammar.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Grammar.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Grammar.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Grammar.dia",
+    "index-unit-output-path" : "/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Grammar.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Grammar.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Grammar.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Grammar.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Grammar~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/Sources/Splash/Grammar/SwiftGrammar.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/SwiftGrammar.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/SwiftGrammar.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/SwiftGrammar.dia",
+    "index-unit-output-path" : "/Splash.build/Debug/Splash.build/Objects-normal/x86_64/SwiftGrammar.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/SwiftGrammar.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/SwiftGrammar.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/SwiftGrammar.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/SwiftGrammar~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/Sources/Splash/Output/AttributedStringOutputFormat.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/AttributedStringOutputFormat.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/AttributedStringOutputFormat.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/AttributedStringOutputFormat.dia",
+    "index-unit-output-path" : "/Splash.build/Debug/Splash.build/Objects-normal/x86_64/AttributedStringOutputFormat.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/AttributedStringOutputFormat.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/AttributedStringOutputFormat.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/AttributedStringOutputFormat.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/AttributedStringOutputFormat~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/Sources/Splash/Output/HTMLOutputFormat.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/HTMLOutputFormat.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/HTMLOutputFormat.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/HTMLOutputFormat.dia",
+    "index-unit-output-path" : "/Splash.build/Debug/Splash.build/Objects-normal/x86_64/HTMLOutputFormat.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/HTMLOutputFormat.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/HTMLOutputFormat.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/HTMLOutputFormat.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/HTMLOutputFormat~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/Sources/Splash/Output/MarkdownDecorator.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/MarkdownDecorator.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/MarkdownDecorator.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/MarkdownDecorator.dia",
+    "index-unit-output-path" : "/Splash.build/Debug/Splash.build/Objects-normal/x86_64/MarkdownDecorator.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/MarkdownDecorator.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/MarkdownDecorator.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/MarkdownDecorator.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/MarkdownDecorator~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/Sources/Splash/Output/OutputBuilder.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/OutputBuilder.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/OutputBuilder.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/OutputBuilder.dia",
+    "index-unit-output-path" : "/Splash.build/Debug/Splash.build/Objects-normal/x86_64/OutputBuilder.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/OutputBuilder.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/OutputBuilder.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/OutputBuilder.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/OutputBuilder~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/Sources/Splash/Output/OutputFormat.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/OutputFormat.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/OutputFormat.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/OutputFormat.dia",
+    "index-unit-output-path" : "/Splash.build/Debug/Splash.build/Objects-normal/x86_64/OutputFormat.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/OutputFormat.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/OutputFormat.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/OutputFormat.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/OutputFormat~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/Sources/Splash/Syntax/SyntaxHighlighter.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/SyntaxHighlighter.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/SyntaxHighlighter.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/SyntaxHighlighter.dia",
+    "index-unit-output-path" : "/Splash.build/Debug/Splash.build/Objects-normal/x86_64/SyntaxHighlighter.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/SyntaxHighlighter.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/SyntaxHighlighter.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/SyntaxHighlighter.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/SyntaxHighlighter~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/Sources/Splash/Syntax/SyntaxRule.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/SyntaxRule.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/SyntaxRule.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/SyntaxRule.dia",
+    "index-unit-output-path" : "/Splash.build/Debug/Splash.build/Objects-normal/x86_64/SyntaxRule.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/SyntaxRule.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/SyntaxRule.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/SyntaxRule.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/SyntaxRule~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/Sources/Splash/Theming/Color.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Color.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Color.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Color.dia",
+    "index-unit-output-path" : "/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Color.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Color.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Color.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Color.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Color~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/Sources/Splash/Theming/Font.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Font.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Font.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Font.dia",
+    "index-unit-output-path" : "/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Font.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Font.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Font.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Font.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Font~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/Sources/Splash/Theming/Theme+Defaults.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Theme+Defaults.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Theme+Defaults.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Theme+Defaults.dia",
+    "index-unit-output-path" : "/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Theme+Defaults.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Theme+Defaults.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Theme+Defaults.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Theme+Defaults.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Theme+Defaults~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/Sources/Splash/Theming/Theme.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Theme.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Theme.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Theme.dia",
+    "index-unit-output-path" : "/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Theme.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Theme.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Theme.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Theme.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Theme~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/Sources/Splash/Tokenizing/Segment.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Segment.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Segment.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Segment.dia",
+    "index-unit-output-path" : "/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Segment.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Segment.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Segment.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Segment.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Segment~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/Sources/Splash/Tokenizing/TokenType.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/TokenType.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/TokenType.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/TokenType.dia",
+    "index-unit-output-path" : "/Splash.build/Debug/Splash.build/Objects-normal/x86_64/TokenType.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/TokenType.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/TokenType.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/TokenType.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/TokenType~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/Sources/Splash/Tokenizing/Tokenizer.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Tokenizer.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Tokenizer.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Tokenizer.dia",
+    "index-unit-output-path" : "/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Tokenizer.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Tokenizer.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Tokenizer.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Tokenizer.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/Splash/build/Splash.build/Debug/Splash.build/Objects-normal/x86_64/Tokenizer~partial.swiftmodule"
+  }
+}

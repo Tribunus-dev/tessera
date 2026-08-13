@@ -1,0 +1,4 @@
+module CLlama {
+umbrella "/Users/user/Developer/GitHub/tessera/TesseraStudio/Sources/CLlama/include"
+export *
+}

@@ -1,0 +1,70 @@
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/build/swift-crypto.build/Debug/CryptoExtras.build/DerivedSources/resource_bundle_accessor.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/AES/AES_CBC.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/AES/AES_CFB.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/AES/AES_CTR.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/AES/AES_GCM_SIV.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/AES/Block\ Function.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/AES/BoringSSL/AES_CBC_boring.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/AES/BoringSSL/AES_CFB_boring.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/AES/BoringSSL/AES_CTR_boring.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/AES/BoringSSL/AES_GCM_SIV_boring.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/AES/CMAC.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/ARC/ARC+API.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/ARC/ARC.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/ARC/ARCCredential.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/ARC/ARCEncoding.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/ARC/ARCPrecredential.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/ARC/ARCPresentation.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/ARC/ARCRequest.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/ARC/ARCResponse.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/ARC/ARCServer.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/ChaCha20CTR/BoringSSL/ChaCha20CTR_boring.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/ChaCha20CTR/ChaCha20CTR.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/Digests/BoringSSL/BoringSSLSHA512256Context.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/Digests/BoringSSL/BoringSSLSHA512256HashFunction.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/Digests/SHA512256.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/Digests/SHA512256Digest.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/EC/Curve25519+PEM.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/EC/ObjectIdentifier.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/EC/PKCS8DERRepresentation.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/EC/PKCS8PrivateKey.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/EC/RFC8410AlgorithmIdentifier.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/ECToolbox/BoringSSL/ECToolbox_boring.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/ECToolbox/ECToolbox.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/H2G/HashToField.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/Key\ Derivation/KDF.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/Key\ Derivation/PBKDF2/BoringSSL/PBKDF2_boring.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/Key\ Derivation/PBKDF2/BoringSSL/PBKDF2_commoncrypto.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/Key\ Derivation/PBKDF2/PBKDF2.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/Key\ Derivation/Scrypt/BoringSSL/Scrypt_boring.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/Key\ Derivation/Scrypt/Scrypt.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/OPRFs/OPRF.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/OPRFs/OPRFClient.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/OPRFs/OPRFServer.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/OPRFs/VOPRF+API.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/OPRFs/VOPRFClient.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/OPRFs/VOPRFServer.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/RSA/BoringSSLPassphraseCallbackManager.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/RSA/RSA+BlindSigning.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/RSA/RSA.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/RSA/RSA_boring.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/Reexport.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/Util/BoringSSL/Zeroization_boring.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/Util/BoringSSLHelpers.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/Util/CryptoKitErrors_boring.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/Util/Data+Extensions.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/Util/DigestType.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/Util/Error.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/Util/I2OSP.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/Util/IntegerEncoding.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/Util/PEMDocument.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/Util/PrettyBytes.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/Util/SubjectPublicKeyInfo.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/Util/ThreadSpecific/ThreadOps.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/Util/ThreadSpecific/ThreadPosix.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/Util/ThreadSpecific/ThreadSpecific.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/Util/ThreadSpecific/ThreadWindows.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/ZKPs/DLEQ.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/ZKPs/Prover.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/ZKPs/Verifier.swift
+/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-crypto/Sources/CryptoExtras/ZKPs/ZKPToolbox.swift

@@ -1,0 +1,59 @@
+{
+  "" : {
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/NIOTLS-primary.dia",
+    "emit-module-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/NIOTLS-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/NIOTLS-primary-emit-module.dia",
+    "pch" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/NIOTLS-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/NIOTLS-primary.swiftdeps"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/Sources/NIOTLS/ApplicationProtocolNegotiationHandler.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/ApplicationProtocolNegotiationHandler.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/ApplicationProtocolNegotiationHandler.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/ApplicationProtocolNegotiationHandler.dia",
+    "index-unit-output-path" : "/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/ApplicationProtocolNegotiationHandler.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/ApplicationProtocolNegotiationHandler.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/ApplicationProtocolNegotiationHandler.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/ApplicationProtocolNegotiationHandler.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/ApplicationProtocolNegotiationHandler~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/Sources/NIOTLS/NIOTypedApplicationProtocolNegotiationHandler.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/NIOTypedApplicationProtocolNegotiationHandler.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/NIOTypedApplicationProtocolNegotiationHandler.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/NIOTypedApplicationProtocolNegotiationHandler.dia",
+    "index-unit-output-path" : "/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/NIOTypedApplicationProtocolNegotiationHandler.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/NIOTypedApplicationProtocolNegotiationHandler.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/NIOTypedApplicationProtocolNegotiationHandler.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/NIOTypedApplicationProtocolNegotiationHandler.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/NIOTypedApplicationProtocolNegotiationHandler~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/Sources/NIOTLS/ProtocolNegotiationHandlerStateMachine.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/ProtocolNegotiationHandlerStateMachine.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/ProtocolNegotiationHandlerStateMachine.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/ProtocolNegotiationHandlerStateMachine.dia",
+    "index-unit-output-path" : "/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/ProtocolNegotiationHandlerStateMachine.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/ProtocolNegotiationHandlerStateMachine.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/ProtocolNegotiationHandlerStateMachine.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/ProtocolNegotiationHandlerStateMachine.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/ProtocolNegotiationHandlerStateMachine~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/Sources/NIOTLS/SNIHandler.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/SNIHandler.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/SNIHandler.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/SNIHandler.dia",
+    "index-unit-output-path" : "/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/SNIHandler.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/SNIHandler.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/SNIHandler.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/SNIHandler.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/SNIHandler~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/Sources/NIOTLS/TLSEvents.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/TLSEvents.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/TLSEvents.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/TLSEvents.dia",
+    "index-unit-output-path" : "/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/TLSEvents.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/TLSEvents.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/TLSEvents.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/TLSEvents.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-nio/build/swift-nio.build/Debug/NIOTLS.build/Objects-normal/arm64/TLSEvents~partial.swiftmodule"
+  }
+}

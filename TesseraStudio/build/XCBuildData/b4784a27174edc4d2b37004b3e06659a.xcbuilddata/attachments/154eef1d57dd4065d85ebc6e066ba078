@@ -1,0 +1,4 @@
+module ForceSimulation {
+header "ForceSimulation-Swift.h"
+export *
+}

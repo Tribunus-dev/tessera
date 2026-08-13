@@ -1,0 +1,29 @@
+{
+  "" : {
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/ConcurrencyHelpers.build/Objects-normal/x86_64/ConcurrencyHelpers-primary.dia",
+    "emit-module-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/ConcurrencyHelpers.build/Objects-normal/x86_64/ConcurrencyHelpers-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/ConcurrencyHelpers.build/Objects-normal/x86_64/ConcurrencyHelpers-primary-emit-module.dia",
+    "pch" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/ConcurrencyHelpers.build/Objects-normal/x86_64/ConcurrencyHelpers-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/ConcurrencyHelpers.build/Objects-normal/x86_64/ConcurrencyHelpers-primary.swiftdeps"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/Sources/ConcurrencyHelpers/Lock.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/ConcurrencyHelpers.build/Objects-normal/x86_64/Lock.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/ConcurrencyHelpers.build/Objects-normal/x86_64/Lock.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/ConcurrencyHelpers.build/Objects-normal/x86_64/Lock.dia",
+    "index-unit-output-path" : "/swift-service-lifecycle.build/Debug/ConcurrencyHelpers.build/Objects-normal/x86_64/Lock.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/ConcurrencyHelpers.build/Objects-normal/x86_64/Lock.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/ConcurrencyHelpers.build/Objects-normal/x86_64/Lock.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/ConcurrencyHelpers.build/Objects-normal/x86_64/Lock.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/ConcurrencyHelpers.build/Objects-normal/x86_64/Lock~partial.swiftmodule"
+  },
+  "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/Sources/ConcurrencyHelpers/LockedValueBox.swift" : {
+    "const-values" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/ConcurrencyHelpers.build/Objects-normal/x86_64/LockedValueBox.swiftconstvalues",
+    "dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/ConcurrencyHelpers.build/Objects-normal/x86_64/LockedValueBox.d",
+    "diagnostics" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/ConcurrencyHelpers.build/Objects-normal/x86_64/LockedValueBox.dia",
+    "index-unit-output-path" : "/swift-service-lifecycle.build/Debug/ConcurrencyHelpers.build/Objects-normal/x86_64/LockedValueBox.o",
+    "llvm-bc" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/ConcurrencyHelpers.build/Objects-normal/x86_64/LockedValueBox.bc",
+    "object" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/ConcurrencyHelpers.build/Objects-normal/x86_64/LockedValueBox.o",
+    "swift-dependencies" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/ConcurrencyHelpers.build/Objects-normal/x86_64/LockedValueBox.swiftdeps",
+    "swiftmodule" : "/Users/user/Library/Developer/Xcode/DerivedData/TesseraStudio-brhanbxmdwxsikerrtcpycuiugpn/SourcePackages/checkouts/swift-service-lifecycle/build/swift-service-lifecycle.build/Debug/ConcurrencyHelpers.build/Objects-normal/x86_64/LockedValueBox~partial.swiftmodule"
+  }
+}
