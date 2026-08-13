@@ -36,6 +36,11 @@ the middle layers. After five phases of work:
 **The next big thing is the runtime-aware calibration pipeline (Layers 1-6)**
 that closes the loop between kernel dequant fidelity and per-tensor GA fitness.
 
+A parallel next-big-thing is the **Tessera Studio product-surface expansion**
+to bring documents, spreadsheets, and slides to LibreOffice-class capability
+parity within `tesseracore`. Architect-approved plan at
+`TesseraStudio/docs/studio-expansion-plan.md`; see the section below.
+
 ---
 
 ## What we've built
@@ -653,6 +658,161 @@ The skill that produced the move list:
 one-trust + one-anti architecture; `references/pattern-catalog.md`
 for the pattern moves; `references/paradoxes-deep.md` for the seven
 paradoxes).
+
+---
+
+## Tessera Studio product-surface expansion (LibreOffice parity, 2026-08-13, Draw added 2026-08-13)
+
+The agent-ux-fatigue audit (above) shipped the agent *control surface* of
+Tessera Studio. The **product-surface expansion** is a separate, parallel
+track: bring documents, spreadsheets, slides, **and drawings** to
+LibreOffice-class capability parity inside `tesseracore`. The full plan is
+at `TesseraStudio/docs/studio-expansion-plan.md`; the per-suite evidence
+(Writer/Calc/Impress capability inventories) is at
+`TesseraStudio/docs/.scratch/lo-{writer,calc,impress}-report.md`. Three
+parallel explore agents inventoried LibreOffice's `sw/`, `sc/`, `sd/`
+modules against the current `tesseraCore` surface (29K LoC across
+`Productivity/`, `Editor/`, `FormulaEngine/`, `Materials/`,
+`DocumentProcessing/`, `Views/`). Draw is a green-field surface; its
+high-level inventory is in §2 of the master plan, and a dedicated Draw
+scratch report can be dispatched when the rollout needs the per-source
+path evidence.
+
+### Architect decisions (binding for every wave)
+
+| Question | Decision |
+|---|---|
+| DOCX import | UNO bridge (`WriterBridgeFilter`); no native Swift ODT/DOCX reader |
+| `SheetWorkbook` name | Keep the name; do not rename to `Workbook` |
+| `BlockType` enum growth | 16 -> ~24 over P0-P1 is approved (incl. `.shape`/`.shapeGroup` for Draw) |
+| Number formats | **Full** parser in Swift (`NumberFormatEngine`, parity with `svl/source/numbers/`). Not the 80% subset. |
+| Master pages | **Full** layout picker UI at P1 (`MasterPageLayoutPicker`) |
+| Chart engine | **CoreGraphics** long-term (`ChartRenderer` with `CGContext`). Not Swift Charts. Parity with all 14 LO chart types. |
+| Animations | **Evolve to SMIL tree** at P2 (`SMILAnimationTree`, port of `CustomAnimationEffect.cxx`). P1 ships a flat `AnimationEffectList` as an interim; P2 evolves it. |
+| Pivot tables | **Swift with full UNO parity** (`PivotTableStore`, parity with `ScDPObject`). Not a simplified model. |
+| **Draw: separate surface or feature of Impress?** | **Separate surface** (`Materials/Draw/` quartet + `Shape` value type). A deck is a sequence of slides; a drawing is a single page of vector graphics. Shared `sd/` upstream binary; distinct Tessera product surfaces. |
+| **Draw: 3D objects + morph in scope?** | **Out of scope.** 2D capability set is in scope (shape catalog, geometry, fill/stroke, z-order, layers, snap, transform, group, connector, text frame, ODG / SVG / PDF I/O). 3D (`fucon3d.cxx`) + morph (`fumorph.cxx`) explicitly punted. |
+
+### Phased rollout
+
+- **P0 - MVP (16 deliverables)**: `SheetWorkbook` multi-sheet, `RecalcScheduler` + `TokenArray` IR + shared formula groups, `CellValue`/`CellFormat`/`NumberFormat` index, `NumberFormatEngine` (full parser), `BlockType` evolutions (`.section`/`.frame`/`.shape`/`.shapeGroup`), `BlockType.table` rowSpans/colSpans/nested, `MasterPageStore` + `SlideLayoutSpec`, `WriterBridgeFilter` (UNO), `CalcBridgeFilter` (UNO), `SheetProtection`, **`Shape` value type + `ShapeCatalog` + `ShapeRenderer` (Draw data model)**, **`Drawing` material quartet (data only)**, **`BlockType.shape` z-order**, plus the `tessera_lo_service.py` schema update.
+- **P1 - parity milestone (19 deliverables)**: `BlockType` evolutions (`.field`/`.footnote`/`.endnote`/`.chart`/`.media`), `FieldController`, `Footnote`/`Endnote`, `ChartRenderer` (CoreGraphics), `MediaBlock`, `Theme`/`ThemeStore`, `TransitionStore`, `SlideDeckRenderer` + `DeckExportCoordinator` (PNG/JPG), `LOBridgeDeckIO`, `MasterPageLayoutPicker`, `QueryEngine`, `CellStyle`, `ConditionalFormat`, `DataValidation`, `RevisionController`, **`LayerStore` + `TransformController` + `SnapEngine` (Draw UI)**, **`ODGBridgeFilter` + `SVGBridgeFilter` + `PDFExportBridge` (Draw format I/O)**, **text frames on shapes (connector, bullet lists inside shape text)**, plus the flat `AnimationEffectList` as a SMIL interim.
+- **P2 - advanced + architect-locked substantial work (12 deliverables)**: `SMILAnimationTree` (3-5K LoC, full `XAnimationNode` tree), `PivotTableStore` (4-6K LoC, full `ScDPObject` schema), **`BezierPathController` (Draw custom-geometry paths)**, mail merge, ToC/index, solver (UNO), subtotals, statistics wizards, change-track reviewer, custom shows, master documents, **Draw advanced (annotations, measure, Draw tables, bullet lists inside shape text)**.
+
+### Top reusable components (priority-ordered)
+
+1. `SheetWorkbook` multi-sheet model (evolves `SheetWorkbook`)
+2. `RecalcScheduler` (evolves `DependencyGraph`)
+3. `TokenArray` IR (peer of `FormulaAST`)
+4. `CellValue` + `CellFormat` + per-cell `NumberFormat` (evolves `SheetColumn`)
+5. `NumberFormatEngine` (peer of `FunctionRegistry`; full locale-aware parser)
+6. `BlockType` evolutions (evolves `BlockType` enum; 9 new cases incl. `.shape`/`.shapeGroup`)
+7. `MasterPageStore` (peer of `SlideStore`)
+8. `SlideLayoutSpec` (evolves `SlideLayout`)
+9. `WriterBridgeFilter` (peer of `TesseraImporter`; UNO path)
+10. `CalcBridgeFilter` (peer of `SpreadsheetDigester`; UNO path)
+11. **`Shape` value type (peer of `Block`)** - **Draw primitive**
+12. **`ShapeCatalog` (peer of `SlideLayoutSpec`)** - Draw + Impress
+13. **`ShapeRenderer` (CoreGraphics, peer of `BlockRenderer`)** - Draw + Impress
+14. **`Drawing` material + `DrawingStore` + `DrawingsViewModel` + `DrawingReceiptType` + `DrawingsGraphConnector` (full quartet, peer of Slide)** - Draw
+15. `MasterPageLayoutPicker` (peer of `SlideDetailView`; full UI)
+16. `Theme` + `ThemeStore`
+17. `LOBridgeDeckIO` (evolves `EmbeddedPythonBridge`)
+18. `SlideDeckRenderer` (Core Graphics; evolves `BlockRenderer`)
+19. `ChartRenderer` (Core Graphics; full LO chart type parity)
+20. `QueryEngine` (peer of `SheetsViewModel`)
+21. `FieldController` + `RevisionController`
+22. **`LayerStore` + `TransformController` + `SnapEngine` (Draw UI)**
+23. **`ODGBridgeFilter` + `SVGBridgeFilter` + `PDFExportBridge` (Draw format I/O)**
+
+### No-versioned-implementations rule (binding)
+
+Every new component either **evolves an existing type** (`BlockType` cases,
+`SheetColumnType` cases, `SlideLayout` cases, `SheetWorkbook` model,
+`DocumentPageLayout` fields, `FormulaEngine.Evaluator`) or **sits as a
+peer file** next to its sibling. Nothing paralleled; nothing v2.
+
+The Draw surface follows the rule: `Drawing` is a peer of `SlideDeck`,
+`DrawingStore` is a peer of `SlideStore`, `Shape` is a peer of `Block`,
+`ShapeCatalog` is a peer of `SlideLayoutSpec`, `ShapeRenderer` is a peer
+of `BlockRenderer`. The quartet of `*Store` / `*ViewModel` / `*ReceiptType`
+/ `*GraphConnector` for `Drawing` mirrors the same quartet for `Doc` /
+`Sheet` / `SlideDeck`.
+
+### Bridge vs Swift split
+
+UNO drives the heavy format-specific paths: DOCX/ODT/ODP/PPTX import, PDF
+deck export, ODG / SVG / PDF-for-Draw export, presenter console, solver.
+Swift drives the authoring surface (formula engine, cells, slides, shapes,
+charts, animations), the receipts pipeline, and the constitutional
+mutation backbone. The existing
+`LibreOfficeBootstrap` + `EmbeddedPythonBridge` + `tessera_lo_service.py`
+is the gateway; no parallel v2 service.
+
+### Wave routing
+
+The four named capabilities (`alphaevolve`, `tessera-analyst`,
+`findings-curator`, `verifier`) carry the work into the wave loop. The
+conductor section in `AGENTS.md` is unchanged. Branch namespaces
+(`scratch/<feature>/agent-X`, `evolve-review/...`, `champions/<id>`,
+`evolve-baseline/wN`) carry through unchanged.
+
+### Post-claim audit (skill refinements, 2026-08-13)
+
+The user performed an independent post-claim audit of the agent-ux-
+fatigue sprint on 2026-08-13 and surfaced intent-vs-outcome gaps that
+the existing `superpowers:verification-before-completion` and
+`code-review` skills do not cover. The audit caught: 251 compile
+errors during the sprint, an integration-test target that hung
+forever, a measurement layer with 42 unrunnable metrics, three
+"shipped" units with no open path, and a `/var/folders/...` source-
+of-truth directory that was purged on reboot.
+
+The refinement patches are at
+`TesseraStudio/docs/skill-refinement-patches-2026-08-13.md`. The
+patches add (a) a "Post-claim audit" section to `verification-before-
+completion` (system-level integrity) and (b) a "Claim-vs-evidence
+pass" section to `code-review` (per-unit integrity). Both skills
+are built-in (immutable at runtime per the skill-refiner procedure);
+the patches ship via MR to the upstream Mavis skill source. Every
+wave's review gate runs both passes on the previous wave's claims.
+
+### Agent tools surface (2026-08-13)
+
+The expansion is the *architecture* (this section). The *agent-facing
+surface* on top of that architecture is the tools the agent loop can
+call. The full sketch is at
+`TesseraStudio/docs/agent-tools-surface.md`. Headline shape:
+
+- **~65 tools** across `doc_*` (Doc/Writer, ~18), `sheet_*`
+  (Sheet/Calc, ~14), `slide_*` (SlideDeck/Impress, ~12), `drawing_*`
+  (Drawing/Draw, ~12), `materials_*` (cross-cutting, ~6), `lifecycle_*`
+  (lifecycle, ~3). One tool file per material, peer of the existing
+  `Tools/SheetTools.swift`. No `_v2`; no parallel implementations.
+- **Existing `TesseraTool` protocol** is the binding contract
+  (`TesseraCore/Agent/TesseraTool.swift:182`): `name` (snake_case),
+  `description`, `defaultApprovalLevel`, `parameters: JSONSchema`,
+  `execute(arguments:) async throws -> ToolResult`. No new tool shape.
+- **Tier mapping** to `TesseraTier` (audit Wave 1): read = `tier0`,
+  per-entity write = `tier1`, import / export = `tier2`, non-empty
+  trash = `tier3`.
+- **Receipt semantics** ride the existing `ReceiptsCoordinator` and
+  per-material receipt vocabularies. Every mutating tool emits exactly
+  one receipt per call. Read tools do not emit.
+- **Citation + uncertainty** ride the audit Wave 2-3 work: every
+  `ToolResult` carries `sources: [Citation]` and
+  `confidenceBand: ConfidenceBand?`. Numeric confidence percentages
+  are forbidden.
+- **Inline stop + notification budget** bind: long-running tools
+  wire to `TesseraAgentLoop.stop(reason:)`; no tool posts a user-facing
+  push (the budget's 3-per-UTC-day cap is hard; no `force:` override);
+  the audit log is pull, not push.
+
+The wave loop ships a tesseracore component + its tools in the same
+wave (the tool is the agent-facing half of the component). The
+`tools/agent-tools-surface.md` doc is the source of truth for the tool
+API; per-wave briefs enumerate the specific tools that land in that
+wave.
 
 ---
 
