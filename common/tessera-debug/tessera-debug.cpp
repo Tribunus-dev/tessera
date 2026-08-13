@@ -593,6 +593,11 @@ bool dequant_debug_enabled() {
     return !env_state().dequant_dir.empty();
 }
 
+const std::string & dequant_dir() {
+    ensure_env_loaded();
+    return env_state().dequant_dir;
+}
+
 void set_dequant_dir(const std::string & path) {
     ensure_env_loaded();
     if (path == env_state().dequant_dir) {

@@ -31,6 +31,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <utility>
 #include <vector>
@@ -39,6 +40,91 @@ static int g_fail = 0;
 static void check(const char * name, bool ok) {
     std::printf("%s %s\n", ok ? "ok  " : "FAIL", name);
     if (!ok) g_fail++;
+}
+
+// Deterministic fixture weights for tensor `idx`. Shared by the GGUF builder
+// and the sidecar writer so both see identical values.
+static std::vector<float> fixture_tensor_data(size_t idx, int64_t out_dim, int64_t in_dim) {
+    std::vector<float> data((size_t)(out_dim * in_dim));
+    uint32_t rng = (uint32_t)(idx + 1) * 2654435761u;
+    for (int64_t j = 0; j < out_dim * in_dim; j++) {
+        rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5;
+        float u = (float)((rng >> 8) & 0xFFFF) / (float)0xFFFF;
+        // Scale to ~unit variance; deliberately uneven so the tensors have
+        // different divergence profiles.
+        data[(size_t)j] = (u - 0.5f) * (1.0f + 2.0f * (float)idx);
+    }
+    return data;
+}
+
+// Write a v3 TDQT sidecar (same on-disk layout as the runtime hook and as
+// test_l1_fitness.cpp's writer).
+static bool write_v3_sidecar(const char * dir, const std::string & tensor_name,
+                             int64_t rows, int64_t cols,
+                             const std::vector<float> & data) {
+    const std::string path = std::string(dir) + "/" + tensor_name + ".dequant.f32";
+    FILE * f = std::fopen(path.c_str(), "wb");
+    if (!f) return false;
+
+    std::fwrite("TDQT", 1, 4, f);
+    uint32_t version = 3;
+    std::fwrite(&version, sizeof(version), 1, f);
+    std::fwrite(&rows, sizeof(rows), 1, f);
+    std::fwrite(&cols, sizeof(cols), 1, f);
+    uint32_t dtype = 0;                 // F32
+    std::fwrite(&dtype, sizeof(dtype), 1, f);
+    float outlier_threshold = 6.0f;
+    std::fwrite(&outlier_threshold, sizeof(outlier_threshold), 1, f);
+    int64_t outlier_count_total = 0;
+    std::fwrite(&outlier_count_total, sizeof(outlier_count_total), 1, f);
+
+    // FP env block: accumulator dtype, rounding, denormal, backend id.
+    uint32_t fp_env[4] = { 0, 0, 0, 0 };
+    std::fwrite(fp_env, sizeof(uint32_t), 4, f);
+
+    std::vector<int32_t> row_outlier_counts((size_t)rows, 0);
+    std::fwrite(row_outlier_counts.data(), sizeof(int32_t), (size_t)rows, f);
+
+    uint8_t row_meta[24];
+    std::memset(row_meta, 0, sizeof(row_meta));
+    for (int64_t r = 0; r < rows; r++) {
+        std::fwrite(row_meta, 1, sizeof(row_meta), f);
+    }
+
+    std::fwrite(data.data(), sizeof(float), data.size(), f);
+    std::fclose(f);
+    return true;
+}
+
+static std::string read_file_string(const char * path) {
+    FILE * f = std::fopen(path, "rb");
+    if (!f) return std::string();
+    std::fseek(f, 0, SEEK_END);
+    long sz = std::ftell(f);
+    std::fseek(f, 0, SEEK_SET);
+    std::string out;
+    if (sz > 0) {
+        out.resize((size_t)sz);
+        size_t rd = std::fread(&out[0], 1, (size_t)sz, f);
+        out.resize(rd);
+    }
+    std::fclose(f);
+    return out;
+}
+
+// Read the float that follows `key` at `pos` in a flat JSON string.
+static bool parse_json_float_at(const std::string & s, size_t pos,
+                                const char * key, float * out) {
+    if (pos == std::string::npos || s.compare(pos, std::strlen(key), key) != 0) {
+        return false;
+    }
+    const size_t vstart = pos + std::strlen(key);
+    try {
+        *out = std::stof(s.substr(vstart, 64));
+    } catch (...) {
+        return false;
+    }
+    return true;
 }
 
 // Build a synthetic F32 GGUF with the requested 2D weights, sized to
@@ -57,17 +143,10 @@ static bool build_fixture_gguf(const char * path,
         const int64_t in_dim  = dims[i].second;
         struct ggml_tensor * t = ggml_new_tensor_2d(gctx, GGML_TYPE_F32, in_dim, out_dim);
         ggml_set_name(t, tensor_names[i].c_str());
-        // Fill with non-trivial but deterministic values so quantization
-        // produces non-zero reconstruction error (required for L2 flagging).
-        float * data = (float *) t->data;
-        uint32_t rng = (uint32_t)(i + 1) * 2654435761u;
-        for (int64_t j = 0; j < out_dim * in_dim; j++) {
-            rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5;
-            float u = (float)((rng >> 8) & 0xFFFF) / (float)0xFFFF;
-            // Scale to ~unit variance; deliberately uneven so the two tensors
-            // have different divergence profiles.
-            data[j] = (u - 0.5f) * (1.0f + 2.0f * (float)i);
-        }
+        // Non-trivial but deterministic values so quantization produces
+        // non-zero reconstruction error (required for L2 flagging).
+        const std::vector<float> src = fixture_tensor_data(i, out_dim, in_dim);
+        std::memcpy(t->data, src.data(), src.size() * sizeof(float));
         gguf_add_tensor(ctx, t);
     }
 
@@ -532,6 +611,109 @@ int main() {
         std::remove(hledger_path);
         std::remove("/tmp/test_l5_dispatch_hessian.policy.json");
         std::remove("/tmp/test_l5_dispatch_hessian.duckdb.wal");
+    }
+
+    // ---- G6 acceptance: kernel-direct t_l^2 on the threaded path ----
+    // Regression guard. The acceptance gate evaluates tensors serially when
+    // work.size() < 2 and on a thread pool otherwise; production always takes
+    // the pool. Both branches must feed the same source buffer to
+    // ts_dispatch_kernel_direct_t2, or the sidecar measurement silently
+    // degrades to the offline proxy -- which makes kendall_tau identically 1,
+    // ranking_disagreement 0, and novelty_survives false, so the G6 gate can
+    // never pass. Four tensors force the pool; the assertion is that at least
+    // one kernel_direct_t2 differs from its offline_proxy_mse.
+    {
+        const char * acc_fixture = "/tmp/test_l5_dispatch_acc.gguf";
+        const char * acc_output  = "/tmp/test_l5_dispatch_acc_out.gguf";
+        const char * acc_report  = "/tmp/test_l5_dispatch_acc.json";
+        const char * sidecar_dir = "/tmp/test_l5_dispatch_sidecars";
+
+        std::vector<std::string> anames = {
+            "blk.0.attn_q.weight",
+            "blk.0.ffn_down.weight",
+            "blk.1.attn_q.weight",
+            "blk.1.ffn_down.weight",
+        };
+        std::vector<std::pair<int64_t, int64_t>> adims(anames.size(), { 16, 1280 });
+
+        if (build_fixture_gguf(acc_fixture, anames, adims)) {
+            std::filesystem::create_directories(sidecar_dir);
+
+            // One sidecar per tensor, holding the source weights scaled by
+            // (1 + eps). eps is non-monotonic across tensors so the
+            // kernel-direct ranking is neither the offline ranking nor its
+            // exact reverse (|tau| == 1 in both of those cases would leave
+            // ranking_disagreement at 0 and hide a regression).
+            const float eps[4] = { 0.03f, 0.005f, 0.05f, 0.015f };
+            bool wrote_all = true;
+            for (size_t i = 0; i < anames.size(); i++) {
+                std::vector<float> deq = fixture_tensor_data(i, adims[i].first, adims[i].second);
+                for (auto & v : deq) v *= (1.0f + eps[i]);
+                wrote_all &= write_v3_sidecar(sidecar_dir, anames[i],
+                                              adims[i].first, adims[i].second, deq);
+            }
+            check("g6: sidecars written", wrote_all);
+
+            ts_dispatch_params ap = {};
+            ap.input_path        = acc_fixture;
+            ap.output_path       = acc_output;
+            ap.policy_out_path   = "/tmp/test_l5_dispatch_acc.policy.json";
+            ap.evolve_seed       = 42;
+            ap.evolve_iters      = 2;
+            ap.evolve_islands    = 2;
+            ap.evolve_population = 4;
+            ap.outlier_frac      = 0.005f;
+            ap.awq_alpha         = "0.5";
+            ap.awq_clip          = 0.95f;
+            ap.nthreads          = 1;
+            ap.verbose           = false;
+            ap.adaptive_requantize = false;
+            ap.run_acceptance      = true;
+            ts_acceptance_default_config(&ap.acceptance_config);
+            snprintf(ap.acceptance_config.output_path,
+                     sizeof(ap.acceptance_config.output_path), "%s", acc_report);
+            ap.kernel_fitness_dir = sidecar_dir;
+
+            ts_dispatch_result ares;
+            std::string aerr;
+            int arc = ts_dispatch_run(&ap, &ares, &aerr);
+            check("g6: dispatch rc == 0", arc == 0);
+            if (arc != 0) {
+                std::printf("  error: %s\n", aerr.c_str());
+            } else {
+                check("g6: acceptance_ran", ares.acceptance_ran);
+
+                // Parse the per-tensor breakdown and require at least one
+                // tensor whose kernel-direct score is a real measurement
+                // rather than a copy of the offline proxy.
+                std::string rep = read_file_string(acc_report);
+                check("g6: acceptance report written", !rep.empty());
+
+                int n_seen = 0;
+                int n_differ = 0;
+                size_t pos = 0;
+                while ((pos = rep.find("\"offline_proxy_mse\":", pos)) != std::string::npos) {
+                    float off = 0.0f, kd = 0.0f;
+                    if (!parse_json_float_at(rep, pos, "\"offline_proxy_mse\":", &off)) break;
+                    size_t kpos = rep.find("\"kernel_direct_t2\":", pos);
+                    if (kpos == std::string::npos) break;
+                    if (!parse_json_float_at(rep, kpos, "\"kernel_direct_t2\":", &kd)) break;
+                    n_seen++;
+                    if (std::fabs(off - kd) > 1e-9f) n_differ++;
+                    pos = kpos;
+                }
+                check("g6: report has per-tensor scores", n_seen >= 2);
+                check("g6: kernel_direct_t2 is measured, not the offline proxy",
+                      n_differ > 0);
+            }
+
+            std::filesystem::remove_all(sidecar_dir);
+            std::remove(acc_fixture);
+            std::remove(acc_output);
+            std::remove(acc_report);
+            std::remove("/tmp/test_l5_dispatch_acc.policy.json");
+            std::remove("/tmp/test_l5_dispatch_acc.duckdb");
+        }
     }
 
     // Cleanup.

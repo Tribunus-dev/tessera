@@ -236,6 +236,12 @@ struct ts_dispatch_result {
     // independent and can both be set in --no-tessera-l5-joint=false
     // + adaptive_requantize=true scenarios (legacy).
     bool        l5_joint_ran = false;
+    // True only when the joint search ran against real model forwards.
+    // With no drafter/talker paths the harness substitutes synthetic
+    // all-zero-logits forwards: the search mechanism is exercised but
+    // no real optimization happens. The weights-only fallback keys off
+    // this, so "joint ran" alone must never be read as "L5 did work".
+    bool        l5_joint_real_forwards = false;
     std::string l5_joint_report_json;     // schema llama.tessera.l5-joint-loop.v1
     bool        l5_joint_and_gate_passed = false;  // all active models' delta < epsilon
     float       l5_joint_winning_ppl = 0.0f;       // sum of normalized deltas (active only)

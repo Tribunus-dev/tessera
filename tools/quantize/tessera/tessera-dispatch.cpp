@@ -484,16 +484,23 @@ static float ts_dispatch_forced_t2(const float * weights, const float * act_scal
 // tessera-l1-fitness.h) which copies the F32 data into a local
 // std::vector, so the second pass walks the local copy, not
 // the file.
+//
+// The acceptance verdict has the source `w` but no separate `w_hat`
+// reconstruction, so both arguments of the underlying tail metric are
+// the same buffer: `ts_l1_kernel_direct_t2_tail` measures
+// ||w_hat - dequant_kernel||^2 / ||w_original||^2, and with
+// w_hat == w_original == w that reduces to the source-vs-dequant
+// Frobenius, which is the measurement we want. This helper takes one
+// `w` so a call site cannot pass the two apart.
 static float ts_dispatch_kernel_direct_t2(
         const char * tensor_name,
         const char * sidecar_dir,
-        const float * w_original,
-        const float * w_hat,
+        const float * w,
         int64_t n,
         float tau,
         float lambda_tail) {
     if (sidecar_dir == nullptr || sidecar_dir[0] == '\0' ||
-        tensor_name == nullptr || w_original == nullptr || w_hat == nullptr || n <= 0) {
+        tensor_name == nullptr || w == nullptr || n <= 0) {
         return -1.0f;  // sentinel: no measurement available
     }
     std::vector<float> kdeq;
@@ -505,7 +512,7 @@ static float ts_dispatch_kernel_direct_t2(
     if ((int64_t)kdeq.size() != n) {
         return -1.0f;  // sentinel: shape mismatch
     }
-    return ts_l1_kernel_direct_t2_tail(w_hat, w_original, kdeq.data(),
+    return ts_l1_kernel_direct_t2_tail(w, w, kdeq.data(),
                                        n, tau, lambda_tail);
 }
 
@@ -1869,17 +1876,11 @@ int ts_dispatch_run(const ts_dispatch_params * params,
     // hook no longer writes the F16 L1.5 (it would re-introduce the
     // round-trip); the dispatch does.
     {
-        // Read the dequant dir from the same env var the runtime hook
-        // uses (the CLI flag has already been pushed to
-        // tessera_debug::set_dequant_dir by common/arg.cpp, but the
-        // dispatch runs from a separate code path that may not have
-        // been through the CLI; the env-var fallback is the safe
-        // canonical source).
-        std::string l15_dir;
-        const char * env = std::getenv("LLAMA_TILE640_DEBUG_DEQUANT_DIR");
-        if (env != nullptr && env[0] != '\0') {
-            l15_dir = env;
-        }
+        // Resolve through tessera_debug so both sources reach us: the
+        // env var AND `--tessera-dequant-dir` (which arrives via
+        // set_dequant_dir with no env var set). Reading the env var
+        // directly here silently skipped L1.5 capture on the CLI path.
+        const std::string & l15_dir = tessera_debug::dequant_dir();
         if (!l15_dir.empty() && tessera_debug::dequant_w4a4_enabled() &&
             tessera_debug::l15_dtype_is_f16()) {
             std::string l15_err;
@@ -3211,16 +3212,30 @@ int ts_dispatch_run(const ts_dispatch_params * params,
                 name_ptrs.data(), (int64_t) name_ptrs.size(), 0);
             ts_score_map gmap;   // grad: empty (no output_sensitivity)
 
-            // Normalize the spec weights to sum 1.0 (ts_l5_combine does the
-            // weighted sum as-is; normalization is the caller's job per the
-            // spec).
-            float wsum = 0.0f;
-            for (const auto & e : spec_entries) wsum += e.weight;
-            if (wsum <= 0.0f) wsum = 1.0f;
+            // A scorer that is empty (grad: the dispatch captures no
+            // output_sensitivity) or constant across the roster (layer:
+            // ts_l5_layer_position_prior returns a uniform 0.5 when the
+            // block count is 0, as it is here) carries no ranking signal.
+            // Including it in the normalization would spend part of the
+            // weight budget on nothing and make the reported weights a lie
+            // about which signals actually drove the result, so drop it and
+            // renormalize over what is left. Ranking is unaffected either
+            // way -- a constant is an affine shift -- but the receipt now
+            // says which signals were real.
+            auto is_degenerate = [](const ts_score_map & m) {
+                if (m.empty()) return true;
+                const float first = m.begin()->second;
+                for (const auto & kv : m) {
+                    if (std::fabs(kv.second - first) > 1e-12f) return false;
+                }
+                return true;
+            };
 
             const ts_score_map * scorers[4];
             float weights[4];
             int n_s = 0;
+            float wsum = 0.0f;
+            std::vector<std::string> dropped;
             for (const auto & e : spec_entries) {
                 const ts_score_map * m = nullptr;
                 if (e.name == "hessian")      m = &hmap;
@@ -3228,10 +3243,30 @@ int ts_dispatch_run(const ts_dispatch_params * params,
                 else if (e.name == "layer")   m = &lmap;
                 else if (e.name == "grad")    m = &gmap;
                 if (m == nullptr) continue;
+                if (is_degenerate(*m)) {
+                    dropped.push_back(e.name);
+                    continue;
+                }
                 scorers[n_s] = m;
-                weights[n_s] = e.weight / wsum;
+                weights[n_s] = e.weight;
+                wsum += e.weight;
                 n_s++;
             }
+            if (wsum <= 0.0f) wsum = 1.0f;
+            for (int i = 0; i < n_s; i++) weights[i] /= wsum;
+
+            if (!dropped.empty()) {
+                std::string names;
+                for (size_t i = 0; i < dropped.size(); i++) {
+                    if (i > 0) names += ", ";
+                    names += dropped[i];
+                }
+                std::fprintf(stderr, "tessera-dispatch: l5-scorer: dropped %zu "
+                             "scorer(s) carrying no signal (%s); weights "
+                             "renormalized over the remaining %d\n",
+                             dropped.size(), names.c_str(), n_s);
+            }
+
             ts_score_map combined;
             if (n_s > 0) {
                 combined = ts_l5_combine(scorers, weights, n_s);
@@ -3250,12 +3285,26 @@ int ts_dispatch_run(const ts_dispatch_params * params,
                 << "  \"schema\": \"llama.tessera.l5-scorer.v1\",\n"
                 << "  \"spec\": \"" << params->l5_scorer << "\",\n"
                 << "  \"weights\": {";
-            for (size_t i = 0; i < spec_entries.size(); i++) {
-                if (i > 0) rep << ", ";
-                rep << "\"" << spec_entries[i].name << "\": "
-                    << spec_entries[i].weight / wsum;
+            {
+                // Effective weights: degenerate scorers are 0 and the rest
+                // are renormalized, so this echoes what actually ran.
+                bool first_w = true;
+                for (const auto & e : spec_entries) {
+                    const bool was_dropped =
+                        std::find(dropped.begin(), dropped.end(), e.name) != dropped.end();
+                    if (!first_w) rep << ", ";
+                    first_w = false;
+                    rep << "\"" << e.name << "\": "
+                        << (was_dropped ? 0.0f : e.weight / wsum);
+                }
             }
             rep << "},\n"
+                << "  \"dropped_scorers\": [";
+            for (size_t i = 0; i < dropped.size(); i++) {
+                if (i > 0) rep << ", ";
+                rep << "\"" << dropped[i] << "\"";
+            }
+            rep << "],\n"
                 << "  \"hessian\": {\"n_scored\": " << l5_hessian_n_scored
                 << ", \"n_cached\": " << l5_hessian_n_cached
                 << ", \"n_factorized\": " << l5_hessian_n_factorized
@@ -3327,12 +3376,32 @@ int ts_dispatch_run(const ts_dispatch_params * params,
 
     // --- step 7a-legacy: L5 adaptive requantize loop (weights-only) ---
     //
-    // Deprecated path. Runs when --tessera-adaptive-requantize is set
-    // AND l5_joint_mode is false. Re-quantizes flagged tensors in
-    // place (refreshing the GGUF descriptors via
-    // ts_gguf_repoint_tensor_cluster) and emits an l5-loop.json report.
-    // Superseded by the joint PPL path; kept for compatibility.
-    if (params->adaptive_requantize && !params->l5_joint_mode) {
+    // The fallback for when the joint PPL path did no real work.
+    // Re-quantizes flagged tensors in place (refreshing the GGUF
+    // descriptors via ts_gguf_repoint_tensor_cluster) and emits an
+    // l5-loop.json report.
+    //
+    // The gate used to be `adaptive_requantize && !l5_joint_mode`,
+    // which contradicted the comment above calling this the fallback:
+    // l5_joint_mode is on by default, so this never ran. That mattered
+    // because the joint path does NOT need models to "succeed" -- with
+    // no drafter/talker paths the harness substitutes synthetic
+    // all-zero-logits forwards and the search converges on nothing
+    // while still setting l5_joint_ran and emitting a receipt. So an
+    // ordinary quantize run (no spec-decoder GGUFs on the command
+    // line, the common case) got no L5 fixup at all while reporting
+    // that L5 had run.
+    //
+    // Now the weights-only loop runs whenever the joint path did not
+    // optimize against real forwards -- because it was disabled,
+    // because it failed, or because it fell back to synthetic ones.
+    const bool joint_did_real_work =
+        params->l5_joint_mode && result->l5_joint_ran && result->l5_joint_real_forwards;
+    if (params->adaptive_requantize && !joint_did_real_work) {
+        if (params->verbose && params->l5_joint_mode && !joint_did_real_work) {
+            std::fprintf(stderr, "tessera-dispatch: L5 joint had no real forwards; "
+                         "running the weights-only loop\n");
+        }
         ts_dispatch_run_l5_loop(params, result, in_ctx, ggml_ctx, out_ggml_ctx, refine_map,
                                  db_wrap);
     }
@@ -3471,20 +3540,10 @@ int ts_dispatch_run(const ts_dispatch_params * params,
                 // produce a real measurement; if no sidecar is
                 // present, fall back to the composite (offline proxy)
                 // so the existing G6 contract is preserved.
-                //
-                // In the acceptance verdict we have the source `w`
-                // but not a separate `w_hat` reconstruction. The L1
-                // sidecar IS the dequant output, so the kernel-direct
-                // measurement is `||dequant_kernel - source||^2 / ||
-                // source||^2` directly. We pass `w` as both arguments
-                // because `ts_l1_kernel_direct_t2_tail` measures
-                // `||w_hat - dequant_kernel||^2 / ||w_original||^2`;
-                // with `w_hat = w_original = w` this reduces to the
-                // source-vs-dequant Frobenius, which is what we want.
                 {
                     const float kd = ts_dispatch_kernel_direct_t2(
                         item.name.c_str(), kf_dir_buf.c_str(),
-                        w.data(), w.data(), (int64_t)w.size(),
+                        w.data(), (int64_t)w.size(),
                         params->l6_tail_tau, params->l6_tail_weight);
                     if (kd >= 0.0f) {
                         at.kernel_direct_t2 = kd;
@@ -3518,7 +3577,7 @@ int ts_dispatch_run(const ts_dispatch_params * params,
                     {
                         const float kd = ts_dispatch_kernel_direct_t2(
                             item.name.c_str(), kf_dir_buf.c_str(),
-                            nullptr, w.data(), (int64_t)w.size(),
+                            w.data(), (int64_t)w.size(),
                             params->l6_tail_tau, params->l6_tail_weight);
                         if (kd >= 0.0f) {
                             at.kernel_direct_t2 = kd;
@@ -3884,6 +3943,7 @@ int ts_dispatch_run_l5_joint(
 
     // ---- Populate the result struct ----
     result->l5_joint_ran           = true;
+    result->l5_joint_real_forwards = use_real_forwards;
     result->l5_joint_and_gate_passed = sresult.winning_entry.measure.all_pass;
     result->l5_joint_winning_ppl   = sresult.winning_entry.joint_ppl;
     result->l5_joint_n_generations = sresult.n_generations_run;

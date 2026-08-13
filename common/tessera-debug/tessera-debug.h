@@ -158,6 +158,13 @@ namespace tessera_debug {
     // closes any currently open sidecar file.
     void set_dequant_dir(const std::string & path);
 
+    // The resolved sidecar directory (empty when disabled). Callers that
+    // need the path must use this rather than reading
+    // LLAMA_TILE640_DEBUG_DEQUANT_DIR themselves: the env var is only one
+    // of the two sources, and `--tessera-dequant-dir` arrives via
+    // set_dequant_dir with no env var set.
+    const std::string & dequant_dir();
+
     // Configure the dequant mode. Empty string (default) writes only the
     // L1 sidecar; "w4a4" writes both the L1 and L1.5 sidecars. The mode
     // can also be set via the `LLAMA_TILE640_DEBUG_DEQUANT_MODE` env var
