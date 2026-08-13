@@ -45,6 +45,53 @@ def apply_runtime_benchmark(args) -> None:
     )
 
 
+def run_l4_gate(args) -> None:
+    """Run the L4 behavioural probe on the freshly quantized GGUF.
+
+    Exit codes from e2e_probe.py: 0 PASS, 1 WARN, 2 FAIL, 3 harness
+    error. A harness error is never treated as a pass -- under
+    --l4-gate=strict it fails the run like a FAIL would, because a probe
+    that could not run has told us nothing about the model.
+    """
+    if args.l4_gate == "off":
+        return
+
+    reference = args.l4_bf16_gguf or getattr(args, "f16_model", None)
+    if not reference:
+        message = (
+            "L4 gate: no reference model. Pass --l4-bf16-gguf (or --f16-model), "
+            "or set --l4-gate=off to skip the behavioural check."
+        )
+        if args.l4_gate == "strict":
+            raise SystemExit(message)
+        print(f"WARNING: {message}", file=sys.stderr)
+        return
+
+    report = args.l4_report or f"{args.output}.l4-probe.json"
+    command = [
+        sys.executable, args.l4_probe_tool,
+        "--bf16", str(reference),
+        "--quantized", str(args.output),
+        "--llama-cli", args.l4_llama_cli,
+        "--llama-perplexity", args.l4_llama_perplexity,
+        "--out", report,
+    ]
+    if args.l4_skip_ppl:
+        command.append("--skip-ppl")
+
+    print(f"[l4] {' '.join(command)}", flush=True)
+    code = subprocess.call(command)
+
+    verdict = {0: "PASS", 1: "WARN", 2: "FAIL"}.get(code, "HARNESS-ERROR")
+    print(f"[l4] verdict={verdict} report={report}", flush=True)
+
+    if args.l4_gate == "strict" and code != 0:
+        raise SystemExit(
+            f"L4 gate (strict): {verdict}. The quantized model diverges "
+            f"behaviourally from the BF16 source; see {report}."
+        )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Calibrate and Tessera-quantize a model")
     parser.add_argument("--model-dir", required=True, help="Hugging Face safetensors directory")
@@ -156,6 +203,45 @@ def main() -> None:
         default=os.path.join(
             os.path.dirname(__file__), "..", "tessera", "per_tensor_calibrate.py"
         ),
+    )
+    # --- L4 behavioural gate (docs/runtime-aware-pipeline.md Layer 4) ---
+    # Every other layer in the pipeline closes on weight-space or
+    # perplexity proxies. This is the only check that the quantized model
+    # still behaves like the BF16 source, which is the failure mode that
+    # motivated the pipeline (0.86 % drafter acceptance while the
+    # per-tensor metrics looked fine). It runs after the quantize step,
+    # against the artifact that was actually produced.
+    parser.add_argument(
+        "--l4-gate",
+        choices=("off", "warn", "strict"),
+        default="warn",
+        help=(
+            "Run the L4 end-to-end probe on the quantized output. "
+            "'warn' (default) reports the verdict and continues; 'strict' "
+            "exits non-zero unless the verdict is PASS; 'off' skips it. "
+            "Needs --l4-bf16-gguf."
+        ),
+    )
+    parser.add_argument(
+        "--l4-bf16-gguf", default=None,
+        help=(
+            "BF16/F16 GGUF to use as the L4 reference. Defaults to "
+            "--f16-model when that is set."
+        ),
+    )
+    parser.add_argument(
+        "--l4-probe-tool",
+        default=os.path.join(os.path.dirname(__file__), "..", "tessera", "e2e_probe.py"),
+    )
+    parser.add_argument("--l4-llama-cli", default="./build/bin/llama-cli")
+    parser.add_argument("--l4-llama-perplexity", default="./build/bin/llama-perplexity")
+    parser.add_argument(
+        "--l4-skip-ppl", action="store_true",
+        help="Exact-match only; skips the KL/perplexity pass (faster CI gate).",
+    )
+    parser.add_argument(
+        "--l4-report", default=None,
+        help="Where to write the L4 JSON report (default: <output>.l4-probe.json).",
     )
     parser.add_argument(
         "--policy-generator",
@@ -661,6 +747,8 @@ def main() -> None:
     if args.vision_model:
         quantize_command.extend(["--vision-from", args.vision_model])
     run(quantize_command)
+
+    run_l4_gate(args)
 
     if args.hf_evidence_publish:
         if not args.hf_evidence_repo:

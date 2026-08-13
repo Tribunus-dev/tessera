@@ -483,6 +483,30 @@ hard error rather than a defaulted zero, since a silently-zero
 divergence would read as a perfect score. `--skip-ppl` runs the
 exact-match half alone (needs only `llama-cli`) as the per-PR gate.
 
+**Wired into production.** `tools/tile640/calibrate_quantize.py` --
+the calibrate-and-quantize orchestrator -- runs the probe on the
+artifact it just produced, via `--l4-gate`:
+
+| Mode | Behaviour |
+|---|---|
+| `off` | skip the probe |
+| `warn` (default) | report the verdict, continue |
+| `strict` | exit non-zero unless the verdict is PASS |
+
+Under `strict` a harness error (exit 3) fails the run exactly like a
+FAIL, because a probe that could not run has told us nothing about the
+model; likewise a missing reference GGUF. The reference defaults to
+`--f16-model` when `--l4-bf16-gguf` is not given, and the report lands
+at `<output>.l4-probe.json`.
+
+This is the "L2 -> GA -> apply -> L4" loop closing at the orchestrator
+level, which is where the original design put it
+(`--l4-pass-metric paris-exact-match` in the Layer 5 CLI sketch). The
+in-dispatch L5 loop still terminates on its own criteria -- weight-level
+`relative_frobenius` for the weights-only path, per-model PPL deltas
+for the joint path -- so L4 is an acceptance gate on the finished
+artifact rather than a per-generation signal.
+
 Gap versus the spec above: the probe has not been run against a real
 model pair, so the acceptance criteria (exits 0 on Tessera-corrected
 builds, <5 min on 12B) are written but undemonstrated.
