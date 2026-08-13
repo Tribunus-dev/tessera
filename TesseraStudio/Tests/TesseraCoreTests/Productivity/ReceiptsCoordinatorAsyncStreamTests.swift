@@ -190,10 +190,12 @@ final class ReceiptsCoordinatorAsyncStreamTests: XCTestCase {
                 collected.append(r)
             }
         }
-        // The buffer should be saturated with the
-        // newest 64; we just drained them.
-        let after = await iterator.next()
-        XCTAssertNil(after, "stream should be exhausted after the buffer drains")
+        // Draining the buffer does NOT exhaust the stream: this is a
+        // live broadcast source with no `finish()`, so `next()` here
+        // would suspend forever waiting for receipt 201 rather than
+        // return nil. Saturation is proven by the 64 collected below
+        // plus the drop count, not by asking for one more element.
+        XCTAssertEqual(collected.count, 64, "the buffer holds exactly the newest 64")
 
         let drops = await coord.droppedReceiptCount
         XCTAssertGreaterThan(drops, 0,

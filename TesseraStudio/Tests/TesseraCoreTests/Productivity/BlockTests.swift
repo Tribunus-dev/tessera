@@ -30,7 +30,10 @@ final class BlockTests: XCTestCase {
         // intentionally, this test must be updated.
         let expected: Set<BlockType> = [
             .heading, .paragraph, .list, .listItem, .table, .tableCell,
-            .image, .codeBlock, .callout, .divider, .quote, .toggle, .equation
+            .image, .codeBlock, .callout, .divider, .quote, .toggle, .equation,
+            // Track-changes and comment blocks (added after this test was
+            // first written; the editor's review mode renders them).
+            .trackInsertion, .trackDeletion, .comment,
         ]
         XCTAssertEqual(Set(BlockType.allCases), expected)
     }

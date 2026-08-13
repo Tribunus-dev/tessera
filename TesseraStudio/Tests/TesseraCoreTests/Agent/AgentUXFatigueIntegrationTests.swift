@@ -247,10 +247,11 @@ final class AgentUXFatigueIntegrationTests: XCTestCase {
     /// surface without drift. The boundary-drift guard
     /// (`TesseraTier.revoke`) is the only legal downgrade.
     func testTierFlowsFromSafetyDecisionToAllSurfaces() {
-        // The classic "outbound email" example: medium risk,
-        // not irreversible, deterministic approve path.
-        let tier2 = TesseraTier.tier(for: "send_email", risk: .high)
-        XCTAssertEqual(tier2, .tier2, "send_email at high risk should land at tier2 (sync approval)")
+        // The classic "outbound email" example. High risk implies
+        // irreversible, so it lands at tier3 (approved 2026-08-13);
+        // the tier2 reading was unreachable.
+        let emailTier = TesseraTier.tier(for: "send_email", risk: .high)
+        XCTAssertEqual(emailTier, .tier3, "send_email at high risk lands at tier3")
 
         // The destructive-verb escalation: low risk + destructive
         // verb = tier2. This is the load-bearing case for the
@@ -280,14 +281,14 @@ final class AgentUXFatigueIntegrationTests: XCTestCase {
 
         // The PendingMutation chip carries the SAME tier label.
         let pending = PendingMutation(
-            tier: tier2,
+            tier: emailTier,
             risk: .high,
             tool: "send_email",
             actionClass: "send_email",
             outcome: .pending
         )
         XCTAssertTrue(
-            pending.displayString.contains("tier: T2"),
+            pending.displayString.contains("tier: T3"),
             "PendingMutation tier label must match TesseraTier.shortLabel: \(pending.displayString)"
         )
 
@@ -316,7 +317,7 @@ final class AgentUXFatigueIntegrationTests: XCTestCase {
         let tierFromClassifier = TesseraTier.tier(for: "send_email", risk: .high)
         XCTAssertEqual(tierFromDecision, tierFromClassifier,
             "SafetyDecision.tier(forActionClass:) must agree with TesseraTier.tier(for:risk:)")
-        XCTAssertEqual(tierFromDecision, .tier2)
+        XCTAssertEqual(tierFromDecision, .tier3)
     }
 
     // MARK: - 3. Notification budget rate-limits across surfaces
@@ -436,10 +437,11 @@ final class AgentUXFatigueIntegrationTests: XCTestCase {
     /// of truth the audit log reads from.
     func testReceiptsCoordinatorAsyncStreamEmitsAndSupportsBackpressure() async {
         let coordinator = ReceiptsCoordinator()
-        // `receiptStream()` is `nonisolated` on the actor; the
-        // call returns the broadcast stream directly without
-        // hopping the actor.
-        let stream = coordinator.receiptStream()
+        // Awaited so the subscription is registered before the
+        // producer starts; otherwise the three receipts can all
+        // broadcast before this subscriber exists and the
+        // consumer below waits forever.
+        let stream = await coordinator.receiptStream()
 
         // Producer task: register three receipts. Each
         // registration is fan-out to every live subscriber.

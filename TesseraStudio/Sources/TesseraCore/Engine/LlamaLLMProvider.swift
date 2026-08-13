@@ -224,6 +224,10 @@ public actor LlamaLLMProvider: LLMProvider {
                     continuation.yield(.toolCalls(calls))
                 }
                 continuation.yield(.done)
+                // `.done` marks the last chunk; the stream must also end,
+                // or the agent loop's for-await never returns and the turn
+                // hangs after a fully successful generation.
+                continuation.finish()
             }
             continuation.onTermination = { @Sendable _ in task.cancel() }
         }

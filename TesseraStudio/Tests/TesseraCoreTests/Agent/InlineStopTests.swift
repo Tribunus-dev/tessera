@@ -89,8 +89,14 @@ final class InlineStopTests: XCTestCase {
         // Pre-approve the sleepy tool so the loop reaches execution
         // (the safety spine otherwise prompts, which is not what the
         // hard-stop test is exercising).
+        //
+        // The override alone is not enough: "sleepy" matches no rule,
+        // so it rates medium and the spine asks anyway. The responder
+        // answers that gate; without it the loop parks and the test
+        // hangs rather than fails.
         approval.setOverride(.auto, for: "sleepy")
         defer { approval.clearOverride(for: "sleepy") }
+        _ = ApprovalAutoResponder(engine: approval)
 
         let loop = TesseraAgentLoop(
             registry: registry,

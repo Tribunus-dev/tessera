@@ -97,10 +97,14 @@ final class TesseraAgentLoopSafetyTests: XCTestCase {
     /// than fall through to the auto policy. Denying every prompt feeds the
     /// breaker, which trips on the third denial and interrupts the loop.
     func testAskUserForcesPromptAndUserDenialTripsBreaker() async {
-        let registry = TesseraToolRegistry(tools: [StubTool(name: "list_items", defaultApprovalLevel: .auto)])
+        // A MUTATING tool. Low-risk reads now auto-approve regardless of
+        // sandbox (approved 2026-08-13), so a read would never reach the
+        // forced prompt this test exists to exercise. "write_items"
+        // rates medium, which the spine gates even at .auto.
+        let registry = TesseraToolRegistry(tools: [StubTool(name: "write_items", defaultApprovalLevel: .auto)])
         let approval = TesseraApprovalEngine()
-        approval.setOverride(.auto, for: "list_items")
-        defer { approval.clearOverride(for: "list_items") }
+        approval.setOverride(.auto, for: "write_items")
+        defer { approval.clearOverride(for: "write_items") }
 
         // Resolve every forced prompt with a denial, off the loop's own path.
         let resolver = Task { @MainActor in
@@ -116,7 +120,7 @@ final class TesseraAgentLoopSafetyTests: XCTestCase {
         let loop = TesseraAgentLoop(
             registry: registry,
             approvalEngine: approval,
-            llmProvider: RepeatToolProvider(toolName: "list_items"),
+            llmProvider: RepeatToolProvider(toolName: "write_items"),
             maxIterations: 10,
             sandboxEnforceable: false
         )

@@ -22,21 +22,31 @@ final class TesseraNotificationBudgetTests: XCTestCase {
     override func setUp() async throws {
         try await super.setUp()
         TesseraNotificationBudgetLog.reset()
-        withSettings([
-            TesseraSettingsKey.telemetryEnabled: true,
-        ]) {
-            // no-op body; just seed the defaults for the duration of
-            // the test
-        }
+        // Set telemetry for the lifetime of the test, restoring it in
+        // tearDown. `withSettings` is scoped - it restores when its body
+        // returns - so calling it here with an empty body left telemetry
+        // at its default `false`, and `append` dropped every event: the
+        // audit-trail assertions saw an empty log.
+        savedTelemetry = UserDefaults.standard.object(forKey: TesseraSettingsKey.telemetryEnabled)
+        UserDefaults.standard.set(true, forKey: TesseraSettingsKey.telemetryEnabled)
         budget = TesseraNotificationBudget()
         await budget.setDevMode(false)
     }
 
     override func tearDown() async throws {
         TesseraNotificationBudgetLog.reset()
+        if let savedTelemetry {
+            UserDefaults.standard.set(savedTelemetry, forKey: TesseraSettingsKey.telemetryEnabled)
+        } else {
+            UserDefaults.standard.removeObject(forKey: TesseraSettingsKey.telemetryEnabled)
+        }
+        savedTelemetry = nil
         budget = nil
         try await super.tearDown()
     }
+
+    /// Previous `telemetryEnabled` value, restored in tearDown.
+    private var savedTelemetry: Any?
 
     // MARK: - Cap enforcement
 
@@ -81,7 +91,8 @@ final class TesseraNotificationBudgetTests: XCTestCase {
         _ = await budget.tryPost(category: .training, title: "tr-1", body: "ok")
         _ = await budget.tryPost(category: .workflow, title: "wf-2", body: "ok")
         _ = await budget.tryPost(category: .workflow, title: "wf-3", body: "blocked")
-        XCTAssertEqual(await budget.deliveredToday(), 3)
+        let delivered = await budget.deliveredToday()
+        XCTAssertEqual(delivered, 3)
     }
 
     // MARK: - Per-UTC-day reset
@@ -92,9 +103,11 @@ final class TesseraNotificationBudgetTests: XCTestCase {
         for i in 1...3 {
             _ = await budget.tryPost(category: .workflow, title: "wf-\(i)", body: "ok")
         }
-        XCTAssertEqual(await budget.deliveredToday(), 3)
+        let beforeReset = await budget.deliveredToday()
+        XCTAssertEqual(beforeReset, 3)
         await budget.advanceDay(by: 1)
-        XCTAssertEqual(await budget.deliveredToday(), 0)
+        let afterReset = await budget.deliveredToday()
+        XCTAssertEqual(afterReset, 0)
         let ok = await budget.tryPost(category: .workflow, title: "wf-newday", body: "ok")
         XCTAssertTrue(ok, "post on the new day should be allowed")
     }
@@ -195,19 +208,17 @@ final class TesseraNotificationBudgetTests: XCTestCase {
     /// default from TesseraSettings": the cap is non-negotiable, the
     /// log is opt-in.
     func testTelemetryOffSkipsLogButKeepsCap() async {
-        withSettings([TesseraSettingsKey.telemetryEnabled: false]) {
-            // no-op
-        }
+        // Set directly rather than through the scoped `withSettings`,
+        // which restores as soon as its body returns and so left the
+        // flag on for the posts below.
+        UserDefaults.standard.set(false, forKey: TesseraSettingsKey.telemetryEnabled)
         for i in 1...3 {
             _ = await budget.tryPost(category: .workflow, title: "wf-\(i)", body: "ok")
         }
         let fourth = await budget.tryPost(category: .workflow, title: "wf-4", body: "ok")
         XCTAssertFalse(fourth, "cap must still hold with telemetry off")
         XCTAssertEqual(TesseraNotificationBudgetLog.events().count, 0)
-        // Restore so tearDown's reset does not write under a different flag.
-        withSettings([TesseraSettingsKey.telemetryEnabled: true]) {
-            // no-op
-        }
+        // tearDown restores the pre-test value.
     }
 
     // MARK: - Hard cap API

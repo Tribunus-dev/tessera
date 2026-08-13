@@ -171,6 +171,9 @@ public struct RemoteLLMProvider: LLMProvider {
                         }
                     }
                     continuation.yield(.done)
+                    // `.done` marks the last chunk; the stream must also
+                    // end, or the agent loop's for-await never returns.
+                    continuation.finish()
                 } catch {
                     continuation.finish()
                 }

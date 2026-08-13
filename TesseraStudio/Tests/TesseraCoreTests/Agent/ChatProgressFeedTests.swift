@@ -119,15 +119,18 @@ final class ChatProgressFeedTests: XCTestCase {
             persona: .tessy, toolName: "list_models", argumentsSummary: ""
         )))
         XCTAssertEqual(controller.liveState.count, 2)
-        // The controller's API does not expose a `presented` /
-        // `isShowing` / notification hook that the host could
-        // observe. (We can't easily prove a negative across
-        // the module API, but the public surface used by the
-        // feed view is `liveState` and that's it.)
-        let mirror = Mirror(reflecting: controller)
-        let publicPropertyNames = mirror.children.compactMap { $0.label }
-        XCTAssertTrue(publicPropertyNames.contains("liveState"),
-            "controller should expose liveState to the feed")
+        // The feed reads `liveState` and nothing on the controller
+        // pushes: appending entries must not raise anything the host
+        // would present. `pendingApproval` is the one property that
+        // does drive a sheet, and only a real approval gate sets it -
+        // never a feed entry.
+        //
+        // This used to reflect over `Mirror(reflecting: controller)`
+        // looking for a "liveState" child, which asserted on the
+        // @Observable macro's backing storage (`_liveState`) rather
+        // than on the controller, and failed for that reason alone.
+        XCTAssertNil(controller.pendingApproval,
+            "feed entries must not raise a presented surface")
     }
 
     func testClearLiveStateDoesNotAutoPresent() {
