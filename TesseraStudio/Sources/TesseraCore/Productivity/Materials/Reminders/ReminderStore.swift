@@ -104,6 +104,20 @@ public struct ReminderStore: ReminderStoring, Sendable {
                 "priority": .string(reminder.priority.rawValue),
             ]
         )
+        // Fire-and-forget material receipt: failure does not block the upsert.
+        Task {
+            try? await dataLayer.appendMaterialReceipt(
+                entityID: reminder.id,
+                receiptType: ReminderReceiptPayload.receiptType,
+                payload: [
+                    "entityID": .string(reminder.id.uuidString),
+                    "action": .string(receiptType == ReminderReceiptType.created ? "create" : "create"),
+                    "reminderID": .string(reminder.id.uuidString),
+                    "title": .string(reminder.title),
+                    "due": .string(Self.iso8601(reminder.triggerAt)),
+                ]
+            )
+        }
         return reminder
     }
 
@@ -172,6 +186,20 @@ public struct ReminderStore: ReminderStoring, Sendable {
                 "acknowledgedAt": .string(Self.iso8601(now)),
             ]
         )
+        // Fire-and-forget material receipt: failure does not block the acknowledgement.
+        Task {
+            try? await dataLayer.appendMaterialReceipt(
+                entityID: id,
+                receiptType: ReminderReceiptPayload.receiptType,
+                payload: [
+                    "entityID": .string(id.uuidString),
+                    "action": .string("complete"),
+                    "reminderID": .string(id.uuidString),
+                    "title": .string(updated.title),
+                    "due": .string(Self.iso8601(updated.triggerAt)),
+                ]
+            )
+        }
         return updated
     }
 
@@ -221,6 +249,18 @@ public struct ReminderStore: ReminderStoring, Sendable {
                 receiptType: ReminderReceiptType.deleted.rawValue,
                 payload: [:]
             )
+            // Fire-and-forget material receipt: failure does not block the deletion.
+            Task {
+                try? await dataLayer.appendMaterialReceipt(
+                    entityID: id,
+                    receiptType: ReminderReceiptPayload.receiptType,
+                    payload: [
+                        "entityID": .string(id.uuidString),
+                        "action": .string("delete"),
+                        "reminderID": .string(id.uuidString),
+                    ]
+                )
+            }
         }
         return didDelete
     }

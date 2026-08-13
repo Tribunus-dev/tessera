@@ -111,6 +111,18 @@ public struct EmailStore: Sendable {
                 receiptType: EmailReceiptType.delete.rawValue,
                 payload: [:]
             )
+            // Fire-and-forget material receipt: failure does not block the deletion.
+            Task {
+                try? await dataLayer.appendMaterialReceipt(
+                    entityID: id,
+                    receiptType: EmailReceiptPayload.receiptType,
+                    payload: [
+                        "entityID": .string(id.uuidString),
+                        "action": .string("delete"),
+                        "emailID": .string(id.uuidString),
+                    ]
+                )
+            }
         }
         return didDelete
     }
@@ -199,6 +211,19 @@ public struct EmailStore: Sendable {
                 "next": .bool(read),
             ]
         )
+        // Fire-and-forget material receipt: failure does not block the mutation.
+        Task {
+            try? await dataLayer.appendMaterialReceipt(
+                entityID: id,
+                receiptType: EmailReceiptPayload.receiptType,
+                payload: [
+                    "entityID": .string(id.uuidString),
+                    "action": .string(read ? "receive" : "receive"),
+                    "emailID": .string(id.uuidString),
+                    "threadID": .string(email.threadID ?? ""),
+                ]
+            )
+        }
         return email
     }
 
@@ -220,6 +245,20 @@ public struct EmailStore: Sendable {
                 "next": .bool(starred),
             ]
         )
+        // Fire-and-forget material receipt: failure does not block the mutation.
+        Task {
+            try? await dataLayer.appendMaterialReceipt(
+                entityID: id,
+                receiptType: EmailReceiptPayload.receiptType,
+                payload: [
+                    "entityID": .string(id.uuidString),
+                    "action": .string("flag"),
+                    "emailID": .string(id.uuidString),
+                    "threadID": .string(email.threadID ?? ""),
+                    "flagged": .bool(starred),
+                ]
+            )
+        }
         return email
     }
 

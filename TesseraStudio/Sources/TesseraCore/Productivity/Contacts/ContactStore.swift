@@ -56,6 +56,18 @@ public struct ContactStore: Sendable {
                 "phoneCount": .number(Double(contact.phones.count)),
             ]
         )
+        // Fire-and-forget material receipt: failure does not block the upsert.
+        Task {
+            try? await dataLayer.appendMaterialReceipt(
+                entityID: contact.id,
+                receiptType: ContactReceiptPayload.receiptType,
+                payload: [
+                    "entityID": .string(contact.id.uuidString),
+                    "action": .string("create"),
+                    "contactID": .string(contact.id.uuidString),
+                ]
+            )
+        }
         return contact
     }
 
@@ -86,6 +98,18 @@ public struct ContactStore: Sendable {
                 receiptType: ContactReceiptType.delete.rawValue,
                 payload: [:]
             )
+            // Fire-and-forget material receipt: failure does not block the deletion.
+            Task {
+                try? await dataLayer.appendMaterialReceipt(
+                    entityID: id,
+                    receiptType: ContactReceiptPayload.receiptType,
+                    payload: [
+                        "entityID": .string(id.uuidString),
+                        "action": .string("delete"),
+                        "contactID": .string(id.uuidString),
+                    ]
+                )
+            }
         }
         return didDelete
     }
@@ -164,6 +188,19 @@ public struct ContactStore: Sendable {
                 "weight": .number(Double(weight)),
             ]
         )
+        // Fire-and-forget material receipt: failure does not block the link.
+        Task {
+            try? await dataLayer.appendMaterialReceipt(
+                entityID: contactID,
+                receiptType: ContactReceiptPayload.receiptType,
+                payload: [
+                    "entityID": .string(contactID.uuidString),
+                    "action": .string("link"),
+                    "contactID": .string(contactID.uuidString),
+                    "linkedTo": .string(otherEntityID.uuidString),
+                ]
+            )
+        }
         return link
     }
 

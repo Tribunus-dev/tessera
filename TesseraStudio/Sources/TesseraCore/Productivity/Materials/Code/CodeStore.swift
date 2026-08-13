@@ -115,6 +115,19 @@ public final class CodeStore: @unchecked Sendable {
             receiptType: receiptType.rawValue,
             payload: payload
         )
+        // Fire-and-forget material receipt: failure does not block the upsert.
+        Task {
+            try? await dataLayer?.appendMaterialReceipt(
+                entityID: file.id,
+                receiptType: CodeReceiptPayload.receiptType,
+                payload: [
+                    "entityID": .string(file.id.uuidString),
+                    "action": .string("fileWrite"),
+                    "fileID": .string(file.id.uuidString),
+                    "path": .string(file.path),
+                ]
+            )
+        }
         return file
     }
 
@@ -241,6 +254,19 @@ public final class CodeStore: @unchecked Sendable {
                 "filename": .string(file.filename),
             ]
         )
+        // Fire-and-forget material receipt: failure does not block the deletion.
+        Task {
+            try? await dataLayer?.appendMaterialReceipt(
+                entityID: id,
+                receiptType: CodeReceiptPayload.receiptType,
+                payload: [
+                    "entityID": .string(id.uuidString),
+                    "action": .string("fileDelete"),
+                    "fileID": .string(id.uuidString),
+                    "path": .string(file.path),
+                ]
+            )
+        }
     }
 
     /// Rename a file. The id is stable; the path
