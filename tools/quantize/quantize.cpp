@@ -2144,14 +2144,31 @@ int llama_quantize(int argc, char ** argv) {
                 stem.resize(stem.size() - 5);
             }
             tparams.tessera_db_path = stem + ".tessera.duckdb";
-            fprintf(stderr, "tessera: recording run to %s (pass --tessera-db none to disable)\n",
-                    tparams.tessera_db_path.c_str());
+            if (!params.dry_run) {
+                fprintf(stderr, "tessera: recording run to %s (pass --tessera-db none to disable)\n",
+                        tparams.tessera_db_path.c_str());
+            }
         }
         tparams.force_requantize             = tp.force_requantize;
         tparams.verbose                     = tp.verbose;
         tparams.runtime_probe                = tp.runtime_probe;
         tparams.runtime_probe_bf16           = tp.runtime_probe_bf16;
         tparams.runtime_probe_l2_out         = tp.runtime_probe_l2_out;
+        // --dry-run never reaches the standard path's guard: this branch
+        // returns before llama_model_quantize (where dry-run is
+        // implemented), so an unguarded dispatch here ran the FULL GA
+        // calibration under a flag that promises to do nothing. Observed
+        // 2026-08-13: a --dry-run smoke test burned 16 CPU-minutes of
+        // real calibration (and created the run's DuckDB) before being
+        // killed. Tessera output size is not knowable without quantizing
+        // (the outlier count is data-dependent), so dry-run reports the
+        // plan and exits.
+        if (params.dry_run) {
+            printf("tessera: dry-run -- dispatch skipped (would quantize to '%s', record to '%s')\n",
+                   fname_out.c_str(),
+                   tparams.tessera_db_path.empty() ? "<none>" : tparams.tessera_db_path.c_str());
+            return 0;
+        }
         ts_dispatch_result tresult;
         std::string terr;
         if (ts_dispatch_run(&tparams, &tresult, &terr) != 0) {
