@@ -190,7 +190,14 @@ public struct SheetGridView: View {
         let coord = SheetCellCoord(row: row, col: col)
         let isSelected = viewModel.selectedCell == coord
         let isEditing = viewModel.editingCell == coord
-        let cellText = viewModel.sheet.cellText(row: row, col: col)
+        let format = viewModel.sheet.cellFormat(row: row, col: col)
+        // The COMPUTED value, rendered under the cell's number format:
+        // `=SUM(B1:B4)` shows its total, and a currency cell shows the
+        // symbol. Editing swaps back to the SOURCE text (see
+        // `beginEditingCell`) - a user editing $1,234.50 must see the
+        // formula, which is the spreadsheet convention.
+        let value = viewModel.workbook.value(row: row, col: col)
+        let cellText = SheetValueRenderer.string(for: value, format: format)
 
         return Group {
             if isEditing {
@@ -208,18 +215,23 @@ public struct SheetGridView: View {
             } else {
                 Text(cellText)
                     .font(.caption)
+                    .fontWeight(format.isBold ? .bold : .regular)
+                    .italic(format.isItalic)
+                    .foregroundStyle(textColor(format) ?? .primary)
                     .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: textAlignment(format, value: value))
                     .padding(.horizontal, 6)
                     .contentShape(Rectangle())
             }
         }
         .frame(maxWidth: .infinity).frame(height: 32)
+        .background(fillColor(format) ?? Color.clear)
         .background(isEditing ? Color.accentColor.opacity(0.08) : (isSelected ? Color.accentColor.opacity(0.12) : Color.clear))
         .overlay(
             RoundedRectangle(cornerRadius: 2)
                 .stroke(isSelected || isEditing ? Color.accentColor : Color.clear, lineWidth: 1)
         )
+        .overlay(cellBorders(format))
         .overlay(Rectangle().frame(width: 1).foregroundStyle(.separator), alignment: .trailing)
         .overlay(Rectangle().frame(height: 1).foregroundStyle(.separator), alignment: .bottom)
         .onTapGesture {
@@ -278,6 +290,55 @@ public struct SheetGridView: View {
             // Tab/Shift+Tab, Enter/Shift+Enter, arrows, Escape, F2 all handled here.
             GridKeyCapture(viewModel: viewModel)
         }
+    }
+
+    // MARK: - Cell format rendering
+
+    /// Numbers right, everything else left, unless the user chose. The
+    /// automatic case is what makes a column of figures line up on the
+    /// decimal without anyone configuring it.
+    private func textAlignment(_ format: SheetCellFormat, value: Value) -> Alignment {
+        switch format.alignment {
+        case .leading:  return .leading
+        case .center:   return .center
+        case .trailing: return .trailing
+        case .automatic:
+            if case .number = value { return .trailing }
+            return .leading
+        }
+    }
+
+    private func fillColor(_ format: SheetCellFormat) -> Color? {
+        format.fillHex.flatMap(Color.init(hex:))
+    }
+
+    private func textColor(_ format: SheetCellFormat) -> Color? {
+        format.textHex.flatMap(Color.init(hex:))
+    }
+
+    /// Borders drawn as edge rectangles rather than a stroked shape, so
+    /// a cell can carry any subset of the four edges.
+    @ViewBuilder
+    private func cellBorders(_ format: SheetCellFormat) -> some View {
+        ZStack {
+            if format.borders.contains(.top) {
+                Rectangle().frame(height: 1).foregroundStyle(.primary)
+                    .frame(maxHeight: .infinity, alignment: .top)
+            }
+            if format.borders.contains(.bottom) {
+                Rectangle().frame(height: 1).foregroundStyle(.primary)
+                    .frame(maxHeight: .infinity, alignment: .bottom)
+            }
+            if format.borders.contains(.leading) {
+                Rectangle().frame(width: 1).foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if format.borders.contains(.trailing) {
+                Rectangle().frame(width: 1).foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+        }
+        .allowsHitTesting(false)
     }
 
     private func columnLabel(index: Int) -> String {

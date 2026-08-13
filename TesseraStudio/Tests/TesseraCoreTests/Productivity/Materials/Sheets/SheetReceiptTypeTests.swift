@@ -14,9 +14,24 @@ final class SheetReceiptTypeTests: XCTestCase {
     }
 
     func testCountMatchesSpec() {
-        // 14 logical vocab entries; if this breaks you added or
-        // removed a case — update the pin list below.
-        XCTAssertEqual(SheetReceiptType.allCases.count, 20)
+        // A deliberate tripwire: raw values are persisted, so adding or
+        // removing a case is a vocabulary change. If this breaks, add
+        // the new case to the stability pins below and bump the count.
+        XCTAssertEqual(SheetReceiptType.allCases.count, 21)
+    }
+
+    func testSetCellFormatIsStable() {
+        XCTAssertEqual(SheetReceiptType.setCellFormat.rawValue, "sheet_cell_format_changed")
+    }
+
+    /// A restyle must stay distinguishable from a data edit: an auditor
+    /// reading the chain has to tell "the number changed" from "the
+    /// number is now shown in bold".
+    func testFormatChangeIsNotACellChange() {
+        XCTAssertNotEqual(
+            SheetReceiptType.setCellFormat.rawValue,
+            SheetReceiptType.setCell.rawValue
+        )
     }
 
     func testUpsertIsStable() {

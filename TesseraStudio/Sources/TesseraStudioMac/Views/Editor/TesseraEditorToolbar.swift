@@ -61,6 +61,12 @@ public struct FormattingState: Equatable {
     public var showGridlines: Bool = false
     public var commentCount: Int = 0
     public var pendingChangeCount: Int = 0
+    // Sheets-only state - the format of the selected cell. Carried here
+    // rather than read from the view model so the ribbon stays a pure
+    // function of its inputs, the same as it is for the text surfaces.
+    public var sheetNumberFormat: SheetNumberFormat = .general
+    public var sheetBorders: SheetCellBorders = .none
+    public var hasSheetSelection: Bool = false
 
     public enum Alignment: Int, Equatable {
         case leading = 0  // Left
@@ -148,7 +154,10 @@ public struct TesseraEditorToolbar: View {
         func isAvailable(for mode: EditorMode) -> Bool {
             switch self {
             case .home:    return true
-            case .insert:  return mode == .document || mode == .notes
+            // Sheets gets Insert for functions and rows/columns; it has
+            // no page layout and no track-changes surface, so Layout and
+            // Review stay off rather than opening onto dead buttons.
+            case .insert:  return mode == .document || mode == .notes || mode == .sheets
             case .layout:  return mode == .document
             case .review:  return mode == .document || mode == .notes
             case .view:    return true
@@ -251,8 +260,12 @@ public struct TesseraEditorToolbar: View {
     private var ribbonContentArea: some View {
         HStack(spacing: 0) {
             switch activeTab {
-            case .home:    homeContent
-            case .insert:  insertContent
+            // Sheets shares the ribbon chrome but not its contents: bold
+            // on a grid means the cell, headings and page layout mean
+            // nothing at all. Branching here keeps one toolbar rather
+            // than forking a second one.
+            case .home:    if mode == .sheets { sheetsHomeContent } else { homeContent }
+            case .insert:  if mode == .sheets { sheetsInsertContent } else { insertContent }
             case .layout:  layoutContent
             case .review:  reviewContent
             case .view:    viewContent
@@ -348,6 +361,207 @@ public struct TesseraEditorToolbar: View {
         case .improve:      return "wand.and.stars"
         case .custom:       return "text.cursor"
         }
+    }
+
+    // MARK: - Sheets Home tab
+
+    /// The grid's Home ribbon: emphasis, alignment, number format,
+    /// cells, and AutoSum.
+    ///
+    /// Every control acts on the selected cell, so the whole strip is
+    /// disabled without a selection. Buttons that look live but silently
+    /// do nothing are worse than buttons that look unavailable.
+    private var sheetsHomeContent: some View {
+        HStack(spacing: 0) {
+            ribbonGroup {
+                RibbonToggleButton(label: "B", weight: .bold, isActive: formattingState.isBold, shortcut: "⌘B", action: { onCommand(.toggleBold) })
+                RibbonToggleButton(label: "I", italic: true, isActive: formattingState.isItalic, shortcut: "⌘I", action: { onCommand(.toggleItalic) })
+                fillMenu
+                borderMenu
+            }
+            groupSeparator()
+
+            ribbonGroup {
+                RibbonToggleButton(icon: "text.alignleft", isActive: formattingState.alignment == .leading, action: { onCommand(.alignLeft) })
+                RibbonToggleButton(icon: "text.aligncenter", isActive: formattingState.alignment == .center, action: { onCommand(.alignCenter) })
+                RibbonToggleButton(icon: "text.alignright", isActive: formattingState.alignment == .trailing, action: { onCommand(.alignRight) })
+            }
+            groupSeparator()
+
+            ribbonGroup {
+                RibbonToggleButton(
+                    label: "$",
+                    isActive: formattingState.sheetNumberFormat == .currency,
+                    action: { onCommand(.setNumberFormat(.currency)) }
+                )
+                RibbonToggleButton(
+                    label: "%",
+                    isActive: formattingState.sheetNumberFormat == .percent,
+                    action: { onCommand(.setNumberFormat(.percent)) }
+                )
+                RibbonToggleButton(
+                    label: ",",
+                    isActive: formattingState.sheetNumberFormat == .comma,
+                    action: { onCommand(.setNumberFormat(.comma)) }
+                )
+                groupDivider()
+                RibbonButton(label: ".00+", monospaced: true) { onCommand(.stepDecimals(1)) }
+                RibbonButton(label: ".00-", monospaced: true) { onCommand(.stepDecimals(-1)) }
+                numberFormatMenu
+            }
+            groupSeparator()
+
+            ribbonGroup {
+                rowColumnMenu
+            }
+            groupSeparator()
+
+            ribbonGroup {
+                RibbonButton(label: "AutoSum", icon: "sum") { onCommand(.autoSum) }
+            }
+        }
+        .disabled(!formattingState.hasSheetSelection)
+        .opacity(formattingState.hasSheetSelection ? 1 : 0.4)
+        .help(formattingState.hasSheetSelection ? "" : "Select a cell first")
+    }
+
+    /// Number formats that do not have their own one-click button.
+    private var numberFormatMenu: some View {
+        Menu {
+            ForEach(SheetNumberFormat.allCases, id: \.self) { format in
+                Button {
+                    onCommand(.setNumberFormat(format))
+                } label: {
+                    if formattingState.sheetNumberFormat == format {
+                        Label(format.displayName, systemImage: "checkmark")
+                    } else {
+                        Text(format.displayName)
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "textformat.123")
+                .symbolRenderingMode(.hierarchical)
+                .font(.system(size: 13))
+                .frame(minWidth: 28, minHeight: 28)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .help("Number format")
+    }
+
+    /// A short fixed palette rather than a colour picker: model cells
+    /// are colour-coded by convention (inputs, formulas, checks), and a
+    /// fixed set keeps a workbook legible.
+    private var fillMenu: some View {
+        Menu {
+            Button("No fill") { onCommand(.setCellFill(nil)) }
+            Divider()
+            ForEach(Self.fillPalette, id: \.hex) { entry in
+                Button(entry.name) { onCommand(.setCellFill(entry.hex)) }
+            }
+        } label: {
+            Image(systemName: "paintpalette")
+                .symbolRenderingMode(.hierarchical)
+                .font(.system(size: 13))
+                .frame(minWidth: 28, minHeight: 28)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .help("Cell fill")
+    }
+
+    private static let fillPalette: [(name: String, hex: String)] = [
+        ("Yellow", "#FFF3C4"),
+        ("Green", "#D8F3DC"),
+        ("Blue", "#D7E8FF"),
+        ("Red", "#FFD9D9"),
+        ("Grey", "#E9E9E9"),
+    ]
+
+    private var borderMenu: some View {
+        Menu {
+            Button("All borders") { onCommand(.setCellBorders(.all)) }
+            Button("Outline") { onCommand(.setCellBorders(.all)) }
+            Button("Bottom border") { onCommand(.setCellBorders(.bottom)) }
+            Button("Top border") { onCommand(.setCellBorders(.top)) }
+            Divider()
+            Button("No border") { onCommand(.setCellBorders(.none)) }
+        } label: {
+            Image(systemName: "squareshape.split.2x2")
+                .symbolRenderingMode(.hierarchical)
+                .font(.system(size: 13))
+                .frame(minWidth: 28, minHeight: 28)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .help("Borders")
+    }
+
+    private var rowColumnMenu: some View {
+        Menu {
+            Button("Insert row above") { onCommand(.insertSheetRow(above: true)) }
+            Button("Insert row below") { onCommand(.insertSheetRow(above: false)) }
+            Button("Delete row", role: .destructive) { onCommand(.deleteSheetRow) }
+            Divider()
+            Button("Insert column left") { onCommand(.insertSheetColumn(before: true)) }
+            Button("Insert column right") { onCommand(.insertSheetColumn(before: false)) }
+            Button("Delete column", role: .destructive) { onCommand(.deleteSheetColumn) }
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "tablecells.badge.ellipsis")
+                    .symbolRenderingMode(.hierarchical)
+                    .font(.system(size: 13))
+                Text("Cells").font(.system(size: 9))
+            }
+            .frame(minHeight: 28)
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .help("Insert and delete rows and columns")
+    }
+
+    // MARK: - Sheets Insert tab
+
+    private var sheetsInsertContent: some View {
+        HStack(spacing: 0) {
+            ribbonGroup {
+                functionMenu
+                RibbonButton(label: "AutoSum", icon: "sum") { onCommand(.autoSum) }
+            }
+            groupSeparator()
+            ribbonGroup {
+                rowColumnMenu
+            }
+        }
+        .disabled(!formattingState.hasSheetSelection)
+        .opacity(formattingState.hasSheetSelection ? 1 : 0.4)
+    }
+
+    /// The aggregates that account for most of what anyone types into a
+    /// model. Each drops `=NAME()` in the cell and opens it for editing,
+    /// so the user lands with the caret between the parentheses.
+    private static let commonFunctions = [
+        "SUM", "AVERAGE", "COUNT", "MIN", "MAX", "IF", "VLOOKUP", "NPV", "IRR",
+    ]
+
+    private var functionMenu: some View {
+        Menu {
+            ForEach(Self.commonFunctions, id: \.self) { name in
+                Button(name) { onCommand(.insertFunction(name)) }
+            }
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "function")
+                    .symbolRenderingMode(.hierarchical)
+                    .font(.system(size: 13))
+                Text("Function").font(.system(size: 9))
+            }
+            .frame(minHeight: 28)
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .help("Insert a function")
     }
 
     // MARK: - Insert tab
@@ -804,6 +1018,20 @@ public enum EditorCommand: Codable, Equatable, Hashable {
     case previousComment
     // AI Rewrite (Phase 11 P2)
     case aiRewrite(mode: RewriteMode)
+    // Sheets ribbon. Every one of these acts on the selected cell; the
+    // command carries no coordinate because the host already owns the
+    // selection and a stale coordinate in a queued command would edit
+    // the wrong cell.
+    case setNumberFormat(SheetNumberFormat)
+    case stepDecimals(Int)
+    case setCellFill(String?)
+    case setCellBorders(SheetCellBorders)
+    case insertSheetRow(above: Bool)
+    case deleteSheetRow
+    case insertSheetColumn(before: Bool)
+    case deleteSheetColumn
+    case autoSum
+    case insertFunction(String)
 }
 
 // MARK: - Ribbon-specific types
