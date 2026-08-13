@@ -10,7 +10,6 @@
 
 #include "ggml.h"
 #include "ggml-backend.h"
-#include "gguf_weight_stream.h"
 
 #include <stddef.h>
 #include <stdbool.h>
@@ -18,6 +17,10 @@
 struct ggml_tensor;
 struct ggml_cgraph;
 struct ggml_backend_ane_program;
+// Opaque here: gguf_weight_stream.h is private to ggml/src/ggml-ane/, and
+// this header only passes the stream through as a pointer. Including it
+// would break every consumer outside that directory.
+struct ane_weight_stream_t;
 
 #ifdef __cplusplus
 extern "C" {
