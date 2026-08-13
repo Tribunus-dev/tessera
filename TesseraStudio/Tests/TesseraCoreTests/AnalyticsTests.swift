@@ -197,7 +197,7 @@ final class ABReportTests: XCTestCase {
 final class L2ReportTests: XCTestCase {
     private let sampleJSON = """
     {
-      "schema": "llama.tessera.runtime-probe.v1",
+      "schema": "llama.tessera.runtime-probe.v2",
       "layer": "L2",
       "bf16_model": "model-bf16.gguf",
       "quant_model": "model-tessera.gguf",

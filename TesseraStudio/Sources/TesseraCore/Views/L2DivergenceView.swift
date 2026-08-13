@@ -2,7 +2,7 @@ import SwiftUI
 import Charts
 
 /// Renders an L2 BF16-vs-quantized divergence report
-/// (llama.tessera.runtime-probe.v1): per-tensor divergence sorted worst-first,
+/// (llama.tessera.runtime-probe.v2): per-tensor divergence sorted worst-first,
 /// flagged tensors (relative Frobenius above their type's tolerance) highlighted,
 /// and a chart comparing each tensor's divergence against its type-specific
 /// flag threshold.

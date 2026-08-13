@@ -6,7 +6,7 @@ import Foundation
 //   ArchiveReport     tessera.map-elites-archive.v1   (tessera-search.cpp)
 //   AcceptanceVerdict llama.tessera.acceptance.v1     (tessera-acceptance.cpp)
 //   ABReport          A/B harness receipt             (tessera-ab-harness.cpp)
-//   L2Report          llama.tessera.runtime-probe.v1  (tessera-l2-diff.cpp)
+//   L2Report          llama.tessera.runtime-probe.v2  (tessera-l2-diff.cpp)
 //
 // Decoding is defensive (missing fields fall back to neutral defaults) to
 // match the rest of the Studio models.
@@ -466,7 +466,12 @@ public struct ABTensorScore: Codable, Sendable, Identifiable {
 
 // MARK: - L2 divergence report
 
-/// L2 BF16-vs-quantized divergence report (schema llama.tessera.runtime-probe.v1).
+/// L2 BF16-vs-quantized divergence report (schema llama.tessera.runtime-probe.v2).
+///
+/// `relativeFrobenius` is a norm ratio, ||W - R||_F / ||W||_F. Schema v1
+/// carried the un-rooted energy ratio under the same key, so a v1 value
+/// converts forward as sqrt(v1) -- check `schema` before comparing values
+/// across reports.
 public struct L2Report: Identifiable, Codable, Sendable {
     public let id: UUID
     public let schema: String
@@ -491,7 +496,7 @@ public struct L2Report: Identifiable, Codable, Sendable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.id = UUID()
-        self.schema = (try? c.decode(String.self, forKey: .schema)) ?? "llama.tessera.runtime-probe.v1"
+        self.schema = (try? c.decode(String.self, forKey: .schema)) ?? "llama.tessera.runtime-probe.v2"
         self.layer = (try? c.decode(String.self, forKey: .layer)) ?? "L2"
         self.bf16Model = (try? c.decode(String.self, forKey: .bf16Model)) ?? ""
         self.quantModel = (try? c.decode(String.self, forKey: .quantModel)) ?? ""

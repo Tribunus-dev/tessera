@@ -1797,6 +1797,24 @@ The 10 refinements are coupled at three points:
    AND-gate magnitude-agnostic, so adding a new loss form does
    not require re-calibrating `l5_joint_epsilon`.
 
+> **Gate before any of this (added 2026-08-12).** The 11 refinements
+> below total roughly six person-weeks and are layered on a spine
+> whose layers have never been run against a real model pair. Since
+> this spec was written, L1.5, L2's forward-pass differential, and
+> L4's prompt bank have all landed, so the spine is wired end to end
+> -- but no measurement from it exists. Consequently: every threshold
+> these refinements tune against (L2's per-type expected Frobenius,
+> L3's 0.99 cosine, L4's 0.5 PPL verdict) is an unfitted guess, and
+> at least one of them is suspected wrong by ~9x (see
+> `docs/l1-l5-pipeline-technical-report.md` section 12 item 1).
+>
+> Run one end-to-end calibration on gemma-4-12B and publish the
+> drafter-acceptance and PPL numbers **first**. That run costs days,
+> not weeks; it refits the thresholds, exercises `runtime_probe.py`
+> and `e2e_probe.py`, and will reorder the list below. Building §16's
+> tree-attention joint calibration and ANE heterogeneous dispatch on
+> top of unmeasured layers is the main risk this document carries.
+
 The recommended order of work (revised 2026-08-12 with the
 agreed mitigations folded in; see §14 for the assessment):
 

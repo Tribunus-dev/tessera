@@ -476,6 +476,51 @@ python tools/tile640/quantize_v3.py \
   --hessian-trace-policy gemma4-hessian-trace.json
 ```
 
+## L4 end-to-end probe (prompt bank)
+
+`e2e_probe.py` is Layer 4 of the runtime-aware pipeline and the only
+layer that closes on behaviour rather than on weight-space or
+perplexity proxies. It answers "does the quantized model still act
+like BF16?" with a single verdict.
+
+The bank is `prompts/` -- `paris.txt` (factual recall),
+`gsm8k-easy.txt` (one-step arithmetic), `multi-turn.txt` (four-message
+chat with a system instruction), `code.txt` (code completion) -- plus
+`bank.json` carrying the domain, token budget, and rationale per
+prompt. Reference outputs are deliberately **not** stored: the BF16
+model's own greedy continuation is the reference, so the bank stays
+model-agnostic and does not go stale when the source checkpoint
+changes.
+
+Two measurements. `exact_match` greedy-decodes each prompt from both
+models at `--temp 0` with a fixed seed and compares token-for-token,
+so the only difference between runs is the weights. The divergence
+half shells out to `llama-perplexity --save-all-logits` on the BF16
+model and `--kl-divergence-base ... --kl-divergence` on the quantized
+one, then parses `Mean PPL(Q)-PPL(base)`, `Mean PPL(Q)/PPL(base)`,
+`Mean KLD`, and `Same top p`. Top-1 agreement stands in for the
+design's `logit_rank_correlation`, which would need a top-K logit
+export that does not exist yet.
+
+Verdict is `PASS` (all match, ppl_ratio <= 2), `WARN` (exactly one
+mismatch), or `FAIL` (two or more, or ppl_ratio > 2). Exit codes are
+0/1/2, with 3 reserved for harness errors so CI can tell a model
+regression from a broken probe. A `llama-perplexity` summary that
+cannot be parsed is a hard error, never a defaulted zero -- a silent
+zero divergence would read as a perfect score.
+
+`--skip-ppl` runs the exact-match half alone (needs only
+`llama-cli`), which is the per-PR gate; the full probe is the nightly.
+
+```sh
+python3 tools/tessera/e2e_probe.py \
+  --bf16 /path/to/gemma4-bf16.gguf \
+  --quantized /path/to/gemma4-tessera.gguf \
+  --llama-cli ./build/bin/llama-cli \
+  --llama-perplexity ./build/bin/llama-perplexity \
+  --out l4-probe.json
+```
+
 ## Per-layer error table (L1 vs L1.5)
 
 `per_layer_error_table.py` consumes the L1 + L1.5 v3 sidecars and produces a

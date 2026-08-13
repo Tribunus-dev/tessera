@@ -1,0 +1,5 @@
+Complete the function body.
+
+def sum_of_squares(numbers):
+    """Return the sum of the squares of the integers in `numbers`."""
+    return

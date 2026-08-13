@@ -24,7 +24,7 @@ linear-layer tensor name. This Python orchestrator:
 
          - max_abs           = max_i |bf16[i] - quant[i]|
          - mean_abs          = mean_i |bf16[i] - quant[i]|
-         - relative_frobenius = ||bf16 - quant||_F^2 / ||bf16||_F^2
+         - relative_frobenius = ||bf16 - quant||_F / ||bf16||_F
          - top1_mismatch     = 1 if argmax(bf16) != argmax(quant) else 0
          - top5_mismatch     = 1 if top5(bf16) != top5(quant) else 0
 
@@ -34,7 +34,7 @@ linear-layer tensor name. This Python orchestrator:
      mismatch rate (fraction of positions where the argmax differs).
 
   4. Emits a JSONL report at ``--out <path>``. Schema
-     ``llama.tessera.runtime-probe.v1`` (one line per tensor per
+     ``llama.tessera.runtime-probe.v2`` (one line per tensor per
      layer per position; provenance block at the start).
 
 Designed to be the consumer of the C++ sidecar infrastructure;
@@ -63,6 +63,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import shutil
 import struct
@@ -77,7 +78,10 @@ from typing import Iterable
 import numpy as np
 
 
-SCHEMA_NAME = "llama.tessera.runtime-probe.v1"
+# v2: relative_frobenius is a norm ratio. v1 emitted the un-rooted
+# energy ratio under the same field name; convert a v1 value forward
+# with sqrt(). Check the schema string before comparing across runs.
+SCHEMA_NAME = "llama.tessera.runtime-probe.v2"
 
 # Default capture stride and row cap match the C++ sidecar defaults
 # (see common/tessera-debug/tessera-matmul-output.h). The Python
@@ -243,7 +247,9 @@ def per_tensor_divergence(
     mean_abs = float(np.mean(np.abs(diff))) if diff.size else 0.0
     bf16_sq = float(np.sum(bf16.astype(np.float64) ** 2))
     diff_sq = float(np.sum(diff ** 2))
-    rel_frob = diff_sq / bf16_sq if bf16_sq > 0.0 else 0.0
+    # Norm ratio, not the energy ratio: sqrt of sum-of-squares over
+    # sum-of-squares. Matches ts_l2_tensor_divergence under schema v2.
+    rel_frob = math.sqrt(diff_sq / bf16_sq) if bf16_sq > 0.0 else 0.0
     top1_bf16 = int(np.argmax(bf16)) if bf16.size else -1
     top1_quant = int(np.argmax(quant)) if quant.size else -1
     top1_mismatch = 1 if top1_bf16 != top1_quant else 0

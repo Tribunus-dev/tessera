@@ -1,0 +1,34 @@
+{
+  "schema": "llama.tessera.l4-prompt-bank.v1",
+  "note": "Reference outputs are not stored here. The BF16 model's own greedy continuation is the reference, so the bank stays model-agnostic and does not go stale when the source checkpoint changes.",
+  "prompts": [
+    {
+      "name": "paris",
+      "file": "paris.txt",
+      "domain": "factual",
+      "n_tokens": 8,
+      "rationale": "Single-token factual recall. The canonical smoke test: if this diverges, the quantization broke something structural."
+    },
+    {
+      "name": "gsm8k-easy",
+      "file": "gsm8k-easy.txt",
+      "domain": "arithmetic",
+      "n_tokens": 16,
+      "rationale": "One-step arithmetic. Sensitive to ffn_down and attn_output damage in the middle layers, which is where the gemma-4-12B divergence lived."
+    },
+    {
+      "name": "multi-turn",
+      "file": "multi-turn.txt",
+      "domain": "chat",
+      "n_tokens": 40,
+      "rationale": "Four-message exchange with a system instruction. Exercises longer-context attention and instruction adherence rather than single-token recall."
+    },
+    {
+      "name": "code",
+      "file": "code.txt",
+      "domain": "code",
+      "n_tokens": 32,
+      "rationale": "Code completion. Empirically the first domain to degrade under aggressive quantization, and the one a factual smoke test misses."
+    }
+  ]
+}

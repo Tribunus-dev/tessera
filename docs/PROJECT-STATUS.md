@@ -200,14 +200,14 @@ integration work is bringing Tessera's commits onto current master:
 | `llama-cli` | builds + runs | tessera fork, integration branch |
 | `llama-server` | builds + runs | tessera fork, integration branch |
 | `llama-imatrix` | builds + runs | tessera fork, integration branch |
-| Per-tensor GA calibration | ready for use | `tools/tessera/per_tensor_calibrate.py` |
+| Per-tensor GA calibration | ready for use | `tessera-awq.{h,cpp}` (step 5c of `ts_dispatch_run`) |
 | dspark-gguf-patch preprocessor | ready | `tools/dspark-gguf-patch/` |
 | Spec-decoding telemetry v1 | ready | `tools/imatrix/imatrix.cpp` |
 | Spec-decoding telemetry v2 | ready | `tools/imatrix/imatrix.cpp` |
 | DFlash drafter | 30 % accept on Q4_K_M, Q5_K_M | via llama-imatrix spec path |
 | DSpark drafter | 33 % accept on Q4_0 (1-step), 11 % on Q5_K_M (3-step) | via dspark-gguf-patch |
 | Per-tensor quant policy loading | ready | `tile640_quantize_v3.py --calibration-policy` |
-| Direct-fitness GA mode | ready | `per_tensor_calibrate.py --fitness direct` |
+| Kernel-direct GA fitness (L6) | ready | `kernel-fitness --enabled --dir --blend` |
 | ANE MTP prefill | compiles, untested runtime | `common/ane-mtp.{h,mm}` |
 | `dft.` observer prefix | applied | `src/llama-graph.cpp` |
 | `--no-embedded-mtp` flag | ready | `common/arg.cpp` |
@@ -304,11 +304,13 @@ Six findings bind the roadmap:
 
 ### Priority 1 — Runtime-aware calibration pipeline (Layers 1–6)
 
-Status as of 2026-08-01. Design in `docs/pipeline-design.md`; per-layer
+Status as of 2026-08-12. Design in `docs/pipeline-design.md`; per-layer
 details, code paths, and Reality notes in
-`docs/runtime-aware-pipeline.md`. The hook and the GA fitness are no
-longer the blocker; the remaining work is the forward-pass layers and
-the L5 apply loop.
+`docs/runtime-aware-pipeline.md`; audit in
+`docs/l1-l5-pipeline-technical-report.md`. Every layer is now wired end
+to end. The blocker is no longer plumbing: it is that none of these
+layers has been run against a real model pair, so the pipeline's own
+thresholds are unfitted and the L6 fidelity claim is undemonstrated.
 
 - **Layer 1: kernel dequant fidelity — SHIPPED.** The
   `LLAMA_TILE640_DEBUG_DEQUANT_DIR` hook emits the effective dequantized
@@ -317,22 +319,30 @@ the L5 apply loop.
   `ggml-cuda/cuda-dump-dequant.cu`, `ggml-metal/metal-dump-dequant.mm`),
   all called from their real matmul paths. Fitness reader in
   `tessera-l1-fitness.{h,cpp}`. This is the runtime ground truth.
-- **Layer 1.5: W4A4 FP16 reference sidecar — PARTIAL.** Writer and
-  reader shipped and the suffix mismatch is fixed (both sides now use
-  `.act.dequant.f32`), so the path is exercisable end-to-end. Remaining:
-  the backend hooks currently emit the same F32 buffer as L1 rather than
-  an FP16 ground truth.
-- **Layer 2: BF16 vs quantized differential — SHIPPED (weight-level).**
-  Per-tensor weight-level divergence and type-aware flagging in
-  `tessera-l2-diff.{h,cpp}`. The two-forward-pass differential and
-  `tools/tessera/runtime_probe.py` are not yet built.
+- **Layer 1.5: W4A4 FP16 reference sidecar — SHIPPED.** The capture
+  lives at calibration time, not in the runtime hook: the hook can only
+  produce `F16(F32(dequant))`, a round-trip that collapses L3's cosine
+  to ~1.0 by construction. `ts_dispatch_capture_l15_references`
+  (`tessera-dispatch-l15.cpp`) writes `F16` of the original weight per
+  2D tensor instead. The runtime path survives as a no-op behind
+  `TESSERA_L15_RUNTIME_ROUNDTRIP`. Test: `test_l15_capture.cpp`.
+- **Layer 2: BF16 vs quantized differential — SHIPPED.** Per-tensor
+  weight-level divergence and type-aware flagging in
+  `tessera-l2-diff.{h,cpp}`; the two-forward-pass differential in
+  `tools/tessera/runtime_probe.py` (never run against a real model
+  pair). The type-aware flag table is unfitted — see item 1 below.
 - **Layer 3: per-token coherence — SHIPPED (per-row cosine).**
   `tessera-l3-coherence.{h,cpp}` produces per-row cosine between the L1
-  and L1.5 sidecars. Per-token KL and `per_token_coherence.py` are not
-  yet built; depends on the L1.5 fix above.
-- **Layer 4: end-to-end probe — PARTIAL.** A data-free PPL/KL
-  substitute exists in `tessera-ppl.{h,cpp}`. The prompt-bank probe,
-  exact-match, and rank-correlation metrics are not yet built.
+  and L1.5 sidecars; unblocked now that L1.5 is a real reference. Per-token
+  KL and `per_token_coherence.py` are not yet built.
+- **Layer 4: end-to-end probe — SHIPPED.** A data-free PPL/KL
+  substitute in `tessera-ppl.{h,cpp}`, plus the prompt bank
+  (`tools/tessera/prompts/`) and driver
+  (`tools/tessera/e2e_probe.py`): greedy exact-match against the BF16
+  model's own continuation, and PPL delta / mean KLD / top-1 agreement
+  via `llama-perplexity --kl-divergence`. PASS/WARN/FAIL with exit
+  codes 0/1/2 (3 = harness error). Not yet run against a real model
+  pair, and not yet wired into the L5 termination criterion.
 - **Layer 5: adaptive requantization — SHIPPED (on the dispatch path).**
   Sensitivity scorers and L2-closing adaptive requant in
   `tessera-l5.{h,cpp}`. The full generational loop
@@ -348,22 +358,32 @@ the L5 apply loop.
   consumes L1 sidecars as `t_l^2 = ||dequant_kernel(W_l) - W_l||_F^2 /
   ||W_l||_F^2`, blended with the offline proxy, via
   `tessera-l1-fitness.{h,cpp}` and `tessera-dispatch.cpp:263-294`. CLI:
-  `kernel-fitness --enabled`, `--dir`, `--blend`. This is what closes
-  the loop; the loop is closed at the GA-scoring level.
+  `kernel-fitness --enabled`, `--dir`, `--blend`. The G6 acceptance
+  verdict measures the real kernel-direct `t_l^2` as well (fixed
+  2026-08-12; the thread-pool branch had been falling back to the
+  offline proxy, which pinned `ranking_disagreement` at 0 and made the
+  gate unpassable).
 
 Remaining work, ranked:
 
-1. ~~Fix the L1.5 suffix mismatch so the W4A4 reference path is live~~
-   (done 2026-08-01; L3's end-to-end use is unblocked).
-2. Build the forward-pass differential (L2) and the prompt-bank probe
-   (L4) - these are what make the L6 fidelity claim measurable as
-   user-visible behavior, not just per-tensor `t_l^2`.
-3. ~~Wire `tessera-l5` into the dispatch path and add the
-   apply-plan-and-iterate loop.~~ (done 2026-08-01; the loop is live
-   behind the `l5` subcommand's `--enabled` / `--no-enabled` flag,
-   gated on L2 `relative_frobenius` rather than L4).
-4. Lift the L1.5 ground truth to actual FP16 (currently bit-identical
-   to L1).
+1. Fit the L2 flag thresholds against a real model. `ts_l2_expected_frob`
+   returns `2e-2` for T640 and L5 flags at `1.5x`, but
+   `docs/per-tensor-calibration.md` reports a median relative MSE of
+   `0.18` in the same squared convention. If the measured figure is
+   right, every T640 tensor is flagged every generation and L5's
+   selection step is a no-op that still emits a well-formed receipt.
+2. Wire L4 into the L5 termination criterion. The prompt-bank probe
+   now exists, but the weights-only L5 still terminates on L2
+   `relative_frobenius` and the joint L5 on PPL deltas, so the loop can
+   converge on a model that fails the behavioural probe.
+3. One end-to-end run on gemma-4-12B reporting drafter acceptance
+   against the 0.86 % baseline plus a PPL delta. This supplies the data
+   for item 1 and exercises `runtime_probe.py`.
+4. ~~Fix the L1.5 suffix mismatch so the W4A4 reference path is live~~
+   (done 2026-08-01). ~~Lift the L1.5 ground truth to actual FP16~~
+   (done 2026-08-12, at calibration time). ~~Wire `tessera-l5` into the
+   dispatch path and add the apply-plan-and-iterate loop.~~ (done
+   2026-08-01; gated on L2 `relative_frobenius` rather than L4).
 
 ### Priority 2 — Rebase dspark-int work onto integration
 

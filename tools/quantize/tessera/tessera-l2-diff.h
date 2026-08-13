@@ -24,7 +24,9 @@
 struct ts_l2_divergence {
     float max_abs;              // max_i |bf16_i - quant_i|
     float mean_abs;             // mean_i |bf16_i - quant_i|
-    float relative_frobenius;   // ||bf16 - quant||_F^2 / ||bf16||_F^2
+    float relative_frobenius;   // ||bf16 - quant||_F / ||bf16||_F (norm
+                                // ratio; schema v1 emitted the un-rooted
+                                // energy ratio under this same name)
     float per_layer_norm;       // per-element RMS of the difference
 };
 
@@ -33,7 +35,7 @@ struct ts_l2_divergence {
 // (Y_ref = X @ W_bf16) and the quantized matmul (Y_quant = X @ W_hat),
 // then compute:
 //
-//   act_l2_frob = ||Y_ref - Y_quant||_F^2 / ||Y_ref||_F^2
+//   act_l2_frob = ||Y_ref - Y_quant||_F / ||Y_ref||_F
 //   act_l2_top1_mismatch = mean over rows of 1[argmax(Y_ref[r]) != argmax(Y_quant[r])]
 //
 // The inputs are per-row F32 vectors of the matmul outputs (a
@@ -44,7 +46,7 @@ struct ts_l2_divergence {
 // for this tensor). The function reduces over all positions to a
 // single scalar pair (frobenius + top1_mismatch).
 struct ts_l2_act_divergence {
-    float relative_frobenius;   // ||Y_ref - Y_quant||_F^2 / ||Y_ref||_F^2
+    float relative_frobenius;   // ||Y_ref - Y_quant||_F / ||Y_ref||_F
     float top1_mismatch;        // mean over rows of argmax mismatch
     int64_t n_samples;          // number of matmul invocations (= rows)
 };
@@ -166,7 +168,23 @@ struct ts_l2_config {
 void ts_l2_default_config(ts_l2_config * cfg);
 
 // Expected relative Frobenius baseline for a quant type (spec 2.3 table).
-// Unknown types fall back to a conservative 5e-2.
+// Unknown types fall back to a conservative 2.2361e-1.
+//
+// UNITS (schema v2): norm ratios, matching
+// ts_l2_divergence::relative_frobenius. Schema v1 carried the un-rooted
+// energy ratios under the same field name; these entries are the sqrt of
+// their v1 values, so the flag decision is unchanged at equal underlying
+// error.
+//
+// UNFITTED: the v1 numbers came from the design spec's estimates, not
+// from measurement, and converting units does not make them measured.
+// docs/per-tensor-calibration.md reports a median relative MSE of 0.18
+// across the calibrated tensors -- 0.42 in v2 units, ~3x the T640 entry
+// here. If that holds on a real model, every T640 tensor trips the flag
+// in every L5 generation and the loop's tensor selection is vacuous
+// while still emitting a well-formed receipt. Refit against a real
+// runtime-probe report before trusting an L5 receipt. See
+// docs/l1-l5-pipeline-technical-report.md section 12 item 1.
 float ts_l2_expected_frob(const char * qtype);
 
 // Core metric: divergence between two weight buffers of n elements.
@@ -182,7 +200,7 @@ int ts_l2_run(const ts_l2_config * cfg,
               int64_t n_tensors,
               ts_l2_report * report);
 
-// Write the JSON report (schema llama.tessera.runtime-probe.v1).
+// Write the JSON report (schema llama.tessera.runtime-probe.v2).
 // Returns 0 on success, -1 on error.
 int ts_l2_write_report(const char * path,
                        const ts_l2_config * cfg,

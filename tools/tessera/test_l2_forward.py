@@ -37,6 +37,7 @@ import json
 import os
 import shutil
 import struct
+import math
 import sys
 import tempfile
 from pathlib import Path
@@ -110,7 +111,9 @@ def test_synthetic_metrics() -> bool:
         diff = bf16[pos].astype(np.float64) - quant[pos].astype(np.float64)
         ref_max = float(np.max(np.abs(diff)))
         ref_mean = float(np.mean(np.abs(diff)))
-        ref_rel = float(np.sum(diff ** 2)) / float(np.sum(bf16[pos].astype(np.float64) ** 2))
+        # schema v2: norm ratio, so sqrt the energy ratio
+        ref_rel = math.sqrt(float(np.sum(diff ** 2))
+                            / float(np.sum(bf16[pos].astype(np.float64) ** 2)))
         if not (abs(div["max_abs"] - ref_max) < 1e-6):
             print(f"FAIL pos={pos} max_abs: got {div['max_abs']}, ref {ref_max}", file=sys.stderr)
             return False
@@ -207,7 +210,7 @@ def test_synthetic_metrics() -> bool:
         if prov["record_type"] != "provenance":
             print(f"FAIL jsonl prov record_type: {prov['record_type']}", file=sys.stderr)
             return False
-        if prov["schema"] != "llama.tessera.runtime-probe.v1":
+        if prov["schema"] != "llama.tessera.runtime-probe.v2":
             print(f"FAIL jsonl prov schema: {prov['schema']}", file=sys.stderr)
             return False
         for i in range(n_positions):
@@ -280,7 +283,7 @@ def test_end_to_end(llama_cli: str) -> bool:
             print("FAIL: report is empty", file=sys.stderr)
             return False
         prov = json.loads(lines[0])
-        if prov["schema"] != "llama.tessera.runtime-probe.v1":
+        if prov["schema"] != "llama.tessera.runtime-probe.v2":
             print(f"FAIL: schema mismatch: {prov['schema']}", file=sys.stderr)
             return False
         if prov["record_type"] != "provenance":

@@ -1,5 +1,24 @@
 # SEPTQ retrospective addendum
 
+> **Exposure note (2026-08-12).** The heavy-tail failure documented
+> below is not live in the routed path: `ts_regime_classify`
+> (`tools/quantize/tessera/tessera-regime.cpp`) never returns
+> `TS_EXPERT_SEPTQ`. Its cascade selects only DartQuant, CHAMP-Q,
+> FLRQ, LRQ, and AWQ, so no tensor is auto-routed to SEPTQ today.
+> SEPTQ is reachable two other ways: explicit selection via the expert
+> profile (`use_septq`), and the G6 acceptance gate's forced-expert
+> measurement (`at.hessian_t2`), which is a measurement rather than a
+> production route -- and because SEPTQ scores badly on heavy-tailed
+> tensors it will not be the `best_single_t2` minimum, so it does not
+> distort the verdict.
+>
+> The consequence is that the open real-data validation below is a
+> **prerequisite for adding SEPTQ to the cascade**, not a live
+> production risk. If it is ever added, the per-row kurtosis gate
+> (option 3 under "Honest assessment") should land in the same change:
+> the router already computes `kurtosis` on every descriptor, so the
+> gate is a threshold check, not new machinery.
+
 Addendum to the v1 SEPTQ commit `6179dc753` and to the SEPTQ prod
 work on branch `tessera/track-septq-prod` (commits `f80152db4` through
 `fcb98e4a3`).

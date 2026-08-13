@@ -4932,7 +4932,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
     add_opt(common_arg(
         {"--out"}, "PATH",
         "Tessera: output JSONL path for the L2 forward-pass differential report "
-        "(schema llama.tessera.runtime-probe.v1, one line per tensor per layer per position). "
+        "(schema llama.tessera.runtime-probe.v2, one line per tensor per layer per position). "
         "The actual JSONL is written by tools/tessera/runtime_probe.py after joining the BF16 "
         "and quantized matmul-output sidecars.",
         [](common_params &, const std::string & value) {

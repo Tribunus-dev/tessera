@@ -145,13 +145,19 @@ validates the v3 schema. Per-tensor outlier counts, per-row timing,
 kernel id, and dispatch count are present in the sidecar and consumed
 by the L3 metric and the L5 orchestrator.
 
-One open gap: the L1.5 sidecar is currently populated with the same
-F32 dequant buffer as L1 rather than an FP16 ground truth. The
-writer/reader contract uses `.act.dequant.f32` /
-`.act.dequant.f16` correctly; the kernel hook's path to an actual
-FP16 reference is the next step (acknowledged in the hook comments as
-a follow-up). Until that lands, L1.5 reads the same data as L1 and
-L3's per-row cosine becomes trivially 1.0.
+L1.5's FP16 ground truth has since landed, but not in the runtime
+hook. The round-trip the hook could produce -- `F16(F32(dequant))` --
+is not a reference at all: it collapses L3's per-row cosine to ~1.0 by
+construction. The capture moved to calibration time instead:
+`ts_dispatch_capture_l15_references`
+(`tools/quantize/tessera/tessera-dispatch-l15.cpp`) walks the input
+GGUF and writes `F16` of the **original** weight per 2D tensor, which
+is the actual ground truth. The runtime hooks in all three backends
+retain the old path as a no-op behind `TESSERA_L15_RUNTIME_ROUNDTRIP`
+for legacy readers. Capture is gated on `w4a4` mode plus an
+`l15_dtype` of `f16`; the sidecar directory resolves through
+`tessera_debug::dequant_dir()`, so both `--tessera-dequant-dir` and
+the env var reach it. Tested by `test_l15_capture.cpp`.
 
 ## 4. L2: BF16-vs-quantized differential
 
@@ -183,12 +189,46 @@ into a `ts_l2_report`. The schema is `llama.tessera.runtime-probe.v1`
 so the L5 adaptive requantizer (`ts_l5_adaptive_requant`) can read
 the report back.
 
+**Units (schema v2).** `relative_frobenius` is
+`||W - R||_F / ||W||_F`, a norm ratio. Through schema v1 it emitted the
+un-rooted energy ratio under the same field name, which made every
+reported figure read about twice as good as it was. The v2 producer
+takes the sqrt, and the type table entries are the sqrt of their v1
+values, so a tensor at a given underlying error flags identically
+before and after the correction. A v1 report converts forward as
+`sqrt(v1)`; readers must check the schema string rather than the field
+name to know the units.
+
+Note that the offline GA fitness and the L6 `t_l^2` remain squared --
+`t_l^2` is the Linearity-Theorem term and is *defined* as an energy
+ratio, so it was not changed. The two are no longer directly
+comparable; square the L2 figure first.
+
+**The table is unfitted.** These baselines came from the design
+spec's estimates, not from measurement, and they disagree with the
+only measured figure available: `docs/per-tensor-calibration.md`
+reports a median relative MSE of `0.18` across the 48 calibrated
+tensors, roughly 9x the T640 baseline in the same convention. If the
+measured number holds on a real model, every T640 tensor exceeds the
+`1.5x` flag threshold in every L5 generation, and L5's "identify the
+tensors that exceed their type's expected divergence" step selects
+everything -- the loop still runs and still emits a well-formed
+receipt, it just is not choosing. Refitting this table against a real
+`runtime-probe.v1` report is item 1 of section 12.
+
 ### 4.3 Acceptance state
 
 The weight-level differential is shipped and tested
 (`test_l2l5.cpp::test_l2()` exercises the end-to-end path on a
-synthetic input). The forward-pass differential
-(`tools/tessera/runtime_probe.py`) is not shipped. The 0.86 %
+synthetic input). The forward-pass differential has since landed as
+`tools/tessera/runtime_probe.py`: it drives `llama-cli` twice (BF16
+and quantized) with `--tessera-matmul-output-dir`, joins the two
+`.matmul-output.f32` sidecar directories on tensor name, and emits
+`max_abs` / `mean_abs` / `relative_frobenius` / `top1_mismatch` /
+`top5_mismatch` per tensor as JSONL. It has not been run against a
+real model pair, so the acceptance criteria (no-op F16-vs-F16 near
+machine epsilon, Q4_0-vs-F16 in the baseline range) remain
+undemonstrated. The 0.86 %
 drafter acceptance root cause was diagnosed via this layer
 on a per-tensor basis using the gemma-4-12B BF16 reference and a
 Tessera-corrected candidate; the diagnosis revealed that the bulk
@@ -227,9 +267,12 @@ skipped. Tested via `test_l2l5.cpp::test_l3()`.
 
 The per-row weight-level analogue is shipped. The full per-token
 KL/top-1/top-5 path (`tools/tessera/per_token_coherence.py`) is not
-shipped. Because L3 reads the L1.5 reference sidecar and the
-kernel-hook FP16 ground truth is pending, `ts_l3_run` would skip
-every tensor in practice until the L1.5 ground truth lands.
+shipped. `ts_l3_run` is no longer blocked: with the calibration-time
+L1.5 capture in place (section 3.3) both sidecars exist and the
+per-row cosine is a real measurement rather than a trivial 1.0. It
+has not been run against a real model, so there is no measured
+distribution of per-row cosines to set the 0.99 flag threshold
+against; the threshold is still a guess.
 
 ## 6. L4: End-to-end probe
 
@@ -257,10 +300,31 @@ a pass/fail verdict against a 0.5 threshold. Tested via
 ### 6.3 Acceptance state
 
 The data-free PPL/KL substitute is shipped and tested. The prompt
-bank, exact-match, logit-rank correlation, and
-`tools/tessera/e2e_probe.py` are not shipped. The acceptance
-criteria in the design spec (L4 PASS on a Tessera-corrected build,
-<5 min on 12B) are not demonstrable from the shipped code.
+bank and its driver have since landed as `tools/tessera/prompts/`
+(the four prompts the spec names, plus a `bank.json` manifest) and
+`tools/tessera/e2e_probe.py`.
+
+The driver differs from the spec in two ways, both deliberate. The
+reference is the BF16 model's own greedy continuation rather than a
+stored expected string, so the bank does not go stale when the source
+checkpoint changes. And `perplexity_delta` plus the rank metric reuse
+`llama-perplexity --kl-divergence` rather than a reimplementation:
+the probe saves BF16 logits, scores the quantized model against them,
+and parses `Mean PPL(Q)-PPL(base)`, `Mean PPL(Q)/PPL(base)`,
+`Mean KLD`, and `Same top p`. That last figure -- top-1 agreement --
+substitutes for the spec's `logit_rank_correlation`, which would
+require a top-K logit export that does not exist today.
+
+Verdict is PASS / WARN / FAIL with exit codes 0/1/2, and 3 for
+harness errors so CI can separate "the model regressed" from "the
+probe broke". A failure to parse the `llama-perplexity` summary is a
+hard error rather than a defaulted zero, since a silently-zero
+divergence reads as a perfect score.
+
+This is the only shipped layer that closes on behaviour rather than
+on weight-space or perplexity proxies. It has not been run against a
+real model pair, so the design spec's acceptance criteria (L4 PASS on
+a Tessera-corrected build, <5 min on 12B) remain undemonstrated.
 
 ## 7. L5: Adaptive requantization
 
@@ -424,14 +488,25 @@ offline proxy for tensors without a sidecar. Tested via
 
 ### 8.3 Acceptance state
 
-L6 is effective in the GA scoring path. One caveat from the audit:
-in the standalone dispatch acceptance path
-(`tessera-dispatch.cpp:1346`), the code hardcodes
-`at.kernel_direct_t2 = comp_t2` when no sidecar is present, which
-makes kernel-direct equal to offline. L6 is therefore effective in
-the GA scoring path but not in the dispatch acceptance verdict. The
-fix is to thread the actual kernel-direct `t_l^2` through to the
-acceptance verdict when a sidecar is present.
+L6 is effective in the GA scoring path and, since the
+`ts_dispatch_kernel_direct_t2` helper landed, in the dispatch
+acceptance verdict as well: the verdict measures the real
+kernel-direct `t_l^2` from the L1 sidecar and falls back to the
+offline composite only when no sidecar is present.
+
+The first version of that fix was live on the serial acceptance
+branch only. The gate evaluates tensors serially when
+`work.size() < 2` and on a thread pool otherwise, and the pool branch
+passed a null source buffer, so the helper returned its
+"no measurement" sentinel and every tensor fell back to the offline
+proxy. Production always takes the pool branch. The consequence was
+worse than a silent no-op: `ranking_disagreement` is
+`1 - |kendall_tau|` over the offline-vs-kernel-direct rankings, so
+identical arrays gave `tau = 1`, `disagreement = 0`,
+`novelty_survives = false` -- the G6 gate could never pass. The helper
+now takes a single `w` pointer so the two branches cannot diverge, and
+`test_l5_dispatch.cpp` covers the pool path with a four-tensor fixture
+and synthetic v3 sidecars.
 
 ## 9. The wiring: `ts_dispatch_run`
 
@@ -475,20 +550,22 @@ family, modality). The MAP-Elites archive is indexed by
 
 | Layer | Spec | Shipped | Gap |
 |------|------|---------|-----|
-| L1 | Kernel hook + sidecar; 12-20 GB per chunk | v3 TDQT with per-row outliers, timing, kernel_id, dispatch_count, provenance | L1.5 ground truth is F32 (L1 buffer), not FP16 reference |
-| L1.5 | FP16 reference sidecar | Writer/reader present; back-compat suffix fixed; F32 default for now | Kernel hook path to actual FP16 reference pending |
-| L2 | Forward-pass differential with top-1/top-5 mismatch | Weight-level differential (max-abs, mean-abs, relative Frobenius, per-layer norm) | Forward-pass variant (`tools/tessera/runtime_probe.py`) not shipped |
-| L3 | Per-token KL, top-1 mismatch, top-5 overlap | Per-row weight-level cosine | Token-level variant (`tools/tessera/per_token_coherence.py`) not shipped; L1.5 ground truth needed |
-| L4 | Prompt bank, exact-match, perplexity-delta, logit-rank correlation | Data-free PPL/KL substitute on random tokens | Prompt bank and `e2e_probe.py` not shipped |
-| L5 | Adaptive requant, schedule L2 -> GA -> apply -> L4 | Two paths shipped: weights-only `ts_l5_adaptive_requant` and joint PPL `ts_l5_joint_search` | Loop terminates on L2 weight-level `relative_frobenius`, not the L4 prompt probe |
-| L6 | Per-tensor `t_l^2` against L1 sidecar | `ts_l1_kernel_direct_t2` + `ts_l1_blended_t2` in C++ dispatch GA; Python `--fitness` choices remain offline | Effective in GA scoring path; hardcoded to offline in dispatch acceptance verdict when no sidecar present |
+| L1 | Kernel hook + sidecar; 12-20 GB per chunk | v3 TDQT with per-row outliers, timing, kernel_id, dispatch_count, provenance | None |
+| L1.5 | FP16 reference sidecar | Calibration-time capture of `F16(original weight)` via `ts_dispatch_capture_l15_references`; runtime round-trip retained as an opt-in no-op | Never run against a real model |
+| L2 | Forward-pass differential with top-1/top-5 mismatch | Weight-level differential in C++; forward-pass differential in `tools/tessera/runtime_probe.py` | `runtime_probe.py` unexercised against a real model pair |
+| L3 | Per-token KL, top-1 mismatch, top-5 overlap | Per-row weight-level cosine | Token-level variant (`per_token_coherence.py`) not shipped; 0.99 threshold unfitted |
+| L4 | Prompt bank, exact-match, perplexity-delta, logit-rank correlation | Data-free PPL/KL substitute in C++; prompt bank + `e2e_probe.py` (exact-match, PPL delta, KLD, top-1 agreement) | Never run against a real model pair; rank correlation approximated by top-1 agreement |
+| L5 | Adaptive requant, schedule L2 -> GA -> apply -> L4 | Two paths shipped: weights-only `ts_l5_adaptive_requant` and joint PPL `ts_l5_joint_search` | Loop terminates on L2 weight-level `relative_frobenius`, not the L4 prompt probe; flag thresholds unfitted (section 12 item 1) |
+| L6 | Per-tensor `t_l^2` against L1 sidecar | `ts_l1_kernel_direct_t2` + `ts_l1_blended_t2` in the C++ dispatch GA and in the acceptance verdict; Python `--fitness` choices remain offline | None |
 
-The headline gap: L1, L2, L5, L6 are on the critical path. L3 and L4
-have a weight-level / data-free analogue but lack the
-forward-pass / prompt-bank instantiation. The acceptance criteria
-that require the forward-pass variants (L4 PASS on a
-Tessera-corrected build, <5 min on 12B) are not demonstrable from
-shipped code today.
+The headline gap is no longer plumbing. L1, L1.5, L2, L5, L6 are on
+the critical path and wired end to end; L3 has a weight-level
+analogue and L4 a data-free one. What is missing is **evidence**:
+none of these layers has been run against a real model pair, so
+every threshold in the pipeline (L2's per-type expected Frobenius,
+L3's 0.99 cosine, L4's 0.5 PPL verdict) is an unfitted guess, and
+the acceptance criteria that require a real run (L4 PASS on a
+Tessera-corrected build, <5 min on 12B) remain undemonstrated.
 
 ## 11. Findings that bind the design to recent literature
 
@@ -547,27 +624,41 @@ piece is prior art; this exact composition is not.
 
 ## 12. What's left to ship
 
-In priority order:
+The L1.5 FP16 ground truth (was item 1) and the L6 acceptance verdict
+path (was item 4) have shipped; see sections 3.3 and 8.3. What
+remains, in priority order:
 
-1. **L1.5 FP16 ground truth**. The writer/reader contract is
-   correct; the kernel hook path to actual FP16 reference is the
-   next step. Unblocks L3's per-row cosine being non-trivial.
-   Estimated: 1-2 days, small C++ surface.
+1. **Fit the L2 flag thresholds to a real model**. `ts_l2_expected_frob`
+   returns `1.4142e-1` for T640 (v2 norm-ratio units) and L5 flags at
+   `1.5x` that, but `docs/per-tensor-calibration.md` reports a median
+   relative MSE of `0.18` across the 48 calibrated tensors -- `0.42` in
+   v2 units, roughly 3x the T640 entry.
+   If the measured value is right, every T640 tensor is flagged in
+   every generation and L5's tensor selection degenerates into
+   "requantize everything" while still emitting a well-formed
+   receipt. Dump the `relative_frobenius` distribution from a
+   `llama.tessera.runtime-probe.v1` report on a real model and refit
+   the table. Estimated: 1 day once a model pair is available; this
+   gates the meaning of every L5 receipt produced so far.
 
-2. **L3 per-token KL on real models**. The weight-level cosine is
-   shipped; the per-token KL path is the next step. Requires L1.5
-   FP16 ground truth and the joint forward pass harness from L5.
-   Estimated: 3-5 days, ties L3 to the L5 harness.
+2. **Wire L4 into the L5 termination criterion.** The prompt bank and
+   `e2e_probe.py` now exist (section 6.3), but L5 still terminates on
+   the L2 weight-level `relative_frobenius` (weights-only path) or on
+   per-model PPL deltas (joint path). Neither consults the behavioural
+   probe, so the loop can still converge on a model that fails L4.
+   Closing this is what the original design meant by "L2 -> GA ->
+   apply -> L4".
 
-3. **L4 prompt bank**. `prompts/paris.txt`, `prompts/gsm8k-easy.txt`,
-   `prompts/multi-turn.txt`, `prompts/code.txt`. The matchers
-   (exact_match, perplexity_delta, logit_rank_correlation) and the
-   `tools/tessera/e2e_probe.py` driver. Estimated: 3-5 days.
+3. **One end-to-end run on gemma-4-12B**. Every layer is wired but
+   none has been run against a real model pair. The number that
+   matters is drafter acceptance recovery against the 0.86 %
+   baseline, plus a PPL delta. Publish it either way. This also
+   supplies the data for item 1 and exercises `runtime_probe.py`.
 
-4. **L6 acceptance verdict path**. The `kernel_direct_t2 = comp_t2`
-   hardcode in `tessera-dispatch.cpp:1346` should be replaced with
-   the actual kernel-direct `t_l^2` when a sidecar is present.
-   Estimated: <1 day, one-line fix.
+4. **L3 per-token KL on real models**. The weight-level cosine is
+   shipped and unblocked; the per-token KL path is the next step.
+   Requires the joint forward pass harness from L5. Estimated: 3-5
+   days, ties L3 to the L5 harness.
 
 5. **HIGGS alpha_l estimation**. The cross-tensor coefficient
    `alpha_l` in the Linearity-Theorem aggregation is currently a
@@ -580,11 +671,13 @@ In priority order:
    in the 2026-08-08 design doc: per-expert stats, per-expert regime
    routing, per-expert evolutionary search, kernel-direct fitness
    per expert, and a flattened 3D GGUF that loaders actually read.
-   Estimated: 2-3 weeks, requires 1-3 (L1.5) and 4 (HIGGS).
+   Estimated: 2-3 weeks, requires 5 (HIGGS).
 
 The L5 joint PPL path is the production default and is in good
-shape. The remaining work is on the verification layers (L3, L4)
-and on the principled aggregation coefficient (HIGGS alpha_l).
+shape structurally. The centre of gravity of the remaining work has
+moved: it is no longer plumbing but calibration of the pipeline's own
+thresholds against real data, plus the behavioural probe (L4) that
+none of the shipped layers substitutes for.
 
 ## 13. Reproducibility
 

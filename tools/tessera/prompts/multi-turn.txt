@@ -1,0 +1,5 @@
+System: You are a terse assistant. Answer in one short sentence.
+User: I am planning a trip to Japan in April.
+Assistant: April is cherry blossom season, so expect crowds in Kyoto and Tokyo.
+User: What is the single most useful thing to book in advance?
+Assistant:

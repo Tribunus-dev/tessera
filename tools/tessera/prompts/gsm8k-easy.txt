@@ -1,0 +1,2 @@
+Q: A shelf holds 7 boxes. Each box holds 4 cups. How many cups are on the shelf? Answer with a single number.
+A:

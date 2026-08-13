@@ -112,15 +112,17 @@ static void test_l2() {
     std::printf("--- L2 ---\n");
 
     // bf16 weights and a quantized reconstruction scaled by (1 + eps).
-    // diff = bf16 * eps  =>  relative_frobenius = eps^2 exactly.
+    // diff = bf16 * eps  =>  relative_frobenius = eps exactly (schema v2
+    // reports the norm ratio; v1 reported eps^2, the energy ratio).
     const int64_t n = 64;
     std::vector<float> bf16((size_t)n);
     for (int64_t i = 0; i < n; i++) {
         bf16[(size_t)i] = 1.0f + 0.1f * (float)(i % 5);
     }
 
-    const float eps_bad  = 0.2f;   // rel_frob = 0.04 > 3e-2 (t640) -> flagged
-    const float eps_good = 0.1f;   // rel_frob = 0.01 < 3e-2        -> ok
+    // t640 flags above 1.5 * 1.4142e-1 = 2.1213e-1.
+    const float eps_bad  = 0.3f;   // rel_frob = 0.30 > 2.12e-1 -> flagged
+    const float eps_good = 0.1f;   // rel_frob = 0.10 < 2.12e-1 -> ok
     std::vector<float> quant_bad((size_t)n);
     std::vector<float> quant_good((size_t)n);
     for (int64_t i = 0; i < n; i++) {
@@ -130,7 +132,7 @@ static void test_l2() {
 
     // --- core metrics ---
     ts_l2_divergence d_bad = ts_l2_tensor_divergence(bf16.data(), quant_bad.data(), n);
-    check_close("l2 rel_frob == eps^2", d_bad.relative_frobenius, eps_bad * eps_bad, 1e-5f);
+    check_close("l2 rel_frob == eps", d_bad.relative_frobenius, eps_bad, 1e-5f);
     check("l2 max_abs > 0", d_bad.max_abs > 0.0f);
     check("l2 mean_abs > 0", d_bad.mean_abs > 0.0f);
     check("l2 per_layer_norm > 0", d_bad.per_layer_norm > 0.0f);
@@ -140,11 +142,15 @@ static void test_l2() {
     check_close("l2 self rel_frob == 0", d_zero.relative_frobenius, 0.0f, 1e-9f);
     check_close("l2 self max_abs == 0", d_zero.max_abs, 0.0f, 1e-9f);
 
-    // --- tolerance table ---
-    check_close("l2 tol f16",  ts_l2_expected_frob("f16"),          1e-5f, 1e-9f);
-    check_close("l2 tol q8_0", ts_l2_expected_frob("q8_0"),         1e-3f, 1e-9f);
-    check_close("l2 tol q4_k", ts_l2_expected_frob("q4_k"),         5e-2f, 1e-9f);
-    check_close("l2 tol t640", ts_l2_expected_frob("tessera_t640"), 2e-2f, 1e-9f);
+    // --- tolerance table (schema v2: norm ratios = sqrt of the v1 values) ---
+    check_close("l2 tol f16",  ts_l2_expected_frob("f16"),          3.1623e-3f, 1e-7f);
+    check_close("l2 tol q8_0", ts_l2_expected_frob("q8_0"),         3.1623e-2f, 1e-6f);
+    check_close("l2 tol q4_k", ts_l2_expected_frob("q4_k"),         2.2361e-1f, 1e-5f);
+    check_close("l2 tol t640", ts_l2_expected_frob("tessera_t640"), 1.4142e-1f, 1e-5f);
+    // Each entry must be the sqrt of its v1 value, so a tensor at a given
+    // underlying error flags identically before and after the units fix.
+    check_close("l2 tol t640 == sqrt(v1)", ts_l2_expected_frob("tessera_t640"),
+                std::sqrt(2e-2f), 1e-5f);
 
     // --- L2 activation-space differential (v3.1 spec §4) ---
     // Synthetic matmul outputs: 4 samples x 8 out_dim. Each row is a
@@ -205,14 +211,14 @@ static void test_l2() {
               d_zero.top1_mismatch == 1.0f);
 
         // Single-sample single-column: degenerate shape, no NaN/Inf.
-        // (0.5 - 0.4)^2 / 0.5^2 = 0.01 / 0.25 = 0.04
+        // sqrt((0.5 - 0.4)^2 / 0.5^2) = sqrt(0.04) = 0.2
         std::vector<float> y1_ref(1,  0.5f);
         std::vector<float> y1_qt(1,  0.4f);
         ts_l2_act_divergence d1 = ts_l2_compute_act_diff(
             y1_ref.data(), y1_qt.data(), 1, 1);
         check("act 1x1: n_samples == 1", d1.n_samples == 1);
-        check_close("act 1x1: relative_frobenius == 0.04",
-                    d1.relative_frobenius, 0.04f, 1e-5f);
+        check_close("act 1x1: relative_frobenius == 0.2",
+                    d1.relative_frobenius, 0.2f, 1e-5f);
         check_close("act 1x1: top1_mismatch == 0",
                     d1.top1_mismatch, 0.0f, 1e-9f);
 
@@ -724,7 +730,8 @@ static void test_l2() {
     check("l2 report n_flagged == 1", report.n_flagged == 1);
     check("l2 bad tensor flagged", report.tensors[0].flagged);
     check("l2 good tensor not flagged", !report.tensors[1].flagged);
-    check_close("l2 flag threshold", report.tensors[0].flag_threshold, 1.5f * 2e-2f, 1e-9f);
+    check_close("l2 flag threshold", report.tensors[0].flag_threshold,
+                1.5f * 1.4142e-1f, 1e-5f);
 
     // --- JSON round-trip ---
     ts_l2_report loaded;
@@ -752,15 +759,19 @@ static void test_l2() {
     check("l5 generation", plan.generation == 1);
     check("l5 spec name", plan.specs[0].tensor_name == "blk.0.attn_q.weight");
 
-    // overshoot = 0.04 / 0.02 = 2.0 -> new_alpha = 0.5 / 2.0 = 0.25
-    check_close("l5 overshoot", plan.specs[0].overshoot, 2.0f, 1e-4f);
-    check_close("l5 new_alpha tightened", plan.specs[0].new_alpha, 0.25f, 1e-4f);
-    check_close("l5 new_clip tightened", plan.specs[0].new_clip, 0.25f, 1e-4f);
+    // overshoot = 0.30 / 1.4142e-1 = 2.1213 -> new_alpha = 0.5 / 2.1213
+    // In v1 units this same tensor overshot by 2.0; the ratio of a norm
+    // to a norm is the sqrt of the ratio of the energies, so tightening
+    // is gentler than it was. That is the intended reading: the driver
+    // is now an error ratio rather than an energy ratio.
+    check_close("l5 overshoot", plan.specs[0].overshoot, 2.1213f, 1e-3f);
+    check_close("l5 new_alpha tightened", plan.specs[0].new_alpha, 0.5f / 2.1213f, 1e-3f);
+    check_close("l5 new_clip tightened", plan.specs[0].new_clip, 0.5f / 2.1213f, 1e-3f);
     check("l5 alpha reduced", plan.specs[0].new_alpha < ap.alpha_scale);
 
     // larger overshoot -> smaller alpha (monotonic tightening)
     ts_l2_report worse = loaded;
-    worse.tensors[0].divergence.relative_frobenius = 0.10f;  // overshoot 5.0
+    worse.tensors[0].divergence.relative_frobenius = 0.70710f;  // overshoot 5.0
     ts_l5_adaptive_plan plan2;
     ts_l5_adaptive_requant(&worse, &ap, 2, &plan2);
     check("l5 worse -> smaller alpha",

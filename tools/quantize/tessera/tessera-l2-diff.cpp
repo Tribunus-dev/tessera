@@ -19,7 +19,12 @@
 
 using json = nlohmann::json;
 
-static const char * TS_L2_SCHEMA = "llama.tessera.runtime-probe.v1";
+// v2: relative_frobenius is a norm ratio. v1 reported the un-rooted
+// energy ratio under the same field name, so a v1 value converts
+// forward as sqrt(v1). Readers must check the schema string before
+// comparing values across runs; the field name alone no longer
+// identifies the units.
+static const char * TS_L2_SCHEMA = "llama.tessera.runtime-probe.v2";
 
 // finite stand-in for an infinite relative error (zero-norm reference)
 static const float TS_L2_INF = 1e30f;
@@ -36,22 +41,25 @@ void ts_l2_default_config(ts_l2_config * cfg) {
 }
 
 float ts_l2_expected_frob(const char * qtype) {
+    // Norm-ratio units (schema v2). These are the sqrt of the v1 energy
+    // ratios, so a tensor that tripped the flag before still trips it now
+    // at the same underlying error; only the number's meaning changed.
     if (qtype == nullptr) {
-        return 5e-2f;
+        return 2.2361e-1f;   // was 5e-2
     }
     if (strcmp(qtype, "f16") == 0 || strcmp(qtype, "f32") == 0) {
-        return 1e-5f;
+        return 3.1623e-3f;   // was 1e-5
     }
     if (strcmp(qtype, "q8_0") == 0) {
-        return 1e-3f;
+        return 3.1623e-2f;   // was 1e-3
     }
     if (strcmp(qtype, "q4_k") == 0 || strcmp(qtype, "q4_0") == 0) {
-        return 5e-2f;
+        return 2.2361e-1f;   // was 5e-2
     }
     if (strcmp(qtype, "tessera_t640") == 0 || strcmp(qtype, "t640") == 0) {
-        return 2e-2f;
+        return 1.4142e-1f;   // was 2e-2
     }
-    return 5e-2f;
+    return 2.2361e-1f;       // was 5e-2
 }
 
 ts_l2_divergence ts_l2_tensor_divergence(const float * bf16,
@@ -79,7 +87,12 @@ ts_l2_divergence ts_l2_tensor_divergence(const float * bf16,
 
     d.max_abs  = (float)max_abs;
     d.mean_abs = (float)(sum_abs / (double)n);
-    d.relative_frobenius = (den > 0.0) ? (float)(num / den)
+    // ||bf16 - quant||_F / ||bf16||_F. Both accumulators are squared, so
+    // the ratio needs the sqrt to be a relative Frobenius NORM -- which is
+    // what the name has always claimed. Through v1 of the schema this
+    // returned the un-rooted energy ratio, making every reported figure
+    // read roughly twice as good as it was (0.18 is ~42 % RMS, not 18 %).
+    d.relative_frobenius = (den > 0.0) ? (float)sqrt(num / den)
                                        : (num > 0.0 ? TS_L2_INF : 0.0f);
     d.per_layer_norm = (float)sqrt(num / (double)n);
     return d;
@@ -149,7 +162,9 @@ ts_l2_act_divergence ts_l2_compute_act_diff(const float * y_ref,
         }
     }
 
-    d.relative_frobenius = (den > 0.0) ? (float)(num / den)
+    // sqrt for the same reason as the weight-level metric above: this is
+    // a relative Frobenius norm, not an energy ratio.
+    d.relative_frobenius = (den > 0.0) ? (float)sqrt(num / den)
                                        : (num > 0.0 ? TS_L2_INF : 0.0f);
     d.top1_mismatch = (float) ((double) n_mismatch / (double) n_samples);
     d.n_samples     = n_samples;
