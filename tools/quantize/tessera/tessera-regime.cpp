@@ -34,10 +34,21 @@ static float ts_regime_kurtosis(const float * data, int64_t n) {
     return (m4 / (var * var)) - 3.0f;  // excess kurtosis
 }
 
-// Effective rank: exp(H(p)) where H is Shannon entropy of the normalized
-// singular-value distribution. Measures how uniformly the matrix "uses" its
-// dimensions. Compact (low-rank) matrices have eff_rank << min(out,in).
-// Implemented via the weight column magnitudes as a proxy for singular values.
+// NORMALIZED effective rank: exp(H(p)) / n, in (0, 1] -- H is Shannon
+// entropy of the normalized singular-value distribution. Uniform "uses
+// every dimension" -> 1.0; one-hot -> 1/n. Implemented via the weight
+// column magnitudes as a proxy for singular values.
+//
+// The /n is load-bearing: every consumer speaks fractions -- the regime
+// router's low-rank branch fires at eff_rank < 0.3, ts_awq_make_cell
+// buckets with (int)(eff_rank * 5), the no-data default is 0.5, and the
+// imatrix-side producer (cv/(1+cv)) is already in [0,1). This function
+// shipped RAW (exp(H), values in the thousands) for a period: the
+// low-rank routing branch never fired, the MAP-Elites eff_rank bucket
+// pinned at 4 for every tensor, and tensor_stats rows from that era
+// (first Orpheus runs: 2841..8188) carry raw units, while talker-era
+// rows (~1.0) were normalized. Check magnitude before comparing
+// eff_rank across runs.
 static float ts_regime_eff_rank(const float * data, int64_t n) {
     if (n < 2) return 0.0f;
     float sum = 0.0f;
@@ -48,7 +59,7 @@ static float ts_regime_eff_rank(const float * data, int64_t n) {
         float p = std::fabsf(data[i]) / sum;
         if (p > 1e-12f) entropy -= p * std::logf(p);
     }
-    return std::expf(entropy);
+    return std::expf(entropy) / (float)n;
 }
 
 // Linear-interpolated p-th percentile (np.percentile semantics).
