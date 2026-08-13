@@ -9,7 +9,8 @@
 //
 //   1. ts_l5_joint_search returns 0 (success)
 //   2. status == CONVERGED
-//   3. n_generations_run == 1 (terminated at gen 0)
+//   3. n_generations_run == 4 (velocity gate needs window+1 = 4 scores,
+//      so the earliest convergence is at gen 3)
 //   4. winning_entry.joint_ppl == 0.0 (all deltas are 0)
 //   5. winning_entry.measure.all_pass is true
 //   6. gen 0's top-K has top_k entries, all with joint_ppl == 0
@@ -24,6 +25,7 @@
 
 #include "tessera-l5-joint.h"
 #include "tessera-ppl-harness.h"
+#include "tessera-convergence.h"
 
 #include <cmath>
 #include <cstdio>
@@ -145,7 +147,9 @@ static int run_case1() {
     params.max_generations   = 5;
     params.n_gen0_samples    = 32;
     params.n_evo_pop         = 16;
-    params.delta_converged   = 0.001f;
+    params.velocity_window        = 3;
+    params.velocity_threshold     = 0.001f;
+    params.acceleration_threshold = 0.002f;
     params.rng_seed          = 0x5EED5u;
     params.verbose           = true;
 
@@ -166,8 +170,8 @@ static int run_case1() {
 
     check("status == CONVERGED",
           result.status == ts_l5_joint_search_result::Status::CONVERGED);
-    check("n_generations_run == 1 (terminated at gen 0)",
-          result.n_generations_run == 1);
+    check("n_generations_run == 4 (velocity gate fires at gen 3)",
+          result.n_generations_run == 4);
 
     // Gen 0 should exist
     check("n_generations >= 1", result.generations.size() >= 1);
@@ -253,7 +257,7 @@ static int run_case1() {
 // AND-gate passes at gen 0, and the search converges. The test
 // verifies:
 //   1. status == CONVERGED
-//   2. n_generations_run == 1
+//   2. n_generations_run == 4 (velocity gate at gen 3)
 //   3. winning_entry.joint_ppl == 0
 //   4. all 5 models' per_model.delta == 0
 //
@@ -303,7 +307,9 @@ static int run_case2() {
     params.max_generations   = 5;
     params.n_gen0_samples    = 32;
     params.n_evo_pop         = 16;
-    params.delta_converged   = 0.001f;
+    params.velocity_window        = 3;
+    params.velocity_threshold     = 0.001f;
+    params.acceleration_threshold = 0.002f;
     params.rng_seed          = 0x5EED5u;
     params.verbose           = false;
 
@@ -317,7 +323,7 @@ static int run_case2() {
 
     check("status == CONVERGED (5-model AND-gate)",
           result.status == ts_l5_joint_search_result::Status::CONVERGED);
-    check("n_generations_run == 1", result.n_generations_run == 1);
+    check("n_generations_run == 4 (velocity gate at gen 3)", result.n_generations_run == 4);
     check("winning_entry.joint_ppl == 0 (5 active, all delta=0)",
           result.winning_entry.joint_ppl == 0.0f);
     check("winning_entry.measure.all_pass",
@@ -417,7 +423,9 @@ static int run_case3() {
     params.top_k             = 4;
     params.max_generations   = 5;
     params.n_gen0_samples    = 32;
-    params.delta_converged   = 0.001f;
+    params.velocity_window        = 3;
+    params.velocity_threshold     = 0.001f;
+    params.acceleration_threshold = 0.002f;
     params.rng_seed          = 0x5EED5u;
     params.verbose           = false;
 
@@ -738,19 +746,130 @@ static int run_case4() {
     }
 }
 
+// ===========================================================================
+// Case 5: ts_velocity_gate unit test (PR #11, spec §10)
+// ===========================================================================
+//
+// The velocity gate is the shared convergence primitive for the GA and
+// the L5 joint search. This case pins the finite-difference math and
+// the window semantics:
+//
+//   5a. velocity()/acceleration() match hand-computed differences.
+//   5b. converged() needs window+1 scores (window transitions).
+//   5c. window=1 converges after ONE flat transition (2 scores) - the
+//       TESSERA_STAGNATION_LIMIT=1 e2e semantics.
+//   5d. A monotonically improving series never converges.
+//   5e. reset() clears the history; window<=0 disables the gate.
+//
+
+static int run_case5() {
+    g_fail = 0;
+    std::printf("\n=== Case 5: ts_velocity_gate ===\n");
+
+    // 5a. Finite differences on a hand-computed series.
+    //     scores 1.0, 1.1, 1.4: last velocity = 1.4-1.1 = 0.3,
+    //     last acceleration = (1.4-1.1) - (1.1-1.0) = 0.2.
+    {
+        ts_velocity_gate g;
+        g.window                = 3;
+        g.velocity_threshold     = 0.001f;
+        g.acceleration_threshold = 0.002f;
+        g.add(1.0f);
+        g.add(1.1f);
+        g.add(1.4f);
+        check("velocity() = last first diff (0.3)",
+              std::fabs(g.velocity() - 0.3f) < 1e-6f);
+        check("acceleration() = second diff (0.2)",
+              std::fabs(g.acceleration() - 0.2f) < 1e-6f);
+        check("size() = 3 scores", g.size() == 3);
+        check("not converged: < window+1 scores AND jumpy history",
+              !g.converged());
+    }
+
+    // 5b. window+1 flat scores are required: the gate stays open until
+    //     the window has enough flat transitions.
+    {
+        ts_velocity_gate g;
+        g.window = 3;
+        g.velocity_threshold = 0.001f;
+        g.acceleration_threshold = 0.002f;
+        for (int i = 0; i < 3; i++) {
+            g.add(0.0f);
+            check("not converged with < window+1 scores", !g.converged());
+        }
+        g.add(0.0f);  // 4th score = 3 flat transitions
+        check("converged once window+1 flat scores are in", g.converged());
+    }
+
+    // 5c. window=1: one flat transition converges (2 scores).
+    {
+        ts_velocity_gate g;
+        g.window = 1;
+        g.velocity_threshold = 1e-5f;
+        g.acceleration_threshold = 2e-5f;
+        g.add(0.5f);
+        check("window=1 not converged with 1 score", !g.converged());
+        g.add(0.5f);
+        check("window=1 converged after one flat transition", g.converged());
+    }
+
+    // 5d. A monotonically improving series never converges (each step is
+    //     50x the velocity threshold).
+    {
+        ts_velocity_gate g;
+        g.window = 3;
+        g.velocity_threshold = 0.001f;
+        g.acceleration_threshold = 0.002f;
+        float score = 0.0f;
+        for (int i = 0; i < 20; i++) {
+            g.add(score);
+            check("improving series never converges", !g.converged());
+            score += 0.05f;
+        }
+    }
+
+    // 5e. reset() clears history; window<=0 disables the gate.
+    {
+        ts_velocity_gate g;
+        g.window = 1;
+        g.velocity_threshold = 1e-5f;
+        g.acceleration_threshold = 2e-5f;
+        g.add(0.0f);
+        g.add(0.0f);
+        check("converged before reset", g.converged());
+        g.reset();
+        check("reset() clears history", g.size() == 0 && !g.converged());
+        ts_velocity_gate off;
+        off.window = 0;  // disabled
+        off.velocity_threshold = 1e-5f;
+        off.acceleration_threshold = 2e-5f;
+        for (int i = 0; i < 10; i++) off.add(0.0f);
+        check("window<=0 never converges", !off.converged());
+    }
+
+    if (g_fail == 0) {
+        std::printf("\nCASE 5 ALL OK\n");
+        return 0;
+    } else {
+        std::printf("\nCASE 5 FAIL (%d checks failed)\n", g_fail);
+        return 1;
+    }
+}
+
 int main() {
-    std::printf("=== test_l5_joint: v2 target-only + v3 full 5-model + v4 strict + v3.5 metric ===\n");
+    std::printf("=== test_l5_joint: v2 target-only + v3 full 5-model + v4 strict + v3.5 metric + v5 velocity gate ===\n");
 
     int rc1 = run_case1();
     int rc2 = run_case2();
     int rc3 = run_case3();
     int rc4 = run_case4();
+    int rc5 = run_case5();
 
-    if (rc1 == 0 && rc2 == 0 && rc3 == 0 && rc4 == 0) {
-        std::printf("\nALL OK (all 4 cases)\n");
+    if (rc1 == 0 && rc2 == 0 && rc3 == 0 && rc4 == 0 && rc5 == 0) {
+        std::printf("\nALL OK (all 5 cases)\n");
         return 0;
     } else {
-        std::printf("\nFAIL (rc1=%d rc2=%d rc3=%d rc4=%d)\n", rc1, rc2, rc3, rc4);
+        std::printf("\nFAIL (rc1=%d rc2=%d rc3=%d rc4=%d rc5=%d)\n", rc1, rc2, rc3, rc4, rc5);
         return 1;
     }
 }

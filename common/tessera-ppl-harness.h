@@ -126,7 +126,15 @@ struct ts_l5_joint_params {
     int32_t n_gen0_samples = 32;       // N joint policies sampled in gen 0
     int32_t n_evo_pop      = 16;       // evolutionary population size
     int32_t n_evo_gens     = 2;        // evolutionary generations when escape fires
-    float delta_converged  = 0.001f;   // top-K PPL convergence: max-min < this
+    // Velocity-based convergence (PR #11, spec §10): the winning joint_ppl
+    // per generation feeds a ts_velocity_gate (common/tessera-convergence.h).
+    // The search stops when the best PPL is flat for velocity_window
+    // generations (|velocity| < velocity_threshold) without accelerating
+    // (|acceleration| < acceleration_threshold). The AND-gate epsilon
+    // stays the acceptance bar; this gate is only the stop criterion.
+    int32_t velocity_window          = 3;      // flat transitions required
+    float   velocity_threshold       = 0.001f; // max |first diff| per generation
+    float   acceleration_threshold   = 0.002f; // max |second diff| per generation
     uint32_t rng_seed      = 0x5EED5u; // search RNG seed (deterministic by default)
     ts_l5_joint_metric metric = ts_l5_joint_metric::MAX; // default MAX so drafters get full optimization
     bool   verbose         = false;

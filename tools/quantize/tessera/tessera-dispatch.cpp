@@ -1658,14 +1658,16 @@ int ts_dispatch_run(const ts_dispatch_params * params,
     evolve_params.heldout_weight     = 2.0f;
     evolve_params.seed               = (uint32_t)params->evolve_seed;
     evolve_params.verbose            = verbose;
-    // Early termination: stop a tensor's GA after 10 consecutive generations
-    // with < 1e-5 improvement in the composite score. Most tensors converge
-    // by gen 15-30; without this the GA wastes 70+% of its evaluations on
-    // stagnant populations. Combined with family warm-start (the seed_candidate
-    // field, populated by evolve_all from same-family converged tensors),
-    // later tensors in a family converge in 1-5 generations.
+    // Early termination: stop a tensor's GA after 10 consecutive flat
+    // generations (velocity gate, see tessera-convergence.h). Most
+    // tensors converge by gen 15-30; without this the GA wastes 70+% of
+    // its evaluations on stagnant populations. Combined with family
+    // warm-start (the seed_candidate field, populated by evolve_all from
+    // same-family converged tensors), later tensors in a family converge
+    // in 1-5 generations.
     evolve_params.stagnation_limit   = 10;
-    evolve_params.stagnation_epsilon = 1e-5f;
+    evolve_params.velocity_threshold     = 1e-5f;
+    evolve_params.acceleration_threshold = 2e-5f;
     // One-shot family hypothesis test: accept a family seed if this tensor's
     // eval scores within 95% of the seed's original composite. This skips the
     // GA entirely for tensors that share the family optimum (most of them in a
@@ -1673,9 +1675,9 @@ int ts_dispatch_run(const ts_dispatch_params * params,
     evolve_params.seed_accept_ratio = 0.95f;
     evolve_params.seed_composite    = 0.0f;  // populated per-layer by evolve_all
     // TESSERA_STAGNATION_LIMIT overrides the default early-termination window
-    // (generations without improvement). Useful for tests that need to force
-    // convergence on small fixtures, and for users who want to tune the GA's
-    // exploration/exploitation trade-off.
+    // (flat generations before the velocity gate fires). Useful for tests that
+    // need to force convergence on small fixtures, and for users who want to
+    // tune the GA's exploration/exploitation trade-off.
     {
         const char * env = std::getenv("TESSERA_STAGNATION_LIMIT");
         if (env != nullptr && env[0] != '\0') {
@@ -3860,12 +3862,12 @@ int ts_dispatch_run_l5_joint(
     }
 
     // ---- Build the search params ----
+    // velocity_window/thresholds keep the struct defaults (PR #11).
     ts_l5_joint_params jparams;
     jparams.epsilon           = params->l5_joint_epsilon;
     jparams.top_k             = params->l5_joint_top_k;
     jparams.max_generations   = params->l5_joint_max_generations;
     jparams.n_gen0_samples    = params->l5_joint_n_gen0_samples;
-    jparams.delta_converged   = 0.001f;
     jparams.rng_seed          = params->l5_joint_rng_seed;
     jparams.metric            = static_cast<ts_l5_joint_metric>(params->l5_joint_metric);
     jparams.verbose           = params->verbose;
@@ -3931,6 +3933,12 @@ int ts_dispatch_run_l5_joint(
         report += "\",\n";
         report += "  \"n_generations\": " + std::to_string(sresult.n_generations_run) + ",\n";
         report += "  \"epsilon\": " + std::to_string(params->l5_joint_epsilon) + ",\n";
+        // Velocity-gate knobs (PR #11): the stop criterion is the winning
+        // joint_ppl being flat for velocity_window generations. Additive
+        // to the schema; old readers ignore the new fields.
+        report += "  \"velocity_window\": " + std::to_string(jparams.velocity_window) + ",\n";
+        report += "  \"velocity_threshold\": " + std::to_string(jparams.velocity_threshold) + ",\n";
+        report += "  \"acceleration_threshold\": " + std::to_string(jparams.acceleration_threshold) + ",\n";
         // Echo the search metric (0=MAX, 1=SUM, 2=MEAN) so the report
         // shows which collapse the winning_ppl used.
         const char * metric_name = "max";

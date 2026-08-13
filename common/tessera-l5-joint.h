@@ -17,7 +17,8 @@
 //           + crossover on the (outlier_layout, algorithm, alpha, clip)
 //           tuple).
 //   Termination: AND-gate across all active models' deltas, AND
-//           top-K PPL deltas within delta_converged of each other.
+//           velocity gate: winning joint_ppl flat for velocity_window
+//           generations (see tessera-convergence.h).
 //
 // Per-model sequential: at v2, only the target model is active. v3
 // activates the 3 drafters + talker. The search resolves models
@@ -65,7 +66,7 @@ struct ts_l5_joint_topk_entry {
 struct ts_l5_joint_gen_result {
     int32_t generation;
     bool    and_gate_passed;             // AND-gate met this generation
-    bool    converged;                   // top-K within delta_converged
+    bool    converged;                   // velocity gate fired this generation
     bool    switched_to_evolutionary;    // slippery escape fired this generation
     std::vector<ts_l5_joint_topk_entry> all_entries;  // N entries (or N_evo for evolutionary)
     std::vector<ts_l5_joint_topk_entry> top_k;        // top-K by joint_ppl

@@ -1,5 +1,6 @@
 #include "tessera-awq.h"
 #include "tessera-sharded-map.h"
+#include "tessera-convergence.h"
 
 #include <algorithm>
 #include <atomic>
@@ -389,14 +390,17 @@ int ts_awq_evolve(const ts_awq_layer * layer,
         }
     }
 
-    // Early termination: track consecutive generations without improvement.
-    // If stagnation_limit > 0 and the best score hasn't improved by more than
-    // stagnation_epsilon for that many generations, the GA has converged and
-    // we stop early. This cuts typical evolution from 100 gens to ~20-30.
-    const bool   use_stagnation = (params->stagnation_limit > 0);
-    const float  stag_eps       = params->stagnation_epsilon;
-    int64_t      gens_since_improve = 0;
-    float        prev_best_composite = best_score.composite;
+    // Early termination: velocity gate over the best composite score.
+    // The initial best seeds the gate, then one score is added per
+    // generation. The GA stops when the score is flat for
+    // stagnation_limit consecutive transitions (see tessera-convergence.h).
+    // This cuts typical evolution from 100 gens to ~20-30.
+    const bool use_stagnation = (params->stagnation_limit > 0);
+    ts_velocity_gate vgate;
+    vgate.window                = (int)params->stagnation_limit;
+    vgate.velocity_threshold     = params->velocity_threshold;
+    vgate.acceleration_threshold = params->acceleration_threshold;
+    vgate.add(best_score.composite);
 
     // Main GA loop
     int64_t gen = 0;
@@ -488,22 +492,16 @@ int ts_awq_evolve(const ts_awq_layer * layer,
             }
         }
 
-        // Stagnation check: has the best score improved this generation?
+        // Convergence check: feed the best composite into the velocity
+        // gate. When the gate fires, the score has been flat for
+        // stagnation_limit transitions. Surfaced via result->converged so
+        // callers (the persistent store, resume set) can treat this tensor
+        // as a stable warm-start seed.
         if (use_stagnation) {
-            if (best_score.composite > prev_best_composite + stag_eps) {
-                gens_since_improve = 0;
-                prev_best_composite = best_score.composite;
-            } else {
-                gens_since_improve++;
-                if (gens_since_improve >= params->stagnation_limit) {
-                    // Converged: best has been stable for stagnation_limit
-                    // generations, so further iterations are unlikely to
-                    // improve. Surfaced via result->converged so callers
-                    // (the persistent store, resume set) can treat this
-                    // tensor as a stable warm-start seed.
-                    result->converged = true;
-                    break;
-                }
+            vgate.add(best_score.composite);
+            if (vgate.converged()) {
+                result->converged = true;
+                break;
             }
         }
     }
@@ -515,14 +513,15 @@ int ts_awq_evolve(const ts_awq_layer * layer,
     result->evaluations = evaluations.load();
     result->warm_started = (params->seed_candidate != nullptr);
     // A tensor is "converged" when the GA either:
-    //   (a) hit the stagnation break (result->converged already true), or
-    //   (b) ran all generations but the score didn't improve in the last
-    //       generation (gens_since_improve > 0 at loop exit).
+    //   (a) hit the velocity-gate break (result->converged already true), or
+    //   (b) ran all generations but the last transition was flat
+    //       (|velocity| < velocity_threshold at loop exit).
     // Case (b) covers the common small-budget scenario (evolve_iters=8,
-    // stagnation_limit=10) where the loop ends naturally before the
-    // stagnation break can trigger. The score IS stable, the GA just
-    // didn't have enough generations to prove it via the break.
-    if (!result->converged && gen >= n_gen - 1 && gens_since_improve > 0) {
+    // stagnation_limit=10) where the loop ends naturally before the gate
+    // break can trigger. The score IS stable, the GA just didn't have
+    // enough generations to prove it via the break.
+    if (!result->converged && gen >= n_gen - 1 && vgate.size() >= 2
+            && std::fabs(vgate.velocity()) < params->velocity_threshold) {
         result->converged = true;
     }
     result->archive.clear();

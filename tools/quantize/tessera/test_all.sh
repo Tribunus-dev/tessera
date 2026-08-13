@@ -50,11 +50,11 @@ echo ""
 # --- Standalone (test + own module) ---
 compile_and_run linalg      $T/test_linalg.cpp      $T/tessera-linalg.cpp -framework Accelerate
 compile_and_run lbfgs       $T/test_lbfgs.cpp       $T/tessera-lbfgs.cpp
-compile_and_run awq         $T/test_awq.cpp         $T/tessera-awq.cpp $T/tessera-policy.cpp -I vendor
+compile_and_run awq         $T/test_awq.cpp         $T/tessera-awq.cpp $T/tessera-policy.cpp -I common -I vendor
 # AWQ GA fitness port (parity vs Python awq-evolve.py + GA convergence).
 # Links the standalone port against tessera-policy (for ts_policy_genes) +
 # the awq sources + nlohmann/json (fixture loader).
-compile_and_run awq_fitness $T/test_awq_fitness.cpp $T/tessera-awq.cpp $T/tessera-awq-fitness.cpp $T/tessera-policy.cpp -I vendor -framework Accelerate
+compile_and_run awq_fitness $T/test_awq_fitness.cpp $T/tessera-awq.cpp $T/tessera-awq-fitness.cpp $T/tessera-policy.cpp -I common -I vendor -framework Accelerate
 # FLRQ outlier-aware low-rank port (parity vs Python flrq_bcl; loads the
 # Python sketch basis from the fixture so the deterministic BLC core is pinned
 # bit-for-bit). Needs tessera-linalg (sym-eig for the sketch basis) + vendor.
@@ -129,7 +129,7 @@ compile_and_run operative_routing $T/test_operative_routing.cpp $T/tessera-regim
 # dispatch requires libgguf/libggml (full CMake build); skip in standalone mode
 printf "  %-30s" "dispatch"
 if [ -f build/ggml/src/libgguf.a ] || [ -f build/ggml/src/libgguf.dylib ]; then
-    compile_and_run dispatch $T/test_dispatch.cpp $T/tessera-dispatch.cpp $T/tessera-quant.cpp $T/tessera-vec.cpp $T/tessera-awq.cpp $T/tessera-awq-fitness.cpp -I ggml/include -I ggml/src -L build/ggml/src -lgguf -lggml -framework Accelerate
+    compile_and_run dispatch $T/test_dispatch.cpp $T/tessera-dispatch.cpp $T/tessera-quant.cpp $T/tessera-vec.cpp $T/tessera-awq.cpp $T/tessera-awq-fitness.cpp -I common -I ggml/include -I ggml/src -L build/ggml/src -lgguf -lggml -framework Accelerate
 else
     echo "SKIP (needs CMake build for libgguf)"
 fi
@@ -167,7 +167,7 @@ fi
 # plus the L2-diff/L5 modules the adaptive-requantize loop pulls in.
 printf "  %-30s" "l5_dispatch"
 if [ -f build/ggml/src/libgguf.a ] || [ -f build/ggml/src/libgguf.dylib ]; then
-    compile_and_run l5_dispatch $T/test_l5_dispatch.cpp $T/tessera-dispatch.cpp $T/tessera-quant.cpp $T/tessera-vec.cpp $T/tessera-awq.cpp $T/tessera-awq-fitness.cpp $T/tessera-l2-diff.cpp $T/tessera-l3-coherence.cpp $T/tessera-l5.cpp $T/tessera-ppl.cpp $C/tessera-sidecar-v3.cpp -I ggml/include -I ggml/src -I vendor -I $C -L build/ggml/src -lgguf -lggml -framework Accelerate
+    compile_and_run l5_dispatch $T/test_l5_dispatch.cpp $T/tessera-dispatch.cpp $T/tessera-quant.cpp $T/tessera-vec.cpp $T/tessera-awq.cpp $T/tessera-awq-fitness.cpp $T/tessera-l2-diff.cpp $T/tessera-l3-coherence.cpp $T/tessera-l5.cpp $T/tessera-ppl.cpp $C/tessera-sidecar-v3.cpp -I common -I ggml/include -I ggml/src -I vendor -I $C -L build/ggml/src -lgguf -lggml -framework Accelerate
 else
     echo "SKIP (needs CMake build for libgguf)"
 fi

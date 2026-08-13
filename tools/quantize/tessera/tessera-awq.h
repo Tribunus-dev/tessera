@@ -193,13 +193,17 @@ struct ts_awq_evolve_params {
     void    (* on_phase_change)(const char * phase, int64_t n_layers,
                                 void * user);
     void     * on_phase_change_user;
-    // Early termination: if the best composite score has not improved by more
-    // than stagnation_epsilon for stagnation_limit consecutive generations,
-    // the GA stops early and marks the tensor as converged. 0 = disabled
-    // (run all generations). Default is set by the caller (the dispatch sets
-    // a sensible default).
-    int64_t   stagnation_limit;    // gens without improvement before stop, 0 = off
-    float     stagnation_epsilon;  // min improvement to count as progress
+    // Early termination (PR #11, spec §10): the best composite score is
+    // fed into a velocity gate (common/tessera-convergence.h) each
+    // generation. The GA stops early and marks the tensor converged when
+    // the score is flat for stagnation_limit consecutive transitions
+    // (|velocity| < velocity_threshold) without accelerating
+    // (|acceleration| < acceleration_threshold). stagnation_limit is the
+    // gate window; 0 = disabled (run all generations). Default is set by
+    // the caller (the dispatch sets a sensible default).
+    int64_t   stagnation_limit = 0;    // gate window (flat transitions), 0 = off
+    float     velocity_threshold     = 1e-5f;  // max |first diff| per generation
+    float     acceleration_threshold = 2e-5f;  // max |second diff| per generation
     // Family warm-start seed: if non-null, injected into the initial population
     // of every island (replacing one random member). This lets the caller pass
     // the best candidate from a previously-converged tensor in the same family,

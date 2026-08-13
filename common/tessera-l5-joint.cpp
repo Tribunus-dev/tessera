@@ -7,6 +7,7 @@
 //
 
 #include "tessera-l5-joint.h"
+#include "tessera-convergence.h"
 
 #include <algorithm>
 #include <cmath>
@@ -275,6 +276,14 @@ int ts_l5_joint_search(
     float prev_topk_ppl = 0.0f;
     bool   prev_topk_valid = false;
 
+    // Velocity-based convergence gate over the winning joint_ppl per
+    // generation (PR #11, spec §10). Replaces the static top-K spread
+    // gate; the AND-gate above stays the acceptance bar.
+    ts_velocity_gate vgate;
+    vgate.window                = params->velocity_window;
+    vgate.velocity_threshold     = params->velocity_threshold;
+    vgate.acceleration_threshold = params->acceleration_threshold;
+
     for (int32_t gen = 0; gen < params->max_generations; ++gen) {
         ts_l5_joint_gen_result gr;
         gr.generation = gen;
@@ -314,13 +323,16 @@ int ts_l5_joint_search(
             gr.and_gate_passed = true;
         }
 
-        // ---- Termination: top-K convergence (within delta_converged) ----
-        if (gr.top_k.size() >= 2) {
-            const float best = gr.top_k[0].joint_ppl;
-            const float worst = gr.top_k.back().joint_ppl;
-            if (std::fabs(worst - best) < params->delta_converged) {
-                gr.converged = true;
-            }
+        // ---- Termination: velocity-based convergence (PR #11) ----
+        // The winning joint_ppl feeds the gate once per generation; the
+        // search stops when the best PPL is flat without accelerating
+        // (see tessera-convergence.h). Replaces the old top-K spread
+        // check; gr.converged now means the gate fired.
+        if (!gr.top_k.empty()) {
+            vgate.add(gr.top_k[0].joint_ppl);
+        }
+        if (vgate.converged()) {
+            gr.converged = true;
         }
 
         // ---- Slippery detection (adaptive) ----
