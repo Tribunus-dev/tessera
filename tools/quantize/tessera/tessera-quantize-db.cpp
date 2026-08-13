@@ -24,6 +24,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -544,7 +545,41 @@ static const char * TS_QDB_SCHEMA_SQL =
     "    PRIMARY KEY (run_id)\n"
     ");\n"
     "CREATE INDEX IF NOT EXISTS idx_l5_search_gen\n"
-    "    ON l5_search_state(model_hash, generation DESC);\n";
+    "    ON l5_search_state(model_hash, generation DESC);\n"
+    // ---- v2_hessian_cache: forward-only Hessian second-order info (Phase C) ----
+    // The L5 Hessian scorer (§9) needs the diagonal of H^{-1} (the OBQ
+    // denominator) per tensor. Computing it is a Cholesky factorize per
+    // (corpus, in_dim) — ~10 s on M-series for in_dim=4096 — so the result
+    // is cached. The cache is FORWARD-ONLY: the first row written for a key
+    // is permanent (INSERT ... ON CONFLICT DO NOTHING). Nothing in the
+    // pipeline ever overwrites, ALTERs, or DROPs a cached row. Stale values
+    // invalidate through the key, not through mutation:
+    //   - scorer_version in the PK: a bump on every scorer math change
+    //     (TS_L5_HESSIAN_SCORER_VERSION) silently invalidates old rows
+    //     instead of producing wrong scores (§13 risk 2 / risk 9)
+    //   - n_samples / ridge_fraction are recorded WITH the value and the
+    //     reader refuses a hit when the caller's corpus (n_samples) or
+    //     ridge differs, so a different calibration corpus never reuses a
+    //     stale factor — the read is a miss, the compute is fresh, and the
+    //     ON CONFLICT keeps the first row regardless.
+    // h_inv_diag is the raw F32 (in_dim,) buffer stored as a BLOB (4*in_dim
+    // bytes). The key is per tensor NAME (not per in_dim): the future
+    // per-layer activation capture (§16) gives each tensor its own corpus,
+    // so two tensors sharing in_dim may legitimately have different H.
+    "CREATE TABLE IF NOT EXISTS v2_hessian_cache (\n"
+    "    model_hash      TEXT NOT NULL,\n"
+    "    model_role      TEXT NOT NULL DEFAULT 'trunk',\n"
+    "    name            TEXT NOT NULL,\n"
+    "    in_dim          INTEGER NOT NULL,\n"
+    "    scorer_version  INTEGER NOT NULL,\n"
+    "    h_inv_diag      BLOB,\n"
+    "    n_samples       BIGINT NOT NULL DEFAULT 0,\n"
+    "    ridge_fraction  DOUBLE NOT NULL DEFAULT 0.0,\n"
+    "    created_at      TEXT,\n"
+    "    PRIMARY KEY (model_hash, model_role, name, in_dim, scorer_version)\n"
+    ");\n"
+    "CREATE INDEX IF NOT EXISTS idx_hessian_cache_model\n"
+    "    ON v2_hessian_cache(model_hash, model_role);\n";
 
 // Phase 16.7: per-component (model_role, name) covering index
 // statements. Kept as a separate constant from TS_QDB_SCHEMA_SQL
@@ -2717,6 +2752,245 @@ int ts_tessera_db_read_l5_gen_checkpoint(
         return 1;
     } catch (...) {
         if (err) *err = "read_l5_gen_checkpoint unknown exception";
+        return 1;
+    }
+    return 0;
+}
+
+// --- L5 Hessian cache: forward-only second-order info (Phase C) ---
+
+// Ledger stem: "/path/foo.duckdb" -> "/path/foo". Mirrors the
+// model_role_migration.json sidecar rule (only the final dot-after-slash
+// is the extension separator).
+static std::string hessian_ledger_path(const std::string & db_path) {
+    std::string stem = db_path;
+    auto slash = stem.find_last_of("/\\");
+    auto dot   = stem.find_last_of('.');
+    if (dot != std::string::npos &&
+        (slash == std::string::npos || dot > slash)) {
+        stem = stem.substr(0, dot);
+    }
+    return stem + ".hessian-cache.jsonl";
+}
+
+int ts_tessera_db_append_hessian_ledger(
+        ts_tessera_db * db,
+        const char * event,
+        const std::string & model_hash,
+        const std::string & model_role,
+        const std::string & name,
+        int64_t in_dim,
+        int32_t scorer_version,
+        int64_t n_samples,
+        double ridge_fraction,
+        std::string * err) {
+    if (db == nullptr || db->db_path.empty() || db->db_path == ":memory:") {
+        return 0;   // no ledger for in-memory / missing path
+    }
+    if (event == nullptr) event = "";
+    const std::string path = hessian_ledger_path(db->db_path);
+    // JSON requires double quotes and ASCII; escape the identifier fields
+    // (paths are not expected to contain quotes, but the escape is cheap).
+    auto json_esc = [](const std::string & s) -> std::string {
+        std::string out;
+        out.reserve(s.size() + 8);
+        for (char c : s) {
+            if (c == '"' || c == '\\') out += '\\';
+            out += c;
+        }
+        return out;
+    };
+    std::ostringstream line;
+    line << "{\"ts\": " << ts_now_ts() << ", "
+         << "\"event\": \"" << json_esc(event) << "\", "
+         << "\"model_hash\": \"" << json_esc(model_hash) << "\", "
+         << "\"model_role\": \"" << json_esc(model_role) << "\", "
+         << "\"name\": \"" << json_esc(name) << "\", "
+         << "\"in_dim\": " << in_dim << ", "
+         << "\"scorer_version\": " << scorer_version << ", "
+         << "\"n_samples\": " << n_samples << ", "
+         << "\"ridge_fraction\": " << ridge_fraction << "}\n";
+    // Append-only: open in append mode, write one line, flush. A crash
+    // mid-write can leave a partial trailing line; consumers skip it.
+    std::ofstream f(path, std::ios::binary | std::ios::app);
+    if (!f) {
+        if (err) *err = "hessian ledger open failed: " + path;
+        return 1;
+    }
+    f << line.str();
+    f.flush();
+    if (!f) {
+        if (err) *err = "hessian ledger write failed: " + path;
+        return 1;
+    }
+    return 0;
+}
+
+int ts_tessera_db_read_hessian_cache(
+        ts_tessera_db * db,
+        const std::string & model_hash,
+        const std::string & model_role,
+        const std::string & name,
+        int64_t in_dim,
+        int32_t scorer_version,
+        int64_t n_samples,
+        double ridge_fraction,
+        std::vector<float> * h_inv_diag_out,
+        bool * hit,
+        std::string * err) {
+    if (hit) *hit = false;
+    if (h_inv_diag_out) h_inv_diag_out->clear();
+    if (db == nullptr || db->conn == nullptr) return 0;
+    if (in_dim <= 0 || h_inv_diag_out == nullptr || hit == nullptr) return 0;
+
+    std::ostringstream q;
+    q << "SELECT h_inv_diag, n_samples, ridge_fraction "
+         "FROM v2_hessian_cache WHERE model_hash = '" << sql_escape(model_hash)
+      << "' AND model_role = '" << sql_escape(model_role)
+      << "' AND name = '" << sql_escape(name)
+      << "' AND in_dim = " << in_dim
+      << " AND scorer_version = " << scorer_version;
+
+    try {
+        auto res = db->conn->Query(q.str());
+        if (res->HasError()) {
+            if (err) *err = "read_hessian_cache: " + res->GetError();
+            return 1;
+        }
+        if (res->RowCount() == 0) {
+            // Absent key -> miss. Log it so the ledger shows the lifecycle.
+            ts_tessera_db_append_hessian_ledger(db, "cache_miss", model_hash,
+                model_role, name, in_dim, scorer_version, n_samples,
+                ridge_fraction, nullptr);
+            return 0;
+        }
+        // Corpus validation: the stored factor is only usable when the
+        // caller's corpus (n_samples) and ridge match. A mismatch is a
+        // miss -- the caller recomputes fresh and the ON CONFLICT write
+        // keeps the first row (forward-only).
+        const int64_t stored_n = res->GetValue(1, 0).GetValue<int64_t>();
+        const double  stored_r = res->GetValue(2, 0).GetValue<double>();
+        const double  ridge_eps = 1e-6 * std::max(1.0, std::fabs(ridge_fraction));
+        if (stored_n != n_samples || std::fabs(stored_r - ridge_fraction) > ridge_eps) {
+            ts_tessera_db_append_hessian_ledger(db, "cache_miss", model_hash,
+                model_role, name, in_dim, scorer_version, n_samples,
+                ridge_fraction, nullptr);
+            return 0;
+        }
+        // BLOB -> float vector. BLOB is stored as a raw byte string_t.
+        auto v = res->GetValue(0, 0);
+        if (v.IsNull()) {
+            // Null blob is a corrupt row; treat as miss, never crash.
+            ts_tessera_db_append_hessian_ledger(db, "cache_miss", model_hash,
+                model_role, name, in_dim, scorer_version, n_samples,
+                ridge_fraction, nullptr);
+            return 0;
+        }
+        auto s = v.GetValueUnsafe<duckdb::string_t>();
+        if (s.GetSize() != (size_t) in_dim * sizeof(float)) {
+            if (err) *err = "read_hessian_cache: blob size mismatch for " + name;
+            return 1;
+        }
+        h_inv_diag_out->resize((size_t) in_dim);
+        std::memcpy(h_inv_diag_out->data(), s.GetData(),
+                    (size_t) in_dim * sizeof(float));
+        *hit = true;
+        ts_tessera_db_append_hessian_ledger(db, "cache_hit", model_hash,
+            model_role, name, in_dim, scorer_version, n_samples,
+            ridge_fraction, nullptr);
+    } catch (const std::exception & e) {
+        if (err) *err = "read_hessian_cache exception: " + std::string(e.what());
+        return 1;
+    } catch (...) {
+        if (err) *err = "read_hessian_cache unknown exception";
+        return 1;
+    }
+    return 0;
+}
+
+int ts_tessera_db_write_hessian_cache(
+        ts_tessera_db * db,
+        const ts_tessera_db_hessian_entry & e,
+        bool * stored,
+        std::string * err) {
+    if (stored) *stored = false;
+    if (db == nullptr || db->conn == nullptr) return 0;
+    if (e.in_dim <= 0 || e.h_inv_diag.size() != (size_t) e.in_dim) {
+        if (err) *err = "write_hessian_cache: h_inv_diag size != in_dim";
+        return 1;
+    }
+    const size_t blob_bytes = (size_t) e.in_dim * sizeof(float);
+
+    // Encode the raw F32 bytes as a DuckDB BLOB literal ('\xNN' escapes are
+    // processed by the BLOB cast; raw bytes survive byte-for-byte). The
+    // string-literal form keeps the materialized Query() overload (with
+    // RowCount) instead of the parameterized one, which returns the base
+    // QueryResult type.
+    std::string blob_lit;
+    blob_lit.reserve(blob_bytes * 4 + 8);
+    blob_lit += "'";
+    static const char HEX[] = "0123456789abcdef";
+    const uint8_t * bytes = (const uint8_t *) e.h_inv_diag.data();
+    for (size_t i = 0; i < blob_bytes; i++) {
+        blob_lit += "\\x";
+        blob_lit += HEX[bytes[i] >> 4];
+        blob_lit += HEX[bytes[i] & 0x0f];
+    }
+    blob_lit += "'::BLOB";
+
+    std::ostringstream q;
+    q << "INSERT INTO v2_hessian_cache "
+         "(model_hash, model_role, name, in_dim, scorer_version, h_inv_diag, n_samples, ridge_fraction, created_at) "
+         "VALUES ("
+         "'" << sql_escape(e.model_hash) << "', "
+         "'" << sql_escape(e.model_role) << "', "
+         "'" << sql_escape(e.name) << "', "
+         << e.in_dim << ", "
+         << e.scorer_version << ", "
+         << blob_lit << ", "
+         << e.n_samples << ", "
+         << e.ridge_fraction << ", "
+         << ts_now_ts() << ") "
+         "ON CONFLICT DO NOTHING";
+
+    try {
+        // DuckDB reports RowCount()=1 for an INSERT that was skipped by
+        // ON CONFLICT DO NOTHING, so the count cannot detect the conflict.
+        // Pre-count the key instead (the hessian path is single-threaded,
+        // so there is no race): stored = the key was absent before this
+        // call. The INSERT itself is still ON CONFLICT DO NOTHING, so the
+        // first row is permanent regardless of what this call observes.
+        std::ostringstream cnt;
+        cnt << "SELECT COUNT(*) FROM v2_hessian_cache WHERE model_hash = '"
+            << sql_escape(e.model_hash) << "' AND model_role = '"
+            << sql_escape(e.model_role) << "' AND name = '"
+            << sql_escape(e.name) << "' AND in_dim = " << e.in_dim
+            << " AND scorer_version = " << e.scorer_version;
+        auto cnt_res = db->conn->Query(cnt.str());
+        if (cnt_res->HasError()) {
+            if (err) *err = "write_hessian_cache count: " + cnt_res->GetError();
+            return 1;
+        }
+        const bool pre_existing =
+            cnt_res->RowCount() > 0 &&
+            cnt_res->GetValue(0, 0).GetValue<int64_t>() > 0;
+
+        auto res = db->conn->Query(q.str());
+        if (res->HasError()) {
+            if (err) *err = "write_hessian_cache: " + res->GetError();
+            return 1;
+        }
+        // stored = this call inserted (the key was absent before it).
+        if (stored) *stored = !pre_existing;
+        ts_tessera_db_append_hessian_ledger(db,
+            !pre_existing ? "cache_store" : "cache_store_conflict",
+            e.model_hash, e.model_role, e.name, e.in_dim,
+            e.scorer_version, e.n_samples, e.ridge_fraction, nullptr);
+    } catch (const std::exception & e2) {
+        if (err) *err = "write_hessian_cache exception: " + std::string(e2.what());
+        return 1;
+    } catch (...) {
+        if (err) *err = "write_hessian_cache unknown exception";
         return 1;
     }
     return 0;

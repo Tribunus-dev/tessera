@@ -22,6 +22,7 @@
 #include "tessera-dispatch-internal.h"
 #include "tessera-quant.h"
 #include "tessera-quantize-db.h"
+#include "tessera-corpus.h"   // ts_corpus_* (Phase C calib corpus)
 
 #include "ggml.h"
 #include "gguf.h"
@@ -404,6 +405,133 @@ int main() {
                 std::printf("  phase14-fast dispatch err: %s\n", err3.c_str());
             }
         }
+    }
+
+    // ---- Phase C: L5 scorer combine (hessian + imatrix) ----
+    // The l5_scorer spec joins the per-tensor scorer maps via ts_l5_combine
+    // after the quantize walk. The hessian map needs a calibration corpus
+    // whose width matches the tensors (in_dim 1280): generate one, point
+    // calib_corpus at it, and run the dispatch twice against the same
+    // tessera.duckdb. Run 1 factorizes the Hessian (once per in_dim);
+    // run 2 must hit the forward-only v2_hessian_cache for both tensors.
+    {
+        const char * corpus_path  = "/tmp/test_l5_dispatch_hessian_corpus.npy";
+        const char * hdb_path     = "/tmp/test_l5_dispatch_hessian.duckdb";
+        const char * hledger_path = "/tmp/test_l5_dispatch_hessian.hessian-cache.jsonl";
+
+        ts_corpus_params cp = ts_corpus_default_params();
+        cp.n_tokens = 64;
+        cp.in_dim   = 1280;   // matches the fixture tensors' in_dim
+        cp.seed     = 7;
+        std::string cerr;
+        if (ts_corpus_generate_to_file(&cp, corpus_path, &cerr) != 0) {
+            std::printf("  phase-c setup: corpus generate failed: %s\n", cerr.c_str());
+            g_fail++;
+        } else {
+            // Fresh fixture + fresh DB for the cache assertions.
+            if (!build_fixture_gguf(fixture_path, names, dims)) {
+                std::printf("  phase-c setup: fixture rebuild failed\n");
+                g_fail++;
+            } else {
+                ts_dispatch_params hp = {};
+                hp.input_path      = fixture_path;
+                hp.output_path     = output_path;
+                hp.imatrix_path    = "";
+                hp.policy_path     = "";
+                hp.policy_out_path = "/tmp/test_l5_dispatch_hessian.policy.json";
+                hp.calib_corpus    = corpus_path;
+                hp.tessera_db_path = hdb_path;
+                hp.l5_scorer       = "hessian:0.6,imatrix:0.4";
+                hp.evolve_seed     = 7;
+                hp.evolve_iters    = 1;
+                hp.evolve_islands  = 1;
+                hp.evolve_population = 4;
+                hp.outlier_frac    = 0.005f;
+                hp.awq_alpha       = "0.5";
+                hp.awq_clip        = 0.95f;
+                hp.nthreads        = 1;
+                hp.verbose         = false;
+
+                ts_dispatch_result hr;
+                std::string herr;
+                int hrc = ts_dispatch_run(&hp, &hr, &herr);
+                check("phase-c: dispatch rc == 0", hrc == 0);
+                if (hrc != 0) {
+                    std::printf("  phase-c dispatch err: %s\n", herr.c_str());
+                } else {
+                    check("phase-c: l5_scorer_ran", hr.l5_scorer_ran);
+                    check("phase-c: hessian n_scored == 2",
+                          hr.l5_hessian_n_scored == 2);
+                    check("phase-c: hessian n_factorized == 1 (memoized per in_dim)",
+                          hr.l5_hessian_n_factorized == 1);
+                    check("phase-c: hessian n_cached == 0 (fresh DB)",
+                          hr.l5_hessian_n_cached == 0);
+                    check("phase-c: hessian n_skipped == 0",
+                          hr.l5_hessian_n_skipped == 0);
+                    bool rep_ok = hr.l5_scorer_report_json.find(
+                        "llama.tessera.l5-scorer.v1") != std::string::npos;
+                    check("phase-c: report carries the l5-scorer.v1 schema", rep_ok);
+                    bool scores_ok = hr.l5_scorer_report_json.find(
+                        "\"scores\"") != std::string::npos;
+                    check("phase-c: report has a scores array", scores_ok);
+                    // Exactly 2 combined entries (one per fixture tensor).
+                    size_t pos = 0;
+                    int combined_count = 0;
+                    while ((pos = hr.l5_scorer_report_json.find("\"combined\"", pos))
+                           != std::string::npos) {
+                        combined_count++;
+                        pos += 10;
+                    }
+                    check("phase-c: report has 2 combined scores",
+                          combined_count == 2);
+                }
+
+                // Run 2 against the same DB: both H_inv_diag come from the
+                // forward-only cache (no factorization).
+                ts_dispatch_result hr2;
+                std::string herr2;
+                int hrc2 = ts_dispatch_run(&hp, &hr2, &herr2);
+                check("phase-c: second dispatch rc == 0", hrc2 == 0);
+                if (hrc2 != 0) {
+                    std::printf("  phase-c second dispatch err: %s\n", herr2.c_str());
+                } else {
+                    check("phase-c: second run n_cached == 2",
+                          hr2.l5_hessian_n_cached == 2);
+                    check("phase-c: second run n_factorized == 0",
+                          hr2.l5_hessian_n_factorized == 0);
+                    check("phase-c: second run n_scored == 2",
+                          hr2.l5_hessian_n_scored == 2);
+                }
+
+                // Ledger: the append-only hessian-cache.jsonl exists next to
+                // the duckdb and records the full lifecycle.
+                FILE * lf = std::fopen(hledger_path, "rb");
+                check("phase-c: hessian ledger exists", lf != nullptr);
+                if (lf) {
+                    std::fseek(lf, 0, SEEK_END);
+                    long sz = std::ftell(lf);
+                    std::fseek(lf, 0, SEEK_SET);
+                    std::vector<char> buf((size_t) sz);
+                    if (sz > 0) {
+                        std::fread(buf.data(), 1, (size_t) sz, lf);
+                    }
+                    std::fclose(lf);
+                    std::string lc(buf.begin(), buf.end());
+                    check("phase-c: ledger has cache_store",
+                          lc.find("\"event\": \"cache_store\"") != std::string::npos);
+                    check("phase-c: ledger has cache_hit",
+                          lc.find("\"event\": \"cache_hit\"") != std::string::npos);
+                    check("phase-c: ledger has cache_compute",
+                          lc.find("\"event\": \"cache_compute\"") != std::string::npos);
+                }
+            }
+        }
+
+        std::remove(corpus_path);
+        std::remove(hdb_path);
+        std::remove(hledger_path);
+        std::remove("/tmp/test_l5_dispatch_hessian.policy.json");
+        std::remove("/tmp/test_l5_dispatch_hessian.duckdb.wal");
     }
 
     // Cleanup.

@@ -719,3 +719,90 @@ int ts_tessera_db_read_l5_gen_checkpoint(
         const std::string & run_id,
         ts_l5_joint_gen_checkpoint * out,
         std::string * err);
+
+// --- L5 Hessian cache: forward-only second-order info (Phase C) ---
+//
+// The L5 Hessian scorer (§9 of docs/l1-l6-telemetry-refinements-spec.md)
+// caches the diagonal of H^{-1} (the OBQ denominator, v3.1 spec errata:
+// [H^{-1}]_ii = ||L_inv[i,:]||^2) per tensor. The v2_hessian_cache table is
+// FORWARD-ONLY: the first row written for a (model_hash, model_role, name,
+// in_dim, scorer_version) key is permanent. No code path ever overwrites,
+// ALTERs, or DROPs a cached row; staleness is handled by keying:
+//   - scorer_version (TS_L5_HESSIAN_SCORER_VERSION) invalidates rows when
+//     the scorer math changes (§13 risk 2 / risk 9)
+//   - n_samples / ridge_fraction are recorded with the value and the reader
+//     refuses a hit when the caller's corpus or ridge differs, so a
+//     different calibration corpus recomputes instead of reusing a stale
+//     factor. The first row still stays (ON CONFLICT DO NOTHING).
+//
+// model_role uses the Phase 16 enum ("trunk" / "dflash" / "dspark" /
+// "mtp_nextn" / "shared_embd"); the unified Gemma4 arch shares tensor names
+// across components, so the role disambiguates the cache key exactly like
+// tensor_stats / l5_weights.
+struct ts_tessera_db_hessian_entry {
+    std::string          model_hash;
+    std::string          model_role;
+    std::string          name;
+    int64_t              in_dim          = 0;
+    int32_t              scorer_version  = 0;
+    std::vector<float>   h_inv_diag;     // in_dim floats; empty on read miss
+    int64_t              n_samples       = 0;   // corpus rows that built H
+    double               ridge_fraction  = 0.0; // ridge used when building H
+};
+
+// Read one cached H_inv_diag. Returns 0 on success with *hit set:
+//   - *hit == true  -> h_inv_diag_out is the stored (in_dim,) diagonal.
+//   - *hit == false -> no usable row (absent key, scorer_version mismatch,
+//                      or n_samples / ridge_fraction mismatch with the
+//                      caller's corpus). The caller should compute fresh.
+// Never mutates. db == nullptr is a safe no-op (hit=false, return 0).
+int ts_tessera_db_read_hessian_cache(
+        ts_tessera_db * db,
+        const std::string & model_hash,
+        const std::string & model_role,
+        const std::string & name,
+        int64_t in_dim,
+        int32_t scorer_version,
+        int64_t n_samples,
+        double ridge_fraction,
+        std::vector<float> * h_inv_diag_out,
+        bool * hit,
+        std::string * err);
+
+// Write one cached H_inv_diag. FORWARD-ONLY: INSERT ... ON CONFLICT DO
+// NOTHING. The first row for the key is permanent; a later write for the
+// same key (e.g. a different corpus) is dropped without touching the
+// stored row. *stored reports whether this call inserted (false = conflict
+// kept the existing row). Returns 0 on success (including the conflict
+// case); non-zero only on a real SQL error. db == nullptr is a no-op.
+int ts_tessera_db_write_hessian_cache(
+        ts_tessera_db * db,
+        const ts_tessera_db_hessian_entry & e,
+        bool * stored,
+        std::string * err);
+
+// Append one line to the append-only Hessian cache ledger. The ledger
+// lives next to the duckdb file as "<db-stem>.hessian-cache.jsonl" (the
+// same stem rule as the model_role_migration.json sidecar); ":memory:" DBs
+// have no ledger (returns 0, no-op). One JSON object per line:
+//   {"ts": ..., "event": <event>, "model_hash": ..., "model_role": ...,
+//    "name": ..., "in_dim": ..., "scorer_version": ..., "n_samples": ...,
+//    "ridge_fraction": ...}
+// event is one of "cache_hit" / "cache_miss" / "cache_compute" /
+// "cache_store" / "cache_store_conflict". The read/write helpers emit
+// hit/miss/store/conflict internally; the DISPATCH emits "cache_compute"
+// when it factorized a missed key, so the ledger shows the full lifecycle.
+// The ledger is append-only (a crash can leave a partial last line; the
+// consumer skips a malformed trailing line). Returns 0 on success; 1 on a
+// file error (non-fatal — the caller logs and continues).
+int ts_tessera_db_append_hessian_ledger(
+        ts_tessera_db * db,
+        const char * event,
+        const std::string & model_hash,
+        const std::string & model_role,
+        const std::string & name,
+        int64_t in_dim,
+        int32_t scorer_version,
+        int64_t n_samples,
+        double ridge_fraction,
+        std::string * err);

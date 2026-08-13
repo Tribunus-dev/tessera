@@ -254,6 +254,23 @@ struct ts_dispatch_result {
     // Which metric the search used (0=MAX, 1=SUM, 2=MEAN). Echoed in
     // the JSON report so the user knows what drove the search.
     int         l5_joint_metric_used = 0;
+
+    // L5 scorer-map combine result (populated when params->l5_scorer is
+    // set; Phase C of docs/l1-l6-telemetry-refinements-spec.md §9.4).
+    // The --l5-scorer spec ("hessian:0.5,imatrix:0.3,grad:0.2") is joined
+    // via ts_l5_combine over the per-tensor scorer maps; the combined map
+    // and the per-scorer contributions land in l5_scorer_report_json.
+    // The hessian map is the OBQ sensitivity of each tensor's ACTUAL
+    // quantized reconstruction (qr.recon), scored against the diagonal of
+    // H^{-1} from the calibration corpus (cached in v2_hessian_cache,
+    // forward-only, keyed by scorer_version). The grad map is always empty
+    // in the dispatch today (no output_sensitivity is captured).
+    bool        l5_scorer_ran = false;
+    std::string l5_scorer_report_json;   // schema llama.tessera.l5-scorer.v1
+    int32_t     l5_hessian_n_scored     = 0;  // tensors with a hessian score
+    int32_t     l5_hessian_n_cached     = 0;  // H_inv_diag from the DB cache
+    int32_t     l5_hessian_n_factorized = 0;  // Cholesky factorizes this run
+    int32_t     l5_hessian_n_skipped    = 0;  // 2D tensors w/o calibration data
 };
 
 // Run the full Tessera quantization pipeline.

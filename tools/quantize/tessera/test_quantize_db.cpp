@@ -18,6 +18,7 @@
 
 #include "tessera-quantize-db.h"
 #include "tessera-db-buffer.h"
+#include "tessera-l5.h"   // TS_L5_HESSIAN_SCORER_VERSION (hessian cache key)
 
 #ifdef _WIN32
 #  define NOMINMAX
@@ -937,6 +938,171 @@ int main(int argc, char ** argv) {
 
                 delete pre_db;
             }
+        }
+    }
+
+    // ---- L5 Hessian cache: forward-only semantics + scorer_version gate ----
+    //
+    // Phase C. v2_hessian_cache is keyed on (model_hash, model_role, name,
+    // in_dim, scorer_version). The first write for a key is permanent
+    // (INSERT ... ON CONFLICT DO NOTHING); the reader refuses a hit when
+    // the caller's corpus (n_samples) or ridge_fraction differs.
+    {
+        const std::string h_model = "hessian_model";
+        std::vector<float> diag_a = { 0.25f, 0.5f, 0.75f, 1.0f };
+        std::vector<float> diag_b = { 2.0f, 3.0f, 4.0f, 5.0f };
+        const int64_t  h_in_dim = (int64_t) diag_a.size();
+        const int64_t  h_n      = 128;
+        const double   h_ridge  = 0.01;
+
+        // Miss on absent key.
+        std::vector<float> got;
+        bool hit = true;
+        CHECK(ts_tessera_db_read_hessian_cache(db, h_model, "trunk",
+              "blk.0.attn_q.weight", h_in_dim, TS_L5_HESSIAN_SCORER_VERSION,
+              h_n, h_ridge, &got, &hit, &err) == 0,
+              "hessian cache: read absent key returns 0");
+        CHECK(!hit, "hessian cache: absent key is a miss");
+        CHECK(got.empty(), "hessian cache: miss leaves output empty");
+
+        // Write then read back: round-trip.
+        ts_tessera_db_hessian_entry e1;
+        e1.model_hash     = h_model;
+        e1.model_role     = "trunk";
+        e1.name           = "blk.0.attn_q.weight";
+        e1.in_dim         = h_in_dim;
+        e1.scorer_version = TS_L5_HESSIAN_SCORER_VERSION;
+        e1.h_inv_diag     = diag_a;
+        e1.n_samples      = h_n;
+        e1.ridge_fraction = h_ridge;
+        bool stored = false;
+        CHECK(ts_tessera_db_write_hessian_cache(db, e1, &stored, &err) == 0,
+              "hessian cache: first write returns 0");
+        CHECK(stored, "hessian cache: first write stores");
+
+        hit = false;
+        got.clear();
+        CHECK(ts_tessera_db_read_hessian_cache(db, h_model, "trunk",
+              "blk.0.attn_q.weight", h_in_dim, TS_L5_HESSIAN_SCORER_VERSION,
+              h_n, h_ridge, &got, &hit, &err) == 0,
+              "hessian cache: read after write returns 0");
+        CHECK(hit, "hessian cache: round-trip hits");
+        CHECK(got.size() == diag_a.size(), "hessian cache: round-trip size");
+        bool roundtrip_ok = got.size() == diag_a.size();
+        for (size_t i = 0; roundtrip_ok && i < got.size(); i++) {
+            if (got[i] != diag_a[i]) roundtrip_ok = false;
+        }
+        CHECK(roundtrip_ok, "hessian cache: round-trip bytes match");
+
+        // Forward-only: a second write with different data for the same
+        // key is dropped; the first row wins.
+        ts_tessera_db_hessian_entry e2 = e1;
+        e2.h_inv_diag = diag_b;
+        stored = true;
+        CHECK(ts_tessera_db_write_hessian_cache(db, e2, &stored, &err) == 0,
+              "hessian cache: conflicting write returns 0");
+        CHECK(!stored, "hessian cache: conflicting write is a conflict (not stored)");
+        hit = false;
+        got.clear();
+        CHECK(ts_tessera_db_read_hessian_cache(db, h_model, "trunk",
+              "blk.0.attn_q.weight", h_in_dim, TS_L5_HESSIAN_SCORER_VERSION,
+              h_n, h_ridge, &got, &hit, &err) == 0,
+              "hessian cache: read after conflict returns 0");
+        CHECK(hit, "hessian cache: conflict keeps the row usable");
+        roundtrip_ok = got.size() == diag_a.size();
+        for (size_t i = 0; roundtrip_ok && i < got.size(); i++) {
+            if (got[i] != diag_a[i]) roundtrip_ok = false;
+        }
+        CHECK(roundtrip_ok, "hessian cache: first write survives the conflict");
+
+        // Corpus mismatch (different n_samples) is a MISS, never a stale hit.
+        hit = true;
+        got.clear();
+        CHECK(ts_tessera_db_read_hessian_cache(db, h_model, "trunk",
+              "blk.0.attn_q.weight", h_in_dim, TS_L5_HESSIAN_SCORER_VERSION,
+              h_n + 1, h_ridge, &got, &hit, &err) == 0,
+              "hessian cache: corpus-mismatch read returns 0");
+        CHECK(!hit, "hessian cache: n_samples mismatch is a miss");
+
+        // Ridge mismatch is a MISS too.
+        hit = true;
+        got.clear();
+        CHECK(ts_tessera_db_read_hessian_cache(db, h_model, "trunk",
+              "blk.0.attn_q.weight", h_in_dim, TS_L5_HESSIAN_SCORER_VERSION,
+              h_n, h_ridge * 10.0, &got, &hit, &err) == 0,
+              "hessian cache: ridge-mismatch read returns 0");
+        CHECK(!hit, "hessian cache: ridge mismatch is a miss");
+
+        // scorer_version gate: the same tensor under a different scorer
+        // version is a different key (v3.1 spec errata + §13 risk 2/9).
+        hit = true;
+        got.clear();
+        CHECK(ts_tessera_db_read_hessian_cache(db, h_model, "trunk",
+              "blk.0.attn_q.weight", h_in_dim,
+              TS_L5_HESSIAN_SCORER_VERSION + 1,
+              h_n, h_ridge, &got, &hit, &err) == 0,
+              "hessian cache: scorer_version-gated read returns 0");
+        CHECK(!hit, "hessian cache: different scorer_version is a miss");
+        // Writing under the bumped version stores a SEPARATE row: the old
+        // key's row is untouched (forward-only, no overwrite of either).
+        ts_tessera_db_hessian_entry e3 = e1;
+        e3.scorer_version = TS_L5_HESSIAN_SCORER_VERSION + 1;
+        e3.h_inv_diag     = diag_b;
+        stored = false;
+        CHECK(ts_tessera_db_write_hessian_cache(db, e3, &stored, &err) == 0,
+              "hessian cache: version-bumped write returns 0");
+        CHECK(stored, "hessian cache: version-bumped write stores (separate key)");
+        hit = false;
+        got.clear();
+        CHECK(ts_tessera_db_read_hessian_cache(db, h_model, "trunk",
+              "blk.0.attn_q.weight", h_in_dim,
+              TS_L5_HESSIAN_SCORER_VERSION + 1,
+              h_n, h_ridge, &got, &hit, &err) == 0,
+              "hessian cache: version-bumped read returns 0");
+        CHECK(hit, "hessian cache: version-bumped key hits");
+        CHECK(got == diag_b, "hessian cache: version-bumped key returns its own value");
+        // The original key still returns the ORIGINAL value (no cross-talk).
+        hit = false;
+        got.clear();
+        CHECK(ts_tessera_db_read_hessian_cache(db, h_model, "trunk",
+              "blk.0.attn_q.weight", h_in_dim, TS_L5_HESSIAN_SCORER_VERSION,
+              h_n, h_ridge, &got, &hit, &err) == 0,
+              "hessian cache: original key still readable");
+        CHECK(hit, "hessian cache: original key unaffected by version bump");
+        CHECK(got == diag_a, "hessian cache: original key returns first value");
+
+        // model_role disambiguates: the dflash encoder shares tensor names.
+        hit = true;
+        got.clear();
+        CHECK(ts_tessera_db_read_hessian_cache(db, h_model, "dflash",
+              "blk.0.attn_q.weight", h_in_dim, TS_L5_HESSIAN_SCORER_VERSION,
+              h_n, h_ridge, &got, &hit, &err) == 0,
+              "hessian cache: dflash role read returns 0");
+        CHECK(!hit, "hessian cache: dflash role is a separate key (miss)");
+
+        // Ledger: the append-only JSONL ledger exists and has lines for
+        // the lifecycle above. The path mirrors the sidecar stem rule.
+        {
+            std::string ledger_path = std::string(path);
+            auto dot = ledger_path.find_last_of('.');
+            if (dot != std::string::npos) ledger_path = ledger_path.substr(0, dot);
+            ledger_path += ".hessian-cache.jsonl";
+            std::ifstream f(ledger_path, std::ios::binary);
+            CHECK(f.good(), "hessian ledger: file exists next to the duckdb");
+            std::string content((std::istreambuf_iterator<char>(f)),
+                                std::istreambuf_iterator<char>());
+            CHECK(content.find("\"event\": \"cache_store\"") != std::string::npos,
+                  "hessian ledger: records cache_store");
+            CHECK(content.find("\"event\": \"cache_hit\"") != std::string::npos,
+                  "hessian ledger: records cache_hit");
+            CHECK(content.find("\"event\": \"cache_miss\"") != std::string::npos,
+                  "hessian ledger: records cache_miss");
+            CHECK(content.find("\"event\": \"cache_store_conflict\"") != std::string::npos,
+                  "hessian ledger: records cache_store_conflict");
+            // Each line is one JSON object ending with a newline.
+            size_t newlines = 0;
+            for (char c : content) if (c == '\n') newlines++;
+            CHECK(newlines >= 6, "hessian ledger: one JSON object per line");
         }
     }
 

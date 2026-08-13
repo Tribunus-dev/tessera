@@ -49,6 +49,7 @@
 #include <cstring>
 #include <deque>
 #include <limits>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <atomic>
@@ -2500,6 +2501,29 @@ int ts_dispatch_run(const ts_dispatch_params * params,
     std::string policy_json = "{\n  \"tensors\": [\n";
     bool first_policy_entry = true;
 
+    // ---- L5 scorer combine collectors (Phase C, spec §9.4) ----
+    // The l5_scorer spec ("hessian:0.5,imatrix:0.3,grad:0.2") is joined via
+    // ts_l5_combine AFTER the quantize walk. The per-tensor inputs are
+    // collected during the walk, where the source weights AND the quantized
+    // reconstruction coexist (the OBQ omega denominator needs both). Only
+    // 2D tensors participate: the MoE branch produces per-expert
+    // reconstructions, not a single w_hat, so it stays out of the map
+    // (absent tensors contribute 0 to the combined score, matching the
+    // shipped scorers' missing-data fallback).
+    const bool l5_scorer_enabled = !params->l5_scorer.empty();
+    std::vector<std::string>  l5_names;          // 2D quantized tensor names
+    std::vector<float>        l5_imatrix_mean;   // mean |act| per tensor
+    std::vector<float>        l5_hessian_raw;    // OBQ mean omega per tensor
+    int32_t l5_hessian_n_scored     = 0;
+    int32_t l5_hessian_n_cached     = 0;   // H_inv_diag read from the DB cache
+    int32_t l5_hessian_n_factorized = 0;   // Cholesky factorizes this run
+    int32_t l5_hessian_n_skipped    = 0;   // 2D tensors without calibration data
+    // Run-local memo: with the dispatch-level corpus, every tensor sharing
+    // (X, in_dim) has the SAME H = X^T X / n, so factorize once per in_dim
+    // per run and store the diagonal under each tensor name (the cache key
+    // is per-name for the future per-layer activation capture).
+    std::map<int64_t, std::vector<float>> l5_hinv_memo;
+
     // The quantize-write loop is the second long phase. Bump progress per
     // tensor written (quantized or copied through).
     ts_progress_set_phase(prog, ts_progress_phase::QUANTIZE, n_tensors,
@@ -2981,6 +3005,135 @@ int ts_dispatch_run(const ts_dispatch_params * params,
                 printf("tessera-dispatch: quantized %s (mse=%.6f alpha=%.3f)\n",
                        name, qr.mse, qr.best_alpha);
             }
+
+            // ---- L5 scorer collection (Phase C) ----
+            if (l5_scorer_enabled) {
+                l5_names.push_back(name);
+                // imatrix magnitude: mean |act| per tensor. act_scales is
+                // the per-channel mean |activation| (imatrix, else corpus-
+                // derived); the map is peak-normalized after the walk,
+                // mirroring ts_l5_imatrix_magnitude's normalization.
+                if (act_scales != nullptr && in_dim > 0) {
+                    double s = 0.0;
+                    for (int64_t c = 0; c < in_dim; c++) {
+                        s += (double) std::fabs(act_scales[c]);
+                    }
+                    l5_imatrix_mean.push_back((float) (s / (double) in_dim));
+                } else {
+                    l5_imatrix_mean.push_back(0.0f);
+                }
+                // hessian: OBQ sensitivity of the ACTUAL quantized
+                // reconstruction against the diagonal of H^{-1}. Needs a
+                // calibration corpus whose width matches this tensor (the
+                // same gate the pipeline uses for corpus-derived act_scales
+                // and the w4a4 path). Tensors without matching data are
+                // absent from the hessian map (0 contribution in combine).
+                float hessian_raw = 0.0f;
+                if (!calib_X.empty() && calib_in_dim == in_dim &&
+                    calib_n_tokens > 0 && qr.recon.size() == (size_t) (out_dim * in_dim)) {
+                    const double ridge = 1e-4;   // SEPTQ Hessian ridge default
+                    const std::string h_model =
+                        (db_wrap != nullptr) ? db_wrap->model_hash : std::string();
+                    std::vector<float> hinv;
+                    bool hit = false;
+                    std::string herr;
+                    if (ts_tessera_db_read_hessian_cache(
+                            (db_wrap != nullptr) ? db_wrap->db : nullptr,
+                            h_model, params->model_role, name, in_dim,
+                            TS_L5_HESSIAN_SCORER_VERSION,
+                            calib_n_tokens, ridge, &hinv, &hit, &herr) != 0) {
+                        if (verbose) {
+                            fprintf(stderr, "tessera-dispatch: warning: "
+                                    "hessian cache read: %s\n", herr.c_str());
+                        }
+                    }
+                    if (!hit) {
+                        // Miss: factorize once per (X, in_dim) this run.
+                        auto mit = l5_hinv_memo.find(in_dim);
+                        if (mit != l5_hinv_memo.end()) {
+                            hinv = mit->second;
+                        } else {
+                            std::vector<float> scratch((size_t) in_dim * in_dim, 0.0f);
+                            std::vector<float> L((size_t) in_dim * in_dim, 0.0f);
+                            std::vector<float> hinv_new((size_t) in_dim, 0.0f);
+                            if (ts_l5_hessian_factorize_inverse(
+                                    in_dim, calib_X.data(), calib_n_tokens,
+                                    (float) ridge, hinv_new.data(),
+                                    L.data(), scratch.data()) == 0) {
+                                hinv = hinv_new;
+                                l5_hinv_memo[in_dim] = hinv;
+                                ts_tessera_db_append_hessian_ledger(
+                                    (db_wrap != nullptr) ? db_wrap->db : nullptr,
+                                    "cache_compute", h_model, params->model_role,
+                                    name, in_dim, TS_L5_HESSIAN_SCORER_VERSION,
+                                    calib_n_tokens, ridge, nullptr);
+                                l5_hessian_n_factorized++;
+                            } else {
+                                // Degenerate Hessian (non-PD even with the
+                                // ridge): skip the tensor, never a stale hit.
+                                l5_hessian_n_skipped++;
+                            }
+                        }
+                    } else {
+                        l5_hessian_n_cached++;
+                    }
+                    if (!hinv.empty()) {
+                        // Forward-only store under the per-name key. The
+                        // first row for the key is permanent; a conflict
+                        // (different corpus, earlier run) keeps the stored
+                        // row and is fine — the read validated the corpus
+                        // before we got here.
+                        ts_tessera_db_hessian_entry he;
+                        he.model_hash     = h_model;
+                        he.model_role     = params->model_role;
+                        he.name           = name;
+                        he.in_dim         = in_dim;
+                        he.scorer_version = TS_L5_HESSIAN_SCORER_VERSION;
+                        he.h_inv_diag     = hinv;
+                        he.n_samples      = calib_n_tokens;
+                        he.ridge_fraction = ridge;
+                        bool stored = false;
+                        std::string werr;
+                        if (ts_tessera_db_write_hessian_cache(
+                                (db_wrap != nullptr) ? db_wrap->db : nullptr,
+                                he, &stored, &werr) != 0 && verbose) {
+                            fprintf(stderr, "tessera-dispatch: warning: "
+                                    "hessian cache write: %s\n", werr.c_str());
+                        }
+                        // OBQ omega: mean over input rows i of
+                        //   sum_j (w_ij - w_hat_ij)^2 / [H^{-1}]_ii
+                        // (the same criterion ts_l5_hessian_sensitivity
+                        // computes; w_hat here is the tensor's real
+                        // quantized reconstruction, qr.recon).
+                        double sum_omega = 0.0;
+                        int64_t n_rows = 0;
+                        for (int64_t r = 0; r < in_dim; r++) {
+                            const float hii = hinv[(size_t) r];
+                            if (hii <= 0.0f) continue;
+                            const float * wrow  = weights.data() + (size_t) r * out_dim;
+                            const float * wqrow = qr.recon.data() + (size_t) r * out_dim;
+                            double err_i = 0.0;
+                            for (int64_t c = 0; c < out_dim; c++) {
+                                const float d = wrow[c] - wqrow[c];
+                                err_i += (double) d * (double) d;
+                            }
+                            sum_omega += err_i / (double) hii;
+                            n_rows++;
+                        }
+                        if (n_rows > 0) {
+                            hessian_raw = (float) (sum_omega / (double) in_dim);
+                            l5_hessian_n_scored++;
+                        } else {
+                            l5_hessian_n_skipped++;
+                        }
+                    }
+                } else {
+                    // No matching calibration corpus (or no reconstruction)
+                    // for this tensor: absent from the hessian map.
+                    l5_hessian_n_skipped++;
+                }
+                l5_hessian_raw.push_back(hessian_raw);
+            }
         }
 
         // accumulate policy entry
@@ -3008,6 +3161,134 @@ int ts_dispatch_run(const ts_dispatch_params * params,
     }
 
     policy_json += "\n  ]\n}";
+
+    // ---- L5 scorer combine (Phase C, spec §9.4) ----
+    // Join the per-scorer maps via ts_l5_combine per the parsed l5_scorer
+    // spec, after the whole walk so the hessian map can be peak-normalized
+    // over the full roster. The grad map is always empty here (the dispatch
+    // does not capture output_sensitivity); the combine treats an absent
+    // scorer entry as a 0 contribution, matching the shipped missing-data
+    // fallback. The result lands in the l5_scorer_report_json (schema
+    // llama.tessera.l5-scorer.v1) + the l5_hessian_* counters.
+    if (l5_scorer_enabled && !l5_names.empty()) {
+        std::vector<ts_l5_scorer_entry> spec_entries;
+        std::string spec_err;
+        if (ts_l5_parse_scorer_spec(params->l5_scorer, spec_entries, spec_err)) {
+            // imatrix map: peak-normalized mean |act| (mirrors
+            // ts_l5_imatrix_magnitude's normalization).
+            ts_score_map imap;
+            {
+                float peak = 0.0f;
+                for (size_t i = 0; i < l5_names.size(); i++) {
+                    imap[l5_names[i]] = std::max(0.0f, l5_imatrix_mean[i]);
+                    peak = std::max(peak, imap[l5_names[i]]);
+                }
+                if (peak > 0.0f) {
+                    for (auto & kv : imap) kv.second /= peak;
+                }
+            }
+            // hessian map: peak-normalized OBQ omega over the tensors that
+            // got a score (zero tensors stay at zero).
+            ts_score_map hmap;
+            {
+                float peak = 0.0f;
+                for (size_t i = 0; i < l5_names.size(); i++) {
+                    hmap[l5_names[i]] = std::max(0.0f, l5_hessian_raw[i]);
+                    peak = std::max(peak, hmap[l5_names[i]]);
+                }
+                if (peak > 0.0f) {
+                    for (auto & kv : hmap) kv.second /= peak;
+                }
+            }
+            // layer map: position prior from the tensor names. The dispatch
+            // has no block count, so the helper's uniform 0.5 prior applies.
+            std::vector<const char *> name_ptrs;
+            name_ptrs.reserve(l5_names.size());
+            for (const auto & n : l5_names) name_ptrs.push_back(n.c_str());
+            ts_score_map lmap = ts_l5_layer_position_prior(
+                name_ptrs.data(), (int64_t) name_ptrs.size(), 0);
+            ts_score_map gmap;   // grad: empty (no output_sensitivity)
+
+            // Normalize the spec weights to sum 1.0 (ts_l5_combine does the
+            // weighted sum as-is; normalization is the caller's job per the
+            // spec).
+            float wsum = 0.0f;
+            for (const auto & e : spec_entries) wsum += e.weight;
+            if (wsum <= 0.0f) wsum = 1.0f;
+
+            const ts_score_map * scorers[4];
+            float weights[4];
+            int n_s = 0;
+            for (const auto & e : spec_entries) {
+                const ts_score_map * m = nullptr;
+                if (e.name == "hessian")      m = &hmap;
+                else if (e.name == "imatrix") m = &imap;
+                else if (e.name == "layer")   m = &lmap;
+                else if (e.name == "grad")    m = &gmap;
+                if (m == nullptr) continue;
+                scorers[n_s] = m;
+                weights[n_s] = e.weight / wsum;
+                n_s++;
+            }
+            ts_score_map combined;
+            if (n_s > 0) {
+                combined = ts_l5_combine(scorers, weights, n_s);
+            }
+
+            // Report (schema llama.tessera.l5-scorer.v1): spec echo,
+            // per-scorer weights, hessian counters, and the per-tensor
+            // combined + per-scorer scores.
+            result->l5_scorer_ran = true;
+            result->l5_hessian_n_scored     = l5_hessian_n_scored;
+            result->l5_hessian_n_cached     = l5_hessian_n_cached;
+            result->l5_hessian_n_factorized = l5_hessian_n_factorized;
+            result->l5_hessian_n_skipped    = l5_hessian_n_skipped;
+            std::ostringstream rep;
+            rep << "{\n"
+                << "  \"schema\": \"llama.tessera.l5-scorer.v1\",\n"
+                << "  \"spec\": \"" << params->l5_scorer << "\",\n"
+                << "  \"weights\": {";
+            for (size_t i = 0; i < spec_entries.size(); i++) {
+                if (i > 0) rep << ", ";
+                rep << "\"" << spec_entries[i].name << "\": "
+                    << spec_entries[i].weight / wsum;
+            }
+            rep << "},\n"
+                << "  \"hessian\": {\"n_scored\": " << l5_hessian_n_scored
+                << ", \"n_cached\": " << l5_hessian_n_cached
+                << ", \"n_factorized\": " << l5_hessian_n_factorized
+                << ", \"n_skipped\": " << l5_hessian_n_skipped << "},\n"
+                << "  \"scores\": [";
+            for (size_t i = 0; i < l5_names.size(); i++) {
+                if (i > 0) rep << ",\n";
+                auto c_it = combined.find(l5_names[i]);
+                auto h_it = hmap.find(l5_names[i]);
+                auto im_it = imap.find(l5_names[i]);
+                auto l_it = lmap.find(l5_names[i]);
+                rep << "    {\"name\": \"" << l5_names[i]
+                    << "\", \"combined\": "
+                    << (c_it != combined.end() ? c_it->second : 0.0f)
+                    << ", \"hessian\": "
+                    << (h_it != hmap.end() ? h_it->second : 0.0f)
+                    << ", \"imatrix\": "
+                    << (im_it != imap.end() ? im_it->second : 0.0f)
+                    << ", \"layer\": "
+                    << (l_it != lmap.end() ? l_it->second : 0.0f) << "}";
+            }
+            rep << "\n  ]\n}\n";
+            result->l5_scorer_report_json = rep.str();
+            if (verbose) {
+                printf("tessera-dispatch: l5 scorer combine (spec=%s) "
+                       "hessian scored=%d cached=%d factorized=%d skipped=%d\n",
+                       params->l5_scorer.c_str(), l5_hessian_n_scored,
+                       l5_hessian_n_cached, l5_hessian_n_factorized,
+                       l5_hessian_n_skipped);
+            }
+        } else if (verbose) {
+            fprintf(stderr, "tessera-dispatch: warning: l5_scorer spec "
+                            "rejected late: %s\n", spec_err.c_str());
+        }
+    }
 
     // --- step 7a: L5 joint PPL loop (the production default) ---
     //
