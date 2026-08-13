@@ -18,6 +18,11 @@
 struct ts_acceptance_config {
     int   n_heldout_tensors;     // number of held-out tensors for evaluation
     float heldout_fraction;      // default 0.2 (20% of tensors held out)
+    float margin;                // composite must beat best single by this
+                                 // fraction (0.02 = 2%; a tie must not bless
+                                 // shipping). <= 0 disables the floor (legacy
+                                 // strict-<). The dispatch defaults an unset
+                                 // config to 0.02; TESSERA_G6_MARGIN overrides.
     bool  verbose;
     char  output_path[1024];     // JSON report output (empty = no file)
 };
@@ -44,10 +49,19 @@ struct ts_acceptance_result {
     float improvement_pct;       // (best_single - composite) / best_single * 100
     bool  composite_wins;        // composite_t2 < best_single_t2
 
-    // Test 2: ranking disagreement
+    // Kernel-fidelity diagnostic (the v1 novelty prong; reported, not gating)
     float kendall_tau;           // offline vs kernel-direct ranking agreement
     float ranking_disagreement;  // 1 - |kendall_tau| (0 = identical rankings)
-    bool  novelty_survives;      // ranking_disagreement > 0.05 (non-trivial)
+
+    // Test 2 (v2): cross-METHOD novelty over the held-out Tier-2 panel.
+    // The methods must rank the held-out tensors differently somewhere:
+    // method_disagreement = 1 - min |kendall tau| across the 6 method
+    // pairs (awq/rotation/lowrank/hessian). The MOST disagreeing pair is
+    // used so one degenerate slot (a score still carried by a proxy)
+    // cannot suppress signal from the real pairs.
+    float method_tau_min;        // the most-disagreeing pair's tau
+    float method_disagreement;   // 1 - |method_tau_min|
+    bool  novelty_survives;      // method_disagreement > 0.05 (non-trivial)
 
     // Per-proxy breakdown (mean t_l^2 over held-out tensors)
     float awq_t2;

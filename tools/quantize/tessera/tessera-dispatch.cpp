@@ -28,6 +28,8 @@
 #include "tessera-mm-awq.h"
 #include "tessera-w4a4.h"
 #include "tessera-acceptance.h"
+#include "tessera-dartquant.h"
+#include "tessera-lrq.h"
 #include "tessera-policy.h"
 #include "tessera-progress.h"
 #include "tessera-sharded-map.h"
@@ -514,6 +516,100 @@ static float ts_dispatch_kernel_direct_t2(
     }
     return ts_l1_kernel_direct_t2_tail(w, w, kdeq.data(),
                                        n, tau, lambda_tail);
+}
+
+// Tier-2 REAL per-expert evaluation for the G6 panel. ts_dispatch_forced_t2
+// only scales alpha/clip through the same T640 core -- the rotation never
+// rotates, the low-rank never factorizes -- so the per-method scores could
+// not disagree (measured: rotation and Hessian bit-identical to AWQ on
+// 197/197 Orpheus tensors) and the novelty prong was structurally null.
+// This helper runs the expert's ACTUAL algorithm and scores the full
+// reconstruction against the original weights in t2 units (mse * n /
+// ||W||_F^2), matching forced_t2's convention:
+//   DARTQUANT: fit the block rotation (QR-Orth), rotate, quantize the
+//     rotated weights with the T640 core. Orthogonality makes the rotated-
+//     space error equal the original-space error, and ||W|| invariant.
+//   FLRQ/low-rank: fit U,V (LRQ), quantize the residual W - UV with the
+//     T640 core; the reconstruction is UV (carried high-precision) +
+//     Q(residual), so the residual's MSE is the reconstruction error.
+//   AWQ needs no Tier-2 path: forced_t2 with the AWQ profile IS the real
+//     AWQ-core measurement (actual alpha/clip through the actual core).
+//   SEPTQ scoring is not yet plumbed (needs a dequant of its packed
+//     output); its slot keeps the proxy and the verdict labels it.
+// Returns -1 on any failure so the caller keeps the proxy value.
+static float ts_dispatch_tier2_t2(ts_expert_id expert, const float * w,
+                                  const float * act_scales,
+                                  int64_t out_dim, int64_t in_dim,
+                                  float alpha, float clip, uint32_t seed) {
+    const int64_t n = out_dim * in_dim;
+    if (w == nullptr || n <= 0) return -1.0f;
+    const float frob2 = ts_vec_dotpr(w, w, n);
+    if (frob2 <= 0.0f) return -1.0f;
+
+    switch (expert) {
+        case TS_EXPERT_DARTQUANT: {
+            int64_t K = 0;
+            for (int64_t cand : {(int64_t)128, (int64_t)64, (int64_t)32,
+                                 (int64_t)16, (int64_t)8}) {
+                if (in_dim % cand == 0) { K = cand; break; }
+            }
+            if (K == 0) return -1.0f;
+            ts_dartquant_params dp;
+            dp.block_size  = K;
+            dp.max_iters   = 30;   // panel budget: enough to leave identity,
+                                   // bounded so 4 experts x holdout stays
+                                   // minutes, not hours
+            dp.lr          = 1.0e-2f;
+            dp.whip_weight = 0.1f;
+            dp.seed        = seed;
+            ts_dartquant_result dr;
+            if (ts_dartquant_qr_orth(w, out_dim, in_dim, &dp, &dr) != 0) {
+                return -1.0f;
+            }
+            std::vector<float> wrot((size_t)n);
+            ts_dartquant_apply(w, dr.R.data(), wrot.data(), out_dim, in_dim, K);
+            const float mse = ts_quantize_mse_streaming(
+                wrot.data(), act_scales, alpha, clip, out_dim, in_dim);
+            if (mse < 0.0f) return -1.0f;
+            return mse * (float)n / frob2;
+        }
+        case TS_EXPERT_FLRQ: {
+            ts_lrq_params lp;
+            lp.rank      = std::max<int64_t>(1,
+                std::min<int64_t>(32, std::min(out_dim, in_dim) / 8));
+            lp.max_iters = 50;
+            lp.lr        = 1.0e-3f;
+            lp.tol       = 1.0e-6f;
+            lp.seed      = seed;
+            ts_lrq_result lres;
+            if (ts_train_lrq(w, out_dim, in_dim, &lp, &lres) != 0) {
+                return -1.0f;
+            }
+            const int64_t r = lres.rank;
+            if (r <= 0 || (int64_t)lres.U.size() < out_dim * r ||
+                (int64_t)lres.V.size() < r * in_dim) {
+                return -1.0f;
+            }
+            std::vector<float> resid((size_t)n);
+            for (int64_t i = 0; i < out_dim; i++) {
+                for (int64_t j = 0; j < in_dim; j++) {
+                    float uv = 0.0f;
+                    for (int64_t k = 0; k < r; k++) {
+                        uv += lres.U[(size_t)(i * r + k)] *
+                              lres.V[(size_t)(k * in_dim + j)];
+                    }
+                    resid[(size_t)(i * in_dim + j)] =
+                        w[(size_t)(i * in_dim + j)] - uv;
+                }
+            }
+            const float mse = ts_quantize_mse_streaming(
+                resid.data(), act_scales, alpha, clip, out_dim, in_dim);
+            if (mse < 0.0f) return -1.0f;
+            return mse * (float)n / frob2;
+        }
+        default:
+            return -1.0f;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3591,6 +3687,14 @@ int ts_dispatch_run(const ts_dispatch_params * params,
             (int32_t) std::thread::hardware_concurrency(),
             std::min((int32_t)8, (int32_t)work.size())));
 
+        // Pre-mark the held-out set (trailing 20%, min 1) so the Tier-2
+        // real-expert panel runs exactly on the tensors the gate means
+        // over. ts_acceptance_run respects explicit held_out marks and
+        // only falls back to its own trailing-fraction selection when
+        // none are set.
+        const int64_t acc_heldout_cutoff = (int64_t)work.size()
+            - std::max<int64_t>(1, (int64_t)(0.2 * (double)work.size()));
+
         if (acc_threads <= 1 || work.size() < 2) {
             for (size_t idx = 0; idx < work.size(); idx++) {
                 const auto & item = work[idx];
@@ -3623,7 +3727,21 @@ int ts_dispatch_run(const ts_dispatch_params * params,
                         at.kernel_direct_t2 = at.composite_t2;
                     }
                 }
-                at.held_out          = false;
+                at.held_out = ((int64_t)idx >= acc_heldout_cutoff);
+                // Tier-2 real panel on the held-out set: rotation and
+                // low-rank run their actual algorithms; -1 keeps the
+                // profile proxy (AWQ's proxy IS the real AWQ-core
+                // measurement; SEPTQ scoring not yet plumbed).
+                if (at.held_out) {
+                    const float rt = ts_dispatch_tier2_t2(
+                        TS_EXPERT_DARTQUANT, w.data(), item.act,
+                        item.out_dim, item.in_dim, alpha, clip, seed);
+                    if (rt >= 0.0f) at.rotation_t2 = rt;
+                    const float lt = ts_dispatch_tier2_t2(
+                        TS_EXPERT_FLRQ, w.data(), item.act,
+                        item.out_dim, item.in_dim, alpha, clip, seed);
+                    if (lt >= 0.0f) at.lowrank_t2 = lt;
+                }
                 acc_tensors[idx] = at;
                 ts_progress_inc(prog, 1, item.name.c_str());
             }
@@ -3657,7 +3775,19 @@ int ts_dispatch_run(const ts_dispatch_params * params,
                             at.kernel_direct_t2 = at.composite_t2;
                         }
                     }
-                    at.held_out          = false;
+                    at.held_out = ((int64_t)idx >= acc_heldout_cutoff);
+                    // Tier-2 real panel on the held-out set (see the
+                    // serial branch for the contract).
+                    if (at.held_out) {
+                        const float rt = ts_dispatch_tier2_t2(
+                            TS_EXPERT_DARTQUANT, w.data(), item.act,
+                            item.out_dim, item.in_dim, alpha, clip, seed);
+                        if (rt >= 0.0f) at.rotation_t2 = rt;
+                        const float lt = ts_dispatch_tier2_t2(
+                            TS_EXPERT_FLRQ, w.data(), item.act,
+                            item.out_dim, item.in_dim, alpha, clip, seed);
+                        if (lt >= 0.0f) at.lowrank_t2 = lt;
+                    }
                     acc_tensors[idx] = at;
                     ts_progress_inc(prog, 1, item.name.c_str());
                 }
@@ -3670,7 +3800,23 @@ int ts_dispatch_run(const ts_dispatch_params * params,
         // work is destroyed here; acc_tensors owns the results.
 
         if (!acc_tensors.empty()) {
-            ts_acceptance_run(&params->acceptance_config,
+            // Margin floor (option B element): an unset/zero-initialized
+            // config gets the 2% default; TESSERA_G6_MARGIN overrides
+            // (0 disables the floor explicitly).
+            ts_acceptance_config acfg = params->acceptance_config;
+            if (acfg.margin <= 0.0f) {
+                acfg.margin = 0.02f;
+            }
+            {
+                const char * menv = std::getenv("TESSERA_G6_MARGIN");
+                if (menv != nullptr && menv[0] != '\0') {
+                    const float m = (float)atof(menv);
+                    if (m >= 0.0f && m < 1.0f) {
+                        acfg.margin = m;
+                    }
+                }
+            }
+            ts_acceptance_run(&acfg,
                               acc_tensors.data(), (int64_t)acc_tensors.size(),
                               &result->acceptance);
             result->acceptance_ran = true;

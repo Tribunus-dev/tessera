@@ -20,6 +20,7 @@ void ts_acceptance_default_config(ts_acceptance_config * cfg) {
     if (!cfg) return;
     cfg->n_heldout_tensors = 0;
     cfg->heldout_fraction  = 0.2f;
+    cfg->margin            = 0.02f;
     cfg->verbose           = false;
     cfg->output_path[0]    = '\0';
 }
@@ -97,13 +98,52 @@ int ts_acceptance_run(const ts_acceptance_config * config,
     if (result->lowrank_t2  < result->best_single_t2) result->best_single_t2 = result->lowrank_t2;
     if (result->hessian_t2  < result->best_single_t2) result->best_single_t2 = result->hessian_t2;
 
-    result->composite_wins = result->composite_t2 < result->best_single_t2;
+    // Margin floor: a tie ("0.0% worse") must not bless shipping.
+    // margin <= 0 preserves the legacy strict-< behavior.
+    const float margin = config->margin > 0.0f ? config->margin : 0.0f;
+    result->composite_wins = result->composite_t2
+        < result->best_single_t2 * (1.0f - margin);
     result->improvement_pct = (result->best_single_t2 > 1e-12f)
         ? (result->best_single_t2 - result->composite_t2) / result->best_single_t2 * 100.0f
         : 0.0f;
 
-    // --- Test 2: ranking disagreement ---
-    // Kendall tau between offline proxy and kernel-direct rankings.
+    // --- Test 2 (v2): cross-METHOD novelty on the held-out Tier-2 panel ---
+    // The methods must rank the held-out tensors differently somewhere:
+    // novelty = 1 - min |kendall tau| over the 6 method pairs. The v1
+    // prong compared the offline proxy against the kernel-direct ranking;
+    // that comparison remains below as a kernel-fidelity DIAGNOSTIC. The
+    // most-disagreeing pair is used so one degenerate slot (a score still
+    // carried by a proxy) cannot suppress signal from real pairs.
+    {
+        std::vector<float> va, vr, vl, vh;
+        for (int64_t i = 0; i < n_tensors; i++) {
+            if (!work[i].held_out) continue;
+            va.push_back(work[i].awq_t2);
+            vr.push_back(work[i].rotation_t2);
+            vl.push_back(work[i].lowrank_t2);
+            vh.push_back(work[i].hessian_t2);
+        }
+        const int64_t m = (int64_t)va.size();
+        float tau_min = 1.0f;
+        if (m >= 2) {
+            const float * vs[4] = { va.data(), vr.data(), vl.data(), vh.data() };
+            for (int a = 0; a < 4; a++) {
+                for (int b = a + 1; b < 4; b++) {
+                    const float t = ts_ab_kendall_tau(vs[a], vs[b], m);
+                    if (fabsf(t) < fabsf(tau_min)) {
+                        tau_min = t;
+                    }
+                }
+            }
+        }
+        result->method_tau_min      = tau_min;
+        result->method_disagreement = 1.0f - fabsf(tau_min);
+        result->novelty_survives    = result->method_disagreement > 0.05f;
+    }
+
+    // Kernel-fidelity diagnostic (the v1 novelty prong): kendall tau
+    // between offline proxy and kernel-direct rankings. Reported, not
+    // gating.
     std::vector<float> offline_scores;
     std::vector<float> kernel_scores;
     offline_scores.reserve(n_tensors);
@@ -117,24 +157,25 @@ int ts_acceptance_run(const ts_acceptance_config * config,
                                             kernel_scores.data(),
                                             n_tensors);
     result->ranking_disagreement = 1.0f - fabsf(result->kendall_tau);
-    result->novelty_survives = result->ranking_disagreement > 0.05f;
 
     // --- verdict ---
     result->acceptance_passed = result->composite_wins && result->novelty_survives;
 
     snprintf(result->verdict, sizeof(result->verdict),
-             "G6 %s | composite_t2=%.6g best_single=%.6g (%.1f%% %s) | "
-             "tau=%.4f disagreement=%.4f novelty=%s | "
-             "proxies: awq=%.6g rot=%.6g lr=%.6g hess=%.6g | "
+             "G6 %s | composite_t2=%.6g best_single=%.6g (%.1f%% %s, margin %.1f%%) | "
+             "method_dis=%.4f (tau_min=%.4f) novelty=%s | kernel_fid_dis=%.4f | "
+             "tier2: awq=%.6g rot=%.6g lr=%.6g hess=%.6g(proxy) | "
              "held_out=%lld/%lld",
              result->acceptance_passed ? "PASS" : "FAIL",
              (double)result->composite_t2,
              (double)result->best_single_t2,
              (double)result->improvement_pct,
              result->composite_wins ? "better" : "worse",
-             (double)result->kendall_tau,
-             (double)result->ranking_disagreement,
+             (double)(margin * 100.0f),
+             (double)result->method_disagreement,
+             (double)result->method_tau_min,
              result->novelty_survives ? "survives" : "null",
+             (double)result->ranking_disagreement,
              (double)result->awq_t2,
              (double)result->rotation_t2,
              (double)result->lowrank_t2,
@@ -204,6 +245,15 @@ int ts_acceptance_write_json(const char * path,
 
     j += ",\"composite_wins\":";
     j += result->composite_wins ? "true" : "false";
+
+    j += ",\"margin\":";
+    ts_acc_json_float(&j, config ? config->margin : 0.0f);
+
+    j += ",\"method_tau_min\":";
+    ts_acc_json_float(&j, result->method_tau_min);
+
+    j += ",\"method_disagreement\":";
+    ts_acc_json_float(&j, result->method_disagreement);
 
     j += ",\"kendall_tau\":";
     ts_acc_json_float(&j, result->kendall_tau);

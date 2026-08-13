@@ -682,6 +682,13 @@ int main() {
                 std::printf("  error: %s\n", aerr.c_str());
             } else {
                 check("g6: acceptance_ran", ares.acceptance_ran);
+                // The verdict must carry the Tier-2 panel label (real
+                // per-expert scores on the held-out set) and the margin
+                // floor -- the proxy-era format said "proxies:".
+                check("g6: verdict labels the tier2 panel",
+                      strstr(ares.acceptance.verdict, "tier2:") != nullptr);
+                check("g6: verdict carries the margin floor",
+                      strstr(ares.acceptance.verdict, "margin") != nullptr);
 
                 // Parse the per-tensor breakdown and require at least one
                 // tensor whose kernel-direct score is a real measurement
