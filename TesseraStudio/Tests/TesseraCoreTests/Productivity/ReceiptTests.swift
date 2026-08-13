@@ -293,4 +293,142 @@ final class ReceiptTests: XCTestCase {
         )
         XCTAssertTrue(receipt.summary.contains("set title"))
     }
+
+    // MARK: - Void appends a NEW receipt (not mutation of original)
+
+    /// Voiding creates a brand-new receipt with a different ID from the
+    /// original. The original's `voidedBy` is set in-memory after the
+    /// inverse is appended to the chain. This is the property that
+    /// keeps the chain append-only: the original row in the DB is
+    /// never modified.
+    func testVoidAppendsNewReceipt() throws {
+        let original = try signer.sign(
+            documentID: UUID(),
+            mutations: [.setDocumentTitle(title: "x")],
+            priorReceiptID: nil,
+            actor: .user(UUID())
+        )
+        // The inverse receipt must have a different ID from the original.
+        // We simulate what ReceiptUndoManager does: sign the inverse
+        // as a new receipt.
+        let inverse = try signer.sign(
+            documentID: original.documentID,
+            mutations: [],   // empty for the test (real inverse has inverse mutations)
+            priorReceiptID: original.id,
+            actor: .user(UUID()),
+            preMutationSnapshot: [:]
+        )
+        XCTAssertNotEqual(inverse.id, original.id)
+        // The inverse's prior is the original, so the chain is intact.
+        XCTAssertEqual(inverse.priorReceiptID, original.id)
+        // The original is NOT modified in place (append-only).
+        XCTAssertNil(original.voidedBy)
+    }
+
+    // MARK: - Pre-mutation snapshot
+
+    /// The receipt's `preMutationSnapshot` captures the blocks affected
+    /// by the mutations. This is what makes the receipt self-contained
+    /// for undo: the inverse can be computed without the live document.
+    func testPreMutationSnapshotCapturesAffectedBlocks() throws {
+        let blockID = UUID()
+        let block = Block(
+            id: blockID,
+            type: .paragraph,
+            content: [InlineRun(text: "original content")]
+        )
+        let docID = UUID()
+        var engine = MutationEngine()
+        var ast = DocumentAST(
+            blocks: [blockID: block],
+            rootChildren: [blockID]
+        )
+        // Apply a mutation and capture the pre-snapshot the engine returns.
+        let preFromEngine = try engine.apply(
+            .setBlockContent(
+                blockID: blockID,
+                content: [InlineRun(text: "new content")]
+            ),
+            to: &ast
+        )
+        // The engine must return the pre-state of the affected block.
+        XCTAssertTrue(preFromEngine.keys.contains(blockID))
+        XCTAssertEqual(
+            preFromEngine[blockID]?.content.first?.text,
+            "original content"
+        )
+        // Now sign a receipt with this snapshot and verify it round-trips.
+        let receipt = try signer.sign(
+            documentID: docID,
+            mutations: [.setBlockContent(
+                blockID: blockID,
+                content: [InlineRun(text: "new content")]
+            )],
+            priorReceiptID: nil,
+            actor: .user(UUID()),
+            preMutationSnapshot: preFromEngine
+        )
+        XCTAssertEqual(receipt.preMutationSnapshot[blockID]?.id, blockID)
+        XCTAssertEqual(
+            receipt.preMutationSnapshot[blockID]?.content.first?.text,
+            "original content"
+        )
+    }
+
+    /// The receipt is self-contained for undo: the inverse mutations can
+    /// be computed entirely from the receipt's `preMutationSnapshot` and
+    /// `mutations` fields. We verify by building the receipt from a
+    /// document, then restoring the original state using only the
+    /// embedded snapshot (not the live document).
+    func testPreMutationSnapshotSelfContained() throws {
+        let blockID = UUID()
+        let originalBlock = Block(
+            id: blockID,
+            type: .paragraph,
+            content: [InlineRun(text: "the original text")]
+        )
+        let docID = UUID()
+
+        // Apply a mutation and capture the pre-snapshot (same pattern
+        // DocumentStore uses when building the receipt).
+        var engine = MutationEngine()
+        var ast = DocumentAST(
+            blocks: [blockID: originalBlock],
+            rootChildren: [blockID]
+        )
+        var preSnapshot: [UUID: Block] = [:]
+        let newContent = [InlineRun(text: "the new text")]
+        let mutation = Mutation.setBlockContent(blockID: blockID, content: newContent)
+        let pre = try engine.apply(mutation, to: &ast)
+        for (k, v) in pre { preSnapshot[k] = v }
+
+        // Sign the receipt with the pre-snapshot.
+        let receipt = try signer.sign(
+            documentID: docID,
+            mutations: [mutation],
+            priorReceiptID: nil,
+            actor: .user(UUID()),
+            preMutationSnapshot: preSnapshot
+        )
+
+        // The inverse mutations are computable entirely from the receipt
+        // (no live document needed).
+        let inverseMutations = receipt.mutations.flatMap {
+            $0.inverse(preMutation: receipt.preMutationSnapshot)
+        }
+        XCTAssertFalse(inverseMutations.isEmpty)
+
+        // Verify the inverse restores the original text. Apply the inverse
+        // to the post-mutation document (which has "the new text") using
+        // only the data in the receipt's snapshot.
+        let inverse = inverseMutations[0]
+        var restored = ast  // ast has "the new text" after the mutation
+        let inversePre = try engine.apply(inverse, to: &restored)
+        XCTAssertFalse(inversePre.isEmpty)
+        XCTAssertEqual(
+            restored.blocks[blockID]?.content.first?.text,
+            "the original text",
+            "inverse must restore the original text using the embedded snapshot"
+        )
+    }
 }
