@@ -8,6 +8,9 @@ add_executable(${TARGET}
     # Phase imatrix-crash-safe: DuckDB-backed persistent imatrix_accum_state
     ${CMAKE_CURRENT_SOURCE_DIR}/../quantize/tessera/tessera-quantize-db.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../quantize/tessera/tessera-db-buffer.cpp
+    # Real per-tensor activation capture sidecar writer (--activation-capture)
+    ${CMAKE_CURRENT_SOURCE_DIR}/../quantize/tessera/tessera-activation-sidecar.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../common/tessera-debug/tessera-sidecar-v3.cpp
     # DuckDB amalgamation (self-contained, no external library needed)
     ${PROJECT_SOURCE_DIR}/third-party/duckdb/duckdb.cpp
 )

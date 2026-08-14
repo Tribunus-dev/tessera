@@ -129,6 +129,14 @@ else
     echo "SKIP (needs CMake build for libggml)"
 fi
 
+# --- Real per-tensor activation capture reservoir sampling (pipeline refactor stage 5) ---
+# Unit tests for the bounded reservoir sampling algorithm (Vitter's
+# Algorithm R) tools/imatrix/imatrix.cpp's collector uses to harvest a
+# real, bounded sample of captured activations. Header-only, no ggml/
+# llama dependency -- tested in isolation from the graph-harvesting
+# machinery around it, which needs a real model to exercise end to end.
+compile_and_run activation_reservoir $T/test_activation_reservoir.cpp -I $T
+
 # --- L5 joint calibration set generator (v1 of plan-sess_57d0ae24-05b7-4442-b516-8175bc46df1d) ---
 # Writes JSONL with synthetic text + synthetic audio targets. v3 wires
 # the real text-to-audio target mapping. Schema-only at v1.

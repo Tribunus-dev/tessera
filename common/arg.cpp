@@ -4323,6 +4323,44 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_examples({LLAMA_EXAMPLE_TESSERA}));
     add_opt(common_arg(
+        {"--activation-capture"}, "DIR",
+        "Tessera (llama-imatrix): capture a real, bounded sample of each dense "
+        "weight's actual input activations during the calibration forward pass "
+        "(not just their compact moments) and write a train + heldout sidecar "
+        "per tensor to DIR. Consumed by llama-tessera's GA fitness scoring "
+        "(--activation-capture-dir) to make it reconstruction-aware instead of "
+        "a weight-space proxy. Default: unset (disabled, no behavior change). "
+        "Requires real calibration text (-f); a data-free corpus produces "
+        "activation distributions unrepresentative of real deployment traffic.",
+        [](common_params &, const std::string & value) {
+            tessera_params.activation_capture_dir = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_IMATRIX}));
+    add_opt(common_arg(
+        {"--activation-capture-train-tokens"}, "N",
+        "Tessera: bounded reservoir sample size (train split) per tensor for "
+        "--activation-capture. Default: 512.",
+        [](common_params &, int value) {
+            if (value <= 0) {
+                throw std::invalid_argument(
+                    string_format("error: --activation-capture-train-tokens must be > 0, got %d\n", value));
+            }
+            tessera_params.activation_capture_train_tokens = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_IMATRIX}));
+    add_opt(common_arg(
+        {"--activation-capture-heldout-tokens"}, "N",
+        "Tessera: bounded reservoir sample size (heldout split) per tensor for "
+        "--activation-capture. Default: 128.",
+        [](common_params &, int value) {
+            if (value <= 0) {
+                throw std::invalid_argument(
+                    string_format("error: --activation-capture-heldout-tokens must be > 0, got %d\n", value));
+            }
+            tessera_params.activation_capture_heldout_tokens = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_IMATRIX}));
+    add_opt(common_arg(
         {"--phase"}, "NAME",
         "Tessera pipeline phase: imatrix (calibration only) | quantize (normal) | l5-joint (L5 search only). "
         "Default: quantize.",

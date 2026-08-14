@@ -35,6 +35,7 @@
 #include <map>
 #include <regex>
 #include <numeric>
+#include <random>
 #include <set>
 #include <csignal>
 #include <sys/stat.h>
@@ -51,6 +52,8 @@
 // CHECKPOINT before exit.
 #include "../quantize/tessera/tessera-quantize-db.h"
 #include "../quantize/tessera/tessera-db-buffer.h"
+#include "../quantize/tessera/tessera-activation-sidecar.h"
+#include "../quantize/tessera/tessera-activation-reservoir.h"
 #include "../../common/tessera-args.h"
 
 // duckdb.hpp for duckdb::Exception used in resume_from_db(). Placed after
@@ -264,6 +267,14 @@ public:
     void begin_graph_observers();
     bool collect_graph_observers();
     bool flush_graph_observers();
+    // Real per-tensor activation capture (pipeline refactor stage 5):
+    // drains the async reservoir-sampling ring the same way
+    // flush_graph_observers() drains the stats ring, then writes each
+    // captured tensor's train/heldout reservoir to
+    // tp.activation_capture_dir via ts_activation_sidecar_write. No-op
+    // (returns true immediately) when activation capture is off. Called
+    // once at the end of compute_imatrix(), after flush_graph_observers().
+    bool flush_activation_capture();
     void log_observer_performance();
     bool update_progressive_transfer(
             int32_t chunks_processed,
@@ -326,6 +337,30 @@ private:
             std::vector<graph_observer_snapshot> snapshots,
             const std::vector<float> & staging);
     bool flush_graph_observer_slot(size_t slot);
+
+    // Real per-tensor activation capture (pipeline refactor stage 5): a
+    // second async ring, parallel to the m_observer_staging/
+    // m_observer_reduction pair above but sized for raw per-token F16
+    // activation data (a different lifetime/size profile than the O(channels)
+    // compact stats -- staged tensors here are per-ubatch-sized, not O(1)).
+    struct activation_view_snapshot {
+        std::string name;    // filter_tensor_name(view->name)
+        int64_t     in_dim;  // view->ne[0] (channels)
+        int64_t     n_rows;  // ggml_nelements(view) / in_dim
+        size_t      offset;  // into the staging buffer, in uint16_t elements
+    };
+    // Bounded reservoir of real captured activations for one tensor. The
+    // sampling algorithm itself (ts_activation_reservoir +
+    // ts_activation_reservoir_insert, Vitter's Algorithm R) lives in
+    // tessera-activation-reservoir.h -- factored out of this class so it
+    // can be unit-tested independently of the ggml graph-harvesting
+    // machinery around it (see test_activation_reservoir.cpp).
+    using activation_reservoir = ts_activation_reservoir;
+    bool reduce_activation_views(
+            std::vector<activation_view_snapshot> snapshots,
+            const std::vector<uint16_t> & staging);
+    bool flush_activation_view_slot(size_t slot);
+    bool collect_activation_views();
     void save_transfer_ledger(
             const std::string & imatrix_path,
             int32_t checkpoint_chunk) const;
@@ -368,6 +403,22 @@ private:
     std::unordered_map<std::string, observer_transfer_state> m_transfer;
     int32_t                                m_observer_chunk = 0;
     bool                                   m_observer_topology_changed = false;
+
+    // Real per-tensor activation capture (pipeline refactor stage 5): the
+    // staged-this-ubatch list (parallel to m_graph_observers) and its own
+    // async ring, mirroring m_observer_staging/m_observer_reduction above
+    // but sized for raw F16 activation data rather than compact stats.
+    std::vector<ggml_tensor *>             m_activation_views;
+    std::array<std::vector<uint16_t>, k_observer_slots> m_activation_staging;
+    std::vector<size_t>                    m_activation_offsets;
+    std::array<std::future<bool>, k_observer_slots> m_activation_reduction;
+    size_t                                  m_activation_staging_slot = 0;
+    // Bounded reservoirs, keyed by filter_tensor_name(view->name). Written
+    // only from inside reduce_activation_views (under m_mutex); read only
+    // from flush_activation_capture, which first drains every in-flight
+    // reduction task via flush_activation_view_slot, so no concurrent
+    // reader ever races a writer.
+    std::unordered_map<std::string, activation_reservoir> m_activation_reservoirs;
 };
 
 // kv_stats (Phase 3 "KV-joint plumbing"): opt-in switch for the
@@ -583,9 +634,25 @@ bool IMatrixCollector::collect_imatrix(struct ggml_tensor * t, bool ask, void * 
             t->op == GGML_OP_IMATRIX_OBSERVER &&
             t->type == GGML_TYPE_F32 &&
             imatrix_op_param_i32(t, 1) == 0;
+        // Real per-tensor activation capture (pipeline refactor stage 5):
+        // claim the F16 activation view too (the raw per-token data
+        // build_lora_mm's dense path now harvests alongside the compact
+        // stats when imatrix_activation_capture is on -- see
+        // src/llama-graph.cpp). Staged into a separate list/ring
+        // (m_activation_views) from the stats views, since raw activation
+        // data has a different lifetime/size profile (per-ubatch-sized,
+        // not O(channels)).
+        const bool activation_view =
+            m_params.imatrix_activation_capture &&
+            ggml_imatrix_observer_is_activation_view(t);
         if (ask && (regular_observer ||
-                    fused_stats_view)) {
-            m_graph_observers.push_back(t);
+                    fused_stats_view ||
+                    activation_view)) {
+            if (activation_view) {
+                m_activation_views.push_back(t);
+            } else {
+                m_graph_observers.push_back(t);
+            }
             return false;
         }
 
@@ -634,11 +701,13 @@ bool IMatrixCollector::collect_imatrix(struct ggml_tensor * t, bool ask, void * 
             // Synchronize once at the ordinary graph output, after all compact
             // observer nodes for this internal ubatch have executed.
             return (t->flags & GGML_TENSOR_FLAG_OUTPUT) &&
-                   !m_graph_observers.empty();
+                   (!m_graph_observers.empty() || !m_activation_views.empty());
         }
-        const bool ok = collect_graph_observers();
+        const bool stats_ok = collect_graph_observers();
         m_graph_observers.clear();
-        return ok;
+        const bool activations_ok = collect_activation_views();
+        m_activation_views.clear();
+        return stats_ok && activations_ok;
     }
     GGML_UNUSED(user_data);
 
@@ -977,6 +1046,167 @@ bool IMatrixCollector::flush_graph_observers() {
             return false;
         }
     }
+    return true;
+}
+
+bool IMatrixCollector::collect_activation_views() {
+    if (m_activation_views.empty()) {
+        return true;
+    }
+    static_assert(k_observer_slots == std::tuple_size_v<decltype(m_activation_reduction)>);
+    const size_t slot = m_activation_staging_slot++ % m_activation_reduction.size();
+    if (!flush_activation_view_slot(slot)) {
+        return false;
+    }
+
+    m_activation_offsets.resize(m_activation_views.size() + 1);
+    m_activation_offsets[0] = 0;
+    for (size_t i = 0; i < m_activation_views.size(); ++i) {
+        m_activation_offsets[i + 1] =
+            m_activation_offsets[i] + (size_t) ggml_nelements(m_activation_views[i]);
+    }
+    std::vector<uint16_t> & staging = m_activation_staging[slot];
+    staging.resize(m_activation_offsets.back());
+
+    std::vector<activation_view_snapshot> snapshots;
+    snapshots.reserve(m_activation_views.size());
+    for (size_t i = 0; i < m_activation_views.size(); ++i) {
+        ggml_tensor * view = m_activation_views[i];
+        const int64_t in_dim = view->ne[0];
+        if (in_dim <= 0) {
+            continue;
+        }
+        const size_t read_bytes =
+            (m_activation_offsets[i + 1] - m_activation_offsets[i]) * sizeof(uint16_t);
+        ggml_backend_buffer_t view_buffer = view->buffer;
+        if (!view_buffer && view->view_src) {
+            view_buffer = view->view_src->buffer;
+        }
+        if (view_buffer && ggml_backend_buffer_is_host(view_buffer)) {
+            memcpy(staging.data() + m_activation_offsets[i], view->data, read_bytes);
+        } else {
+            ggml_backend_tensor_get(
+                view, staging.data() + m_activation_offsets[i], 0, read_bytes);
+        }
+        const int64_t total_elements = (int64_t) (read_bytes / sizeof(uint16_t));
+        snapshots.push_back({
+            filter_tensor_name(view->name),
+            in_dim,
+            total_elements / in_dim,
+            m_activation_offsets[i],
+        });
+    }
+
+    m_activation_reduction[slot] = std::async(
+        std::launch::async,
+        [this, slot, snapshots = std::move(snapshots)]() mutable {
+            return reduce_activation_views(std::move(snapshots), m_activation_staging[slot]);
+        });
+    return true;
+}
+
+bool IMatrixCollector::reduce_activation_views(
+        std::vector<activation_view_snapshot> snapshots,
+        const std::vector<uint16_t> & staging) {
+    const common_tessera_params & tp = common_get_tessera_params();
+    const int64_t train_target   = tp.activation_capture_train_tokens;
+    const int64_t heldout_target = tp.activation_capture_heldout_tokens;
+    const int64_t capacity       = train_target + heldout_target;
+
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (const activation_view_snapshot & snapshot : snapshots) {
+        if (snapshot.n_rows <= 0 || snapshot.in_dim <= 0) {
+            continue;
+        }
+        auto it = m_activation_reservoirs.find(snapshot.name);
+        if (it == m_activation_reservoirs.end()) {
+            activation_reservoir res;
+            res.in_dim = snapshot.in_dim;
+            res.capacity_rows = capacity;
+            // Deterministic per-tensor seed: same corpus + same tensor
+            // name always samples the same reservoir, across repeated
+            // runs, matching this codebase's determinism convention for
+            // anything GA/seed-driven (ts_awq_evolve_params.seed etc.).
+            res.rng.seed((uint32_t) (std::hash<std::string>{}(snapshot.name) & 0xffffffffu));
+            it = m_activation_reservoirs.emplace(snapshot.name, std::move(res)).first;
+        }
+        activation_reservoir & res = it->second;
+        if (res.in_dim != snapshot.in_dim) {
+            LOG_ERR(
+                "%s: activation capture in_dim changed for %s: stored=%lld incoming=%lld\n",
+                __func__, snapshot.name.c_str(),
+                (long long) res.in_dim, (long long) snapshot.in_dim);
+            return false;
+        }
+        ts_activation_reservoir_insert(
+            res, staging.data() + snapshot.offset, snapshot.n_rows, snapshot.in_dim);
+    }
+    return true;
+}
+
+bool IMatrixCollector::flush_activation_view_slot(size_t slot) {
+    GGML_ASSERT(slot < m_activation_reduction.size());
+    if (!m_activation_reduction[slot].valid()) {
+        return true;
+    }
+    return m_activation_reduction[slot].get();
+}
+
+bool IMatrixCollector::flush_activation_capture() {
+    const common_tessera_params & tp = common_get_tessera_params();
+    if (tp.activation_capture_dir.empty()) {
+        return true;
+    }
+    for (size_t slot = 0; slot < m_activation_reduction.size(); ++slot) {
+        if (!flush_activation_view_slot(slot)) {
+            return false;
+        }
+    }
+
+    // No lock needed here: every reduction task has been drained above,
+    // so nothing can still be writing into m_activation_reservoirs.
+    const int64_t train_target = tp.activation_capture_train_tokens;
+    int64_t n_written = 0;
+    for (const auto & [name, res] : m_activation_reservoirs) {
+        if (res.n_seen <= 0 || res.in_dim <= 0) {
+            continue;
+        }
+        // The reservoir's slot assignment is already randomized by
+        // construction (Algorithm R), so any fixed partition of the
+        // filled rows is itself an unbiased, disjoint train/heldout
+        // split -- no separate sampling pass is needed. A reservoir that
+        // never filled (n_seen < capacity) only has n_seen valid rows;
+        // split proportionally in that case rather than reading past
+        // what was ever written.
+        const int64_t filled_rows = res.filled_rows();
+        const int64_t train_rows = std::min(train_target, filled_rows);
+        const int64_t heldout_rows = filled_rows - train_rows;
+
+        std::string err;
+        if (train_rows > 0) {
+            if (ts_activation_sidecar_write(
+                    tp.activation_capture_dir.c_str(), name.c_str(), ".act_train.f16",
+                    train_rows, res.in_dim, res.data.data(), &err) != 0) {
+                LOG_ERR("%s: activation capture: train sidecar write failed for %s: %s\n",
+                        __func__, name.c_str(), err.c_str());
+                continue;
+            }
+        }
+        if (heldout_rows > 0) {
+            if (ts_activation_sidecar_write(
+                    tp.activation_capture_dir.c_str(), name.c_str(), ".act_heldout.f16",
+                    heldout_rows, res.in_dim,
+                    res.data.data() + train_rows * res.in_dim, &err) != 0) {
+                LOG_ERR("%s: activation capture: heldout sidecar write failed for %s: %s\n",
+                        __func__, name.c_str(), err.c_str());
+                continue;
+            }
+        }
+        ++n_written;
+    }
+    LOG_INF("%s: activation capture: wrote sidecars for %lld/%zu tensors to '%s'\n",
+            __func__, (long long) n_written, m_activation_reservoirs.size(),
+            tp.activation_capture_dir.c_str());
     return true;
 }
 
@@ -2661,6 +2891,9 @@ static bool compute_imatrix(llama_context * ctx, const common_params & params, c
     if (!g_collector.flush_graph_observers()) {
         return false;
     }
+    if (!g_collector.flush_activation_capture()) {
+        return false;
+    }
 
     return true;
 }
@@ -3146,6 +3379,22 @@ int imatrix_main(int argc, char ** argv) {
     // collector in the legacy callback mode and silently emits an empty
     // imatrix for Tile640 graphs.
     params.imatrix_observers = true;
+    // Real per-tensor activation capture: derived from --activation-capture
+    // (tp, read above) the same way imatrix_observers is forced above --
+    // both must land on params (and therefore on m_params via set_params()
+    // below, AND on cparams once this params object reaches context
+    // construction) before the collector/graph builder are configured, or
+    // the capture path silently never engages (the exact
+    // params-ordering-trap imatrix_observers documents at its own
+    // assignment).
+    params.imatrix_activation_capture = !tp.activation_capture_dir.empty();
+    if (params.imatrix_activation_capture && params.prompt.empty()) {
+        LOG_ERR("%s: --activation-capture requires real calibration text (-f); "
+                "a data-free run would capture activation distributions "
+                "unrepresentative of real deployment traffic, defeating the "
+                "point of real activation capture\n", __func__);
+        return 1;
+    }
     params.warmup = false;
     g_collector.set_params(params);
 

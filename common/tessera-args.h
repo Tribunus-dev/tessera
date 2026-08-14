@@ -238,6 +238,25 @@ struct common_tessera_params {
     std::string ane_profile_out;
     // Verbose dispatch output (L5 joint progress, tensor-level MSE, etc.).
     bool verbose = false;
+
+    // Real per-tensor activation capture (llama-imatrix --activation-capture):
+    // when non-empty, llama-imatrix harvests a bounded, real sample of each
+    // dense weight's actual input activations (not just their compact
+    // moments) during the calibration forward pass, and writes a train +
+    // heldout sidecar per tensor to this directory (see
+    // tools/quantize/tessera/tessera-activation-sidecar.h for the format).
+    // ts_dispatch_run_gaprep reads these sidecars back via
+    // ts_dispatch_params::activation_capture_dir to make GA fitness scoring
+    // reconstruction-aware (ts_awq_evaluate_layer's train_activations path)
+    // instead of the diagonal weight-space proxy. Empty = disabled
+    // (the default -- no behavior change).
+    std::string activation_capture_dir;
+    // Bounded reservoir sample size per tensor, evenly subsampled across
+    // the whole calibration run (not first-N truncation) once more rows
+    // than this are seen. Defaults sit inside the "a few hundred samples"
+    // AWQ/SmoothQuant calibration-set-size convention.
+    int32_t activation_capture_train_tokens   = 512;
+    int32_t activation_capture_heldout_tokens = 128;
 };
 
 const common_tessera_params & common_get_tessera_params();
