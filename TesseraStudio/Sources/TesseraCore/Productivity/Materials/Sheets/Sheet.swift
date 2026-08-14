@@ -87,6 +87,11 @@ public struct Sheet: Codable, Sendable, Identifiable, Hashable {
     /// engine without re-keying.
     public var namedRanges: [String: SheetNamedRange]?
 
+    /// Nil (the implicit default, like the fields above) means no
+    /// validation rules - read through `effectiveValidationRules`
+    /// (SheetValidationRule.swift), not this field directly.
+    public var validationRules: [SheetValidationRule]?
+
     public init(
         id: UUID = UUID(),
         title: String = "",
