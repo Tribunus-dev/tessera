@@ -1,8 +1,14 @@
 #include "../ggml-amd-internal.h"
 #include "../ggml-amd-provider.h"
+#include "ggml-amd-hip.h"
+#include "ggml-impl.h"
 #include "ggml.h"
 
 #include <cstring>
+
+#if defined(__linux__)
+#include <unistd.h>
+#endif
 
 #ifdef GGML_AMD_HIP
 
@@ -21,6 +27,113 @@ struct ggml_amd_hip_context {
 #endif
     bool initialized;
 };
+
+static ggml_amd_hip_context * ggml_amd_hip_context_get(struct ggml_amd_provider * provider) {
+#ifdef __HIP_PLATFORM_AMD__
+    if (!provider || !provider->context) {
+        return nullptr;
+    }
+
+    auto ctx = (ggml_amd_hip_context *)provider->context;
+    return ctx->initialized ? ctx : nullptr;
+#else
+    (void)provider;
+    return nullptr;
+#endif
+}
+
+bool ggml_amd_hip_is_provider(const struct ggml_amd_provider * provider) {
+    return provider && provider->iface && provider->iface->name && strcmp(provider->iface->name, "hip") == 0;
+}
+
+void * ggml_amd_hip_alloc(struct ggml_amd_provider * provider, size_t size) {
+#ifdef __HIP_PLATFORM_AMD__
+    auto ctx = ggml_amd_hip_context_get(provider);
+    void * ptr = nullptr;
+    if (!ctx || hipSetDevice(ctx->device_id) != hipSuccess || hipMalloc(&ptr, size) != hipSuccess) {
+        return nullptr;
+    }
+    return ptr;
+#else
+    (void)provider;
+    (void)size;
+    return nullptr;
+#endif
+}
+
+void ggml_amd_hip_free(struct ggml_amd_provider * provider, void * ptr) {
+#ifdef __HIP_PLATFORM_AMD__
+    auto ctx = ggml_amd_hip_context_get(provider);
+    if (ctx && ptr && hipSetDevice(ctx->device_id) == hipSuccess) {
+        (void)hipFree(ptr);
+    }
+#else
+    (void)provider;
+    (void)ptr;
+#endif
+}
+
+bool ggml_amd_hip_set(struct ggml_amd_provider * provider, void * dst, const void * src, size_t size) {
+#ifdef __HIP_PLATFORM_AMD__
+    auto ctx = ggml_amd_hip_context_get(provider);
+    return ctx && hipSetDevice(ctx->device_id) == hipSuccess && hipMemcpy(dst, src, size, hipMemcpyHostToDevice) == hipSuccess;
+#else
+    (void)provider;
+    (void)dst;
+    (void)src;
+    (void)size;
+    return false;
+#endif
+}
+
+bool ggml_amd_hip_get(struct ggml_amd_provider * provider, void * dst, const void * src, size_t size) {
+#ifdef __HIP_PLATFORM_AMD__
+    auto ctx = ggml_amd_hip_context_get(provider);
+    return ctx && hipSetDevice(ctx->device_id) == hipSuccess && hipMemcpy(dst, src, size, hipMemcpyDeviceToHost) == hipSuccess;
+#else
+    (void)provider;
+    (void)dst;
+    (void)src;
+    (void)size;
+    return false;
+#endif
+}
+
+bool ggml_amd_hip_copy(struct ggml_amd_provider * provider, void * dst, const void * src, size_t size) {
+#ifdef __HIP_PLATFORM_AMD__
+    auto ctx = ggml_amd_hip_context_get(provider);
+    return ctx && hipSetDevice(ctx->device_id) == hipSuccess && hipMemcpy(dst, src, size, hipMemcpyDeviceToDevice) == hipSuccess;
+#else
+    (void)provider;
+    (void)dst;
+    (void)src;
+    (void)size;
+    return false;
+#endif
+}
+
+bool ggml_amd_hip_memset(struct ggml_amd_provider * provider, void * dst, uint8_t value, size_t size) {
+#ifdef __HIP_PLATFORM_AMD__
+    auto ctx = ggml_amd_hip_context_get(provider);
+    return ctx && hipSetDevice(ctx->device_id) == hipSuccess && hipMemset(dst, value, size) == hipSuccess;
+#else
+    (void)provider;
+    (void)dst;
+    (void)value;
+    (void)size;
+    return false;
+#endif
+}
+
+bool ggml_amd_hip_synchronize(struct ggml_amd_provider * provider) {
+#ifdef __HIP_PLATFORM_AMD__
+    auto ctx = ggml_amd_hip_context_get(provider);
+    return ctx && hipSetDevice(ctx->device_id) == hipSuccess && hipStreamSynchronize(ctx->stream) == hipSuccess;
+#else
+    (void)provider;
+    return false;
+#endif
+}
 
 static bool ggml_amd_hip_probe_impl(struct ggml_amd_provider * provider, struct ggml_amd_probe_result * result) {
 #ifdef GGML_AMD_HIP
@@ -58,6 +171,7 @@ static bool ggml_amd_hip_probe_impl(struct ggml_amd_provider * provider, struct 
         result->pci_function = 0;
         result->memory_total = ctx->props.totalGlobalMem;
         result->memory_free = ctx->props.totalGlobalMem;
+        // Import is currently brokered for Vulkan-exported OPAQUE_FD handles.
         result->supports_external_memory = 1;
         result->supports_dma_buf_import = 1;
     }
@@ -99,7 +213,7 @@ static bool ggml_amd_hip_supports_import_impl(struct ggml_amd_provider * provide
     if (!alloc || alloc->dma_buf_fd < 0) {
         return false;
     }
-    return true;
+    return alloc->external_handle_kind == GGML_AMD_EXTERNAL_HANDLE_KIND_VULKAN_OPAQUE_FD;
 }
 
 static ggml_status ggml_amd_hip_import_allocation_impl(
@@ -113,6 +227,10 @@ static ggml_status ggml_amd_hip_import_allocation_impl(
         return GGML_STATUS_FAILED;
     }
 
+    if (alloc->external_handle_kind != GGML_AMD_EXTERNAL_HANDLE_KIND_VULKAN_OPAQUE_FD) {
+        return GGML_STATUS_FAILED;
+    }
+
     auto ctx = (ggml_amd_hip_context *)provider->context;
     if (!ctx || !ctx->initialized) {
         return GGML_STATUS_FAILED;
@@ -123,11 +241,42 @@ static ggml_status ggml_amd_hip_import_allocation_impl(
         return GGML_STATUS_FAILED;
     }
 
+    if (hipSetDevice(ctx->device_id) != hipSuccess) {
+        close(dup_fd);
+        return GGML_STATUS_FAILED;
+    }
+
+    hipExternalMemoryHandleDesc handle_desc = {};
+    handle_desc.type = hipExternalMemoryHandleTypeOpaqueFd;
+    handle_desc.handle.fd = dup_fd;
+    handle_desc.size = alloc->size;
+
+    hipExternalMemory_t external_memory = nullptr;
+    if (hipImportExternalMemory(&external_memory, &handle_desc) != hipSuccess) {
+        close(dup_fd);
+        return GGML_STATUS_FAILED;
+    }
+
+    hipExternalMemoryBufferDesc mapped_buffer_desc = {};
+    mapped_buffer_desc.size = alloc->size;
+    mapped_buffer_desc.offset = 0;
+    mapped_buffer_desc.flags = 0;
+
+    void * mapped_ptr = nullptr;
+    if (hipExternalMemoryGetMappedBuffer(&mapped_ptr, external_memory, &mapped_buffer_desc) != hipSuccess) {
+        (void)hipDestroyExternalMemory(external_memory);
+        close(dup_fd);
+        return GGML_STATUS_FAILED;
+    }
+    (void)mapped_ptr;
+    close(dup_fd);
+
     auto import = new ggml_amd_import();
     import->allocation = alloc;
     import->provider = provider;
-    import->native_handle = nullptr;
+    import->native_handle = external_memory;
     import->ref_count = 1;
+    ggml_amd_allocation_retain(alloc);
 
     *out_import = import;
     return GGML_STATUS_SUCCESS;
@@ -146,10 +295,21 @@ static ggml_status ggml_amd_hip_import_allocation_impl(
 }
 
 static void ggml_amd_hip_release_import_impl(struct ggml_amd_provider * provider, struct ggml_amd_import * import) {
-    (void)provider;
-    if (import) {
-        delete import;
+    if (!import) {
+        return;
     }
+
+#ifdef __HIP_PLATFORM_AMD__
+    auto ctx = ggml_amd_hip_context_get(provider);
+    if (ctx && import->native_handle && hipSetDevice(ctx->device_id) == hipSuccess) {
+        (void)hipDestroyExternalMemory((hipExternalMemory_t)import->native_handle);
+    }
+#else
+    (void)provider;
+#endif
+
+    ggml_amd_allocation_release(import->allocation);
+    delete import;
 }
 
 static ggml_status ggml_amd_hip_submit_region_impl(
@@ -168,46 +328,21 @@ static ggml_status ggml_amd_hip_submit_region_impl(
         return GGML_STATUS_FAILED;
     }
 
-    // Dispatch T640 operations. The region contains a contiguous range of
-    // nodes from a compute graph; each node is a ggml_tensor with an op type.
-    // For T640 ops, we extract the tensor data pointers and launch the
-    // corresponding HIP kernel.
-    //
-    // Note: this is a reference implementation. A production dispatch would
-    // use a more sophisticated scheduling mechanism (e.g., graph capture,
-    // kernel fusion, memory pooling). The current implementation launches
-    // each kernel independently and records a fence at the end.
-
-    // TODO: The region structure does not yet expose the graph or nodes directly.
-    // For now, we record a fence immediately. The actual kernel dispatch will
-    // be wired in when the region formation exposes the node list.
-    //
-    // The dispatch pattern will be:
-    //   for (int i = region->node_start; i <= region->node_end; i++) {
-    //       ggml_tensor * node = graph->nodes[i];
-    //       switch (node->op) {
-    //           case GGML_OP_TILE640_DEQUANT:
-    //               ggml_amd_hip_tile640_dequant(ctx->stream, ...);
-    //               break;
-    //           case GGML_OP_TILE640_MATMUL:
-    //               ggml_amd_hip_tile640_matmul(ctx->stream, ...);
-    //               break;
-    //           ...
-    //       }
-    //   }
-
-    hipEvent_t event;
-    if (hipEventCreate(&event) != hipSuccess) {
+    if (!region->graph || region->node_start < 0 || region->node_end < region->node_start || region->node_end >= region->graph->n_nodes) {
         return GGML_STATUS_FAILED;
     }
 
-    if (hipEventRecord(event, ctx->stream) != hipSuccess) {
-        hipEventDestroy(event);
-        return GGML_STATUS_FAILED;
+    for (int i = region->node_start; i <= region->node_end; ++i) {
+        const struct ggml_tensor * node = region->graph->nodes[i];
+        if (!node || !ggml_amd_hip_supports_op_impl(provider, node)) {
+            return GGML_STATUS_FAILED;
+        }
     }
 
-    *fence = ggml_amd_fence_create_hip_event(event);
-    return GGML_STATUS_SUCCESS;
+    // HIP dispatch requires AMD backend buffers and imported tensor handles.
+    // The current backend does not establish that memory contract, so a valid
+    // region must fail rather than report a completed empty stream.
+    return GGML_STATUS_FAILED;
 #else
     (void)provider;
     (void)region;
@@ -238,7 +373,7 @@ static ggml_status ggml_amd_hip_wait_fence_impl(struct ggml_amd_provider * provi
         return GGML_STATUS_FAILED;
     }
 
-    hipEventDestroy(event);
+    (void)hipEventDestroy(event);
     fence->kind = GGML_AMD_FENCE_NONE;
     return GGML_STATUS_SUCCESS;
 #else
@@ -456,6 +591,51 @@ ggml_status ggml_amd_hip_compute_tile640_get_rows(
     return GGML_STATUS_SUCCESS;
 }
 
+extern bool ggml_amd_buffer_is_hip_device_tensor(const struct ggml_tensor * tensor);
+
+ggml_status ggml_amd_hip_graph_compute(struct ggml_amd_provider * provider, struct ggml_cgraph * graph) {
+    if (!ggml_amd_hip_context_get(provider) || !graph) {
+        return GGML_STATUS_FAILED;
+    }
+
+    for (int i = 0; i < graph->n_nodes; ++i) {
+        struct ggml_tensor * node = graph->nodes[i];
+        if (!node || !ggml_amd_hip_supports_op_impl(provider, node) || !ggml_amd_buffer_is_hip_device_tensor(node)) {
+            return GGML_STATUS_FAILED;
+        }
+
+        for (int j = 0; j < GGML_MAX_SRC && node->src[j]; ++j) {
+            if (!ggml_amd_buffer_is_hip_device_tensor(node->src[j])) {
+                return GGML_STATUS_FAILED;
+            }
+        }
+
+        ggml_status status = GGML_STATUS_FAILED;
+        switch (node->op) {
+            case GGML_OP_TILE640_DEQUANT:
+                status = ggml_amd_hip_compute_tile640_dequant(provider, node);
+                break;
+            case GGML_OP_TILE640_MATMUL:
+                status = ggml_amd_hip_compute_tile640_matmul(provider, node);
+                break;
+            case GGML_OP_TILE640_MATMUL_ID:
+                status = ggml_amd_hip_compute_tile640_matmul_id(provider, node);
+                break;
+            case GGML_OP_TILE640_GET_ROWS:
+                status = ggml_amd_hip_compute_tile640_get_rows(provider, node);
+                break;
+            default:
+                return GGML_STATUS_FAILED;
+        }
+
+        if (status != GGML_STATUS_SUCCESS || hipGetLastError() != hipSuccess) {
+            return GGML_STATUS_FAILED;
+        }
+    }
+
+    return ggml_amd_hip_synchronize(provider) ? GGML_STATUS_SUCCESS : GGML_STATUS_FAILED;
+}
+
 #endif // __HIP_PLATFORM_AMD__
 
 #else
@@ -464,6 +644,12 @@ bool ggml_amd_hip_probe(struct ggml_amd_provider * provider, struct ggml_amd_pro
     (void)provider;
     (void)result;
     return false;
+}
+
+ggml_status ggml_amd_hip_graph_compute(struct ggml_amd_provider * provider, struct ggml_cgraph * graph) {
+    (void)provider;
+    (void)graph;
+    return GGML_STATUS_FAILED;
 }
 
 #endif
