@@ -5,9 +5,13 @@
 #include <chrono>
 #include <cstring>
 
+#ifdef __HIP_PLATFORM_AMD__
+#include <hip/hip_runtime_api.h>
+#endif
+
 #ifdef __linux__
+#include <fcntl.h>
 #include <unistd.h>
-#include <sys/eventfd.h>
 #include <poll.h>
 #endif
 
@@ -24,6 +28,10 @@ struct ggml_amd_fence ggml_amd_fence_create_host(void) {
 struct ggml_amd_fence ggml_amd_fence_create_sync_file(int fd) {
     struct ggml_amd_fence fence;
     memset(&fence, 0, sizeof(fence));
+    if (fd < 0) {
+        fence.kind = GGML_AMD_FENCE_NONE;
+        return fence;
+    }
     fence.kind = GGML_AMD_FENCE_SYNC_FILE;
     fence.sequence = g_fence_sequence.fetch_add(1);
     fence.sync_file_fd = fd;
@@ -62,6 +70,7 @@ void ggml_amd_fence_release(struct ggml_amd_fence * fence) {
         return;
     }
 
+    // sync-file fds are transferred; provider-native handles remain provider-owned.
     if (fence->kind == GGML_AMD_FENCE_SYNC_FILE && fence->sync_file_fd >= 0) {
 #ifdef __linux__
         close(fence->sync_file_fd);
@@ -70,6 +79,7 @@ void ggml_amd_fence_release(struct ggml_amd_fence * fence) {
 
     fence->kind = GGML_AMD_FENCE_NONE;
     fence->sequence = 0;
+    fence->sync_file_fd = -1;
 }
 
 int ggml_amd_fence_wait(struct ggml_amd_fence * fence, int timeout_ms) {
@@ -84,7 +94,7 @@ int ggml_amd_fence_wait(struct ggml_amd_fence * fence, int timeout_ms) {
         case GGML_AMD_FENCE_SYNC_FILE: {
 #ifdef __linux__
             if (fence->sync_file_fd < 0) {
-                return 0;
+                return -1;
             }
             struct pollfd pfd = {};
             pfd.fd = fence->sync_file_fd;
@@ -96,7 +106,7 @@ int ggml_amd_fence_wait(struct ggml_amd_fence * fence, int timeout_ms) {
             if (ret == 0) {
                 return 1;
             }
-            return 0;
+            return (pfd.revents & (POLLIN | POLLRDNORM)) ? 0 : -1;
 #else
             (void)timeout_ms;
             return -1;
@@ -104,7 +114,14 @@ int ggml_amd_fence_wait(struct ggml_amd_fence * fence, int timeout_ms) {
         }
 
         case GGML_AMD_FENCE_HIP_EVENT:
+#ifdef __HIP_PLATFORM_AMD__
+            if (!fence->hip_event) {
+                return -1;
+            }
+            return hipEventSynchronize((hipEvent_t)fence->hip_event) == hipSuccess ? 0 : -1;
+#else
             return -1;
+#endif
 
         case GGML_AMD_FENCE_VULKAN_TIMELINE:
             return -1;
@@ -134,7 +151,25 @@ void ggml_amd_allocation_record_writer(struct ggml_amd_allocation * alloc, struc
         return;
     }
 
+    struct ggml_amd_fence recorded = {};
+    recorded.kind = fence->kind;
+    recorded.sequence = fence->sequence;
+
+    if (fence->kind == GGML_AMD_FENCE_SYNC_FILE) {
+#ifdef __linux__
+        if (fence->sync_file_fd >= 0) {
+            recorded.sync_file_fd = fcntl(fence->sync_file_fd, F_DUPFD_CLOEXEC, 0);
+        } else {
+            recorded.sync_file_fd = -1;
+        }
+#else
+        recorded.sync_file_fd = -1;
+#endif
+    }
+
     std::lock_guard<std::mutex> lock(alloc->mutex);
-    alloc->last_writer = *fence;
+    // Only sync-file fences have a provider-neutral clone operation.
+    ggml_amd_fence_release(&alloc->last_writer);
+    alloc->last_writer = recorded;
     alloc->generation++;
 }

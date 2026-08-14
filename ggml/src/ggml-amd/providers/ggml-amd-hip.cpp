@@ -28,6 +28,8 @@ struct ggml_amd_hip_context {
     bool initialized;
 };
 
+extern struct ggml_amd_fence ggml_amd_fence_create_host(void);
+
 static ggml_amd_hip_context * ggml_amd_hip_context_get(struct ggml_amd_provider * provider) {
 #ifdef __HIP_PLATFORM_AMD__
     if (!provider || !provider->context) {
@@ -339,10 +341,17 @@ static ggml_status ggml_amd_hip_submit_region_impl(
         }
     }
 
-    // HIP dispatch requires AMD backend buffers and imported tensor handles.
-    // The current backend does not establish that memory contract, so a valid
-    // region must fail rather than report a completed empty stream.
-    return GGML_STATUS_FAILED;
+    auto region_graph = ggml_graph_view(region->graph, region->node_start, region->node_end + 1);
+    ggml_status status = ggml_amd_hip_graph_compute(provider, &region_graph);
+    if (status != GGML_STATUS_SUCCESS) {
+        return GGML_STATUS_FAILED;
+    }
+
+    if (fence) {
+        *fence = ggml_amd_fence_create_host();
+    }
+
+    return GGML_STATUS_SUCCESS;
 #else
     (void)provider;
     (void)region;
