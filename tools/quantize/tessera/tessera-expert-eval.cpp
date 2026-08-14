@@ -348,7 +348,8 @@ static int ts_eval_real_septq(const ts_eval_tensor_ctx & ctx,
 
     const int64_t n_outliers = res.outlier_row_offsets.empty()
         ? 0 : res.outlier_row_offsets[(size_t)ctx.out_dim];
-    const bool accel_outlier = ts_t640_outlier_accel_wins(n_outliers);
+    const bool accel_outlier = ts_t640_outlier_accel_wins(n_outliers)
+                               && ggml_tessera_t640_accel_enabled();
     ts_apply_outlier_addback(Y.data(), ctx.in_dim, ctx.out_dim,
                              res.outlier_row_offsets.data(),
                              res.outlier_cols.data(),

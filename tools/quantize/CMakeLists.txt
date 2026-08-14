@@ -587,6 +587,18 @@ if(LLAMA_BUILD_TESTS)
     target_compile_features(${TARGET} PRIVATE cxx_std_17)
     add_test(NAME ${TARGET} COMMAND ${TARGET})
 
+    # ts_expert_eval seam (pipeline refactor phase 1): PROXY tier parity
+    # with forced_t2's algorithm, REAL tier per expert on a deterministic
+    # fixture, SEPTQ's dequant-scoring adapter against a hand-computed
+    # reconstruction, DARTQUANT/CHAMPQ identity-transform invariance.
+    set(TARGET test-tessera-expert-eval)
+    add_executable(${TARGET} tessera/test_expert_eval.cpp)
+    target_link_libraries(${TARGET} PRIVATE llama-quantize-impl)
+    target_compile_features(${TARGET} PRIVATE cxx_std_17)
+    target_include_directories(${TARGET} PRIVATE
+        ${PROJECT_SOURCE_DIR}/ggml/src)
+    add_test(NAME ${TARGET} COMMAND ${TARGET})
+
     # L1.5 dispatch-time capture (v3.1, §3 of the spec). Verifies the
     # calibration-time F16 reference capture writes F16 of the ORIGINAL
     # (unquantized) weight — the spec's "true FP16 reference", which

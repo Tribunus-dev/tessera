@@ -37,6 +37,7 @@ struct ts_acceptance_tensor {
     float rotation_t2;           // rotation-only (DartQuant) t_l^2
     float lowrank_t2;            // low-rank-only (LRQ/FLRQ) t_l^2
     float hessian_t2;            // Hessian-mask-only (SEPTQ) t_l^2
+    float champq_t2;             // permutation-only (CHAMP-Q) t_l^2
     float offline_proxy_mse;     // offline proxy score (for ranking)
     float kernel_direct_t2;      // kernel-direct score (for ranking)
     bool  held_out;              // true = not used during GA evolution
@@ -55,10 +56,10 @@ struct ts_acceptance_result {
 
     // Test 2 (v2): cross-METHOD novelty over the held-out Tier-2 panel.
     // The methods must rank the held-out tensors differently somewhere:
-    // method_disagreement = 1 - min |kendall tau| across the 6 method
-    // pairs (awq/rotation/lowrank/hessian). The MOST disagreeing pair is
-    // used so one degenerate slot (a score still carried by a proxy)
-    // cannot suppress signal from the real pairs.
+    // method_disagreement = 1 - min |kendall tau| across the 10 method
+    // pairs (awq/rotation/lowrank/hessian/champq). The MOST disagreeing
+    // pair is used so one degenerate slot (a score still carried by a
+    // proxy) cannot suppress signal from the real pairs.
     float method_tau_min;        // the most-disagreeing pair's tau
     float method_disagreement;   // 1 - |method_tau_min|
     bool  novelty_survives;      // method_disagreement > 0.05 (non-trivial)
@@ -68,6 +69,7 @@ struct ts_acceptance_result {
     float rotation_t2;
     float lowrank_t2;
     float hessian_t2;
+    float champq_t2;
 
     // Overall verdict
     bool  acceptance_passed;     // composite_wins AND novelty_survives
