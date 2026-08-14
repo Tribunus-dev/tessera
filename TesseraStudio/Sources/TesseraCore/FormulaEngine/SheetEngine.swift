@@ -538,24 +538,38 @@ public final class SheetEngine: @unchecked Sendable, SheetEngineCore {
 
     // MARK: - Named ranges
 
-    /// All defined names in the workbook.
+    /// All defined names in the workbook, keyed by `name.uppercased()`
+    /// (case-insensitive lookup, matching how a formula resolves a bare
+    /// identifier - see `defineName`). Each value's own `.name` keeps
+    /// the caller's original spelling for display.
     public var namedRanges: [String: NamedRange] {
         withLock { _namedRanges }
     }
 
-    /// Define a name bound to a range. Fails if the name already exists.
+    /// Define a name bound to a range. Fails if the name already exists
+    /// (case-insensitively - `MyCell` and `MYCELL` are the same name).
+    ///
+    /// Stored under `name.uppercased()`: the lexer uppercases every bare
+    /// identifier before a formula ever sees it (`Lexer.scanIdentifier`'s
+    /// `.namedRange(upper)`, the same case-folding function names get),
+    /// so a name stored under its original mixed-case spelling could
+    /// never be found by a formula that references it - every named
+    /// range would silently resolve to `#NAME?` unless it happened to
+    /// be defined in all caps. `NamedRange.name` still keeps the
+    /// caller's original spelling for display.
     public func defineName(_ name: String, range: RangeRef, sheet: String? = nil) -> Bool {
         withLock {
-            guard _namedRanges[name] == nil else { return false }
-            _namedRanges[name] = NamedRange(name: name, range: range, sheet: sheet)
+            let key = name.uppercased()
+            guard _namedRanges[key] == nil else { return false }
+            _namedRanges[key] = NamedRange(name: name, range: range, sheet: sheet)
             return true
         }
     }
 
-    /// Remove a named range.
+    /// Remove a named range (case-insensitively, matching `defineName`).
     public func undefineName(_ name: String) {
         withLock {
-            _namedRanges.removeValue(forKey: name)
+            _namedRanges.removeValue(forKey: name.uppercased())
         }
     }
 
@@ -734,9 +748,14 @@ public final class SheetEngine: @unchecked Sendable, SheetEngineCore {
                 )
                 return WorkbookState.SheetState(name: name, cells: cellMap)
             }
+            // Keyed by nr.name (the caller's original spelling), not the
+            // dictionary's own lookup key (`name`, uppercased for
+            // case-insensitive resolution - see defineName) - a
+            // serialized snapshot should read back the name as the user
+            // typed it, the same way `namedRanges`'s public getter does.
             let nrMap = Dictionary(
-                uniqueKeysWithValues: _namedRanges.map { (name, nr) -> (String, [String: Any]) in
-                    (name, [
+                uniqueKeysWithValues: _namedRanges.map { (_, nr) -> (String, [String: Any]) in
+                    (nr.name, [
                         "range": nr.range.description,
                         "sheet": nr.sheet as Any
                     ])

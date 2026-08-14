@@ -152,7 +152,8 @@ final class SheetEngineTests: XCTestCase {
         let dirty = try engine.setFormula(sheet: nil, addr: addr, source: "=42")
         // Only the cell itself is recalculated; it has no dependents.
         XCTAssertEqual(dirty, [addr])
-        XCTAssertTrue(engine.graph.allDependents(of: addr).subtracting([addr]).isEmpty)
+        let key = SheetCellAddr(sheet: engine.activeSheet, addr: addr)
+        XCTAssertTrue(engine.graph.allDependents(of: key).subtracting([key]).isEmpty)
     }
 
     // MARK: - Named Ranges
@@ -179,7 +180,42 @@ final class SheetEngineTests: XCTestCase {
         let r2 = RangeRef(topLeft: CellAddr(col: 1, row: 0), bottomRight: CellAddr(col: 1, row: 0))
         engine.defineName("Rate", range: r1, sheet: nil)
         engine.defineName("Base", range: r2, sheet: nil)
-        XCTAssertEqual(engine.namedRanges.keys.sorted(), ["Base", "Rate"])
+        // Display names keep the caller's original spelling...
+        XCTAssertEqual(engine.namedRanges.values.map(\.name).sorted(), ["Base", "Rate"])
+        // ...but the dictionary's own keys are uppercased, matching how
+        // a formula resolves a bare identifier (the lexer uppercases
+        // every one) - lookup is case-insensitive even though display
+        // isn't.
+        XCTAssertEqual(engine.namedRanges.keys.sorted(), ["BASE", "RATE"])
+    }
+
+    /// A name defined once must resolve however it's later spelled in a
+    /// formula - this is the bug a case-sensitive lookup produced: every
+    /// named range silently resolved to #NAME? unless a formula
+    /// happened to reference it in the exact same case it was defined
+    /// in (which the lexer, uppercasing every bare identifier before
+    /// the parser ever sees it, made effectively "never" unless the
+    /// name was defined all-caps to begin with).
+    func testNamedRange_resolvesRegardlessOfFormulaCasing() throws {
+        engine.setValue(sheet: nil, addr: CellAddr(col: 0, row: 0), value: .number(7))
+        XCTAssertTrue(engine.defineName("Rate", range: RangeRef(
+            topLeft: CellAddr(col: 0, row: 0), bottomRight: CellAddr(col: 0, row: 0)
+        ), sheet: nil))
+
+        try engine.setFormula(sheet: nil, addr: CellAddr(col: 1, row: 0), source: "=rate*2")
+        XCTAssertEqual(engine.getValue(sheet: nil, addr: CellAddr(col: 1, row: 0)), .number(14))
+    }
+
+    /// Defining "RATE" after "Rate" already exists must be rejected as a
+    /// duplicate, the same as Excel: two names differing only by case
+    /// are the same name.
+    func testDefineName_rejectsCaseVariantOfExistingName() throws {
+        XCTAssertTrue(engine.defineName("Rate", range: RangeRef(
+            topLeft: CellAddr(col: 0, row: 0), bottomRight: CellAddr(col: 0, row: 0)
+        ), sheet: nil))
+        XCTAssertFalse(engine.defineName("RATE", range: RangeRef(
+            topLeft: CellAddr(col: 1, row: 0), bottomRight: CellAddr(col: 1, row: 0)
+        ), sheet: nil))
     }
 
     // MARK: - Sheets
@@ -802,8 +838,9 @@ final class SheetEngineTests: XCTestCase {
     func testVolatileCell_markedInGraph() throws {
         let addr = CellAddr(col: 0, row: 0)
         try engine.setFormula(sheet: nil, addr: addr, source: "=NOW()")
-        XCTAssertTrue(engine.graph.isVolatile(addr))
-        XCTAssertTrue(engine.graph.volatile.contains(addr))
+        let key = SheetCellAddr(sheet: engine.activeSheet, addr: addr)
+        XCTAssertTrue(engine.graph.isVolatile(key))
+        XCTAssertTrue(engine.graph.volatile.contains(key))
     }
 
     func testNonVolatileCell_notMarkedVolatile() throws {
@@ -812,6 +849,6 @@ final class SheetEngineTests: XCTestCase {
         // correctly throws. Sum a different column.
         let addr = CellAddr(col: 0, row: 0)
         try engine.setFormula(sheet: nil, addr: addr, source: "=SUM(B1:B10)")
-        XCTAssertFalse(engine.graph.isVolatile(addr))
+        XCTAssertFalse(engine.graph.isVolatile(SheetCellAddr(sheet: engine.activeSheet, addr: addr)))
     }
 }

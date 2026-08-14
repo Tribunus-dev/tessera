@@ -83,9 +83,14 @@ final class LexerSheetQualifierTests: XCTestCase {
         XCTAssertNil(range.sheet)
     }
 
+    /// A leading "=" always makes a formula in this engine, even for a
+    /// bare constant (`Parser.swift`'s `parse()`: "=42 is a formula
+    /// cell in Excel... only input with no = folds to a bare value") -
+    /// so the boolean literal shows up as `.formula(...)` wrapping a
+    /// `.bool` AST node, not as `.value(.bool(...))` directly.
     func testBooleanLiteralsAreUnaffected() throws {
-        XCTAssertEqual(try FormulaParser(source: "=TRUE").parse().value, .bool(true))
-        XCTAssertEqual(try FormulaParser(source: "=FALSE").parse().value, .bool(false))
+        XCTAssertEqual(try parse("=TRUE").ast, .bool(true))
+        XCTAssertEqual(try parse("=FALSE").ast, .bool(false))
     }
 
     /// A known, PRE-EXISTING, shared limitation - not a regression this
