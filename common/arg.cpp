@@ -988,9 +988,18 @@ static bool common_params_parse_ex(int argc, char ** argv, common_params_context
             || tessera_active_sc == TESSERA_SC_UNIFIED_WRITER
             || tessera_active_sc == TESSERA_SC_EXPORT_TERNARY
             || tessera_active_sc == TESSERA_SC_PACK
-            // l5 is a tuning subcommand: it falls through to llama_quantize
-            // which reads the input path from positional args (<input>).
+            // l5/champq/w4a4 are tuning subcommands: llama_tessera_main sets
+            // a toggle on tessera_params for these and falls through to
+            // llama_quantize(argc - 1, argv + 1), which reads the input path
+            // from positional args (<input>), not --model. Before this fix,
+            // champq/w4a4 were missing here even though they are handled
+            // identically to l5/NONE in quantize.cpp -- verified via
+            // `llama-tessera champq model.gguf Q4_K` unconditionally failing
+            // with "error: --model is required" despite the classic
+            // positional syntax being exactly what that subcommand expects.
             || tessera_active_sc == TESSERA_SC_L5
+            || tessera_active_sc == TESSERA_SC_CHAMPQ
+            || tessera_active_sc == TESSERA_SC_W4A4
             // TESSERA_SC_NONE: no subcommand, positional syntax (<input> <output> <ftype>)
             // is in use. llama_quantize reads the input from positional args directly.
             || tessera_active_sc == TESSERA_SC_NONE;
