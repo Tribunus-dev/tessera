@@ -580,6 +580,149 @@ int main(int argc, char ** argv) {
               "recommended_action='' round-trip is a no-op semantic");
     }
 
+    // ---- Phase 2 "Layer A": tensor_stats frob2/absq_sketch/stats_version ----
+    {
+        // Pure-math sketch build + quantile lookup, no DB involved: a
+        // known ramp (0, 1, 2, ..., 999) sampled at a cap well above its
+        // own size degrades to an exact sort, so the quantiles are exact
+        // and independently checkable.
+        {
+            std::vector<float> ramp(1000);
+            for (size_t i = 0; i < ramp.size(); i++) ramp[i] = (float) i;
+            // Mix in negatives to confirm the sketch is built from |w|,
+            // not w -- a ramp from -999..0 has the same |.| distribution
+            // as 0..999.
+            for (size_t i = 0; i < ramp.size(); i += 2) ramp[i] = -ramp[i];
+
+            std::vector<float> sketch;
+            ts_tensor_stats_build_absq_sketch(ramp.data(), (int64_t) ramp.size(),
+                                               &sketch, /*max_points=*/1024, /*sample_cap=*/65536);
+            CHECK(sketch.size() == ramp.size(),
+                  "absq_sketch: sample_cap >> n degrades to one point per element");
+            CHECK(std::fabs(sketch.front() - 0.0f) < 1e-6f,
+                  "absq_sketch: min of |ramp| is 0");
+            CHECK(std::fabs(sketch.back() - 999.0f) < 1e-6f,
+                  "absq_sketch: max of |ramp| is 999");
+            const float q50 = ts_tensor_stats_sketch_quantile(sketch, 0.5f);
+            char msg[128];
+            std::snprintf(msg, sizeof(msg), "absq_sketch: median of |ramp| ~= 499.5 (got %.3f)", (double) q50);
+            CHECK(std::fabs(q50 - 499.5f) < 1.0f, msg);
+            CHECK(std::fabs(ts_tensor_stats_sketch_quantile(sketch, 0.0f) - sketch.front()) < 1e-6f,
+                  "absq_sketch: q=0 returns the sketch minimum");
+            CHECK(std::fabs(ts_tensor_stats_sketch_quantile(sketch, 1.0f) - sketch.back()) < 1e-6f,
+                  "absq_sketch: q=1 returns the sketch maximum");
+
+            // A tensor far larger than sample_cap: the sketch is bounded
+            // by max_points, not by n, and stays ordered/in-range.
+            std::vector<float> big(200000);
+            for (size_t i = 0; i < big.size(); i++) big[i] = (float)(i % 1000) - 500.0f;
+            std::vector<float> big_sketch;
+            ts_tensor_stats_build_absq_sketch(big.data(), (int64_t) big.size(),
+                                               &big_sketch, /*max_points=*/1024, /*sample_cap=*/4096);
+            CHECK(big_sketch.size() == 1024,
+                  "absq_sketch: n >> sample_cap still yields exactly max_points entries");
+            bool ordered = true;
+            for (size_t i = 1; i < big_sketch.size(); i++) {
+                if (big_sketch[i] < big_sketch[i - 1]) { ordered = false; break; }
+            }
+            CHECK(ordered, "absq_sketch: entries are ascending");
+
+            // n <= 0 and empty-sketch edge cases.
+            std::vector<float> empty_sketch;
+            ts_tensor_stats_build_absq_sketch(ramp.data(), 0, &empty_sketch);
+            CHECK(empty_sketch.empty(), "absq_sketch: n<=0 clears the output");
+            CHECK(ts_tensor_stats_sketch_quantile(empty_sketch, 0.5f) == 0.0f,
+                  "sketch_quantile: empty sketch returns 0.0");
+        }
+
+        // DB round-trip: upsert with frob2/absq_sketch/stats_version,
+        // read back via ts_tessera_db_read_tensor_stat, verify every
+        // Layer A field (and the pre-existing ones) survives exactly.
+        {
+            ts_tessera_db_tensor_stat row;
+            row.model_hash    = "layer_a_model";
+            row.model_role    = "trunk";
+            row.name          = "blk.0.attn_q.weight";
+            row.family        = "attn_q";
+            row.layer_depth   = 3;
+            row.out_dim       = 128;
+            row.in_dim        = 256;
+            row.n_elements    = 128 * 256;
+            row.dtype         = "f16";
+            row.kurtosis      = 5.5;
+            row.eff_rank      = 0.72;
+            row.source        = "cpp_quant";
+            row.frob2         = 123456.789012345;
+            row.stats_version = TS_TENSOR_STATS_VERSION;
+            for (int i = 0; i < 1024; i++) {
+                row.absq_sketch.push_back((float) i * 0.01f);
+            }
+            std::string err;
+            CHECK(ts_tessera_db_upsert_tensor_stat(db, row, &err) == 0,
+                  ("layer_a: upsert failed: " + err).c_str());
+
+            ts_tessera_db_tensor_stat out;
+            bool hit = false;
+            CHECK(ts_tessera_db_read_tensor_stat(db, "layer_a_model", "trunk",
+                    "blk.0.attn_q.weight", &out, &hit, &err) == 0,
+                  ("layer_a: read failed: " + err).c_str());
+            CHECK(hit, "layer_a: read hits the just-written row");
+            CHECK(out.stats_version == TS_TENSOR_STATS_VERSION,
+                  "layer_a: stats_version round-trips");
+            char fmsg[160];
+            std::snprintf(fmsg, sizeof(fmsg),
+                         "layer_a: frob2 round-trips at double precision (wrote=%.15g read=%.15g)",
+                         row.frob2, out.frob2);
+            CHECK(std::fabs(out.frob2 - row.frob2) < 1e-6 * std::fabs(row.frob2), fmsg);
+            CHECK(out.absq_sketch.size() == row.absq_sketch.size(),
+                  "layer_a: absq_sketch length round-trips");
+            bool sketch_matches = out.absq_sketch.size() == row.absq_sketch.size();
+            if (sketch_matches) {
+                for (size_t i = 0; i < out.absq_sketch.size(); i++) {
+                    if (std::fabs(out.absq_sketch[i] - row.absq_sketch[i]) > 1e-6f) {
+                        sketch_matches = false;
+                        break;
+                    }
+                }
+            }
+            CHECK(sketch_matches, "layer_a: absq_sketch contents round-trip exactly");
+            CHECK(out.kurtosis == row.kurtosis && out.eff_rank == row.eff_rank,
+                  "layer_a: pre-existing columns still round-trip alongside the new ones");
+
+            // Miss: a name with no row is hit=false, return 0 (not an error).
+            ts_tessera_db_tensor_stat miss_out;
+            bool miss_hit = true;  // pre-seed true to prove the function clears it
+            CHECK(ts_tessera_db_read_tensor_stat(db, "layer_a_model", "trunk",
+                    "no_such_tensor", &miss_out, &miss_hit, &err) == 0,
+                  ("layer_a: miss read returned an error: " + err).c_str());
+            CHECK(!miss_hit, "layer_a: read on an absent key clears hit to false");
+
+            // db == nullptr: safe no-op, hit=false, return 0.
+            bool null_hit = true;
+            CHECK(ts_tessera_db_read_tensor_stat(nullptr, "layer_a_model", "trunk",
+                    "blk.0.attn_q.weight", &miss_out, &null_hit, &err) == 0,
+                  "layer_a: db==nullptr read returns 0");
+            CHECK(!null_hit, "layer_a: db==nullptr read never hits");
+
+            // Empty absq_sketch upserts as SQL NULL, reads back as an
+            // empty vector (not a 0-length-but-non-null distinction the
+            // struct can represent anyway).
+            ts_tessera_db_tensor_stat no_sketch_row = row;
+            no_sketch_row.name = "blk.0.attn_k.weight";
+            no_sketch_row.absq_sketch.clear();
+            CHECK(ts_tessera_db_upsert_tensor_stat(db, no_sketch_row, &err) == 0,
+                  ("layer_a: upsert (no sketch) failed: " + err).c_str());
+            ts_tessera_db_tensor_stat no_sketch_out;
+            bool no_sketch_hit = false;
+            CHECK(ts_tessera_db_read_tensor_stat(db, "layer_a_model", "trunk",
+                    "blk.0.attn_k.weight", &no_sketch_out, &no_sketch_hit, &err) == 0,
+                  ("layer_a: read (no sketch) failed: " + err).c_str());
+            CHECK(no_sketch_hit, "layer_a: read (no sketch) hits");
+            CHECK(no_sketch_out.absq_sketch.empty(),
+                  "layer_a: empty absq_sketch round-trips as an empty vector");
+        }
+    }
+
     // ---- Phase 16: model_role round-trip on the 4 C++ structs ----
     // The unified Gemma4 12B + dspark + dflash + MTP arch has
     // tensors with the same name in both the trunk and the

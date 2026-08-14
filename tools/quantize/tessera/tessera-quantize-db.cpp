@@ -22,6 +22,7 @@
 #endif
 #include "duckdb.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -252,6 +253,9 @@ static const char * TS_QDB_SCHEMA_SQL =
     "    tail_ratio         DOUBLE,\n"
     "    source             TEXT,\n"
     "    recommended_action TEXT,\n"
+    "    frob2              DOUBLE,\n"
+    "    absq_sketch        BLOB,\n"
+    "    stats_version      INTEGER,\n"
     "    updated_at         TIMESTAMP,\n"
     "    PRIMARY KEY (model_hash, model_role, name)\n"
     ");\n"
@@ -658,6 +662,18 @@ std::string sql_escape(const std::string & s) {
     return out;
 }
 
+// std::ostringstream defaults to 6 significant digits for floating point --
+// enough to silently truncate a value a memoization/scoring column cannot
+// afford to lose (see ts_float_sql_literal's float counterpart, added
+// after an eval_cache round-trip test caught the same class of bug on
+// t2). 17 significant digits is the standard round-trip guarantee for
+// IEEE 754 double precision.
+std::string ts_double_sql_literal(double v) {
+    char buf[40];
+    std::snprintf(buf, sizeof(buf), "%.17g", v);
+    return buf;
+}
+
 // Format the current UTC time as a DuckDB TIMESTAMP literal
 // 'YYYY-MM-DD HH:MM:SS'. We avoid CURRENT_TIMESTAMP / NOW() because DuckDB
 // 1.5+ gates them behind the core_functions extension, which is awkward to
@@ -712,6 +728,13 @@ ts_tessera_db::~ts_tessera_db() {
 // function is available to the open path without a header dependency.
 int ts_tessera_db_migrate_regime_thresholds(ts_tessera_db * db,
                                              std::string * err);
+
+// Forward declaration: same rationale (Phase 2 "Layer A" -- adds
+// frob2/absq_sketch/stats_version to an existing tensor_stats table via
+// ADD COLUMN IF NOT EXISTS, since CREATE TABLE IF NOT EXISTS is a no-op
+// on a DB that already has the table from before this phase).
+int ts_tessera_db_migrate_tensor_stats_layer_a(ts_tessera_db * db,
+                                                std::string * err);
 
 ts_tessera_db * ts_tessera_db_open(const std::string & path,
                                      std::string * err) {
@@ -769,6 +792,13 @@ ts_tessera_db * ts_tessera_db_open(const std::string & path,
         // columns (kurtosis, eff_rank, layer_position) and ensure
         // regime_thresholds table exists. Idempotent: no-op on re-open.
         if (ts_tessera_db_migrate_regime_thresholds(wrap, err) != 0) {
+            delete wrap;
+            return nullptr;
+        }
+        // Phase 2 "Layer A": extend tensor_stats with frob2/absq_sketch/
+        // stats_version on a DB that already has the table (from before
+        // this phase). Idempotent: no-op on re-open.
+        if (ts_tessera_db_migrate_tensor_stats_layer_a(wrap, err) != 0) {
             delete wrap;
             return nullptr;
         }
@@ -1019,6 +1049,14 @@ int ts_tessera_db_upsert_tensor_stat(
     const ts_tessera_db_tensor_stat & row,
     std::string * err) {
     if (db == nullptr || db->conn == nullptr) return 0;
+    // Currently only called from the dispatch's single-threaded GA-prep
+    // walk, but ts_tessera_db_read_tensor_stat (same table, same
+    // Connection) is reachable from the acceptance panel's threaded
+    // worker pool and takes this lock -- taking it here too means a
+    // future concurrent caller of this function can't reintroduce the
+    // unsynchronized-Connection hazard eval_cache_mutex exists to
+    // prevent, without anyone having to remember why.
+    std::lock_guard<std::mutex> lock(db->eval_cache_mutex);
     // PRIMARY KEY (model_hash, model_role, name). The ON CONFLICT
     // DO UPDATE clause overwrites every column on a re-write.
     // source is updated to the current writer's tag. Phase 16
@@ -1028,11 +1066,33 @@ int ts_tessera_db_upsert_tensor_stat(
     const std::string role = row.model_role.empty()
         ? std::string("trunk")
         : row.model_role;
+    // absq_sketch: raw F32 bytes hex-escaped into a BLOB literal, same
+    // encoding v2_hessian_cache's h_inv_diag uses (see
+    // ts_tessera_db_write_hessian_cache) -- an empty sketch becomes
+    // SQL NULL rather than an empty BLOB so "no sketch" and "empty
+    // sketch" aren't ambiguous to a reader.
+    std::string sketch_lit = "NULL";
+    if (!row.absq_sketch.empty()) {
+        const size_t blob_bytes = row.absq_sketch.size() * sizeof(float);
+        std::string lit;
+        lit.reserve(blob_bytes * 4 + 8);
+        lit += "'";
+        static const char HEX[] = "0123456789abcdef";
+        const uint8_t * bytes = (const uint8_t *) row.absq_sketch.data();
+        for (size_t i = 0; i < blob_bytes; i++) {
+            lit += "\\x";
+            lit += HEX[bytes[i] >> 4];
+            lit += HEX[bytes[i] & 0x0f];
+        }
+        lit += "'::BLOB";
+        sketch_lit = lit;
+    }
     std::ostringstream q;
     q << "INSERT INTO tensor_stats (model_hash, model_role, name, family, "
          "layer_depth, out_dim, in_dim, n_elements, dtype, "
          "kurtosis, eff_rank, rms, mean_abs, tail_ratio, source, "
-         "recommended_action, updated_at) VALUES ("
+         "recommended_action, frob2, absq_sketch, stats_version, "
+         "updated_at) VALUES ("
       << "'" << sql_escape(row.model_hash) << "', "
       << "'" << sql_escape(role) << "', "
       << "'" << sql_escape(row.name) << "', "
@@ -1049,6 +1109,9 @@ int ts_tessera_db_upsert_tensor_stat(
       << row.tail_ratio << ", "
       << "'" << sql_escape(row.source) << "', "
       << "'" << sql_escape(row.recommended_action) << "', "
+      << ts_double_sql_literal(row.frob2) << ", "
+      << sketch_lit << ", "
+      << row.stats_version << ", "
       << ts_now_ts()
       << ") ON CONFLICT (model_hash, model_role, name) DO UPDATE SET "
          "family=excluded.family, layer_depth=excluded.layer_depth, "
@@ -1058,6 +1121,8 @@ int ts_tessera_db_upsert_tensor_stat(
          "rms=excluded.rms, mean_abs=excluded.mean_abs, "
          "tail_ratio=excluded.tail_ratio, source=excluded.source, "
          "recommended_action=excluded.recommended_action, "
+         "frob2=excluded.frob2, absq_sketch=excluded.absq_sketch, "
+         "stats_version=excluded.stats_version, "
          "updated_at=excluded.updated_at";
     try {
         auto res = db->conn->Query(q.str());
@@ -1070,6 +1135,144 @@ int ts_tessera_db_upsert_tensor_stat(
         return 1;
     } catch (...) {
         if (err) *err = "upsert_tensor_stat failed: unknown exception";
+        return 1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 "Layer A": absq_sketch build / quantile lookup
+// ---------------------------------------------------------------------------
+
+void ts_tensor_stats_build_absq_sketch(
+        const float * w, int64_t n, std::vector<float> * out,
+        int64_t max_points, int64_t sample_cap) {
+    if (out == nullptr) return;
+    out->clear();
+    if (w == nullptr || n <= 0 || max_points <= 0) return;
+
+    const int64_t stride = std::max<int64_t>(1, n / std::max<int64_t>(1, sample_cap));
+    std::vector<float> sample;
+    sample.reserve((size_t)((n + stride - 1) / stride));
+    for (int64_t i = 0; i < n; i += stride) {
+        sample.push_back(std::fabs(w[i]));
+    }
+    std::sort(sample.begin(), sample.end());
+
+    const int64_t np = std::min<int64_t>(max_points, (int64_t) sample.size());
+    out->resize((size_t) np);
+    for (int64_t j = 0; j < np; j++) {
+        const int64_t idx = (np == 1) ? 0
+            : (j * ((int64_t) sample.size() - 1)) / (np - 1);
+        (*out)[(size_t) j] = sample[(size_t) idx];
+    }
+}
+
+float ts_tensor_stats_sketch_quantile(const std::vector<float> & sketch, float q) {
+    if (sketch.empty()) return 0.0f;
+    if (sketch.size() == 1) return sketch[0];
+    q = std::max(0.0f, std::min(1.0f, q));
+    const double pos = q * (double)(sketch.size() - 1);
+    const size_t lo = (size_t) pos;
+    const size_t hi = std::min(lo + 1, sketch.size() - 1);
+    const double frac = pos - (double) lo;
+    return (float)((1.0 - frac) * sketch[lo] + frac * sketch[hi]);
+}
+
+// ---------------------------------------------------------------------------
+// tensor_stats read: single-row keyed lookup (Phase 2 "Layer A" and every
+// pre-existing column)
+// ---------------------------------------------------------------------------
+//
+// Mirrors ts_tessera_db_read_eval_cache's hit/miss contract: db == nullptr
+// is a safe no-op, an absent row is a miss (not an error), and only a real
+// SQL/decode failure returns non-zero.
+int ts_tessera_db_read_tensor_stat(
+        ts_tessera_db * db,
+        const std::string & model_hash,
+        const std::string & model_role,
+        const std::string & name,
+        ts_tessera_db_tensor_stat * out,
+        bool * hit,
+        std::string * err) {
+    if (hit) *hit = false;
+    if (db == nullptr || db->conn == nullptr || out == nullptr) return 0;
+    const std::string role = model_role.empty() ? std::string("trunk") : model_role;
+
+    // This is reached from the acceptance panel's threaded worker pool via
+    // ts_eval_frob2 (tessera-expert-eval.cpp) -- same DuckDB Connection
+    // thread-safety hazard eval_cache's read/write already guard against
+    // (see the ts_tessera_db struct comment on eval_cache_mutex). Reused
+    // here rather than a second mutex: tensor_stats reads/writes never
+    // overlap with eval_cache reads/writes in a way that needs separate
+    // shards, and both are individually fast SQL statements.
+    std::lock_guard<std::mutex> lock(db->eval_cache_mutex);
+
+    std::ostringstream q;
+    q << "SELECT family, layer_depth, out_dim, in_dim, n_elements, dtype, "
+         "kurtosis, eff_rank, rms, mean_abs, tail_ratio, source, "
+         "recommended_action, frob2, absq_sketch, stats_version "
+         "FROM tensor_stats WHERE model_hash = '" << sql_escape(model_hash)
+      << "' AND model_role = '" << sql_escape(role)
+      << "' AND name = '" << sql_escape(name) << "'";
+    try {
+        auto res = db->conn->Query(q.str());
+        if (res->HasError()) {
+            if (err) *err = "read_tensor_stat: " + res->GetError();
+            return 1;
+        }
+        if (res->RowCount() == 0) return 0;   // miss, not an error
+
+        out->model_hash = model_hash;
+        out->model_role = role;
+        out->name       = name;
+        auto getstr = [&](idx_t col) -> std::string {
+            auto v = res->GetValue(col, 0);
+            return v.IsNull() ? std::string() : v.GetValue<std::string>();
+        };
+        auto getdbl = [&](idx_t col) -> double {
+            auto v = res->GetValue(col, 0);
+            return v.IsNull() ? 0.0 : v.GetValue<double>();
+        };
+        auto getint = [&](idx_t col) -> int64_t {
+            auto v = res->GetValue(col, 0);
+            return v.IsNull() ? 0 : v.GetValue<int64_t>();
+        };
+        out->family             = getstr(0);
+        out->layer_depth        = (int32_t) getint(1);
+        out->out_dim            = getint(2);
+        out->in_dim             = getint(3);
+        out->n_elements         = getint(4);
+        out->dtype              = getstr(5);
+        out->kurtosis           = getdbl(6);
+        out->eff_rank           = getdbl(7);
+        out->rms                = getdbl(8);
+        out->mean_abs           = getdbl(9);
+        out->tail_ratio         = getdbl(10);
+        out->source             = getstr(11);
+        out->recommended_action = getstr(12);
+        out->frob2              = getdbl(13);
+        out->absq_sketch.clear();
+        auto sketch_v = res->GetValue(14, 0);
+        if (!sketch_v.IsNull()) {
+            auto s = sketch_v.GetValueUnsafe<duckdb::string_t>();
+            if (s.GetSize() % sizeof(float) != 0) {
+                if (err) *err = "read_tensor_stat: absq_sketch blob size not a multiple of sizeof(float) for " + name;
+                return 1;
+            }
+            const size_t np = s.GetSize() / sizeof(float);
+            out->absq_sketch.resize(np);
+            if (np > 0) {
+                std::memcpy(out->absq_sketch.data(), s.GetData(), np * sizeof(float));
+            }
+        }
+        out->stats_version = (int32_t) getint(15);
+        if (hit) *hit = true;
+    } catch (const std::exception & e) {
+        if (err) *err = std::string("read_tensor_stat exception: ") + e.what();
+        return 1;
+    } catch (...) {
+        if (err) *err = "read_tensor_stat unknown exception";
         return 1;
     }
     return 0;
@@ -2335,12 +2538,20 @@ int ts_tessera_db_migrate_model_role(ts_tessera_db * db,
             "    tail_ratio         DOUBLE,"
             "    source             TEXT,"
             "    recommended_action TEXT,"
+            "    frob2              DOUBLE,"
+            "    absq_sketch        BLOB,"
+            "    stats_version      INTEGER,"
             "    updated_at         TIMESTAMP,"
             "    PRIMARY KEY (model_hash, model_role, name)"
             ")",
             // INSERT: the SELECT explicitly lists the old
             // columns so the trailing AS model_role has a
             // matching slot in the CREATE TABLE column list.
+            // frob2/absq_sketch/stats_version are Phase 2 "Layer A"
+            // additions that did not exist on any pre-Phase-16 DB --
+            // omitted here so they default NULL (stats_version reads
+            // back as 0 via COALESCE at the read site, the documented
+            // "predates Layer A" sentinel).
             "INSERT INTO tensor_stats__p16_new "
             "(model_hash, name, family, layer_depth, out_dim, in_dim, "
             "n_elements, dtype, kurtosis, eff_rank, rms, mean_abs, "
@@ -2687,6 +2898,53 @@ int ts_tessera_db_migrate_regime_thresholds(ts_tessera_db * db,
         return 1;
     } catch (...) {
         if (err) *err = "migrate_regime_thresholds: unknown exception";
+        return 1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline refactor phase 2 "Layer A": tensor_stats frob2/absq_sketch/
+// stats_version columns
+// ---------------------------------------------------------------------------
+//
+// ADD COLUMN IF NOT EXISTS (not a PK change, so no PK-rebuild dance is
+// needed -- same shape as ts_tessera_db_migrate_regime_thresholds above).
+// Idempotent: a fresh DB already has the columns from TS_QDB_SCHEMA_SQL,
+// so every ADD COLUMN here is a no-op on it; a DB migrated by this
+// function on a prior open is likewise a no-op on re-open.
+int ts_tessera_db_migrate_tensor_stats_layer_a(ts_tessera_db * db,
+                                                std::string * err) {
+    if (db == nullptr || db->conn == nullptr) {
+        if (err) *err = "migrate_tensor_stats_layer_a: null db or conn";
+        return 1;
+    }
+    try {
+        const char * alter_sqls[] = {
+            "ALTER TABLE tensor_stats ADD COLUMN IF NOT EXISTS frob2 DOUBLE",
+            "ALTER TABLE tensor_stats ADD COLUMN IF NOT EXISTS absq_sketch BLOB",
+            "ALTER TABLE tensor_stats ADD COLUMN IF NOT EXISTS stats_version INTEGER",
+        };
+        for (const char * sql : alter_sqls) {
+            auto r = db->conn->Query(sql);
+            if (r->HasError()) {
+                // Same "duplicate column" tolerance as
+                // ts_tessera_db_migrate_regime_thresholds: DuckDB's
+                // ADD COLUMN IF NOT EXISTS still surfaces an error for
+                // the already-present case rather than a true no-op.
+                std::string msg = r->GetError();
+                if (msg.find("duplicate") == std::string::npos &&
+                    msg.find("already exists") == std::string::npos) {
+                    if (err) *err = std::string(sql) + ": " + msg;
+                    return 1;
+                }
+            }
+        }
+    } catch (const std::exception & e) {
+        if (err) *err = std::string("migrate_tensor_stats_layer_a: ") + e.what();
+        return 1;
+    } catch (...) {
+        if (err) *err = "migrate_tensor_stats_layer_a: unknown exception";
         return 1;
     }
     return 0;

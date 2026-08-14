@@ -347,8 +347,16 @@ static ts_awq_score ts_dispatch_awq_eval(const ts_awq_candidate * cand,
     }
 
     // mse is the mean squared reconstruction error, so
-    // ||W_hat - W||_F^2 = mse * n.
-    float frob2 = ts_vec_dotpr(layer->weights, layer->weights, n);
+    // ||W_hat - W||_F^2 = mse * n. layer->frob2 is precomputed once by the
+    // GA-prep walk (see tensor_stats.frob2); this is the GA's single
+    // hottest per-candidate computation (~1.6M evals/run per the pipeline
+    // refactor phase 2 notes), so reusing it instead of a fresh
+    // ts_vec_dotpr full pass here is the dominant win of that work.
+    // Falls back to a fresh pass for the (should not happen) case of a
+    // layer that never got a precomputed value.
+    float frob2 = (layer->frob2 > 0.0f)
+        ? layer->frob2
+        : ts_vec_dotpr(layer->weights, layer->weights, n);
     float rel_frob = (frob2 > 0.0f) ? (mse_val * (float)n / frob2) : mse_val;
 
     // S5: kernel-direct t_l^2 from the L1 sidecar, blended with the proxy.
@@ -2038,6 +2046,18 @@ int ts_dispatch_run(const ts_dispatch_params * params,
                 name, w.data(), out_dim, in_dim, imdata, imdata ? imdim : 0,
                 imdata_max_abs, imdata_max_abs ? imdim_max_abs : 0);
 
+            // Phase 2 "Layer A": frob2 + an approximate |W| quantile sketch,
+            // computed once here from the same full f32 buffer the regime
+            // descriptor above already scans, then reused by every later
+            // consumer (the GA hot path's ts_dispatch_awq_eval below, and
+            // the ts_expert_eval seam via a tensor_stats read-back) instead
+            // of each redoing its own full pass. See
+            // tools/quantize/tessera/tessera-quantize-db.h for why the
+            // sketch is a bounded sample, not an exact sort.
+            const float tensor_frob2 = ts_vec_dotpr(w.data(), w.data(), out_dim * in_dim);
+            std::vector<float> tensor_absq_sketch;
+            ts_tensor_stats_build_absq_sketch(w.data(), out_dim * in_dim, &tensor_absq_sketch);
+
             // multimodal: resolve the operative modality (drives routing + the
             // archive axis) and run the per-modality AWQ alpha search (drives
             // the modality-weighted fitness below).
@@ -2093,6 +2113,7 @@ int ts_dispatch_run(const ts_dispatch_params * params,
             layer.n_tokens_h  = 0;
             layer.kurtosis    = desc.kurtosis;
             layer.eff_rank    = desc.eff_rank;
+            layer.frob2       = tensor_frob2;
             // Streaming weight loader: each GA worker calls this to fetch the
             // layer's f32 weights on demand from the mmap'd ggml context.
             // The buffer is owned per-call and freed by weights_release_fn
@@ -2167,6 +2188,9 @@ int ts_dispatch_run(const ts_dispatch_params * params,
                 tstat.mean_abs    = 0.0;
                 tstat.tail_ratio  = 0.0;
                 tstat.source      = "cpp_quant";
+                tstat.frob2         = tensor_frob2;
+                tstat.absq_sketch   = tensor_absq_sketch;
+                tstat.stats_version = TS_TENSOR_STATS_VERSION;
                 std::string uerr;
                 if (ts_tessera_db_upsert_tensor_stat(db_wrap->db, tstat, &uerr) != 0
                     && !uerr.empty()) {

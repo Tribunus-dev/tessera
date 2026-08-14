@@ -203,6 +203,12 @@ int ts_tessera_db_insert_l5_fixup(ts_tessera_db * db,
 // l5_weights via the rules in l5_action.py. The COALESCE
 // preservation in the upsert makes this a one-way Python write
 // without disturbing the C++ side's other columns.
+// Pipeline refactor phase 2, "Layer A": bumped whenever the meaning or
+// computation of frob2/absq_sketch changes, so a reader can tell a
+// pre-Layer-A row (stats_version 0, both fields absent) from a stale
+// producer apart from a current one without inspecting the values.
+#define TS_TENSOR_STATS_VERSION 1
+
 struct ts_tessera_db_tensor_stat {
     std::string  model_hash;
     std::string  model_role;   // Phase 16: "trunk" / "dflash" / "dspark" /
@@ -228,10 +234,57 @@ struct ts_tessera_db_tensor_stat {
     std::string  recommended_action;  // "protect" / "requant_up" /
                                       // "requant_down" / "monitor" / "noop"
                                       // (Python-side only; default empty)
+    // Phase 2 "Layer A": producer is the dispatch's GA-prep walk (the same
+    // loop that already materializes the full f32 weight buffer to compute
+    // kurtosis/eff_rank above -- frob2/absq_sketch ride the same pass at
+    // no extra I/O cost). frob2 = ||W||_F^2 (sum of squared weights).
+    double       frob2         = 0.0;
+    // ~1024-point ascending sketch of |W|, for interpolated quantile
+    // lookups (see ts_tensor_stats_sketch_quantile below). Built from a
+    // bounded deterministic sample, not a full sort -- an approximation,
+    // not exact order statistics (see ts_tensor_stats_build_absq_sketch).
+    std::vector<float> absq_sketch;
+    // TS_TENSOR_STATS_VERSION at write time. 0 (the struct default) means
+    // "row predates Layer A" -- frob2/absq_sketch are not populated and
+    // readers must fall back to recomputing from raw weights.
+    int32_t      stats_version = 0;
 };
 int ts_tessera_db_upsert_tensor_stat(ts_tessera_db * db,
                                      const ts_tessera_db_tensor_stat & row,
                                      std::string * err);
+
+// Single-row keyed read for a tensor_stats row (model_hash, model_role,
+// name) -- every column, including the Layer A additions. hit=false with
+// return 0 means "no row for this key" (not an error, matches
+// ts_tessera_db_read_eval_cache's contract); callers fall back to
+// recomputing frob2/thresholds from raw weights. db == nullptr is a safe
+// no-op (hit=false, return 0).
+int ts_tessera_db_read_tensor_stat(
+    ts_tessera_db * db,
+    const std::string & model_hash,
+    const std::string & model_role,
+    const std::string & name,
+    ts_tessera_db_tensor_stat * out,
+    bool * hit,
+    std::string * err);
+
+// Builds an ascending sketch of |w| (up to max_points entries) by taking a
+// bounded deterministic-stride sample (at most sample_cap elements, not
+// the full n) and sorting the sample. This is O(n) (the stride pass) +
+// O(sample log sample), NOT O(n log n) -- a full sort of a multi-million-
+// element tensor inside the dispatch's per-tensor walk is a real
+// wall-clock risk this pipeline has already stalled on once (the
+// unaccelerated Jacobi eigensolver, see tessera-linalg.cpp); the sketch is
+// an intentional approximation of the quantile function, not an exact
+// order statistic. n <= 0 clears *out.
+void ts_tensor_stats_build_absq_sketch(
+    const float * w, int64_t n, std::vector<float> * out,
+    int64_t max_points = 1024, int64_t sample_cap = 65536);
+
+// Interpolated quantile lookup into a sketch built by the function above.
+// q is clamped to [0, 1]; q=0 returns the sketch minimum, q=1 the sketch
+// maximum. Returns 0.0f for an empty sketch.
+float ts_tensor_stats_sketch_quantile(const std::vector<float> & sketch, float q);
 
 // --- Per-component qtype reader (Phase 16 unified writer) ---
 //

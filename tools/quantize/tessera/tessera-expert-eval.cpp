@@ -30,6 +30,35 @@
 #include <vector>
 
 // ---------------------------------------------------------------------------
+// Phase 2 "Layer A": frob2 read-back
+// ---------------------------------------------------------------------------
+//
+// frob2 (||W||_F^2) is needed by every tier below and was previously
+// recomputed via a full ts_vec_dotpr pass on every single call -- cheap
+// once, but this seam is invoked many times per tensor across a GA/
+// acceptance sweep. When the caller wired ctx.db/model_hash/name (the
+// same eligibility the eval_cache check in ts_expert_eval uses), the
+// dispatch's GA-prep walk has already computed and stored frob2 in
+// tensor_stats (see tools/quantize/tessera/tessera-quantize-db.h) -- read
+// it back instead of recomputing. Falls back to a fresh pass whenever no
+// cache is wired, the row is missing, or the row predates Layer A
+// (stats_version mismatch) -- always correct, just sometimes not free.
+static float ts_eval_frob2(const ts_eval_tensor_ctx & ctx) {
+    const int64_t n = ctx.out_dim * ctx.in_dim;
+    if (ctx.db != nullptr && !ctx.model_hash.empty() && ctx.name != nullptr) {
+        ts_tessera_db_tensor_stat stat;
+        bool hit = false;
+        std::string err;
+        if (ts_tessera_db_read_tensor_stat(ctx.db, ctx.model_hash, ctx.model_role,
+                ctx.name, &stat, &hit, &err) == 0 &&
+            hit && stat.stats_version == TS_TENSOR_STATS_VERSION && stat.frob2 > 0.0) {
+            return (float) stat.frob2;
+        }
+    }
+    return ts_vec_dotpr(ctx.weights, ctx.weights, n);
+}
+
+// ---------------------------------------------------------------------------
 // PROXY tier: bit-for-bit ts_dispatch_forced_t2 (profile alpha/clip scaling
 // into the T640-core streaming MSE). Every REAL-tier fallback routes back
 // through this same helper so a failed real algorithm still returns a
@@ -55,7 +84,7 @@ static void ts_eval_proxy_score(ts_expert_id expert,
     }
 
     const int64_t n = ctx.out_dim * ctx.in_dim;
-    const float frob2 = ts_vec_dotpr(ctx.weights, ctx.weights, n);
+    const float frob2 = ts_eval_frob2(ctx);
     out->mse = mse;
     out->t2  = (frob2 > 0.0f) ? (mse * (float)n / frob2) : mse;
 }
@@ -100,7 +129,7 @@ static int ts_eval_real_dartquant(const ts_eval_tensor_ctx & ctx,
                                   const ts_eval_opts & opts,
                                   ts_eval_result * out) {
     const int64_t n = ctx.out_dim * ctx.in_dim;
-    const float frob2 = ts_vec_dotpr(ctx.weights, ctx.weights, n);
+    const float frob2 = ts_eval_frob2(ctx);
     if (frob2 <= 0.0f) {
         return ts_eval_fallback_to_proxy(TS_EXPERT_DARTQUANT, ctx, opts, out,
                                          "frob2_nonpositive");
@@ -167,7 +196,7 @@ static int ts_eval_real_flrq(const ts_eval_tensor_ctx & ctx,
                              const ts_eval_opts & opts,
                              ts_eval_result * out) {
     const int64_t n = ctx.out_dim * ctx.in_dim;
-    const float frob2 = ts_vec_dotpr(ctx.weights, ctx.weights, n);
+    const float frob2 = ts_eval_frob2(ctx);
     if (frob2 <= 0.0f) {
         return ts_eval_fallback_to_proxy(TS_EXPERT_FLRQ, ctx, opts, out,
                                          "frob2_nonpositive");
@@ -210,7 +239,7 @@ static int ts_eval_real_champq(const ts_eval_tensor_ctx & ctx,
                                const ts_eval_opts & opts,
                                ts_eval_result * out) {
     const int64_t n = ctx.out_dim * ctx.in_dim;
-    const float frob2 = ts_vec_dotpr(ctx.weights, ctx.weights, n);
+    const float frob2 = ts_eval_frob2(ctx);
     if (frob2 <= 0.0f) {
         return ts_eval_fallback_to_proxy(TS_EXPERT_CHAMPQ, ctx, opts, out,
                                          "frob2_nonpositive");
@@ -302,7 +331,7 @@ static int ts_eval_real_septq(const ts_eval_tensor_ctx & ctx,
                               const ts_eval_opts & opts,
                               ts_eval_result * out) {
     const int64_t n = ctx.out_dim * ctx.in_dim;
-    const float frob2 = ts_vec_dotpr(ctx.weights, ctx.weights, n);
+    const float frob2 = ts_eval_frob2(ctx);
     if (frob2 <= 0.0f) {
         return ts_eval_fallback_to_proxy(TS_EXPERT_SEPTQ, ctx, opts, out,
                                          "frob2_nonpositive");

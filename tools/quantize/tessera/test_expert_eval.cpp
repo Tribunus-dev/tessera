@@ -370,6 +370,91 @@ int main() {
         }
     }
 
+    // ---- 7b. Phase 2 "Layer A": frob2 read-back from tensor_stats ----
+    //
+    // Three model_hash values keep each call's eval_cache key distinct
+    // (model_hash is part of the PK) so this test exercises ts_eval_frob2
+    // fresh every time, never an eval_cache hit from a prior call here.
+    {
+        std::string db_err;
+        ts_tessera_db * fdb = ts_tessera_db_open(":memory:", &db_err);
+        CHECK(fdb != nullptr, "frob2 read-back: opened an in-memory db");
+        if (fdb != nullptr) {
+            ts_eval_opts opts;
+            opts.tier = TS_EVAL_REAL;
+            opts.alpha = 0.5f; opts.clip = 0.95f; opts.seed = 7;
+
+            // (a) db wired but no tensor_stats row for this key yet -> miss
+            // -> falls back to a fresh ts_vec_dotpr pass, same as db==nullptr.
+            ts_eval_tensor_ctx bctx = ctx;
+            bctx.model_hash = "frob2_test_baseline";
+            bctx.model_role = "trunk";
+            bctx.db = fdb;
+            ts_eval_result base_out;
+            CHECK(ts_expert_eval(TS_EXPERT_SEPTQ, bctx, opts, &base_out) == 0,
+                  "frob2 read-back: baseline (no tensor_stats row) rc == 0");
+
+            ts_eval_result plain_out;
+            CHECK(ts_expert_eval(TS_EXPERT_SEPTQ, ctx, opts, &plain_out) == 0,
+                  "frob2 read-back: plain db==nullptr call rc == 0");
+            CHECK(std::fabs(base_out.t2 - plain_out.t2) < 1e-9f,
+                  "frob2 read-back: tensor_stats miss matches the db==nullptr fallback exactly");
+
+            // (b) a genuine tensor_stats row with a deliberately WRONG frob2
+            // (2x the true value) must change t2 by exactly that factor --
+            // t2 = mse * n / frob2, so doubling frob2 halves t2. This is
+            // the only way to prove the read-back value actually flows
+            // into the computation rather than the fallback silently
+            // winning every time.
+            ts_tessera_db_tensor_stat row;
+            row.model_hash    = "frob2_test_injected";
+            row.model_role    = "trunk";
+            row.name          = ctx.name;
+            row.out_dim       = ctx.out_dim;
+            row.in_dim        = ctx.in_dim;
+            const int64_t n   = ctx.out_dim * ctx.in_dim;
+            const float true_frob2 = ts_vec_dotpr(ctx.weights, ctx.weights, n);
+            row.frob2         = 2.0 * (double) true_frob2;
+            row.stats_version = TS_TENSOR_STATS_VERSION;
+            std::string uerr;
+            CHECK(ts_tessera_db_upsert_tensor_stat(fdb, row, &uerr) == 0,
+                  ("frob2 read-back: upsert_tensor_stat failed: " + uerr).c_str());
+
+            ts_eval_tensor_ctx ictx = ctx;
+            ictx.model_hash = "frob2_test_injected";
+            ictx.model_role = "trunk";
+            ictx.db = fdb;
+            ts_eval_result inj_out;
+            CHECK(ts_expert_eval(TS_EXPERT_SEPTQ, ictx, opts, &inj_out) == 0,
+                  "frob2 read-back: injected-frob2 call rc == 0");
+            char msg[192];
+            std::snprintf(msg, sizeof(msg),
+                         "frob2 read-back: injected 2x frob2 halves t2 (baseline=%.9f injected=%.9f expected=%.9f)",
+                         (double)base_out.t2, (double)inj_out.t2, (double)base_out.t2 * 0.5);
+            CHECK(std::fabs(inj_out.t2 - base_out.t2 * 0.5f) < 1e-6f, msg);
+
+            // (c) same row but stats_version predates Layer A (0) -> must
+            // be ignored, falling back to a fresh pass (matches baseline,
+            // NOT the injected value).
+            ts_tessera_db_tensor_stat stale_row = row;
+            stale_row.model_hash    = "frob2_test_stale_version";
+            stale_row.stats_version = 0;
+            CHECK(ts_tessera_db_upsert_tensor_stat(fdb, stale_row, &uerr) == 0,
+                  ("frob2 read-back: upsert_tensor_stat (stale) failed: " + uerr).c_str());
+            ts_eval_tensor_ctx sctx = ctx;
+            sctx.model_hash = "frob2_test_stale_version";
+            sctx.model_role = "trunk";
+            sctx.db = fdb;
+            ts_eval_result stale_out;
+            CHECK(ts_expert_eval(TS_EXPERT_SEPTQ, sctx, opts, &stale_out) == 0,
+                  "frob2 read-back: stale-version call rc == 0");
+            CHECK(std::fabs(stale_out.t2 - base_out.t2) < 1e-9f,
+                  "frob2 read-back: stats_version 0 (predates Layer A) is ignored, falls back fresh");
+
+            delete fdb;
+        }
+    }
+
     // ---- 8. Invalid args: rc != 0 ----
     {
         ts_eval_tensor_ctx bad_ctx;

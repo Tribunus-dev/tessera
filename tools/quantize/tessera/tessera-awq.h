@@ -101,6 +101,12 @@ struct ts_awq_layer {
     int64_t n_tokens_h;  // rows in heldout_activations
     float   kurtosis;    // from imatrix regime stats
     float   eff_rank;    // effective rank
+    // ||W||_F^2, precomputed by the dispatch's GA-prep walk from the same
+    // full weight buffer it already materializes for kurtosis/eff_rank
+    // above (see tensor_stats.frob2, tools/quantize/tessera/
+    // tessera-quantize-db.h). 0.0f means "not precomputed" -- a consumer
+    // falls back to ts_vec_dotpr(layer->weights, layer->weights, n).
+    float   frob2 = 0.0f;
     // Block index parsed from the tensor name (e.g. blk.12.ffn_gate -> 12).
     // 0 for non-block tensors (embeddings, norm, output). Set by the dispatch
     // from ts_tessera_db_layer_depth(); enables depth-aware family queries
