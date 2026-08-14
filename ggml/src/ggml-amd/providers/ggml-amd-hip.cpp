@@ -298,12 +298,23 @@ static bool ggml_amd_hip_supports_op_impl(struct ggml_amd_provider * provider, c
 static bool ggml_amd_hip_supports_import_impl(struct ggml_amd_provider * provider, struct ggml_amd_allocation * alloc) {
 #ifdef __HIP_PLATFORM_AMD__
     auto ctx = provider ? (ggml_amd_hip_context *)provider->context : nullptr;
-    if (ctx && !ctx->supports_dma_buf_import && alloc &&
-        alloc->domain == GGML_AMD_DOMAIN_SHARED_SYSTEM) {
+    if (!ctx) {
         return false;
     }
-#endif
+    (void)ctx;
+#else
     (void)provider;
+    if (!alloc || alloc->dma_buf_fd < 0) {
+        return false;
+    }
+    if (alloc->domain != GGML_AMD_DOMAIN_IMPORTED_EXTERNAL &&
+        alloc->domain != GGML_AMD_DOMAIN_SHARED_SYSTEM &&
+        alloc->domain != GGML_AMD_DOMAIN_GPU_LOCAL_EXPORTABLE) {
+        return false;
+    }
+    return alloc->external_handle_kind != GGML_AMD_EXTERNAL_HANDLE_KIND_NONE;
+#endif
+
     if (!alloc || alloc->dma_buf_fd < 0) {
         return false;
     }
@@ -343,13 +354,6 @@ static ggml_status ggml_amd_hip_import_allocation_impl(
     if (!ctx || !ctx->initialized) {
         g_ggml_amd_hip_last_import_error = hipErrorNotInitialized;
         return GGML_STATUS_FAILED;
-    }
-
-    if (alloc->domain == GGML_AMD_DOMAIN_SHARED_SYSTEM) {
-        if (!ctx || !ctx->supports_dma_buf_import) {
-            g_ggml_amd_hip_last_import_error = hipErrorNotSupported;
-            return GGML_STATUS_FAILED;
-        }
     }
 
     int dup_fd = ggml_amd_allocation_dup_fd(alloc);
