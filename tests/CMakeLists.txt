@@ -206,6 +206,13 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
 
     llama_build_and_test(test-llama-archs.cpp)
 
+    # Pipeline refactor stage 4: build_lora_mm's dense-path activation
+    # capture (src/llama-graph.cpp) must not perturb the actual matmul --
+    # the F16 harvest is a side channel only. Builds a tiny synthetic
+    # LLM_ARCH_LLAMA model twice (imatrix_activation_capture off vs. on)
+    # and asserts bit-identical logits.
+    llama_build_and_test(test-lora-mm-activation-capture.cpp)
+
     set(MODEL_DIR "${CMAKE_CURRENT_BINARY_DIR}/test-models/")
     file(MAKE_DIRECTORY "${MODEL_DIR}")
 

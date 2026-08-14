@@ -156,6 +156,7 @@ llama_context::llama_context(
     cparams.cb_eval           = params.cb_eval;
     cparams.cb_eval_user_data = params.cb_eval_user_data;
     cparams.imatrix_observers = params.imatrix_observers;
+    cparams.imatrix_activation_capture = params.imatrix_activation_capture;
 
     cparams.ctx_other = nullptr;
 
@@ -3766,6 +3767,7 @@ llama_context_params llama_context_default_params() {
         /*.cb_eval                     =*/ nullptr,
         /*.cb_eval_user_data           =*/ nullptr,
         /*.imatrix_observers           =*/ false,
+        /*.imatrix_activation_capture  =*/ false,
         /*.type_k                      =*/ GGML_TYPE_F16,
         /*.type_v                      =*/ GGML_TYPE_F16,
         /*.abort_callback              =*/ nullptr,

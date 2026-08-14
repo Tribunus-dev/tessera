@@ -380,6 +380,13 @@ extern "C" {
         ggml_backend_sched_eval_callback cb_eval;
         void * cb_eval_user_data;
         bool imatrix_observers; // graph-resident compact activation observers [EXPERIMENTAL]
+        // Extends imatrix_observers on the dense (non-tile640) weight matmul
+        // path: also materializes and harvests a bounded, real, raw F16 copy
+        // of the tensor's actual input activations, not just their compact
+        // moments. The matmul itself always runs on the true F32 input
+        // regardless of this flag -- only the harvested copy is F16.
+        // [EXPERIMENTAL]
+        bool imatrix_activation_capture;
 
         enum ggml_type type_k; // data type for K cache [EXPERIMENTAL]
         enum ggml_type type_v; // data type for V cache [EXPERIMENTAL]

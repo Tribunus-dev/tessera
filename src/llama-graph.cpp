@@ -1557,7 +1557,24 @@ ggml_tensor * llm_graph_context::build_lora_mm(
         cur->type == GGML_TYPE_F32 &&
         cur->ne[1] >= 16 &&
         strncmp(w->name, "blk.", 4) == 0) {
-        build_imatrix_observer_dense(cur, w, w->name);
+        if (cparams.imatrix_activation_capture) {
+            // Real per-tensor activation capture: harvest a real F16 copy
+            // of this matmul's true input alongside the usual compact
+            // stats, via the same fused op the tile640 path already uses.
+            // Side-channel harvest ONLY -- the return value (the F16
+            // activation_view) is intentionally discarded here, NOT fed
+            // into the matmul below. build_tile640_lora_mm reassigns `cur`
+            // to this same return value, which is safe there only because
+            // that path casts to F16 regardless a few lines later; this
+            // dense path has no such cast and must keep computing `res`
+            // from the true F32 `cur`, or every dense matmul -- including
+            // this context's own perplexity/logit computation when
+            // imatrix_activation_capture is on -- would silently run on
+            // F16-downgraded activations.
+            build_imatrix_observer_cast_dense(cur, w, w->name);
+        } else {
+            build_imatrix_observer_dense(cur, w, w->name);
+        }
     }
     ggml_tensor * res = ggml_mul_mat(ctx0, w, cur);
 
