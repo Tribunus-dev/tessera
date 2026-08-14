@@ -50,6 +50,7 @@
 #include "tessera-quantize-db.h"
 #include "tessera-progress.h"
 #include "tessera-vec.h"
+#include "tessera-activation-sidecar.h"
 
 #include "gguf.h"
 #include "ggml.h"
@@ -297,12 +298,31 @@ int ts_dispatch_run_gaprep(
             std::vector<float>   buf;
         };
         std::vector<ts_ga_weight_loader>   ga_weight_loaders;
+        // Streaming activation loader state (real per-tensor activation
+        // capture): holds the tensor name + expected in_dim (for the
+        // sidecar's shape-mismatch check) and the buffers
+        // ts_activation_sidecar_load fills on demand. Same
+        // reserve-before-loop discipline as ga_weight_loaders below --
+        // layer.activations_user_data stores a raw pointer to
+        // ga_activation_loaders.back(), so a mid-loop reallocation would
+        // dangle every prior pointer.
+        struct ts_ga_activation_loader {
+            std::string         tensor_name;
+            std::string         sidecar_dir;
+            int64_t             expected_in_dim = 0;
+            std::vector<float>  train_buf;
+            std::vector<float>  heldout_buf;
+        };
+        std::vector<ts_ga_activation_loader> ga_activation_loaders;
         std::vector<ts_awq_layer>          ga_layers;
         std::vector<ts_regime_descriptor>  ga_descs;     // regime descriptor per layer (archive axes)
 
         ts_progress_set_phase(prog, ts_progress_phase::GA_PREP, n_tensors,
                               "collect GA layers");
         ga_weight_loaders.reserve((size_t)n_tensors);  // prevent realloc (raw ptrs stored)
+        if (!params->activation_capture_dir.empty()) {
+            ga_activation_loaders.reserve((size_t)n_tensors);  // same realloc hazard
+        }
         ga_layers.reserve((size_t)n_tensors);
         ga_names.reserve((size_t)n_tensors);
         ga_descs.reserve((size_t)n_tensors);
@@ -404,10 +424,13 @@ int ts_dispatch_run_gaprep(
             // fourth_moment / max_abs fields stay null and the evaluator
             // falls back to second^2 / sqrt(second), matching Python's
             // Layer.from_npz fallback when in_sum4 / in_maxabs are absent.
-            // train/heldout activations are not yet wired here (no calib
-            // split), so the evaluator uses the diagonal second-moment loss
-            // for train_error and treats heldout == train, exactly as Python
-            // does when train_activations is None.
+            // train/heldout activations: populated on demand below when
+            // params->activation_capture_dir is set (a real sidecar
+            // written by llama-imatrix --activation-capture); otherwise
+            // left null, in which case ts_awq_evaluate_layer falls back to
+            // the diagonal second-moment loss for train_error and treats
+            // heldout == train, exactly as Python does when
+            // train_activations is None.
             layer.second_moment       = (imdata && imdim == in_dim) ? imdata : nullptr;
             layer.fourth_moment       = nullptr;
             layer.max_abs             = nullptr;
@@ -415,16 +438,77 @@ int ts_dispatch_run_gaprep(
             layer.heldout_activations = nullptr;
             layer.ref_train_output    = nullptr;
             layer.ref_heldout_output  = nullptr;
-            // Streaming activation loader: unset here (no capture sidecar
-            // wired yet), so must be explicitly nulled rather than left to
-            // whatever `ts_awq_layer layer;`'s uninitialized stack memory
-            // happens to contain -- a garbage-nonzero activations_load_fn
-            // gets called as a real function pointer by ts_awq_evolve_all's
+            // Streaming activation loader: must always be explicitly set
+            // (even to null) rather than left to whatever
+            // `ts_awq_layer layer;`'s uninitialized stack memory happens to
+            // contain -- a garbage-nonzero activations_load_fn gets called
+            // as a real function pointer by ts_awq_evolve_all's
             // `if (layers[i].activations_load_fn)` guard, which crashed the
             // GA worker threads (SIGSEGV) the first time this field existed.
             layer.activations_load_fn    = nullptr;
             layer.activations_release_fn = nullptr;
             layer.activations_user_data  = nullptr;
+            if (!params->activation_capture_dir.empty()) {
+                ga_activation_loaders.push_back(
+                    {ga_names.back(), params->activation_capture_dir, in_dim, {}, {}});
+                layer.activations_load_fn = [](void * ud,
+                                               const float ** out_train, int64_t * out_n_tokens,
+                                               const float ** out_heldout, int64_t * out_n_tokens_h,
+                                               const float ** out_ref_train,
+                                               const float ** out_ref_heldout) -> bool {
+                    auto * al = static_cast<ts_ga_activation_loader *>(ud);
+                    int64_t rows = 0, cols = 0;
+                    if (ts_activation_sidecar_load(al->sidecar_dir.c_str(), al->tensor_name.c_str(),
+                                                   ".act_train.f16", &al->train_buf, &rows, &cols) != 0) {
+                        return false;  // no capture data for this tensor
+                    }
+                    if (cols != al->expected_in_dim) {
+                        fprintf(stderr,
+                                "tessera-dispatch: activation capture sidecar for '%s' has "
+                                "in_dim=%lld, expected %lld -- ignoring (falling back to "
+                                "the diagonal weight-space error for this tensor)\n",
+                                al->tensor_name.c_str(), (long long)cols,
+                                (long long)al->expected_in_dim);
+                        al->train_buf.clear();
+                        al->train_buf.shrink_to_fit();
+                        return false;
+                    }
+                    *out_train    = al->train_buf.data();
+                    *out_n_tokens = rows;
+
+                    // Heldout is optional: a missing or mismatched heldout
+                    // sidecar still lets the train-only path run (matching
+                    // ts_awq_evaluate_layer's own "heldout falls back to
+                    // train when absent" behavior).
+                    int64_t h_rows = 0, h_cols = 0;
+                    if (ts_activation_sidecar_load(al->sidecar_dir.c_str(), al->tensor_name.c_str(),
+                                                   ".act_heldout.f16", &al->heldout_buf,
+                                                   &h_rows, &h_cols) == 0 &&
+                        h_cols == al->expected_in_dim) {
+                        *out_heldout    = al->heldout_buf.data();
+                        *out_n_tokens_h = h_rows;
+                    } else {
+                        al->heldout_buf.clear();
+                        al->heldout_buf.shrink_to_fit();
+                        *out_heldout    = nullptr;
+                        *out_n_tokens_h = 0;
+                    }
+                    // ref_train_output/ref_heldout_output: not precomputed
+                    // at capture time yet (a pure optimization, deferred --
+                    // see the plan's stage 6); ts_awq_relative_output_error
+                    // already recomputes activations @ original_weight^T on
+                    // the fly when these are null.
+                    *out_ref_train   = nullptr;
+                    *out_ref_heldout = nullptr;
+                    return true;
+                };
+                layer.activations_release_fn = [](void * ud) {
+                    auto * al = static_cast<ts_ga_activation_loader *>(ud);
+                    al->train_buf.clear();   al->train_buf.shrink_to_fit();
+                    al->heldout_buf.clear(); al->heldout_buf.shrink_to_fit();
+                };
+                layer.activations_user_data = &ga_activation_loaders.back();
+            }
             layer.out_dim     = out_dim;
             layer.in_dim      = in_dim;
             layer.n_tokens    = 0;

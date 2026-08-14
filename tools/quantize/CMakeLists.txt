@@ -91,6 +91,7 @@ add_library(${TARGET}
     tessera/tessera-dispatch-walk.cpp
     tessera/tessera-dispatch-gaprep.cpp
     tessera/tessera-dispatch-l15.cpp
+    tessera/tessera-activation-sidecar.cpp
     tessera/tessera-gguf-writer.cpp
     # structured progress reporting (terminal live line + NDJSON for UI)
     tessera/tessera-progress.cpp
@@ -589,6 +590,20 @@ if(LLAMA_BUILD_TESTS)
     # modules + libgguf/libggml).
     set(TARGET test-tessera-l5-dispatch)
     add_executable(${TARGET} tessera/test_l5_dispatch.cpp)
+    target_link_libraries(${TARGET} PRIVATE llama-quantize-impl)
+    target_compile_features(${TARGET} PRIVATE cxx_std_17)
+    add_test(NAME ${TARGET} COMMAND ${TARGET})
+
+    # Real per-tensor activation capture, stage 3: builds a tiny synthetic
+    # GGUF with two 2D weights, writes a real activation-capture sidecar
+    # (tessera-activation-sidecar.h) for one of them, and runs the full
+    # dispatch pipeline twice (params.activation_capture_dir set vs. empty)
+    # with an otherwise-identical seed. Asserts total_mse differs between
+    # the two runs -- proof the sidecar -> activations_load_fn -> GA
+    # fitness wiring has a real, end-to-end effect through the production
+    # entry point, not just structural plumbing.
+    set(TARGET test-tessera-gaprep-activation-capture)
+    add_executable(${TARGET} tessera/test_gaprep_activation_capture.cpp)
     target_link_libraries(${TARGET} PRIVATE llama-quantize-impl)
     target_compile_features(${TARGET} PRIVATE cxx_std_17)
     add_test(NAME ${TARGET} COMMAND ${TARGET})
