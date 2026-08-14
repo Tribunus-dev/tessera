@@ -244,6 +244,38 @@ public struct Sheet: Codable, Sendable, Identifiable, Hashable {
         return updated
     }
 
+    // MARK: - Cell value
+
+    /// The typed value of the cell at (row, col). Cells written before
+    /// `CellValue` existed - and cells nobody has typed into - return
+    /// `.empty`, so every caller can treat the result as non-optional.
+    public func cellValue(row: Int, col: Int) -> CellValue {
+        guard let blockID = cellID(row: row, col: col),
+              let block = body.blocks[blockID],
+              let raw = block.attributes[CellValue.attributeKey],
+              let value = CellValue(json: raw) else { return .empty }
+        return value
+    }
+
+    /// A copy with the cell's typed value replaced, or the sheet
+    /// unchanged when the coordinate is outside the grid.
+    ///
+    /// `.empty` REMOVES the attribute rather than storing an empty
+    /// object, matching ``settingCellFormat(row:col:_:)``'s convention -
+    /// a cleared cell is byte-identical to one that was never touched.
+    public func settingCellValue(row: Int, col: Int, _ value: CellValue) -> Sheet {
+        guard let blockID = cellID(row: row, col: col),
+              var block = body.blocks[blockID] else { return self }
+        var updated = self
+        if value.isEmpty {
+            block.attributes.removeValue(forKey: CellValue.attributeKey)
+        } else {
+            block.attributes[CellValue.attributeKey] = value.json
+        }
+        updated.body.blocks[blockID] = block
+        return updated
+    }
+
     /// A copy with every formula rewritten for a structural edit.
     ///
     /// Call this AFTER the grid has been restructured: each formula has

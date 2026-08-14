@@ -213,6 +213,13 @@ public struct SheetStore: Sendable {
         }
         let oldText = cell.content.map { $0.text }.joined()
         cell.content = value.isEmpty ? [] : [InlineRun(text: value)]
+        let columnType = col < sheet.columns.count ? sheet.columns[col].type : .text
+        let classified = CellValue.classify(value, columnType: columnType)
+        if classified.isEmpty {
+            cell.attributes.removeValue(forKey: CellValue.attributeKey)
+        } else {
+            cell.attributes[CellValue.attributeKey] = classified.json
+        }
         sheet.body.blocks[cellID] = cell
         sheet.updatedAt = Date()
         _ = try await upsert(sheet)
@@ -699,6 +706,13 @@ public struct SheetStore: Sendable {
             throw SheetStoreError.cellNotFound(row: row, col: col)
         }
         cell.content = value.isEmpty ? [] : [InlineRun(text: value)]
+        let columnType = col < sheet.columns.count ? sheet.columns[col].type : .text
+        let classified = CellValue.classify(value, columnType: columnType)
+        if classified.isEmpty {
+            cell.attributes.removeValue(forKey: CellValue.attributeKey)
+        } else {
+            cell.attributes[CellValue.attributeKey] = classified.json
+        }
         sheet.body.blocks[cellListID] = cell
         sheet.updatedAt = Date()
         _ = try await dataLayer.upsertEntity(
