@@ -579,7 +579,33 @@ static const char * TS_QDB_SCHEMA_SQL =
     "    PRIMARY KEY (model_hash, model_role, name, in_dim, scorer_version)\n"
     ");\n"
     "CREATE INDEX IF NOT EXISTS idx_hessian_cache_model\n"
-    "    ON v2_hessian_cache(model_hash, model_role);\n";
+    "    ON v2_hessian_cache(model_hash, model_role);\n"
+    // ---- eval_cache: forward-only memoization for the ts_expert_eval seam
+    // (pipeline refactor phase 2) ----
+    // Every variable input (genes/alpha/clip/tier, the KV-joint codec
+    // context) is folded into params_digest, which IS part of the key --
+    // unlike v2_hessian_cache's n_samples/ridge_fraction, there is no
+    // separate value-gate re-check on read: a hit for the exact key is
+    // unconditionally valid. FORWARD-ONLY (INSERT ... ON CONFLICT DO
+    // NOTHING); nothing ever overwrites, ALTERs, or DROPs a row.
+    // eval_version invalidates rows when the scoring math changes, the
+    // same role scorer_version plays for the hessian cache.
+    "CREATE TABLE IF NOT EXISTS eval_cache (\n"
+    "    model_hash    TEXT NOT NULL,\n"
+    "    model_role    TEXT NOT NULL DEFAULT 'trunk',\n"
+    "    tensor_name   TEXT NOT NULL,\n"
+    "    evaluator     TEXT NOT NULL,\n"
+    "    params_digest TEXT NOT NULL,\n"
+    "    input_digest  TEXT NOT NULL,\n"
+    "    eval_version  INTEGER NOT NULL,\n"
+    "    t2            DOUBLE,\n"
+    "    aux           TEXT,\n"
+    "    computed_at   TEXT,\n"
+    "    PRIMARY KEY (model_hash, model_role, tensor_name,\n"
+    "                 evaluator, params_digest, input_digest, eval_version)\n"
+    ");\n"
+    "CREATE INDEX IF NOT EXISTS idx_eval_cache_model\n"
+    "    ON eval_cache(model_hash, model_role);\n";
 
 // Phase 16.7: per-component (model_role, name) covering index
 // statements. Kept as a separate constant from TS_QDB_SCHEMA_SQL
@@ -2991,6 +3017,223 @@ int ts_tessera_db_write_hessian_cache(
         return 1;
     } catch (...) {
         if (err) *err = "write_hessian_cache unknown exception";
+        return 1;
+    }
+    return 0;
+}
+
+// --- Eval cache: forward-only memoization for the ts_expert_eval seam (Phase 2) ---
+
+static std::string eval_cache_ledger_path(const std::string & db_path) {
+    std::string stem = db_path;
+    auto slash = stem.find_last_of("/\\");
+    auto dot   = stem.find_last_of('.');
+    if (dot != std::string::npos &&
+        (slash == std::string::npos || dot > slash)) {
+        stem = stem.substr(0, dot);
+    }
+    return stem + ".eval-cache.jsonl";
+}
+
+// Core ledger write with NO locking -- every caller in this file already
+// holds db->eval_cache_mutex (read/write take it once and cover both the
+// SQL and the ledger write; a second lock here would deadlock on a plain,
+// non-recursive std::mutex).
+static int eval_cache_ledger_append_locked(
+        ts_tessera_db * db,
+        const char * event,
+        const std::string & model_hash,
+        const std::string & model_role,
+        const std::string & tensor_name,
+        const std::string & evaluator,
+        const std::string & params_digest,
+        const std::string & input_digest,
+        int32_t eval_version,
+        std::string * err) {
+    if (db == nullptr || db->db_path.empty() || db->db_path == ":memory:") {
+        return 0;   // no ledger for in-memory / missing path
+    }
+    if (event == nullptr) event = "";
+    const std::string path = eval_cache_ledger_path(db->db_path);
+    auto json_esc = [](const std::string & s) -> std::string {
+        std::string out;
+        out.reserve(s.size() + 8);
+        for (char c : s) {
+            if (c == '"' || c == '\\') out += '\\';
+            out += c;
+        }
+        return out;
+    };
+    std::ostringstream line;
+    line << "{\"ts\": " << ts_now_ts() << ", "
+         << "\"event\": \"" << json_esc(event) << "\", "
+         << "\"model_hash\": \"" << json_esc(model_hash) << "\", "
+         << "\"model_role\": \"" << json_esc(model_role) << "\", "
+         << "\"tensor_name\": \"" << json_esc(tensor_name) << "\", "
+         << "\"evaluator\": \"" << json_esc(evaluator) << "\", "
+         << "\"params_digest\": \"" << json_esc(params_digest) << "\", "
+         << "\"input_digest\": \"" << json_esc(input_digest) << "\", "
+         << "\"eval_version\": " << eval_version << "}\n";
+    std::ofstream f(path, std::ios::binary | std::ios::app);
+    if (!f) {
+        if (err) *err = "eval cache ledger open failed: " + path;
+        return 1;
+    }
+    f << line.str();
+    f.flush();
+    if (!f) {
+        if (err) *err = "eval cache ledger write failed: " + path;
+        return 1;
+    }
+    return 0;
+}
+
+int ts_tessera_db_append_eval_cache_ledger(
+        ts_tessera_db * db,
+        const char * event,
+        const std::string & model_hash,
+        const std::string & model_role,
+        const std::string & tensor_name,
+        const std::string & evaluator,
+        const std::string & params_digest,
+        const std::string & input_digest,
+        int32_t eval_version,
+        std::string * err) {
+    if (db == nullptr) return 0;
+    std::lock_guard<std::mutex> lock(db->eval_cache_mutex);
+    return eval_cache_ledger_append_locked(db, event, model_hash, model_role,
+        tensor_name, evaluator, params_digest, input_digest, eval_version, err);
+}
+
+int ts_tessera_db_read_eval_cache(
+        ts_tessera_db * db,
+        const std::string & model_hash,
+        const std::string & model_role,
+        const std::string & tensor_name,
+        const std::string & evaluator,
+        const std::string & params_digest,
+        const std::string & input_digest,
+        int32_t eval_version,
+        float * t2_out,
+        std::string * aux_out,
+        bool * hit,
+        std::string * err) {
+    if (hit) *hit = false;
+    if (t2_out) *t2_out = 0.0f;
+    if (aux_out) aux_out->clear();
+    if (db == nullptr || db->conn == nullptr) return 0;
+    if (t2_out == nullptr || hit == nullptr) return 0;
+
+    std::lock_guard<std::mutex> lock(db->eval_cache_mutex);
+
+    std::ostringstream q;
+    q << "SELECT t2, aux FROM eval_cache WHERE model_hash = '"
+      << sql_escape(model_hash)
+      << "' AND model_role = '" << sql_escape(model_role)
+      << "' AND tensor_name = '" << sql_escape(tensor_name)
+      << "' AND evaluator = '" << sql_escape(evaluator)
+      << "' AND params_digest = '" << sql_escape(params_digest)
+      << "' AND input_digest = '" << sql_escape(input_digest)
+      << "' AND eval_version = " << eval_version;
+
+    try {
+        auto res = db->conn->Query(q.str());
+        if (res->HasError()) {
+            if (err) *err = "read_eval_cache: " + res->GetError();
+            return 1;
+        }
+        if (res->RowCount() == 0) {
+            eval_cache_ledger_append_locked(db, "cache_miss", model_hash,
+                model_role, tensor_name, evaluator, params_digest,
+                input_digest, eval_version, nullptr);
+            return 0;
+        }
+        auto t2v = res->GetValue(0, 0);
+        if (!t2v.IsNull()) {
+            *t2_out = t2v.GetValue<float>();
+        }
+        if (aux_out) {
+            auto auxv = res->GetValue(1, 0);
+            if (!auxv.IsNull()) {
+                *aux_out = auxv.GetValue<std::string>();
+            }
+        }
+        *hit = true;
+        eval_cache_ledger_append_locked(db, "cache_hit", model_hash,
+            model_role, tensor_name, evaluator, params_digest,
+            input_digest, eval_version, nullptr);
+    } catch (const std::exception & e) {
+        if (err) *err = "read_eval_cache exception: " + std::string(e.what());
+        return 1;
+    } catch (...) {
+        if (err) *err = "read_eval_cache unknown exception";
+        return 1;
+    }
+    return 0;
+}
+
+int ts_tessera_db_write_eval_cache(
+        ts_tessera_db * db,
+        const ts_tessera_db_eval_cache_entry & e,
+        bool * stored,
+        std::string * err) {
+    if (stored) *stored = false;
+    if (db == nullptr || db->conn == nullptr) return 0;
+
+    std::lock_guard<std::mutex> lock(db->eval_cache_mutex);
+
+    std::ostringstream q;
+    q << "INSERT INTO eval_cache "
+         "(model_hash, model_role, tensor_name, evaluator, params_digest, input_digest, eval_version, t2, aux, computed_at) "
+         "VALUES ("
+         "'" << sql_escape(e.model_hash) << "', "
+         "'" << sql_escape(e.model_role) << "', "
+         "'" << sql_escape(e.tensor_name) << "', "
+         "'" << sql_escape(e.evaluator) << "', "
+         "'" << sql_escape(e.params_digest) << "', "
+         "'" << sql_escape(e.input_digest) << "', "
+         << e.eval_version << ", "
+         << e.t2 << ", "
+         "'" << sql_escape(e.aux) << "', "
+         << ts_now_ts() << ") "
+         "ON CONFLICT DO NOTHING";
+
+    try {
+        // DuckDB reports RowCount()=1 for an INSERT skipped by ON CONFLICT
+        // DO NOTHING, so a pre-count (under the same lock, no race) is how
+        // *stored is determined -- same pattern as write_hessian_cache.
+        std::ostringstream cnt;
+        cnt << "SELECT COUNT(*) FROM eval_cache WHERE model_hash = '"
+            << sql_escape(e.model_hash) << "' AND model_role = '"
+            << sql_escape(e.model_role) << "' AND tensor_name = '"
+            << sql_escape(e.tensor_name) << "' AND evaluator = '"
+            << sql_escape(e.evaluator) << "' AND params_digest = '"
+            << sql_escape(e.params_digest) << "' AND input_digest = '"
+            << sql_escape(e.input_digest) << "' AND eval_version = " << e.eval_version;
+        auto cnt_res = db->conn->Query(cnt.str());
+        if (cnt_res->HasError()) {
+            if (err) *err = "write_eval_cache count: " + cnt_res->GetError();
+            return 1;
+        }
+        const bool pre_existing =
+            cnt_res->RowCount() > 0 &&
+            cnt_res->GetValue(0, 0).GetValue<int64_t>() > 0;
+
+        auto res = db->conn->Query(q.str());
+        if (res->HasError()) {
+            if (err) *err = "write_eval_cache: " + res->GetError();
+            return 1;
+        }
+        if (stored) *stored = !pre_existing;
+        eval_cache_ledger_append_locked(db,
+            !pre_existing ? "cache_store" : "cache_store_conflict",
+            e.model_hash, e.model_role, e.tensor_name, e.evaluator,
+            e.params_digest, e.input_digest, e.eval_version, nullptr);
+    } catch (const std::exception & e2) {
+        if (err) *err = "write_eval_cache exception: " + std::string(e2.what());
+        return 1;
+    } catch (...) {
+        if (err) *err = "write_eval_cache unknown exception";
         return 1;
     }
     return 0;

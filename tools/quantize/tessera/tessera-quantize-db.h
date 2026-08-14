@@ -25,6 +25,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -43,6 +44,17 @@ struct ts_tessera_db {
     // file. The C++ struct used to discard the path; the
     // sidecar needs it.
     std::string                        db_path;
+    // Phase 2 (eval cache): ts_expert_eval is called from the acceptance
+    // panel's concurrent worker pool (and, once the GA converts, from
+    // parallel candidate evaluation too). DuckDB's Connection is not
+    // documented safe for concurrent Query() calls from multiple threads;
+    // every eval_cache read/write serializes through this mutex. The
+    // expensive work (the actual REAL-tier computation on a cache miss)
+    // happens OUTSIDE the lock -- only the cache lookup/store itself is
+    // serialized, mirroring the "lock-sharded or append-buffered" guidance
+    // in the contracts appendix (a single shard, since eval_cache ops are
+    // individually fast SQL statements).
+    std::mutex                         eval_cache_mutex;
 
     ts_tessera_db() = default;
     ~ts_tessera_db();
@@ -805,4 +817,85 @@ int ts_tessera_db_append_hessian_ledger(
         int32_t scorer_version,
         int64_t n_samples,
         double ridge_fraction,
+        std::string * err);
+
+// --- Eval cache: forward-only memoization for the ts_expert_eval seam ---
+//
+// Pipeline refactor phase 2 (docs/tessera-pipeline-refactor-plan.md,
+// docs/tessera-eval-cache-design.md Layer B). Copies the v2_hessian_cache
+// pattern above verbatim: FORWARD-ONLY (first row for a key is permanent,
+// INSERT ... ON CONFLICT DO NOTHING), an append-only JSONL ledger, db ==
+// nullptr is a safe no-op everywhere.
+//
+// Unlike the hessian cache, every variable input (genes/alpha/clip/tier,
+// the KV-joint codec context) is folded into params_digest, which IS part
+// of the primary key -- so a cache HIT is unconditionally valid for the
+// exact key (no separate post-hoc value-gate re-check the way hessian's
+// n_samples/ridge_fraction needed, since those were NOT part of that
+// table's key). evaluator distinguishes both the expert AND the tier
+// (e.g. "expert:SEPTQ:real", "expert:AWQ:proxy") so PROXY/REAL/
+// KERNEL_DIRECT measurements of the same expert never collide.
+struct ts_tessera_db_eval_cache_entry {
+    std::string model_hash;
+    std::string model_role;
+    std::string tensor_name;
+    std::string evaluator;        // "expert:<Name>:<tier>"
+    std::string params_digest;    // resolved genes/alpha/clip/seed (grid-
+                                   // quantized) + kv_codec_digest (phase 3)
+    std::string input_digest;     // act_scales / imatrix slice digest, or
+                                   // a stable sentinel when none is used
+    int32_t     eval_version = 0;
+    float       t2  = 0.0f;
+    std::string aux;              // compact JSON, mirrors ts_eval_result::aux
+};
+
+// Read one cached (t2, aux). Returns 0 on success with *hit set:
+//   - *hit == true  -> t2_out/aux_out are the stored value.
+//   - *hit == false -> no row for the exact key (miss). Caller computes
+//                      fresh and should write the result back.
+// Never mutates. db == nullptr is a safe no-op (hit=false, return 0).
+int ts_tessera_db_read_eval_cache(
+        ts_tessera_db * db,
+        const std::string & model_hash,
+        const std::string & model_role,
+        const std::string & tensor_name,
+        const std::string & evaluator,
+        const std::string & params_digest,
+        const std::string & input_digest,
+        int32_t eval_version,
+        float * t2_out,
+        std::string * aux_out,
+        bool * hit,
+        std::string * err);
+
+// Write one cache entry. FORWARD-ONLY: INSERT ... ON CONFLICT DO NOTHING.
+// *stored reports whether this call inserted (false = a conflicting row
+// already existed and was kept). Returns 0 on success (including the
+// conflict case); non-zero only on a real SQL error. db == nullptr is a
+// no-op. Thread-safe: serializes internally via db->eval_cache_mutex.
+int ts_tessera_db_write_eval_cache(
+        ts_tessera_db * db,
+        const ts_tessera_db_eval_cache_entry & e,
+        bool * stored,
+        std::string * err);
+
+// Append one line to "<db-stem>.eval-cache.jsonl" (same stem rule as the
+// hessian ledger). event is one of "cache_hit" / "cache_miss" /
+// "cache_compute" / "cache_store" / "cache_store_conflict". The read/
+// write helpers emit hit/miss/store/conflict internally; the SEAM (or its
+// caller) emits "cache_compute" when a miss triggered a fresh REAL-tier
+// computation, so the ledger shows the full lifecycle. Thread-safe (the
+// caller already holds db->eval_cache_mutex via read/write above; direct
+// callers emitting "cache_compute" take the lock themselves). Returns 0 on
+// success; 1 on a file error (non-fatal -- the caller logs and continues).
+int ts_tessera_db_append_eval_cache_ledger(
+        ts_tessera_db * db,
+        const char * event,
+        const std::string & model_hash,
+        const std::string & model_role,
+        const std::string & tensor_name,
+        const std::string & evaluator,
+        const std::string & params_digest,
+        const std::string & input_digest,
+        int32_t eval_version,
         std::string * err);

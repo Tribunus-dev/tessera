@@ -26,6 +26,7 @@
 #include "duckdb.hpp"
 
 #include <cassert>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -1103,6 +1104,154 @@ int main(int argc, char ** argv) {
             size_t newlines = 0;
             for (char c : content) if (c == '\n') newlines++;
             CHECK(newlines >= 6, "hessian ledger: one JSON object per line");
+        }
+    }
+
+    // ---- eval_cache: forward-only memoization for ts_expert_eval (Phase 2) ----
+    //
+    // Unlike v2_hessian_cache, every variable input (genes/alpha/clip/tier,
+    // KV-joint codec) is folded into params_digest, which IS part of the
+    // key -- so there is no separate value-gate re-check on read; a hit for
+    // the exact key is unconditionally valid.
+    {
+        const std::string ec_model = "eval_cache_model";
+        const std::string ec_tensor = "blk.0.attn_q.weight";
+        const std::string ec_evaluator = "expert:SEPTQ:real";
+        const std::string ec_params = "a=0.5000,c=0.9500,s=7";
+        const std::string ec_input = "act_scales:deadbeef";
+        const int32_t ec_version = 1;
+
+        // Miss on absent key.
+        float t2 = -1.0f;
+        std::string aux;
+        bool hit = true;
+        CHECK(ts_tessera_db_read_eval_cache(db, ec_model, "trunk", ec_tensor,
+              ec_evaluator, ec_params, ec_input, ec_version,
+              &t2, &aux, &hit, &err) == 0,
+              "eval cache: read absent key returns 0");
+        CHECK(!hit, "eval cache: absent key is a miss");
+
+        // Write then read back: round-trip.
+        ts_tessera_db_eval_cache_entry e1;
+        e1.model_hash     = ec_model;
+        e1.model_role     = "trunk";
+        e1.tensor_name    = ec_tensor;
+        e1.evaluator      = ec_evaluator;
+        e1.params_digest  = ec_params;
+        e1.input_digest   = ec_input;
+        e1.eval_version   = ec_version;
+        e1.t2             = 0.151114f;
+        e1.aux            = "{\"expert\":\"septq\",\"tier\":\"real\"}";
+        bool stored = false;
+        CHECK(ts_tessera_db_write_eval_cache(db, e1, &stored, &err) == 0,
+              "eval cache: first write returns 0");
+        CHECK(stored, "eval cache: first write stores");
+
+        hit = false;
+        t2 = -1.0f;
+        aux.clear();
+        CHECK(ts_tessera_db_read_eval_cache(db, ec_model, "trunk", ec_tensor,
+              ec_evaluator, ec_params, ec_input, ec_version,
+              &t2, &aux, &hit, &err) == 0,
+              "eval cache: read after write returns 0");
+        CHECK(hit, "eval cache: round-trip hits");
+        CHECK(fabsf(t2 - e1.t2) < 1e-6f, "eval cache: round-trip t2 matches");
+        CHECK(aux == e1.aux, "eval cache: round-trip aux matches");
+
+        // Forward-only: a second write with a different t2 for the same key
+        // is dropped; the first row wins.
+        ts_tessera_db_eval_cache_entry e2 = e1;
+        e2.t2 = 999.0f;
+        stored = true;
+        CHECK(ts_tessera_db_write_eval_cache(db, e2, &stored, &err) == 0,
+              "eval cache: conflicting write returns 0");
+        CHECK(!stored, "eval cache: conflicting write is a conflict (not stored)");
+        hit = false;
+        t2 = -1.0f;
+        CHECK(ts_tessera_db_read_eval_cache(db, ec_model, "trunk", ec_tensor,
+              ec_evaluator, ec_params, ec_input, ec_version,
+              &t2, &aux, &hit, &err) == 0,
+              "eval cache: read after conflict returns 0");
+        CHECK(hit, "eval cache: conflict keeps the row usable");
+        CHECK(fabsf(t2 - e1.t2) < 1e-6f, "eval cache: first write survives the conflict");
+
+        // A different evaluator (tier) is a SEPARATE key: PROXY and REAL
+        // measurements of the same expert must never collide.
+        hit = true;
+        CHECK(ts_tessera_db_read_eval_cache(db, ec_model, "trunk", ec_tensor,
+              "expert:SEPTQ:proxy", ec_params, ec_input, ec_version,
+              &t2, &aux, &hit, &err) == 0,
+              "eval cache: different-tier read returns 0");
+        CHECK(!hit, "eval cache: different evaluator/tier is a miss");
+
+        // A different params_digest (e.g. a different alpha/clip/seed) is a
+        // separate key.
+        hit = true;
+        CHECK(ts_tessera_db_read_eval_cache(db, ec_model, "trunk", ec_tensor,
+              ec_evaluator, "a=0.6000,c=0.9500,s=7", ec_input, ec_version,
+              &t2, &aux, &hit, &err) == 0,
+              "eval cache: different params_digest read returns 0");
+        CHECK(!hit, "eval cache: different params_digest is a miss");
+
+        // eval_version gate: bumping it is a distinct key, not an
+        // overwrite -- the old version stays readable unchanged.
+        hit = true;
+        CHECK(ts_tessera_db_read_eval_cache(db, ec_model, "trunk", ec_tensor,
+              ec_evaluator, ec_params, ec_input, ec_version + 1,
+              &t2, &aux, &hit, &err) == 0,
+              "eval cache: version-gated read returns 0");
+        CHECK(!hit, "eval cache: different eval_version is a miss");
+        ts_tessera_db_eval_cache_entry e3 = e1;
+        e3.eval_version = ec_version + 1;
+        e3.t2 = 0.777f;
+        stored = false;
+        CHECK(ts_tessera_db_write_eval_cache(db, e3, &stored, &err) == 0,
+              "eval cache: version-bumped write returns 0");
+        CHECK(stored, "eval cache: version-bumped write stores (separate key)");
+        hit = false;
+        t2 = -1.0f;
+        CHECK(ts_tessera_db_read_eval_cache(db, ec_model, "trunk", ec_tensor,
+              ec_evaluator, ec_params, ec_input, ec_version + 1,
+              &t2, &aux, &hit, &err) == 0,
+              "eval cache: version-bumped read returns 0");
+        CHECK(hit, "eval cache: version-bumped key hits");
+        CHECK(fabsf(t2 - e3.t2) < 1e-6f, "eval cache: version-bumped key returns its own value");
+        hit = false;
+        t2 = -1.0f;
+        CHECK(ts_tessera_db_read_eval_cache(db, ec_model, "trunk", ec_tensor,
+              ec_evaluator, ec_params, ec_input, ec_version,
+              &t2, &aux, &hit, &err) == 0,
+              "eval cache: original version still readable");
+        CHECK(hit, "eval cache: original version unaffected by the bump");
+        CHECK(fabsf(t2 - e1.t2) < 1e-6f, "eval cache: original version returns first value");
+
+        // model_role disambiguates: shared tensor names across components.
+        hit = true;
+        CHECK(ts_tessera_db_read_eval_cache(db, ec_model, "dflash", ec_tensor,
+              ec_evaluator, ec_params, ec_input, ec_version,
+              &t2, &aux, &hit, &err) == 0,
+              "eval cache: dflash role read returns 0");
+        CHECK(!hit, "eval cache: dflash role is a separate key (miss)");
+
+        // Ledger: append-only JSONL next to the duckdb file, stem rule
+        // matches the hessian ledger.
+        {
+            std::string ledger_path = std::string(path);
+            auto dot = ledger_path.find_last_of('.');
+            if (dot != std::string::npos) ledger_path = ledger_path.substr(0, dot);
+            ledger_path += ".eval-cache.jsonl";
+            std::ifstream f(ledger_path, std::ios::binary);
+            CHECK(f.good(), "eval cache ledger: file exists next to the duckdb");
+            std::string content((std::istreambuf_iterator<char>(f)),
+                                std::istreambuf_iterator<char>());
+            CHECK(content.find("\"event\": \"cache_store\"") != std::string::npos,
+                  "eval cache ledger: records cache_store");
+            CHECK(content.find("\"event\": \"cache_hit\"") != std::string::npos,
+                  "eval cache ledger: records cache_hit");
+            CHECK(content.find("\"event\": \"cache_miss\"") != std::string::npos,
+                  "eval cache ledger: records cache_miss");
+            CHECK(content.find("\"event\": \"cache_store_conflict\"") != std::string::npos,
+                  "eval cache ledger: records cache_store_conflict");
         }
     }
 
