@@ -173,7 +173,9 @@ static bool ggml_amd_hip_probe_impl(struct ggml_amd_provider * provider, struct 
         result->pci_function = 0;
         result->memory_total = ctx->props.totalGlobalMem;
         result->memory_free = ctx->props.totalGlobalMem;
-        // Import is currently brokered for Vulkan-exported OPAQUE_FD handles.
+        // Import accepts OPAQUE_FD dma-buf handles from exportable providers
+        // and internal shared-system allocations when dma-buf fd semantics are
+        // available.
         result->supports_external_memory = 1;
         result->supports_dma_buf_import = 1;
     }
@@ -215,10 +217,10 @@ static bool ggml_amd_hip_supports_import_impl(struct ggml_amd_provider * provide
     if (!alloc || alloc->dma_buf_fd < 0) {
         return false;
     }
-    if (alloc->domain != GGML_AMD_DOMAIN_IMPORTED_EXTERNAL) {
+    if (alloc->domain != GGML_AMD_DOMAIN_IMPORTED_EXTERNAL && alloc->domain != GGML_AMD_DOMAIN_SHARED_SYSTEM) {
         return false;
     }
-    return alloc->external_handle_kind == GGML_AMD_EXTERNAL_HANDLE_KIND_VULKAN_OPAQUE_FD;
+    return alloc->external_handle_kind != GGML_AMD_EXTERNAL_HANDLE_KIND_NONE;
 }
 
 static ggml_status ggml_amd_hip_import_allocation_impl(
@@ -233,10 +235,11 @@ static ggml_status ggml_amd_hip_import_allocation_impl(
     }
     *out_import = nullptr;
 
-    if (alloc->external_handle_kind != GGML_AMD_EXTERNAL_HANDLE_KIND_VULKAN_OPAQUE_FD) {
+    if (alloc->external_handle_kind == GGML_AMD_EXTERNAL_HANDLE_KIND_NONE) {
         return GGML_STATUS_FAILED;
     }
-    if (alloc->domain != GGML_AMD_DOMAIN_IMPORTED_EXTERNAL) {
+    if (alloc->domain != GGML_AMD_DOMAIN_IMPORTED_EXTERNAL &&
+        alloc->domain != GGML_AMD_DOMAIN_SHARED_SYSTEM) {
         return GGML_STATUS_FAILED;
     }
 

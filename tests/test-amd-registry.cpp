@@ -277,7 +277,6 @@ static void test_hip_dma_buf_import(void) {
         return;
     }
 
-    const bool is_non_brokered_dma_buf = allocation->external_handle_kind != GGML_AMD_EXTERNAL_HANDLE_KIND_VULKAN_OPAQUE_FD;
     struct ggml_amd_import * import = nullptr;
     const bool supports_import = device_ctx->provider->iface->supports_import(
         device_ctx->provider, allocation);
@@ -285,15 +284,10 @@ static void test_hip_dma_buf_import(void) {
     const ggml_status status = device_ctx->provider->iface->import_allocation(
         device_ctx->provider, allocation, &import);
 
-    if (is_non_brokered_dma_buf) {
-        CHECK(!supports_import, "HIP reports system dma-buf import as unsupported");
-        CHECK(status == GGML_STATUS_FAILED && import == nullptr, "HIP rejects a non-brokered dma-buf");
-    } else {
-        CHECK(supports_import, "HIP reports Vulkan-exported dma-buf as importable");
-        CHECK(status == GGML_STATUS_SUCCESS && import != nullptr, "HIP imports brokered dma-buf");
-        if (import) {
-            device_ctx->provider->iface->release_import(device_ctx->provider, import);
-        }
+    CHECK(supports_import, "HIP reports system dma-buf import as supported");
+    CHECK(status == GGML_STATUS_SUCCESS && import != nullptr, "HIP imports a system dma-buf");
+    if (import) {
+        device_ctx->provider->iface->release_import(device_ctx->provider, import);
     }
     ggml_amd_allocation_release(allocation);
 }
