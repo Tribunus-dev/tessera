@@ -249,8 +249,8 @@ cmake --build /tmp/tessera-amd-test --parallel
 /tmp/tessera-amd-test/bin/test-amd-registry
 ```
 
-The line should now print `HIP rejects a non-brokered dma-buf` when the
-contract is respected.
+The line should print `HIP imports a system dma-buf` when your HIP stack
+can import system dma-buf allocations.
 
 #### Import Fails
 

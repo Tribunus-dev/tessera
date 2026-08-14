@@ -25,6 +25,14 @@
 #include <cstring>
 #include <string>
 
+#ifdef GGML_AMD_HIP
+#ifdef __linux__
+#ifdef __HIP_PLATFORM_AMD__
+#include <hip/hip_runtime.h>
+#endif
+#endif
+#endif
+
 static int g_failures = 0;
 
 extern void ggml_amd_config_init(struct ggml_amd_reg_context * ctx);
@@ -286,6 +294,16 @@ static void test_hip_dma_buf_import(void) {
 
     CHECK(supports_import, "HIP reports system dma-buf import as supported");
     CHECK(status == GGML_STATUS_SUCCESS && import != nullptr, "HIP imports a system dma-buf");
+    if (status != GGML_STATUS_SUCCESS || import == nullptr) {
+#ifdef __HIP_PLATFORM_AMD__
+        const auto last_error = hipGetLastError();
+        std::fprintf(stderr, "     HIP import failed: last_error=%s\n", hipGetErrorString(last_error));
+#else
+        std::fprintf(stderr, "     HIP import failed on non-HIP runtime build\n");
+#endif
+        ggml_amd_allocation_release(allocation);
+        return;
+    }
     if (import) {
         device_ctx->provider->iface->release_import(device_ctx->provider, import);
     }
@@ -333,6 +351,16 @@ static void test_vulkan_to_hip_dma_buf_import(void) {
         exported,
         &import);
     CHECK(status == GGML_STATUS_SUCCESS && import != nullptr, "HIP imports Vulkan-exported dma-buf");
+    if (status != GGML_STATUS_SUCCESS || import == nullptr) {
+#ifdef __HIP_PLATFORM_AMD__
+        const auto last_error = hipGetLastError();
+        std::fprintf(stderr, "     HIP Vulkan->HIP dma-buf import failed: last_error=%s\n", hipGetErrorString(last_error));
+#else
+        std::fprintf(stderr, "     HIP Vulkan->HIP dma-buf import failed on non-HIP runtime build\n");
+#endif
+        ggml_amd_allocation_release(exported);
+        return;
+    }
     if (import) {
         hip_ctx->provider->iface->release_import(hip_ctx->provider, import);
     }
