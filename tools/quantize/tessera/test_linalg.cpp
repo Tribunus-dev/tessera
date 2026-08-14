@@ -8,6 +8,7 @@
 #include "tessera-linalg.h"
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <vector>
 
@@ -112,12 +113,83 @@ static bool test_gram_schmidt() {
     return err < 1e-4f;
 }
 
+// ts_linalg_sym_eig regression: nothing previously exercised this function
+// directly (only indirectly via test_flrq.cpp's small 16x32 fixture, which
+// never distinguishes a broken row-major/column-major convention from a
+// correct one at that size by luck of the input). This pins the PUBLIC
+// contract -- descending eigenvalues, orthonormal eigvecs, A v_i = lambda_i
+// v_i -- against whichever backend ts_linalg_sym_eig dispatches to
+// (LAPACK's ssyevd on Apple, portable Jacobi elsewhere or on LAPACK
+// failure). n=200 is large enough that a transposed eigenvector matrix
+// (the exact bug this pins: LAPACK writes eigenvectors column-major, this
+// codebase is row-major) fails badly, small enough that even the Jacobi
+// fallback finishes in about a second.
+static bool test_sym_eig() {
+    const int64_t n = 200;
+    std::vector<float> A((size_t)(n * n));
+    uint32_t s = 1234;
+    auto rnd = [&]() {
+        s ^= s << 13; s ^= s >> 17; s ^= s << 5;
+        return ((float)(s >> 8) * (1.0f / 16777216.0f)) * 2.0f - 1.0f;
+    };
+    for (int64_t i = 0; i < n; i++) {
+        for (int64_t j = i; j < n; j++) {
+            float v = rnd();
+            A[(size_t)(i*n + j)] = v;
+            A[(size_t)(j*n + i)] = v;
+        }
+    }
+
+    std::vector<float> eigvals((size_t)n), eigvecs((size_t)(n * n));
+    ts_linalg_sym_eig(A.data(), eigvals.data(), eigvecs.data(), n);
+
+    // Descending order.
+    float order_err = 0.0f;
+    for (int64_t i = 0; i + 1 < n; i++) {
+        order_err = fmaxf(order_err, fmaxf(0.0f, eigvals[(size_t)(i+1)] - eigvals[(size_t)i]));
+    }
+
+    // Orthonormality: columns of eigvecs (eigvecs[i*n+j] = component i of
+    // eigenvector j) are unit and mutually orthogonal.
+    float orth_err = 0.0f;
+    for (int64_t a = 0; a < n; a++) {
+        for (int64_t b = a; b < n; b++) {
+            double dot = 0.0;
+            for (int64_t i = 0; i < n; i++) {
+                dot += (double)eigvecs[(size_t)(i*n + a)] * (double)eigvecs[(size_t)(i*n + b)];
+            }
+            double target = (a == b) ? 1.0 : 0.0;
+            orth_err = fmaxf(orth_err, (float)fabs(dot - target));
+        }
+    }
+
+    // Eigen-equation residual on every eigenpair: A v_j = lambda_j v_j.
+    double resid_num = 0.0, resid_den = 0.0;
+    for (int64_t j = 0; j < n; j++) {
+        for (int64_t i = 0; i < n; i++) {
+            double acc = 0.0;
+            for (int64_t k = 0; k < n; k++) {
+                acc += (double)A[(size_t)(i*n + k)] * (double)eigvecs[(size_t)(k*n + j)];
+            }
+            double d = acc - (double)eigvals[(size_t)j] * (double)eigvecs[(size_t)(i*n + j)];
+            resid_num += d*d;
+            resid_den += acc*acc;
+        }
+    }
+    double resid = std::sqrt(resid_num / std::max(1e-30, resid_den));
+
+    printf("  sym_eig: order_err=%.2e orth_err=%.2e residual=%.2e (n=%lld)\n",
+          order_err, orth_err, resid, (long long)n);
+    return order_err < 1e-5f && orth_err < 1e-3f && resid < 1e-3;
+}
+
 int main() {
     struct { const char * name; bool (*fn)(); } tests[] = {
         { "qr",             test_qr },
         { "stiefel_project", test_stiefel_project },
         { "svd_topk",        test_svd_topk },
         { "gram_schmidt",    test_gram_schmidt },
+        { "sym_eig",         test_sym_eig },
     };
 
     bool all = true;

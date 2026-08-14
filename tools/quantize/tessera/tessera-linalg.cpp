@@ -417,14 +417,25 @@ void ts_linalg_gram_schmidt(float * V, int64_t k, int64_t n) {
 }
 
 // ---------------------------------------------------------------------------
-// tessera-flrq helper: symmetric eigendecomposition via cyclic Jacobi.
-// Self-contained; only touched by the FLRQ sketch-basis path. Computes the
-// eigendecomposition of the small (K x K) sketch gram matrix Y Y^T so the
-// FLRQ basis matches numpy.linalg.svd(Y) (whose left singular vectors are the
-// eigenvectors of Y Y^T). Sorts eigenpairs descending by eigenvalue.
+// tessera-flrq helper: symmetric eigendecomposition. Only touched by the
+// FLRQ sketch-basis path. Computes the eigendecomposition of the (K x K)
+// sketch gram matrix Y Y^T so the FLRQ basis matches numpy.linalg.svd(Y)
+// (whose left singular vectors are the eigenvectors of Y Y^T). Contract:
+// row-major eigvecs with eigvecs[i*n+j] = component i of eigenvector j;
+// eigvals sorted DESCENDING.
+//
+// "Small" was the original assumption -- K is out_dim (or in_dim) of a
+// real tensor, and on a production-sized weight (e.g. 3072x3072) this
+// eigendecomposition is anything but small: the portable cyclic-Jacobi
+// path below is O(n^3) per sweep for up to 80 sweeps, ~2.3e12 scalar ops
+// at n=3072 -- minutes to hours. Measured stalling the pipeline refactor
+// phase-1 Orpheus acceptance gate (ts_expert_eval's FLRQ real-tier
+// adapter calls ts_train_flrq, which calls this once per rank candidate).
 // ---------------------------------------------------------------------------
 
-void ts_linalg_sym_eig(const float * A, float * eigvals, float * eigvecs, int64_t n) {
+// Portable fallback: cyclic Jacobi. Used when LAPACK is unavailable, or as
+// a defensive fallback if LAPACK reports a failure.
+static void ts_linalg_sym_eig_jacobi(const float * A, float * eigvals, float * eigvecs, int64_t n) {
     // Work on a symmetric copy (force exact symmetry to absorb input noise).
     std::vector<float> M(n * n);
     for (int64_t i = 0; i < n; i++) {
@@ -529,4 +540,66 @@ void ts_linalg_sym_eig(const float * A, float * eigvals, float * eigvecs, int64_
             eigvecs[i*n + j] = ev_sorted[i*n + j];
         }
     }
+}
+
+#if defined(TS_HAS_CBLAS) && defined(__APPLE__)
+// LAPACK divide-and-conquer symmetric eigensolver (ssyevd), Accelerate's
+// classic Fortran-interface export (still available with
+// ACCELERATE_NEW_LAPACK; __LAPACK_int is the correct integer type in that
+// mode -- see lapack.h). Measured ~14s at n=3072 vs. the Jacobi path's
+// tens of minutes to hours for the same size.
+static bool ts_linalg_sym_eig_lapack(const float * A, float * eigvals, float * eigvecs, int64_t n) {
+    std::vector<float> a((size_t)(n * n));
+    // A is symmetric, so its row-major and column-major linear layouts are
+    // IDENTICAL (A(i,j) == A(j,i) either way) -- no transpose needed on
+    // input; LAPACK reads this buffer as column-major and sees the same
+    // matrix.
+    for (int64_t i = 0; i < n * n; i++) {
+        a[(size_t)i] = A[(size_t)i];
+    }
+
+    const char jobz = 'V', uplo = 'U';
+    __LAPACK_int nn = (__LAPACK_int)n;
+    __LAPACK_int lda = nn, info = 0;
+    // LAPACK-documented minimum workspace for ssyevd with JOBZ='V':
+    // work >= 1 + 6*N + 2*N^2, iwork >= 3 + 5*N. A workspace-size query
+    // (lwork=-1) returns the optimal size in work[0] as a float, which
+    // silently loses integer precision above 2^24 (~16.7M) -- exactly the
+    // regime these matrices are already in at n=3072 (2*n^2 ~ 18.9M) -- so
+    // this uses the documented minimum directly instead of querying.
+    __LAPACK_int lwork  = 1 + 6*nn + 2*nn*nn;
+    __LAPACK_int liwork = 3 + 5*nn;
+    std::vector<float> work((size_t)lwork);
+    std::vector<__LAPACK_int> iwork((size_t)liwork);
+    std::vector<float> w((size_t)n);
+
+    ssyevd_(&jobz, &uplo, &nn, a.data(), &lda, w.data(),
+           work.data(), &lwork, iwork.data(), &liwork, &info);
+    if (info != 0) {
+        return false;  // caller falls back to the portable Jacobi path
+    }
+
+    // LAPACK wrote eigenvectors as COLUMNS in column-major order
+    // (a[row + col*n] = component `row` of eigenvector `col`), eigenvalues
+    // ASCENDING. This function's contract is ROW-major storage with
+    // eigvecs[i*n+j] = component i of eigenvector j, eigenvalues
+    // DESCENDING -- transpose + reverse in one pass.
+    for (int64_t j = 0; j < n; j++) {
+        const int64_t src_col = n - 1 - j;
+        eigvals[j] = w[(size_t)src_col];
+        for (int64_t i = 0; i < n; i++) {
+            eigvecs[(size_t)(i*n + j)] = a[(size_t)(i + src_col*n)];
+        }
+    }
+    return true;
+}
+#endif
+
+void ts_linalg_sym_eig(const float * A, float * eigvals, float * eigvecs, int64_t n) {
+#if defined(TS_HAS_CBLAS) && defined(__APPLE__)
+    if (ts_linalg_sym_eig_lapack(A, eigvals, eigvecs, n)) {
+        return;
+    }
+#endif
+    ts_linalg_sym_eig_jacobi(A, eigvals, eigvecs, n);
 }
