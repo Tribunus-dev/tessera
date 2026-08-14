@@ -18,6 +18,9 @@
 #include "ggml-amd.h"
 #include "ggml-backend-impl.h"
 #include "ggml-amd-internal.h"
+#ifdef GGML_AMD_HIP
+#include "providers/ggml-amd-hip.h"
+#endif
 
 #include <cassert>
 #include <cstdlib>
@@ -296,8 +299,8 @@ static void test_hip_dma_buf_import(void) {
     CHECK(status == GGML_STATUS_SUCCESS && import != nullptr, "HIP imports a system dma-buf");
     if (status != GGML_STATUS_SUCCESS || import == nullptr) {
 #ifdef __HIP_PLATFORM_AMD__
-        const auto last_error = hipGetLastError();
-        std::fprintf(stderr, "     HIP import failed: last_error=%s\n", hipGetErrorString(last_error));
+        const auto last_error = static_cast<hipError_t>(ggml_amd_hip_get_last_import_error());
+        std::fprintf(stderr, "     HIP import failed: last_error=%d %s\n", static_cast<int>(last_error), hipGetErrorString(last_error));
 #else
         std::fprintf(stderr, "     HIP import failed on non-HIP runtime build\n");
 #endif
@@ -353,8 +356,8 @@ static void test_vulkan_to_hip_dma_buf_import(void) {
     CHECK(status == GGML_STATUS_SUCCESS && import != nullptr, "HIP imports Vulkan-exported dma-buf");
     if (status != GGML_STATUS_SUCCESS || import == nullptr) {
 #ifdef __HIP_PLATFORM_AMD__
-        const auto last_error = hipGetLastError();
-        std::fprintf(stderr, "     HIP Vulkan->HIP dma-buf import failed: last_error=%s\n", hipGetErrorString(last_error));
+        const auto last_error = static_cast<hipError_t>(ggml_amd_hip_get_last_import_error());
+        std::fprintf(stderr, "     HIP Vulkan->HIP dma-buf import failed: last_error=%d %s\n", static_cast<int>(last_error), hipGetErrorString(last_error));
 #else
         std::fprintf(stderr, "     HIP Vulkan->HIP dma-buf import failed on non-HIP runtime build\n");
 #endif

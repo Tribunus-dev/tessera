@@ -203,7 +203,13 @@ the ROCm toolchain and `/dev` handles match your runtime.
 1. Check dma-heap device: `ls -l /dev/dma_heap/system`
 2. Verify permissions: user must have read/write access
 3. Check kernel config: `CONFIG_DMA_HEAP` must be enabled
-4. Try GEM PRIME fallback (requires DRM device access)
+4. Try alternate heap list via environment:
+
+```bash
+export GGML_AMD_DMA_HEAP_PATH=/dev/dma_heap/system-uncached:/dev/dma_heap/system
+```
+
+5. Try GEM PRIME fallback (requires DRM device access)
 
 ## Performance Tuning
 

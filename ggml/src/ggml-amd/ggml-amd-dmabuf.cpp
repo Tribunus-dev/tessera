@@ -2,7 +2,11 @@
 #include "ggml.h"
 
 #include <cstring>
+#include <cstdlib>
 #include <cerrno>
+#include <vector>
+#include <string>
+#include <cctype>
 
 extern void ggml_amd_fence_release(struct ggml_amd_fence * fence);
 extern int ggml_amd_fence_wait(struct ggml_amd_fence * fence, int timeout_ms);
@@ -16,27 +20,69 @@ extern int ggml_amd_fence_wait(struct ggml_amd_fence * fence, int timeout_ms);
 #include <linux/dma-buf.h>
 #endif
 
+namespace {
+
+std::vector<std::string> ggml_amd_dma_heap_paths(void) {
+#ifdef __linux__
+    const char * env_paths = std::getenv("GGML_AMD_DMA_HEAP_PATH");
+    if (env_paths && env_paths[0]) {
+        std::vector<std::string> paths;
+        std::string current;
+        const char * cursor = env_paths;
+        while (*cursor) {
+            if (std::isspace(static_cast<unsigned char>(*cursor)) || *cursor == ':' || *cursor == ',') {
+                if (!current.empty()) {
+                    paths.push_back(current);
+                    current.clear();
+                }
+                ++cursor;
+                continue;
+            }
+            current.push_back(*cursor);
+            ++cursor;
+        }
+
+        if (!current.empty()) {
+            paths.push_back(current);
+        }
+
+        if (!paths.empty()) {
+            return paths;
+        }
+    }
+
+    return {"/dev/dma_heap/system"};
+#else
+    return {};
+#endif
+}
+
+}
+
 static int ggml_amd_dma_heap_alloc(size_t size, size_t alignment) {
 #ifdef __linux__
     (void)alignment;
-    int fd = open("/dev/dma_heap/system", O_RDWR | O_CLOEXEC);
-    if (fd < 0) {
-        return -1;
-    }
+    const auto heap_paths = ggml_amd_dma_heap_paths();
+    for (const auto & heap_path : heap_paths) {
+        const int fd = open(heap_path.c_str(), O_RDWR | O_CLOEXEC);
+        if (fd < 0) {
+            continue;
+        }
 
-    struct dma_heap_allocation_data alloc_data = {};
-    alloc_data.len = size;
-    alloc_data.fd = 0;
-    alloc_data.fd_flags = O_RDWR | O_CLOEXEC;
-    alloc_data.heap_flags = 0;
+        struct dma_heap_allocation_data alloc_data = {};
+        alloc_data.len = size;
+        alloc_data.fd = 0;
+        alloc_data.fd_flags = O_RDWR | O_CLOEXEC;
+        alloc_data.heap_flags = 0;
 
-    if (ioctl(fd, DMA_HEAP_IOCTL_ALLOC, &alloc_data) < 0) {
+        const int status = ioctl(fd, DMA_HEAP_IOCTL_ALLOC, &alloc_data);
         close(fd);
-        return -1;
+        if (status == 0) {
+            return alloc_data.fd;
+        }
     }
 
-    close(fd);
-    return alloc_data.fd;
+    return -1;
 #else
     (void)size;
     (void)alignment;

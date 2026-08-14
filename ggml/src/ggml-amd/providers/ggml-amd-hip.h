@@ -30,6 +30,7 @@ bool ggml_amd_hip_copy(struct ggml_amd_provider * provider, void * dst, const vo
 bool ggml_amd_hip_memset(struct ggml_amd_provider * provider, void * dst, uint8_t value, size_t size);
 bool ggml_amd_hip_synchronize(struct ggml_amd_provider * provider);
 ggml_status ggml_amd_hip_graph_compute(struct ggml_amd_provider * provider, struct ggml_cgraph * graph);
+int ggml_amd_hip_get_last_import_error(void);
 
 #ifdef GGML_AMD_HIP
 #ifdef __HIP_PLATFORM_AMD__

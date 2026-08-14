@@ -17,6 +17,10 @@
 #include <hip/hip_runtime_api.h>
 #include "../tile/ggml-amd-tile-hip.h"
 #include "../tile/ggml-amd-tile-dump-dequant.h"
+
+static thread_local int g_ggml_amd_hip_last_import_error = hipSuccess;
+#else
+static thread_local int g_ggml_amd_hip_last_import_error = -1;
 #endif
 
 struct ggml_amd_hip_context {
@@ -29,6 +33,14 @@ struct ggml_amd_hip_context {
 };
 
 extern struct ggml_amd_fence ggml_amd_fence_create_host(void);
+
+int ggml_amd_hip_get_last_import_error(void) {
+#ifdef __HIP_PLATFORM_AMD__
+    return g_ggml_amd_hip_last_import_error;
+#else
+    return -1;
+#endif
+}
 
 static ggml_amd_hip_context * ggml_amd_hip_context_get(struct ggml_amd_provider * provider) {
 #ifdef __HIP_PLATFORM_AMD__
@@ -231,29 +243,35 @@ static ggml_status ggml_amd_hip_import_allocation_impl(
 #ifdef GGML_AMD_HIP
 #ifdef __HIP_PLATFORM_AMD__
     if (!provider || !alloc || !out_import) {
+        g_ggml_amd_hip_last_import_error = hipErrorInvalidValue;
         return GGML_STATUS_FAILED;
     }
     *out_import = nullptr;
 
     if (alloc->external_handle_kind == GGML_AMD_EXTERNAL_HANDLE_KIND_NONE) {
+        g_ggml_amd_hip_last_import_error = hipErrorInvalidValue;
         return GGML_STATUS_FAILED;
     }
     if (alloc->domain != GGML_AMD_DOMAIN_IMPORTED_EXTERNAL &&
         alloc->domain != GGML_AMD_DOMAIN_SHARED_SYSTEM) {
+        g_ggml_amd_hip_last_import_error = hipErrorInvalidValue;
         return GGML_STATUS_FAILED;
     }
 
     auto ctx = (ggml_amd_hip_context *)provider->context;
     if (!ctx || !ctx->initialized) {
+        g_ggml_amd_hip_last_import_error = hipErrorNotInitialized;
         return GGML_STATUS_FAILED;
     }
 
     int dup_fd = ggml_amd_allocation_dup_fd(alloc);
     if (dup_fd < 0) {
+        g_ggml_amd_hip_last_import_error = hipErrorInvalidValue;
         return GGML_STATUS_FAILED;
     }
 
     if (hipSetDevice(ctx->device_id) != hipSuccess) {
+        g_ggml_amd_hip_last_import_error = hipGetLastError();
         close(dup_fd);
         return GGML_STATUS_FAILED;
     }
@@ -264,7 +282,9 @@ static ggml_status ggml_amd_hip_import_allocation_impl(
     handle_desc.size = alloc->size;
 
     hipExternalMemory_t external_memory = nullptr;
-    if (hipImportExternalMemory(&external_memory, &handle_desc) != hipSuccess) {
+    const auto import_error = hipImportExternalMemory(&external_memory, &handle_desc);
+    if (import_error != hipSuccess) {
+        g_ggml_amd_hip_last_import_error = import_error;
         close(dup_fd);
         return GGML_STATUS_FAILED;
     }
@@ -275,12 +295,15 @@ static ggml_status ggml_amd_hip_import_allocation_impl(
     mapped_buffer_desc.flags = 0;
 
     void * mapped_ptr = nullptr;
-    if (hipExternalMemoryGetMappedBuffer(&mapped_ptr, external_memory, &mapped_buffer_desc) != hipSuccess) {
+    const auto map_error = hipExternalMemoryGetMappedBuffer(&mapped_ptr, external_memory, &mapped_buffer_desc);
+    if (map_error != hipSuccess) {
+        g_ggml_amd_hip_last_import_error = map_error;
         (void)hipDestroyExternalMemory(external_memory);
         close(dup_fd);
         return GGML_STATUS_FAILED;
     }
     (void)mapped_ptr;
+    g_ggml_amd_hip_last_import_error = hipSuccess;
     close(dup_fd);
 
     auto import = new ggml_amd_import();

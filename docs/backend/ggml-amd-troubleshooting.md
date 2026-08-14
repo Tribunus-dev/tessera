@@ -226,7 +226,13 @@ zcat /proc/config.gz | grep DMA_HEAP
    sudo chmod 666 /dev/dma_heap/system
    ```
 3. Verify kernel config includes `CONFIG_DMA_HEAP=y`
-4. Fall back to GEM PRIME (requires DRM device access)
+4. Try alternate heap list via environment:
+
+   ```bash
+   export GGML_AMD_DMA_HEAP_PATH=/dev/dma_heap/system-uncached:/dev/dma_heap/system
+   ```
+
+5. Fall back to GEM PRIME (requires DRM device access)
 
 ### Stale Test Binary
 
