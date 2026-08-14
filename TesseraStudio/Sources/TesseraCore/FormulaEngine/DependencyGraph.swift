@@ -39,6 +39,33 @@ public struct SheetCellAddr: Hashable, Sendable, CustomStringConvertible {
     public var description: String { "\(sheet)!\(addr.description)" }
 }
 
+// MARK: - RecalcState
+
+/// A formula cell's freshness relative to its own precedents.
+///
+/// Formalizes what recalculation already tracked implicitly (a cell
+/// was "dirty" exactly when it appeared in a `dirtySubgraph` BFS
+/// result, "clean" by simply being absent) as an explicit, queryable
+/// per-cell state - the recalculation ALGORITHM (dirty-cone BFS +
+/// Kahn's-algorithm topological evaluation order, in
+/// `SheetEngine.recalculateInternal`) is unchanged; this only exposes
+/// its state so a caller can ask "is this cell stale right now"
+/// without re-running a BFS.
+///
+/// Not tracked for plain-value cells: a literal's value is
+/// definitionally always current the instant it's written, so "needs
+/// recalculating" has no meaning for it - only a formula can be stale
+/// relative to its precedents. `DependencyGraph.recalcState(for:)`
+/// reports `.clean` for any untracked cell, which is correct for both
+/// "no formula" and "formula, never touched by a recalculation" -
+/// `SheetEngine.setFormulaUnlocked` always evaluates a new formula
+/// synchronously before returning, so a cell is never observably dirty
+/// from outside the lock.
+public enum RecalcState: Sendable, Equatable {
+    case clean
+    case dirty
+}
+
 /// Bidirectional dependency graph.
 /// Manages cell-to-precedent and cell-to-dependent edges for incremental recalculation.
 public final class DependencyGraph: @unchecked Sendable {
@@ -53,6 +80,8 @@ public final class DependencyGraph: @unchecked Sendable {
     private var formulaASTs: [SheetCellAddr: FormulaAST] = [:]
     /// Cells that contain volatile functions (NOW, RAND, etc.)
     private var volatileCells: Set<SheetCellAddr> = []
+    /// Explicit dirty/clean state for formula cells - see `RecalcState`.
+    private var recalcStates: [SheetCellAddr: RecalcState] = [:]
 
     public init() {}
 
@@ -112,6 +141,7 @@ public final class DependencyGraph: @unchecked Sendable {
         removePrecedentEdges(for: key)
         formulaASTs.removeValue(forKey: key)
         volatileCells.remove(key)
+        recalcStates.removeValue(forKey: key)
     }
 
     /// Remove a cell and all its edges.
@@ -119,6 +149,7 @@ public final class DependencyGraph: @unchecked Sendable {
         removeEdges(for: key)
         formulaASTs.removeValue(forKey: key)
         volatileCells.remove(key)
+        recalcStates.removeValue(forKey: key)
     }
 
     /// Remove every node belonging to one sheet (deleting a sheet) without
@@ -140,6 +171,7 @@ public final class DependencyGraph: @unchecked Sendable {
             removeEdges(for: key)
             formulaASTs.removeValue(forKey: key)
             volatileCells.remove(key)
+            recalcStates.removeValue(forKey: key)
         }
     }
 
@@ -165,6 +197,8 @@ public final class DependencyGraph: @unchecked Sendable {
         formulaASTs = Dictionary(formulaASTs.map { (rekey($0.key), $0.value) },
                                   uniquingKeysWith: { $1 })
         volatileCells = Set(volatileCells.map(rekey))
+        recalcStates = Dictionary(recalcStates.map { (rekey($0.key), $0.value) },
+                                   uniquingKeysWith: { $1 })
     }
 
     /// Clear the entire graph (every sheet).
@@ -173,6 +207,7 @@ public final class DependencyGraph: @unchecked Sendable {
         dependents.removeAll()
         formulaASTs.removeAll()
         volatileCells.removeAll()
+        recalcStates.removeAll()
     }
 
     /// Drop only the OUTGOING edges: the cells `key` reads.
@@ -421,6 +456,29 @@ public final class DependencyGraph: @unchecked Sendable {
     /// Marks ALL volatile cells as dirty (they can change without their inputs changing).
     public func markAllVolatileDirty(_ dirty: inout Set<SheetCellAddr>) {
         dirty.formUnion(volatileCells)
+    }
+
+    // MARK: - RecalcState queries
+
+    /// A formula cell's current freshness. `.clean` for anything not
+    /// tracked - see `RecalcState`.
+    public func recalcState(for key: SheetCellAddr) -> RecalcState {
+        recalcStates[key] ?? .clean
+    }
+
+    /// Mark every FORMULA cell in `keys` dirty, ahead of a
+    /// recalculation pass over them. Plain-value cells (no formula) are
+    /// silently skipped - see `RecalcState`.
+    public func markCellsDirty<S: Sequence>(_ keys: S) where S.Element == SheetCellAddr {
+        for key in keys where formulaASTs[key] != nil {
+            recalcStates[key] = .dirty
+        }
+    }
+
+    /// Mark one formula cell clean - called once it has been freshly
+    /// evaluated against its current precedents.
+    public func markCellClean(_ key: SheetCellAddr) {
+        recalcStates[key] = .clean
     }
 
     // MARK: - Serialization (for debugging / MCP)

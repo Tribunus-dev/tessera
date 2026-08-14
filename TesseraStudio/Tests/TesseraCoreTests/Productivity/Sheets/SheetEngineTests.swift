@@ -833,6 +833,38 @@ final class SheetEngineTests: XCTestCase {
         XCTAssertEqual(engine.getValue(sheet: nil, addr: CellAddr(col: 1, row: 0)), .number(15))
     }
 
+    // MARK: - RecalcState
+
+    /// A cell nobody has touched is clean by definition - nothing to
+    /// recalculate. See DependencyGraphTests.swift for the state
+    /// machine itself; this is the public SheetEngine entry point.
+    func testRecalcState_untouchedCellIsClean() {
+        XCTAssertEqual(engine.recalcState(sheet: nil, addr: CellAddr(col: 5, row: 5)), .clean)
+    }
+
+    /// setFormula evaluates synchronously before returning, so a fresh
+    /// formula cell is already clean by the time the caller sees it -
+    /// this engine has no deferred/async recalculation yet for a
+    /// caller to observe an in-flight dirty state through.
+    func testRecalcState_freshFormulaCellIsCleanAfterSet() throws {
+        let target = CellAddr(col: 1, row: 0)
+        try engine.setFormula(sheet: nil, addr: target, source: "=1+1")
+        XCTAssertEqual(engine.recalcState(sheet: nil, addr: target), .clean)
+    }
+
+    /// A dependent recalculated after its precedent changes ends up
+    /// clean too, same reasoning - the whole edit-then-recalculate
+    /// cycle happens inside one locked call.
+    func testRecalcState_dependentIsCleanAfterPrecedentChanges() throws {
+        let a1 = CellAddr(col: 0, row: 0)
+        let b1 = CellAddr(col: 1, row: 0)
+        engine.setValue(sheet: nil, addr: a1, value: .number(1))
+        try engine.setFormula(sheet: nil, addr: b1, source: "=A1*2")
+        engine.setValue(sheet: nil, addr: a1, value: .number(5))
+        XCTAssertEqual(engine.getValue(sheet: nil, addr: b1), .number(10))
+        XCTAssertEqual(engine.recalcState(sheet: nil, addr: b1), .clean)
+    }
+
     // MARK: - Volatile Functions
 
     func testVolatileCell_markedInGraph() throws {

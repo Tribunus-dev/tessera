@@ -451,6 +451,18 @@ public final class SheetEngine: @unchecked Sendable, SheetEngineCore {
         }
     }
 
+    /// A cell's current recalculation freshness. `.clean` for a cell
+    /// with no formula (nothing to recalculate) or a formula whose
+    /// cached value already reflects its current precedents; `.dirty`
+    /// for a formula cell queued for (or mid-) recalculation. See
+    /// ``RecalcState``.
+    public func recalcState(sheet: String?, addr: CellAddr) -> RecalcState {
+        let effectiveSheet = sheet ?? _activeSheet
+        return withLock {
+            graph.recalcState(for: SheetCellAddr(sheet: effectiveSheet, addr: addr))
+        }
+    }
+
     /// Clear a cell (set to null). Removes any formula.
     public func clearCell(sheet: String?, addr: CellAddr) {
         setValue(sheet: sheet, addr: addr, value: .null)
@@ -793,6 +805,8 @@ public final class SheetEngine: @unchecked Sendable, SheetEngineCore {
 
         guard !subgraph.isEmpty else { return }
 
+        graph.markCellsDirty(subgraph)
+
         do {
             let order = try graph.evaluationOrder(from: Array(subgraph))
             for key in order {
@@ -826,9 +840,12 @@ public final class SheetEngine: @unchecked Sendable, SheetEngineCore {
             // Re-spill on every recalculation: the array's shape can
             // change when its inputs do (a FILTER matching fewer rows).
             writeResult(anchor: key.addr, sheet: key.sheet, result: result, formula: cell.formula)
+            graph.markCellClean(key)
         } catch {
             clearSpill(anchor: key.addr, sheet: key.sheet)
             _sheets[key.sheet]?.cells[key.addr] = CellData(value: .error(.referenceInvalid), formula: cell.formula)
+            // Left dirty: the cached value is an error placeholder, not
+            // a confirmed-fresh result against this cell's precedents.
         }
     }
 
