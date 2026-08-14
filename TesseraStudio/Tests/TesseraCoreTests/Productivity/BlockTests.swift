@@ -34,8 +34,55 @@ final class BlockTests: XCTestCase {
             // Track-changes and comment blocks (added after this test was
             // first written; the editor's review mode renders them).
             .trackInsertion, .trackDeletion, .comment,
+            // Draw data model (P0 0.12): a single vector shape and a
+            // group container over shape/shapeGroup members.
+            .shape, .shapeGroup,
         ]
         XCTAssertEqual(Set(BlockType.allCases), expected)
+    }
+
+    // MARK: - Block + Shape
+
+    func testShapeBlockRoundTripsThroughAttributes() {
+        let shape = Shape(
+            kind: .ellipse,
+            geometry: ShapeGeometry(x: 10, y: 20, width: 30, height: 40, rotation: 15),
+            fill: ShapeFill(colorHex: "#FF0000"),
+            stroke: ShapeStroke(colorHex: "#000000", width: 2),
+            zIndex: 3
+        )
+        var block = Block(shape: shape)
+        XCTAssertEqual(block.type, .shape)
+        XCTAssertEqual(block.shape, shape)
+
+        // The bridge round-trips through attributes["shape"], not a
+        // parallel field - confirm it actually landed there.
+        XCTAssertNotNil(block.attributes["shape"])
+
+        block.shape = nil
+        XCTAssertNil(block.attributes["shape"])
+        XCTAssertNil(block.shape)
+    }
+
+    func testShapeAccessorIsNilForNonShapeBlocks() {
+        var block = Block(type: .paragraph)
+        XCTAssertNil(block.shape)
+
+        // Setting on a non-.shape block is a no-op (matches this file's
+        // other attribute accessors, which don't validate `type` either).
+        block.shape = Shape(kind: .rect, geometry: ShapeGeometry(x: 0, y: 0, width: 1, height: 1))
+        XCTAssertNil(block.shape)
+        XCTAssertNil(block.attributes["shape"])
+    }
+
+    func testShapeGroupIsAPlainChildrenContainer() throws {
+        let child = Block(shape: Shape(kind: .star, geometry: ShapeGeometry(x: 0, y: 0, width: 5, height: 5)))
+        var group = Block(type: .shapeGroup)
+        group.children = [child.id]
+        let doc = DocumentAST(blocks: [group.id: group, child.id: child], rootChildren: [group.id])
+        let decoded = try DocumentAST.from(jsonData: try doc.jsonData())
+        XCTAssertEqual(decoded.blocks[group.id]?.children, [child.id])
+        XCTAssertEqual(decoded.blocks[child.id]?.shape?.kind, .star)
     }
 
     // MARK: - InlineRun

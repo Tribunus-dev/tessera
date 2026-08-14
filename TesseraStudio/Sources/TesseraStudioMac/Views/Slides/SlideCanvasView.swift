@@ -141,6 +141,12 @@ private struct SlideBlockRow: View {
             Divider()
         case .table, .tableCell, .equation, .comment, .trackInsertion, .trackDeletion:
             Text(SlideDeck.plainText(of: ast)).font(.caption).foregroundStyle(.secondary)
+        case .shape, .shapeGroup:
+            // Free shapes on the slide canvas are P1 scope (Impress uses
+            // the Draw shape model at P1, per studio-expansion-plan.md's
+            // P0 table); this placeholder just keeps the switch exhaustive
+            // and legible in the meantime, matching the .table fallback.
+            Text(block.shape?.text?.plainText ?? "[Shape]").font(.caption).foregroundStyle(.secondary)
         }
     }
 

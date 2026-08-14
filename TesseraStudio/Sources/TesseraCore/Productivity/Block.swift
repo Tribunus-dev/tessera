@@ -67,6 +67,15 @@ public enum BlockType: String, Codable, Sendable, Hashable, CaseIterable {
     /// A tracked deletion. `attributes["author"]` and `attributes["timestamp"]`
     /// track who deleted the text. The deleted text (shown struck-through) is in `content`.
     case trackDeletion
+    /// A single vector shape on a Draw/Impress canvas. `attributes["shape"]`
+    /// holds the JSON-encoded ``Shape`` (geometry, fill, stroke, text) - see
+    /// ``Block/shape``. A leaf: `content` and `children` are unused.
+    case shape
+    /// A group of `.shape` (or nested `.shapeGroup`) blocks. `children`
+    /// holds the ordered member block IDs, matching `.list`/`.toggle`'s
+    /// container convention. Carries no geometry of its own at P0 - group
+    /// bounds are derived from members, not stored.
+    case shapeGroup
 }
 
 // MARK: - InlineRun
@@ -136,6 +145,45 @@ public struct Block: Codable, Sendable, Identifiable, Hashable {
         self.content = content
         self.children = children
         self.parentID = parentID
+    }
+}
+
+// MARK: - Block + Shape
+
+extension Block {
+    /// Convenience constructor for a `.shape` block.
+    public init(shape: Shape, id: UUID = UUID(), parentID: UUID? = nil) {
+        self.init(id: id, type: .shape, parentID: parentID)
+        self.shape = shape
+    }
+
+    /// Reads/writes the block's ``Shape`` via `attributes["shape"]`.
+    ///
+    /// `Shape` is stored as a nested JSON object rather than flattened
+    /// into individual attribute keys, so its own `Codable` conformance
+    /// stays the single source of truth for the wire shape - adding a
+    /// field to `Shape` doesn't require touching this bridge. Returns
+    /// `nil` for non-`.shape` blocks or malformed/missing content;
+    /// setting on a non-`.shape` block is a no-op (mirrors the rest of
+    /// this file's attribute accessors, which don't validate `type`
+    /// either - `.shape` blocks with a missing `attributes["shape"]`
+    /// key are treated as "no shape yet", not corrupted data).
+    public var shape: Shape? {
+        get {
+            guard type == .shape, let raw = attributes["shape"] else { return nil }
+            guard let data = try? JSONEncoder().encode(raw) else { return nil }
+            return try? JSONDecoder().decode(Shape.self, from: data)
+        }
+        set {
+            guard type == .shape else { return }
+            guard let newValue else {
+                attributes.removeValue(forKey: "shape")
+                return
+            }
+            guard let data = try? JSONEncoder().encode(newValue),
+                  let raw = try? JSONDecoder().decode(AnyCodable.self, from: data) else { return }
+            attributes["shape"] = raw
+        }
     }
 }
 

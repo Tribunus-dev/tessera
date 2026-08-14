@@ -336,6 +336,10 @@ public struct SlideDeck: Codable, Sendable, Identifiable, Hashable {
             for child in block.children { appendPlainText(blockID: child, ast: ast, into: &out) }
         case .table:
             for child in block.children { appendPlainText(blockID: child, ast: ast, into: &out) }
+        case .shapeGroup:
+            for child in block.children { appendPlainText(blockID: child, ast: ast, into: &out) }
+        case .shape:
+            if let text = block.shape?.text?.plainText, !text.isEmpty { out.append(text) }
         case .toggle, .image, .divider, .equation:
             // Toggle: walk children (heading + paragraph + image group)
             for child in block.children { appendPlainText(blockID: child, ast: ast, into: &out) }
@@ -348,7 +352,7 @@ public struct SlideDeck: Codable, Sendable, Identifiable, Hashable {
             // Future block types: skip gracefully.
             break
         }
-        for child in block.children where block.type != .list && block.type != .table && block.type != .toggle {
+        for child in block.children where block.type != .list && block.type != .table && block.type != .toggle && block.type != .shapeGroup {
             appendPlainText(blockID: child, ast: ast, into: &out)
         }
     }

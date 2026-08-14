@@ -98,6 +98,10 @@ public struct BlockRenderer: Sendable {
             return renderTrackInsertion(block, mode: mode)
         case .trackDeletion:
             return renderTrackDeletion(block, mode: mode)
+        case .shape:
+            return renderShapePlaceholder(block, mode: mode)
+        case .shapeGroup:
+            return renderShapeGroupPlaceholder(block, mode: mode)
         }
     }
 
@@ -172,6 +176,35 @@ public struct BlockRenderer: Sendable {
         let rows = block.attributes["rows"]?.intValue ?? 0
         let cols = block.attributes["cols"]?.intValue ?? 0
         let label = "[Table \(rows)×\(cols) — Phase 3 surface]"
+        return NSAttributedString(
+            string: label,
+            attributes: [
+                .font: fontResolver.font(from: theme.bodyFont),
+                .foregroundColor: PlatformColor.secondaryLabelColor,
+            ]
+        )
+    }
+
+    private func renderShapePlaceholder(_ block: Block, mode: EditorMode) -> NSAttributedString {
+        // Draw/Impress shapes render on their own CGContext-backed canvas
+        // (ShapeRenderer), not flowed into this text view - a Draw
+        // document embedded inline in a text-flow surface is not a P0
+        // scenario. This placeholder exists so the switch stays
+        // exhaustive and non-Draw editors that happen to encounter a
+        // `.shape` block (e.g. a mixed clipboard paste) show something
+        // legible rather than an empty line.
+        let kind = block.shape?.kind.rawValue ?? "shape"
+        return NSAttributedString(
+            string: "[Shape: \(kind)]",
+            attributes: [
+                .font: fontResolver.font(from: theme.bodyFont),
+                .foregroundColor: PlatformColor.secondaryLabelColor,
+            ]
+        )
+    }
+
+    private func renderShapeGroupPlaceholder(_ block: Block, mode: EditorMode) -> NSAttributedString {
+        let label = "[Shape group - \(block.children.count) shapes]"
         return NSAttributedString(
             string: label,
             attributes: [

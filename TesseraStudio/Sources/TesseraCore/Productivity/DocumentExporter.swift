@@ -282,6 +282,22 @@ public final class DocumentExporter: Sendable {
         case .comment, .trackInsertion, .trackDeletion:
             // Review-only / collaboration blocks; not rendered to export HTML.
             return ""
+
+        case .shape:
+            // A bounding-box div, not a faithful silhouette: porting
+            // ShapeRenderer's per-kind CGPath math (polygon/star point
+            // generation) into a second, HTML-string renderer would
+            // duplicate that logic and let the two drift. Position,
+            // size, and fill/stroke color are still accurate.
+            return renderShapeDiv(block.shape)
+
+        case .shapeGroup:
+            var items: [String] = []
+            for childID in block.children {
+                guard let child = ast.blocks[childID] else { continue }
+                items.append(try renderBlock(child, in: ast))
+            }
+            return "<div class=\"shape-group\">\n\(items.joined(separator: "\n"))\n</div>"
         }
     }
 
@@ -409,5 +425,23 @@ public final class DocumentExporter: Sendable {
             .replacingOccurrences(of: ">", with: "&gt;")
             .replacingOccurrences(of: "\"", with: "&quot;")
             .replacingOccurrences(of: "'", with: "&#39;")
+    }
+
+    private func renderShapeDiv(_ shape: Shape?) -> String {
+        guard let shape else { return "<div class=\"shape\"></div>" }
+        let g = shape.geometry
+        var style = "position:absolute;left:\(g.x)px;top:\(g.y)px;width:\(g.width)px;height:\(g.height)px;"
+        if g.rotation != 0 {
+            style += "transform:rotate(\(g.rotation)deg);"
+        }
+        if let fill = shape.fill {
+            style += "background-color:\(escapeHTML(fill.colorHex));opacity:\(fill.opacity);"
+        }
+        if let stroke = shape.stroke {
+            style += "border:\(stroke.width)px solid \(escapeHTML(stroke.colorHex));"
+        }
+        let kindClass = "shape-\(escapeHTML(shape.kind.rawValue))"
+        let label = shape.text?.plainText ?? ""
+        return "<div class=\"shape \(kindClass)\" style=\"\(style)\">\(escapeHTML(label))</div>"
     }
 }

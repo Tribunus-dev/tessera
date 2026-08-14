@@ -381,10 +381,16 @@ public struct Sheet: Codable, Sendable, Identifiable, Hashable {
             for child in block.children {
                 appendPlainText(blockID: child, ast: ast, into: &out)
             }
+        case .shapeGroup:
+            for child in block.children {
+                appendPlainText(blockID: child, ast: ast, into: &out)
+            }
+        case .shape:
+            if let text = block.shape?.text?.plainText, !text.isEmpty { out.append(text) }
         case .toggle, .image, .divider, .equation, .comment, .trackInsertion, .trackDeletion:
             break
         }
-        for child in block.children where block.type != .list && block.type != .table {
+        for child in block.children where block.type != .list && block.type != .table && block.type != .shapeGroup {
             appendPlainText(blockID: child, ast: ast, into: &out)
         }
     }
