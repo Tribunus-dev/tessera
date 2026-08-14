@@ -301,6 +301,12 @@ static bool ggml_amd_hip_supports_import_impl(struct ggml_amd_provider * provide
     if (!ctx) {
         return false;
     }
+    if (!alloc || alloc->dma_buf_fd < 0) {
+        return false;
+    }
+    if (alloc->domain == GGML_AMD_DOMAIN_SHARED_SYSTEM && !ctx->supports_dma_buf_import) {
+        return false;
+    }
     (void)ctx;
 #else
     (void)provider;

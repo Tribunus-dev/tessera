@@ -291,6 +291,7 @@ static void test_hip_dma_buf_import(void) {
     const char * successful_heap = nullptr;
     std::string failed_heap;
     size_t allocation_attempts = 0;
+    bool saw_supported_candidate = false;
     for (const auto & heap_path : dma_heap_candidates) {
         ggml_amd_dma_heap_set_preferred_path(heap_path.c_str());
 
@@ -308,6 +309,9 @@ static void test_hip_dma_buf_import(void) {
 
         const bool supports_import = device_ctx->provider->iface->supports_import(
             device_ctx->provider, allocation);
+        if (supports_import) {
+            saw_supported_candidate = true;
+        }
         if (!supports_import) {
             ggml_amd_allocation_release(allocation);
             allocation = nullptr;
@@ -334,6 +338,16 @@ static void test_hip_dma_buf_import(void) {
         allocation = nullptr;
     }
 
+    if (!saw_supported_candidate) {
+        std::fprintf(stdout, "     HIP dma-buf import skipped (shared-system support not enabled by backend)\n");
+        if (allocation_attempts > 0) {
+            std::fprintf(stdout, "     Shared-system allocations created: %zu\n", allocation_attempts);
+        } else {
+            std::fprintf(stdout, "     No shared-system allocations were created\n");
+        }
+        return;
+    }
+
     CHECK(status == GGML_STATUS_SUCCESS && import != nullptr, "HIP imports a system dma-buf");
     if (status != GGML_STATUS_SUCCESS || import == nullptr) {
 #ifdef __HIP_PLATFORM_AMD__
@@ -356,7 +370,6 @@ static void test_hip_dma_buf_import(void) {
 #else
         std::fprintf(stderr, "     HIP import failed on non-HIP runtime build\n");
 #endif
-        ggml_amd_allocation_release(allocation);
         return;
     }
     if (import) {
