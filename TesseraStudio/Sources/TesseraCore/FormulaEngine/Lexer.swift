@@ -429,17 +429,45 @@ public final class Lexer {
             return try scanRangeRef(prefix: name)
         }
 
+        // Row-only-absolute cell ref with no sheet qualifier: A$1.
+        // `$` is not a valid identifier-continuation character (the
+        // while-loop above only takes letters/digits/_/.), so the loop
+        // already stopped at "A", leaving "$1" for the lexer's next
+        // token - which starts with "$" but isn't followed by a
+        // letter, so `scanDollarRef` (entered only when "$" is the
+        // very FIRST character of a token) would throw "Unexpected
+        // '$'" on the digit. `$` has no other meaning in this grammar
+        // (its only job anywhere is marking an absolute reference), so
+        // seeing it here - immediately after what parses as a valid
+        // column, immediately before a digit - is unambiguous. Guarded
+        // on `name` actually being column letters so an unrelated
+        // identifier stumbling into a stray "$" still falls through to
+        // the ordinary named-range path below (a real syntax error
+        // either way, but not this function's problem to diagnose).
+        if next == "$", let afterDollar = peek(1), afterDollar.isNumber,
+           CellAddr.colNumber(for: name) != nil {
+            return try scanCellRef(colAbsolute: false, colPart: name)
+        }
+
         // Named range or cell ref — defer to parser
         return .namedRange(upper)
     }
 
     // A1:B5, $A1:B$5, etc.
-    private func scanCellRef(colAbsolute: Bool = false, sheet: String? = nil) throws -> Token {
+    //
+    // `colPart`, when non-nil, is a column already scanned by the
+    // caller (`scanIdentifier`'s row-only-absolute branch: the
+    // identifier loop already consumed "A" out of "A$1" before
+    // realizing what followed made it a cell ref, so there's no
+    // column left in the stream to (re-)scan here).
+    private func scanCellRef(colAbsolute: Bool = false, sheet: String? = nil, colPart: String? = nil) throws -> Token {
         // Column letters
-        var colPart = ""
-        while let ch = currentChar, ch.isLetter {
-            colPart.append(ch)
-            _ = advance()
+        var colPart = colPart ?? ""
+        if colPart.isEmpty {
+            while let ch = currentChar, ch.isLetter {
+                colPart.append(ch)
+                _ = advance()
+            }
         }
         guard let colNum = CellAddr.colNumber(for: colPart) else {
             throw LexError(position: currentCol - colPart.count, line: currentLine,
@@ -449,7 +477,9 @@ public final class Lexer {
 
         // Row number
         var rowPart = ""
+        var rowAbsolute = false
         if currentChar == "$" {
+            rowAbsolute = true
             _ = advance()
         }
         while let ch = currentChar, ch.isNumber {
@@ -462,10 +492,8 @@ public final class Lexer {
                            message: "Invalid row '\(rowPart)'")
         }
 
-        let addr = CellAddr(col: colNum, row: rowNum - 1)
         let ref = CellRef(sheet: sheet, col: colNum, row: rowNum - 1,
-                          colAbsolute: colAbsolute, rowAbsolute: false)
-        _ = ref // silence unused
+                          colAbsolute: colAbsolute, rowAbsolute: rowAbsolute)
 
         return .cellRef(ref)
     }
