@@ -90,6 +90,8 @@ void ggml_amd_allocation_set_cleanup(
     struct ggml_amd_allocation * alloc,
     void * producer_context,
     void (*producer_cleanup)(void * context));
+std::vector<std::string> ggml_amd_dma_heap_paths(void);
+void ggml_amd_dma_heap_set_preferred_path(const char * path);
 struct ggml_amd_allocation * ggml_amd_allocation_wrap_external_fd(
     int fd,
     size_t size,

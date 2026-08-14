@@ -7,6 +7,7 @@
 #include <vector>
 #include <string>
 #include <cctype>
+#include <mutex>
 
 extern void ggml_amd_fence_release(struct ggml_amd_fence * fence);
 extern int ggml_amd_fence_wait(struct ggml_amd_fence * fence, int timeout_ms);
@@ -21,6 +22,9 @@ extern int ggml_amd_fence_wait(struct ggml_amd_fence * fence, int timeout_ms);
 #endif
 
 namespace {
+
+static std::string ggml_amd_dma_heap_override;
+static std::mutex ggml_amd_dma_heap_override_mutex;
 
 static bool ggml_amd_is_empty_string(const std::string & str) {
     for (unsigned char c : str) {
@@ -40,8 +44,14 @@ static bool ggml_amd_has_path(std::vector<std::string> const & paths, const std:
     return false;
 }
 
-std::vector<std::string> ggml_amd_dma_heap_paths(void) {
+static std::vector<std::string> ggml_amd_dma_heap_paths_impl(void) {
 #ifdef __linux__
+    {
+        std::lock_guard<std::mutex> lock(ggml_amd_dma_heap_override_mutex);
+        if (!ggml_amd_dma_heap_override.empty()) {
+            return {ggml_amd_dma_heap_override};
+        }
+    }
     const std::vector<std::string> fallback_paths = {
         "/dev/dma_heap/system",
         "/dev/dma_heap/system-uncached",
@@ -86,6 +96,19 @@ std::vector<std::string> ggml_amd_dma_heap_paths(void) {
 #endif
 }
 
+}
+
+std::vector<std::string> ggml_amd_dma_heap_paths(void) {
+    return ggml_amd_dma_heap_paths_impl();
+}
+
+void ggml_amd_dma_heap_set_preferred_path(const char * path) {
+    std::lock_guard<std::mutex> lock(ggml_amd_dma_heap_override_mutex);
+    if (path && path[0]) {
+        ggml_amd_dma_heap_override = path;
+    } else {
+        ggml_amd_dma_heap_override.clear();
+    }
 }
 
 static int ggml_amd_dma_heap_alloc(size_t size, size_t alignment) {

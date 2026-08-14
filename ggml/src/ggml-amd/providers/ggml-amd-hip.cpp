@@ -28,11 +28,24 @@ struct ggml_amd_hip_context {
     int device_id;
     hipDeviceProp_t props;
     hipStream_t stream;
+    bool supports_dma_buf_import = false;
+    std::string preferred_dma_heap_path;
 #endif
     bool initialized;
 };
 
 extern struct ggml_amd_fence ggml_amd_fence_create_host(void);
+extern struct ggml_amd_allocation * ggml_amd_allocation_create(
+    enum ggml_amd_memory_domain domain,
+    size_t size,
+    size_t alignment,
+    enum ggml_amd_coherency coherency);
+extern void ggml_amd_allocation_release(struct ggml_amd_allocation * alloc);
+
+static bool ggml_amd_hip_try_shared_system_import(
+    ggml_amd_hip_context * ctx,
+    struct ggml_amd_provider * provider,
+    const std::string & heap_path);
 
 int ggml_amd_hip_get_last_import_error(void) {
 #ifdef __HIP_PLATFORM_AMD__
@@ -139,6 +152,51 @@ bool ggml_amd_hip_memset(struct ggml_amd_provider * provider, void * dst, uint8_
 #endif
 }
 
+static bool ggml_amd_hip_try_shared_system_import(
+    ggml_amd_hip_context * ctx,
+    struct ggml_amd_provider * provider,
+    const std::string & heap_path) {
+#ifdef __HIP_PLATFORM_AMD__
+    if (!ctx || !provider) {
+        return false;
+    }
+
+    ggml_amd_dma_heap_set_preferred_path(heap_path.c_str());
+    const bool previous_support = ctx->supports_dma_buf_import;
+    ctx->supports_dma_buf_import = true;
+    struct ggml_amd_allocation * allocation = ggml_amd_allocation_create(
+        GGML_AMD_DOMAIN_SHARED_SYSTEM,
+        4096,
+        4096,
+        GGML_AMD_COHERENCY_SHARED);
+    if (!allocation) {
+        ctx->supports_dma_buf_import = previous_support;
+        return false;
+    }
+
+    struct ggml_amd_import * import = nullptr;
+    const auto status = ggml_amd_hip_import_allocation_impl(provider, allocation, &import);
+    if (status == GGML_STATUS_SUCCESS && import) {
+        ggml_amd_hip_release_import_impl(provider, import);
+        ggml_amd_allocation_release(allocation);
+        ctx->supports_dma_buf_import = previous_support;
+        return true;
+    }
+
+    if (import) {
+        ggml_amd_hip_release_import_impl(provider, import);
+    }
+    ggml_amd_allocation_release(allocation);
+    ctx->supports_dma_buf_import = previous_support;
+    return false;
+#else
+    (void)ctx;
+    (void)provider;
+    (void)heap_path;
+    return false;
+#endif
+}
+
 bool ggml_amd_hip_synchronize(struct ggml_amd_provider * provider) {
 #ifdef __HIP_PLATFORM_AMD__
     auto ctx = ggml_amd_hip_context_get(provider);
@@ -172,6 +230,19 @@ static bool ggml_amd_hip_probe_impl(struct ggml_amd_provider * provider, struct 
         return false;
     }
 
+    const auto heap_paths = ggml_amd_dma_heap_paths();
+    for (const auto & heap_path : heap_paths) {
+        if (ggml_amd_hip_try_shared_system_import(ctx, provider, heap_path)) {
+            ctx->supports_dma_buf_import = true;
+            ctx->preferred_dma_heap_path = heap_path;
+            ggml_amd_dma_heap_set_preferred_path(ctx->preferred_dma_heap_path.c_str());
+            break;
+        }
+    }
+    if (!ctx->supports_dma_buf_import) {
+        ggml_amd_dma_heap_set_preferred_path(nullptr);
+    }
+
     ctx->initialized = true;
     provider->context = ctx;
 
@@ -189,7 +260,7 @@ static bool ggml_amd_hip_probe_impl(struct ggml_amd_provider * provider, struct 
         // and internal shared-system allocations when dma-buf fd semantics are
         // available.
         result->supports_external_memory = 1;
-        result->supports_dma_buf_import = 1;
+        result->supports_dma_buf_import = ctx->supports_dma_buf_import ? 1 : 0;
     }
 
     return true;
@@ -225,6 +296,13 @@ static bool ggml_amd_hip_supports_op_impl(struct ggml_amd_provider * provider, c
 }
 
 static bool ggml_amd_hip_supports_import_impl(struct ggml_amd_provider * provider, struct ggml_amd_allocation * alloc) {
+#ifdef __HIP_PLATFORM_AMD__
+    auto ctx = provider ? (ggml_amd_hip_context *)provider->context : nullptr;
+    if (ctx && !ctx->supports_dma_buf_import && alloc &&
+        alloc->domain == GGML_AMD_DOMAIN_SHARED_SYSTEM) {
+        return false;
+    }
+#endif
     (void)provider;
     if (!alloc || alloc->dma_buf_fd < 0) {
         return false;
@@ -262,6 +340,13 @@ static ggml_status ggml_amd_hip_import_allocation_impl(
     if (!ctx || !ctx->initialized) {
         g_ggml_amd_hip_last_import_error = hipErrorNotInitialized;
         return GGML_STATUS_FAILED;
+    }
+
+    if (alloc->domain == GGML_AMD_DOMAIN_SHARED_SYSTEM) {
+        if (!ctx || !ctx->supports_dma_buf_import) {
+            g_ggml_amd_hip_last_import_error = hipErrorNotSupported;
+            return GGML_STATUS_FAILED;
+        }
     }
 
     int dup_fd = ggml_amd_allocation_dup_fd(alloc);
