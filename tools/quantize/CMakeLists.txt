@@ -65,6 +65,10 @@ add_library(${TARGET}
     tessera/tessera-champq.cpp
     # SEPTQ banded-Cholesky Hessian weight quantizer (B3)
     tessera/tessera-septq.cpp
+    # The ONE evaluation seam (pipeline refactor phase 1): unifies
+    # forced_t2 / tier2_t2 / kernel_direct_t2 / the GA eval callback / the
+    # L5 scorer's per-expert scoring behind one contract.
+    tessera/tessera-expert-eval.cpp
     tessera/tessera-archive.cpp
     tessera/tessera-regime.cpp
     tessera/tessera-higgs.cpp
