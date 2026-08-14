@@ -172,30 +172,95 @@ public final class SheetEngine: @unchecked Sendable, SheetEngineCore {
             if _activeSheet == name {
                 _activeSheet = _sheetOrder.first ?? "Sheet1"
             }
-            // Remove all graph edges for this sheet's cells
-            let cellsToRemove = graph.allCells.filter { cell in
-                // Cells on this sheet
-                true // filter by sheet once we add sheet tracking
-            }
-            graph.clear()
-            // Rebuild from remaining sheets
-            rebuildGraphFromCells()
+            graph.removeSheet(name)
         }
     }
 
     /// Rename a sheet.
+    ///
+    /// Reassigns `_sheets[new]` to a copy of the OLD sheet's cells, not a
+    /// fresh empty `WorkbookSheet` - a prior version discarded `sheet`
+    /// (the just-removed data) on the very next line by overwriting it
+    /// with `WorkbookSheet(name: new)`, so every rename silently wiped
+    /// the sheet's contents. `graph.renameSheet` keeps the dependency
+    /// graph's edges - including any cross-sheet formula elsewhere that
+    /// reads this sheet - pointed at the new name.
     public func renameSheet(from old: String, to new: String) -> Bool {
         withLock {
-            guard _sheets[old] != nil, _sheets[new] == nil else { return false }
-            var sheet = _sheets.removeValue(forKey: old)!
-            sheet = WorkbookSheet(name: new)
-            _sheets[new] = sheet
+            guard let oldSheet = _sheets[old], _sheets[new] == nil else { return false }
+            _sheets.removeValue(forKey: old)
+            var renamed = WorkbookSheet(name: new)
+            renamed.cells = oldSheet.cells
+            _sheets[new] = renamed
             if let idx = _sheetOrder.firstIndex(of: old) {
                 _sheetOrder[idx] = new
             }
             if _activeSheet == old { _activeSheet = new }
+            // Rewires the graph's OWN edges (precedent/dependent tracking)
+            // to the new name - necessary but not sufficient. It does not
+            // touch any formula's stored TEXT, so the sweep below is what
+            // makes a formula elsewhere that reads "old!A1" keep reading
+            // the right cell instead of a sheet that no longer exists.
+            graph.renameSheet(from: old, to: new)
+            propagateSheetRename(from: old, to: new)
             return true
         }
+    }
+
+    /// Rewrite every formula in the workbook - on ANY sheet, including
+    /// the renamed one itself (a formula can reference its own sheet by
+    /// name) - that qualifies a reference with the OLD sheet name, so it
+    /// qualifies with the new one instead.
+    ///
+    /// Without this, `graph.renameSheet` above still correctly marks a
+    /// referencing formula dirty when the renamed sheet's data changes
+    /// (the graph edges did follow the rename), but EVALUATING that
+    /// formula resolves "old!A1" against a sheet that no longer exists
+    /// and silently reads null - a formula that looked like it survived
+    /// the rename would quietly start computing wrong.
+    ///
+    /// Text-based, not AST-based, matching `FormulaReferenceAdjuster`'s
+    /// existing row/col rewriting: re-printing an AST would reformat the
+    /// user's formula, and only the sheet-qualifier tokens should change.
+    /// Must be called with `lock` already held.
+    private func propagateSheetRename(from old: String, to new: String) {
+        let edit = StructuralEdit.renameSheet(from: old, to: new)
+        var rewrites: [(sheet: String, addr: CellAddr, source: String)] = []
+        for (sheetName, sheet) in _sheets {
+            for (addr, data) in sheet.cells {
+                guard let source = data.formula?.source else { continue }
+                let rewritten = FormulaReferenceAdjuster.adjust(source, for: edit)
+                if rewritten != source {
+                    rewrites.append((sheetName, addr, rewritten))
+                }
+            }
+        }
+        guard !rewrites.isEmpty else { return }
+
+        // One undo step for the whole cascade, not one per formula.
+        //
+        // Applied in dictionary-iteration order (unspecified), not
+        // dependency order: if A's rewrite runs before a dependent B's,
+        // recalculating A dirties B and evaluates it against B's own
+        // STILL-STALE text (reading null off the now-missing old
+        // sheet name) before B's rewrite lands moments later in this
+        // same loop and corrects it. The wrong intermediate never
+        // escapes - `lock` is held for this whole method - so this is
+        // wasted recalculation, not a correctness bug; sorting the plan
+        // into dependency order would remove the waste but isn't free,
+        // and every formula here converges on the right value by the
+        // time the loop returns either way.
+        //
+        // A rewrite that fails to re-parse is silently dropped by
+        // `try?`: best-effort by design (a rename should not itself
+        // fail), but it means a formula that couldn't be migrated is
+        // left pointing at a sheet name that no longer exists with no
+        // signal to the caller that anything was skipped.
+        undoStack.beginGroup()
+        for r in rewrites {
+            _ = try? setFormulaUnlocked(sheet: r.sheet, addr: r.addr, source: r.source)
+        }
+        undoStack.endGroup()
     }
 
     /// Set the active sheet for unqualified references.
@@ -230,7 +295,7 @@ public final class SheetEngine: @unchecked Sendable, SheetEngineCore {
             // whatever it had spilled, and retires the formula itself so
             // the next recalculation does not resurrect it.
             clearSpill(anchor: addr, sheet: effectiveSheet)
-            graph.clearFormula(addr)
+            graph.clearFormula(SheetCellAddr(sheet: effectiveSheet, addr: addr))
 
             // Snapshot before the write: value edits were not recorded at
             // all, so undo/redo silently did nothing for anything typed
@@ -243,9 +308,9 @@ public final class SheetEngine: @unchecked Sendable, SheetEngineCore {
             )))
 
             // Mark dependents dirty and recalculate
-            let dirty = markDirty(sheet: effectiveSheet, addr: addr)
-            recalculateInternal(dirty: dirty, sheet: effectiveSheet)
-            return dirty
+            let dirtyKeys = markDirtyKeys(sheet: effectiveSheet, addr: addr)
+            recalculateInternal(dirty: dirtyKeys)
+            return Set(dirtyKeys.map(\.addr))
         }
     }
 
@@ -258,54 +323,66 @@ public final class SheetEngine: @unchecked Sendable, SheetEngineCore {
     public func setFormula(sheet: String?, addr: CellAddr, source: String) throws -> Set<CellAddr> {
         let effectiveSheet = sheet ?? _activeSheet
         return try withLock {
-            guard _sheets[effectiveSheet] != nil else { return [] }
+            try setFormulaUnlocked(sheet: effectiveSheet, addr: addr, source: source)
+        }
+    }
 
-            // Parse
-            let parser = try FormulaParser(source: source)
-            let result = try parser.parse()
+    /// The body of `setFormula`, factored out so a caller that already
+    /// holds `lock` - `renameSheet`'s formula-text-propagation pass, most
+    /// notably - can re-set a formula without re-entering the lock.
+    /// `NSLock` is non-recursive; calling the public, locking
+    /// `setFormula` from inside another locked method deadlocks exactly
+    /// the way the evaluator's cell reads once did (see `EvaluatorBridge`).
+    /// The caller MUST already hold `lock`.
+    @discardableResult
+    private func setFormulaUnlocked(sheet effectiveSheet: String, addr: CellAddr, source: String) throws -> Set<CellAddr> {
+        guard _sheets[effectiveSheet] != nil else { return [] }
 
-            switch result {
-            case .value(let constant):
-                // No dependency tracking needed — store as a plain value
-                _sheets[effectiveSheet]?.cells[addr] = CellData(value: constant)
-                let dirty = markDirty(sheet: effectiveSheet, addr: addr)
-                recalculateInternal(dirty: dirty, sheet: effectiveSheet)
-                return dirty
+        // Parse
+        let parser = try FormulaParser(source: source)
+        let result = try parser.parse()
 
-            case .formula(let formula):
-                // Snapshot the previous formula BEFORE the write below
-                // replaces it; reading it afterwards recorded old == new,
-                // so every formula undo step was a no-op.
-                let previousFormula = _sheets[effectiveSheet]?.cells[addr]?.formula
+        switch result {
+        case .value(let constant):
+            // No dependency tracking needed — store as a plain value
+            _sheets[effectiveSheet]?.cells[addr] = CellData(value: constant)
+            let dirtyKeys = markDirtyKeys(sheet: effectiveSheet, addr: addr)
+            recalculateInternal(dirty: dirtyKeys)
+            return Set(dirtyKeys.map(\.addr))
 
-                // Cycle-safe graph insertion
-                try graph.setFormula(addr, ast: formula.ast)
+        case .formula(let formula):
+            // Snapshot the previous formula BEFORE the write below
+            // replaces it; reading it afterwards recorded old == new,
+            // so every formula undo step was a no-op.
+            let previousFormula = _sheets[effectiveSheet]?.cells[addr]?.formula
 
-                // Evaluate and cache, spilling an array result into the
-                // cells below/right of the anchor.
-                let evaluated = try evaluator.evaluate(formula.ast, at: addr, engine: evaluatorBridge)
-                let spilled = writeResult(
-                    anchor: addr, sheet: effectiveSheet,
-                    result: evaluated, formula: formula
-                )
+            // Cycle-safe graph insertion
+            try graph.setFormula(SheetCellAddr(sheet: effectiveSheet, addr: addr), ast: formula.ast)
 
-                // Push undo step
-                let edit = Edit(change: .setFormula(
-                    addr: addr, sheet: effectiveSheet,
-                    old: previousFormula,
-                    new: formula
-                ))
-                undoStack.push(edit)
+            // Evaluate and cache, spilling an array result into the
+            // cells below/right of the anchor.
+            let evaluated = try evaluator.evaluate(formula.ast, at: addr, sheet: effectiveSheet, engine: evaluatorBridge)
+            let spilled = writeResult(
+                anchor: addr, sheet: effectiveSheet,
+                result: evaluated, formula: formula
+            )
 
-                // Recalculate downstream. Spilled addresses are dirty
-                // too: a cell reading one of them must see the new value.
-                var dirty = markDirty(sheet: effectiveSheet, addr: addr)
-                for target in spilled {
-                    dirty.formUnion(graph.dirtySubgraph(from: [target]))
-                }
-                recalculateInternal(dirty: dirty, sheet: effectiveSheet)
-                return dirty
+            // Push undo step
+            let edit = Edit(change: .setFormula(
+                addr: addr, sheet: effectiveSheet,
+                old: previousFormula,
+                new: formula
+            ))
+            undoStack.push(edit)
+
+            // Recalculate downstream. Spilled addresses are dirty
+            // too: a cell reading one of them must see the new value.
+            var dirtyKeys = markDirtyKeys(sheet: effectiveSheet, addr: addr)
+            for target in spilled {
+                dirtyKeys.formUnion(graph.dirtySubgraph(from: [SheetCellAddr(sheet: effectiveSheet, addr: target)]))
             }
+            recalculateInternal(dirty: dirtyKeys)
+            return Set(dirtyKeys.map(\.addr))
         }
     }
 
@@ -345,7 +422,7 @@ public final class SheetEngine: @unchecked Sendable, SheetEngineCore {
             // Deleting an anchor takes its spilled block with it.
             clearSpill(anchor: addr, sheet: effectiveSheet)
             _sheets[effectiveSheet]?.cells.removeValue(forKey: addr)
-            graph.removeCell(addr)
+            graph.removeCell(SheetCellAddr(sheet: effectiveSheet, addr: addr))
         }
     }
 
@@ -442,15 +519,22 @@ public final class SheetEngine: @unchecked Sendable, SheetEngineCore {
     }
 
     /// Resolve a named range to its value (called by the evaluator).
-    private func namedRangeResolver(_ name: String, at context: CellAddr) throws -> Value {
-        withLock { resolveNamedRangeUnlocked(name, at: context) }
+    private func namedRangeResolver(_ name: String, at context: CellAddr, fallbackSheet: String) throws -> Value {
+        withLock { resolveNamedRangeUnlocked(name, at: context, fallbackSheet: fallbackSheet) }
     }
 
     /// Named-range read without taking the lock. The caller MUST already
     /// hold it. See ``getCellValueUnlocked(_:sheet:)``.
-    fileprivate func resolveNamedRangeUnlocked(_ name: String, at context: CellAddr) -> Value {
+    ///
+    /// `fallbackSheet` - the CALLING FORMULA's own sheet, not
+    /// `_activeSheet` - is what a name with no explicit sheet restriction
+    /// resolves against. Using `_activeSheet` here was the same bug
+    /// class this whole fix exists to close, surviving in the
+    /// named-range path: a formula on an inactive sheet reading an
+    /// unscoped named range would silently read the active sheet's data.
+    fileprivate func resolveNamedRangeUnlocked(_ name: String, at context: CellAddr, fallbackSheet: String) -> Value {
         guard let nr = _namedRanges[name] else { return .error(.nameInvalid) }
-        let effectiveSheet = nr.sheet ?? _activeSheet
+        let effectiveSheet = nr.sheet ?? fallbackSheet
         guard let sheetData = _sheets[effectiveSheet] else { return .error(.referenceInvalid) }
         let vals = nr.range.cells().map { sheetData.cells[$0]?.rawValue ?? .null }
         if vals.count == 1 { return vals[0] }
@@ -459,38 +543,43 @@ public final class SheetEngine: @unchecked Sendable, SheetEngineCore {
 
     // MARK: - Recalculation
 
-    /// Full recalculation of all formula cells.
+    /// Full recalculation of all formula cells, across every sheet.
     public func recalculate() {
         withLock {
-            recalculateInternal(dirty: graph.allCells, sheet: nil)
+            recalculateInternal(dirty: graph.allCells)
         }
     }
 
-    /// Incremental recalculation from a dirty root.
-    public func recalculateIncremental(from addr: CellAddr) {
+    /// Incremental recalculation from a dirty root on `sheet` (defaults to
+    /// the active sheet).
+    public func recalculateIncremental(from addr: CellAddr, sheet: String? = nil) {
         withLock {
-            let dirty = graph.dirtySubgraph(from: [addr])
-            recalculateInternal(dirty: dirty, sheet: nil)
+            let key = SheetCellAddr(sheet: sheet ?? _activeSheet, addr: addr)
+            let dirty = graph.dirtySubgraph(from: [key])
+            recalculateInternal(dirty: dirty)
         }
     }
 
     /// Force-mark a cell as dirty (e.g. a volatile function was triggered).
-    public func markDirty(addr: CellAddr) -> Set<CellAddr> {
+    public func markDirty(addr: CellAddr, sheet: String? = nil) -> Set<CellAddr> {
         withLock {
-            var dirty = Set<CellAddr>([addr])
+            let key = SheetCellAddr(sheet: sheet ?? _activeSheet, addr: addr)
+            var dirty = Set<SheetCellAddr>([key])
             graph.markAllVolatileDirty(&dirty)
-            return graph.dirtySubgraph(from: dirty)
+            return Set(graph.dirtySubgraph(from: dirty).map(\.addr))
         }
     }
 
-    /// Evaluate all formula cells and return a map of addr → result.
-    /// Use this for export / checkpointing.
-    public func evaluateAll() -> [CellAddr: Value] {
+    /// Evaluate all formula cells on `sheet` (defaults to the active
+    /// sheet) and return a map of addr -> result. Use this for export /
+    /// checkpointing.
+    public func evaluateAll(sheet: String? = nil) -> [CellAddr: Value] {
         withLock {
+            let effectiveSheet = sheet ?? _activeSheet
             var results: [CellAddr: Value] = [:]
-            for addr in graph.formulaCells {
-                if let data = currentCellData(addr) {
-                    results[addr] = data.rawValue
+            for key in graph.formulaCells where key.sheet == effectiveSheet {
+                if let data = currentCellData(key) {
+                    results[key.addr] = data.rawValue
                 }
             }
             return results
@@ -565,12 +654,12 @@ public final class SheetEngine: @unchecked Sendable, SheetEngineCore {
         return _sheets[effectiveSheet]?.cells[addr]?.rawValue ?? .null
     }
 
-    public func getRangeValues(_ range: RangeRef) throws -> [Value] {
-        getRangeValues(sheet: nil, range: range)
+    public func getRangeValues(_ range: RangeRef, fallbackSheet: String) throws -> [Value] {
+        getRangeValues(sheet: range.sheet ?? fallbackSheet, range: range)
     }
 
-    public func resolveNamedRange(_ name: String, at context: CellAddr) throws -> Value {
-        try namedRangeResolver(name, at: context)
+    public func resolveNamedRange(_ name: String, at context: CellAddr, fallbackSheet: String) throws -> Value {
+        try namedRangeResolver(name, at: context, fallbackSheet: fallbackSheet)
     }
 
     // MARK: - Serialization
@@ -623,15 +712,18 @@ public final class SheetEngine: @unchecked Sendable, SheetEngineCore {
 
     // MARK: - Private helpers
 
-    /// Mark a cell and its dependents as dirty, returning the dirty set.
-    private func markDirty(sheet: String, addr: CellAddr) -> Set<CellAddr> {
-        let dirty = Set<CellAddr>([addr])
-        return graph.dirtySubgraph(from: dirty)
+    /// Mark a cell and its dependents as dirty, returning the dirty set as
+    /// sheet-qualified keys - a dependent can live on a different sheet
+    /// than the cell that changed (`=Sheet1!A1` on Sheet2), and the
+    /// recalculation that follows must know each dirty cell's own sheet,
+    /// not assume they all share one.
+    private func markDirtyKeys(sheet: String, addr: CellAddr) -> Set<SheetCellAddr> {
+        graph.dirtySubgraph(from: [SheetCellAddr(sheet: sheet, addr: addr)])
     }
 
     /// Internal recalculation over a pre-computed dirty set.
     /// Must be called while holding lock.
-    private func recalculateInternal(dirty: Set<CellAddr>, sheet: String?) {
+    private func recalculateInternal(dirty: Set<SheetCellAddr>) {
         guard !dirty.isEmpty else { return }
 
         // Mark volatile cells as dirty too (NOW, RAND, etc. can change any time)
@@ -643,38 +735,45 @@ public final class SheetEngine: @unchecked Sendable, SheetEngineCore {
 
         do {
             let order = try graph.evaluationOrder(from: Array(subgraph))
-            for addr in order {
-                evaluateCell(addr)
+            for key in order {
+                evaluateCell(key)
             }
         } catch {
             // Cycle error — leave cells in their previous state, mark the
-            // root cell with an error value
-            for addr in dirty {
-                var mutableSelf = self
-                _sheets[sheet ?? _activeSheet]?.cells[addr]?.rawValue = .error(.referenceInvalid)
+            // root cell with an error value, on ITS OWN sheet.
+            for key in dirty {
+                _sheets[key.sheet]?.cells[key.addr]?.rawValue = .error(.referenceInvalid)
             }
         }
     }
 
     /// Evaluate a single formula cell and cache the result.
     /// Must be called while holding lock.
-    private func evaluateCell(_ addr: CellAddr) {
-        guard let ast = graph.formulaAST(for: addr) else { return }
-        guard let cell = _sheets[_activeSheet]?.cells[addr] else { return }
+    ///
+    /// `key.sheet` - not `_activeSheet` - is both where the result is
+    /// written and the formula's own sheet passed to the evaluator for
+    /// resolving unqualified references. Using `_activeSheet` here was
+    /// the actual defect: recalculating a dirty cell on an inactive
+    /// sheet evaluated it against the active sheet's data and wrote the
+    /// result into the active sheet's cell at the same (col, row) -
+    /// silently corrupting whichever sheet happened to be open.
+    private func evaluateCell(_ key: SheetCellAddr) {
+        guard let ast = graph.formulaAST(for: key) else { return }
+        guard let cell = _sheets[key.sheet]?.cells[key.addr] else { return }
 
         do {
-            let result = try evaluator.evaluate(ast, at: addr, engine: evaluatorBridge)
+            let result = try evaluator.evaluate(ast, at: key.addr, sheet: key.sheet, engine: evaluatorBridge)
             // Re-spill on every recalculation: the array's shape can
             // change when its inputs do (a FILTER matching fewer rows).
-            writeResult(anchor: addr, sheet: _activeSheet, result: result, formula: cell.formula)
+            writeResult(anchor: key.addr, sheet: key.sheet, result: result, formula: cell.formula)
         } catch {
-            clearSpill(anchor: addr, sheet: _activeSheet)
-            _sheets[_activeSheet]?.cells[addr] = CellData(value: .error(.referenceInvalid), formula: cell.formula)
+            clearSpill(anchor: key.addr, sheet: key.sheet)
+            _sheets[key.sheet]?.cells[key.addr] = CellData(value: .error(.referenceInvalid), formula: cell.formula)
         }
     }
 
-    private func currentCellData(_ addr: CellAddr) -> CellData? {
-        _sheets[_activeSheet]?.cells[addr]
+    private func currentCellData(_ key: SheetCellAddr) -> CellData? {
+        _sheets[key.sheet]?.cells[key.addr]
     }
 
     // MARK: - Dynamic arrays (spill)
@@ -782,22 +881,23 @@ public final class SheetEngine: @unchecked Sendable, SheetEngineCore {
         case .setValue(let addr, let sheet, let old, let new):
             let s = sheet ?? _activeSheet
             _sheets[s]?.cells[addr] = CellData(value: isUndo ? old : new)
-            let dirty = markDirty(sheet: s, addr: addr)
-            recalculateInternal(dirty: dirty, sheet: s)
+            let dirtyKeys = markDirtyKeys(sheet: s, addr: addr)
+            recalculateInternal(dirty: dirtyKeys)
 
         case .setFormula(let addr, let sheet, let old, let new):
             let s = sheet ?? _activeSheet
+            let key = SheetCellAddr(sheet: s, addr: addr)
             let formula = isUndo ? old : new
             if let f = formula {
-                _ = try? graph.setFormula(addr, ast: f.ast)
+                _ = try? graph.setFormula(key, ast: f.ast)
                 _sheets[s]?.cells[addr] = CellData(value: .null, formula: f)
-                evaluateCell(addr)
+                evaluateCell(key)
             } else {
-                graph.removeCell(addr)
+                graph.removeCell(key)
                 _sheets[s]?.cells.removeValue(forKey: addr)
             }
-            let dirty = markDirty(sheet: s, addr: addr)
-            recalculateInternal(dirty: dirty, sheet: s)
+            let dirtyKeys = markDirtyKeys(sheet: s, addr: addr)
+            recalculateInternal(dirty: dirtyKeys)
 
         case .clearSheet(let name):
             if isUndo {
@@ -846,17 +946,6 @@ public final class SheetEngine: @unchecked Sendable, SheetEngineCore {
         }
     }
 
-    /// Rebuild the dependency graph from all stored formulas.
-    /// Called after structural edits that clear the graph.
-    private func rebuildGraphFromCells() {
-        for (_, sheet) in _sheets {
-            for (addr, data) in sheet.cells {
-                if let formula = data.formula {
-                    try? graph.setFormula(addr, ast: formula.ast)
-                }
-            }
-        }
-    }
 }
 
 // MARK: - ColumnSlice extension
@@ -907,11 +996,17 @@ private final class EvaluatorBridge: SheetEngineCore {
         engine.getCellValueUnlocked(addr, sheet: sheet)
     }
 
-    func getRangeValues(_ range: RangeRef) throws -> [Value] {
-        engine.getRangeValuesUnlocked(sheet: nil, range: range)
+    func getRangeValues(_ range: RangeRef, fallbackSheet: String) throws -> [Value] {
+        // range.sheet wins when the formula qualified it explicitly
+        // (`=SUM(Sheet2!A1:B5)`); fallbackSheet - the formula's OWN
+        // sheet - only applies to an unqualified range. The prior
+        // version hardcoded `sheet: nil` here regardless of range.sheet,
+        // so even an explicit qualifier was silently ignored and every
+        // range read resolved against the workbook's active sheet.
+        engine.getRangeValuesUnlocked(sheet: range.sheet ?? fallbackSheet, range: range)
     }
 
-    func resolveNamedRange(_ name: String, at context: CellAddr) throws -> Value {
-        engine.resolveNamedRangeUnlocked(name, at: context)
+    func resolveNamedRange(_ name: String, at context: CellAddr, fallbackSheet: String) throws -> Value {
+        engine.resolveNamedRangeUnlocked(name, at: context, fallbackSheet: fallbackSheet)
     }
 }

@@ -10,7 +10,7 @@
 import Foundation
 
 public struct CycleError: Error, CustomStringConvertible {
-    public let cycle: [CellAddr]
+    public let cycle: [SheetCellAddr]
 
     public var description: String {
         let path = cycle.map { $0.description }.joined(separator: " -> ")
@@ -18,82 +18,156 @@ public struct CycleError: Error, CustomStringConvertible {
     }
 }
 
+// MARK: - SheetCellAddr
+
+/// A cell address qualified by sheet - the graph's real node identity.
+///
+/// `CellAddr` alone (col, row) is not unique across a workbook: Sheet1!A1
+/// and Sheet2!A1 are the same `CellAddr`. Every graph node, edge, and
+/// query is keyed on the pair, not the bare address, so cells on
+/// different sheets never collide and a cross-sheet formula's precedent
+/// edge lands on the sheet it actually reads.
+public struct SheetCellAddr: Hashable, Sendable, CustomStringConvertible {
+    public let sheet: String
+    public let addr: CellAddr
+
+    public init(sheet: String, addr: CellAddr) {
+        self.sheet = sheet
+        self.addr = addr
+    }
+
+    public var description: String { "\(sheet)!\(addr.description)" }
+}
+
 /// Bidirectional dependency graph.
 /// Manages cell-to-precedent and cell-to-dependent edges for incremental recalculation.
 public final class DependencyGraph: @unchecked Sendable {
-    /// Set of cell addresses — factored out to avoid nested-`>` generic syntax.
-    private typealias AddrSet = Set<CellAddr>
+    /// Set of qualified cell addresses — factored out to avoid nested-`>` generic syntax.
+    private typealias AddrSet = Set<SheetCellAddr>
 
     /// Forward edges: cell → cells it depends on (precedents)
-    private var precedents: [CellAddr: AddrSet] = [:]
+    private var precedents: [SheetCellAddr: AddrSet] = [:]
     /// Reverse edges: cell → cells that depend on it (dependents)
-    private var dependents: [CellAddr: AddrSet] = [:]
+    private var dependents: [SheetCellAddr: AddrSet] = [:]
     /// Formula ASTs for each cell
-    private var formulaASTs: [CellAddr: FormulaAST] = [:]
+    private var formulaASTs: [SheetCellAddr: FormulaAST] = [:]
     /// Cells that contain volatile functions (NOW, RAND, etc.)
-    private var volatileCells: Set<CellAddr> = []
+    private var volatileCells: Set<SheetCellAddr> = []
 
     public init() {}
 
     // MARK: - Mutation
 
     /// Set or update a formula for a cell. Updates edges and detects cycles.
+    ///
+    /// A `CellRef`/`RangeRef` inside the AST with `sheet == nil` means
+    /// "same sheet as the formula's own cell" - `key.sheet` resolves it,
+    /// so `=A1` in a formula living on Sheet2 records a precedent edge on
+    /// Sheet2!A1, and `=Sheet1!A1` records one on Sheet1!A1 regardless of
+    /// where the formula itself lives.
+    ///
     /// - Throws: CycleError if the new formula creates a dependency cycle.
-    public func setFormula(_ addr: CellAddr, ast: FormulaAST) throws {
+    public func setFormula(_ key: SheetCellAddr, ast: FormulaAST) throws {
         // Only this cell's own precedents; the cells reading it keep
         // depending on it.
-        removePrecedentEdges(for: addr)
+        removePrecedentEdges(for: key)
 
         // Store the AST
-        formulaASTs[addr] = ast
+        formulaASTs[key] = ast
 
-        // Collect new precedents
-        let newPrecedents = collectPrecedents(from: ast)
+        // Collect new precedents, resolved against this cell's own sheet.
+        let newPrecedents = collectPrecedents(from: ast, currentSheet: key.sheet)
 
         // Check for cycles
-        if wouldCreateCycle(from: addr, newPrecedents: newPrecedents) {
-            formulaASTs.removeValue(forKey: addr)
-            throw CycleError(cycle: buildCycle(from: addr, newPrecedents: newPrecedents))
+        if wouldCreateCycle(from: key, newPrecedents: newPrecedents) {
+            formulaASTs.removeValue(forKey: key)
+            throw CycleError(cycle: buildCycle(from: key, newPrecedents: newPrecedents))
         }
 
         // Add forward edges
-        precedents[addr] = newPrecedents
+        precedents[key] = newPrecedents
 
         // Add reverse edges (dependents)
         for precedent in newPrecedents {
             if dependents[precedent] == nil { dependents[precedent] = Set() }
-            dependents[precedent]!.insert(addr)
+            dependents[precedent]!.insert(key)
         }
 
         // Track volatile functions
         if ast.containsVolatileFunction {
-            volatileCells.insert(addr)
+            volatileCells.insert(key)
         } else {
-            volatileCells.remove(addr)
+            volatileCells.remove(key)
         }
     }
 
-    /// Drop `addr`'s formula and the edges to the cells it read, while
+    /// Drop `key`'s formula and the edges to the cells it read, while
     /// keeping the cells that read IT - the address still exists and now
     /// holds a plain value.
     ///
     /// Typing a value over a formula must go through this. Without it the
     /// AST stayed in the graph, the next recalculation re-evaluated the
     /// old formula, and the typed value was silently thrown away.
-    public func clearFormula(_ addr: CellAddr) {
-        removePrecedentEdges(for: addr)
-        formulaASTs.removeValue(forKey: addr)
-        volatileCells.remove(addr)
+    public func clearFormula(_ key: SheetCellAddr) {
+        removePrecedentEdges(for: key)
+        formulaASTs.removeValue(forKey: key)
+        volatileCells.remove(key)
     }
 
     /// Remove a cell and all its edges.
-    public func removeCell(_ addr: CellAddr) {
-        removeEdges(for: addr)
-        formulaASTs.removeValue(forKey: addr)
-        volatileCells.remove(addr)
+    public func removeCell(_ key: SheetCellAddr) {
+        removeEdges(for: key)
+        formulaASTs.removeValue(forKey: key)
+        volatileCells.remove(key)
     }
 
-    /// Clear the entire graph.
+    /// Remove every node belonging to one sheet (deleting a sheet) without
+    /// disturbing any other sheet's graph state.
+    public func removeSheet(_ sheet: String) {
+        // allCells (== precedents.keys) misses a plain-value cell that
+        // is never a formula OWNER but is still a formula TARGET
+        // elsewhere - it exists only as a value inside some other
+        // cell's precedent set and as a key in `dependents`, never as a
+        // key in `precedents`. Skipping it left a permanent dangling
+        // edge toward a sheet that no longer exists, which years later
+        // could throw a false-positive CycleError if a sheet by the
+        // same name was ever recreated (hasPath walks the stale edge
+        // and "finds" a cycle that was never really there).
+        var toRemove = Set<SheetCellAddr>()
+        for key in precedents.keys where key.sheet == sheet { toRemove.insert(key) }
+        for key in dependents.keys where key.sheet == sheet { toRemove.insert(key) }
+        for key in toRemove {
+            removeEdges(for: key)
+            formulaASTs.removeValue(forKey: key)
+            volatileCells.remove(key)
+        }
+    }
+
+    /// Rewrite every node/edge on `old` to live under `new` (renaming a
+    /// sheet). Cross-sheet edges pointing AT the renamed sheet from
+    /// elsewhere are rewritten too, so a formula on another sheet that
+    /// reads the renamed one keeps its edge instead of dangling.
+    /// The caller (SheetEngine.renameSheet) already guards that `new`
+    /// names no existing sheet, so this never collides through that
+    /// path today. This method is public with no guard of its own,
+    /// though, so `uniquingKeysWith:` - keep the later value, arbitrary
+    /// but deterministic - stands in for `uniqueKeysWithValues:`, which
+    /// traps the process outright if a future caller ever renames onto
+    /// an existing sheet name.
+    public func renameSheet(from old: String, to new: String) {
+        func rekey(_ key: SheetCellAddr) -> SheetCellAddr {
+            key.sheet == old ? SheetCellAddr(sheet: new, addr: key.addr) : key
+        }
+        precedents = Dictionary(precedents.map { (rekey($0.key), Set($0.value.map(rekey))) },
+                                 uniquingKeysWith: { $1 })
+        dependents = Dictionary(dependents.map { (rekey($0.key), Set($0.value.map(rekey))) },
+                                 uniquingKeysWith: { $1 })
+        formulaASTs = Dictionary(formulaASTs.map { (rekey($0.key), $0.value) },
+                                  uniquingKeysWith: { $1 })
+        volatileCells = Set(volatileCells.map(rekey))
+    }
+
+    /// Clear the entire graph (every sheet).
     public func clear() {
         precedents.removeAll()
         dependents.removeAll()
@@ -101,58 +175,59 @@ public final class DependencyGraph: @unchecked Sendable {
         volatileCells.removeAll()
     }
 
-    /// Drop only the OUTGOING edges: the cells `addr` reads.
+    /// Drop only the OUTGOING edges: the cells `key` reads.
     ///
     /// Re-setting a cell's formula replaces what it reads, not who reads
     /// it. Incoming edges must survive - dropping them meant that the
     /// moment a referenced cell's formula was re-set, every cell reading
     /// it silently stopped depending on it, which disabled both cycle
     /// detection and incremental recalculation.
-    private func removePrecedentEdges(for addr: CellAddr) {
-        if let preds = precedents[addr] {
+    private func removePrecedentEdges(for key: SheetCellAddr) {
+        if let preds = precedents[key] {
             for pred in preds {
-                dependents[pred]?.remove(addr)
+                dependents[pred]?.remove(key)
                 if dependents[pred]?.isEmpty == true { dependents.removeValue(forKey: pred) }
             }
         }
-        precedents.removeValue(forKey: addr)
+        precedents.removeValue(forKey: key)
     }
 
-    /// Drop every edge touching `addr`, incoming and outgoing. Only for
+    /// Drop every edge touching `key`, incoming and outgoing. Only for
     /// removing the cell itself; see `removePrecedentEdges` for the
     /// re-set-a-formula path.
-    private func removeEdges(for addr: CellAddr) {
-        removePrecedentEdges(for: addr)
+    private func removeEdges(for key: SheetCellAddr) {
+        removePrecedentEdges(for: key)
 
         // Remove from precedents' dependent lists
-        if let deps = dependents[addr] {
+        if let deps = dependents[key] {
             for dep in deps {
-                precedents[dep]?.remove(addr)
+                precedents[dep]?.remove(key)
                 if precedents[dep]?.isEmpty == true { precedents.removeValue(forKey: dep) }
             }
         }
-        dependents.removeValue(forKey: addr)
+        dependents.removeValue(forKey: key)
     }
 
-    private func collectPrecedents(from ast: FormulaAST) -> Set<CellAddr> {
-        var result = Set<CellAddr>()
+    private func collectPrecedents(from ast: FormulaAST, currentSheet: String) -> Set<SheetCellAddr> {
+        var result = Set<SheetCellAddr>()
         for cell in ast.collectCells() {
-            result.insert(cell.addr)
+            result.insert(SheetCellAddr(sheet: cell.sheet ?? currentSheet, addr: cell.addr))
         }
         for range in ast.collectRanges() {
-            for addr in range.cells() { result.insert(addr) }
+            let sheet = range.sheet ?? currentSheet
+            for addr in range.cells() { result.insert(SheetCellAddr(sheet: sheet, addr: addr)) }
         }
         return result
     }
 
-    private func wouldCreateCycle(from addr: CellAddr, newPrecedents: Set<CellAddr>) -> Bool {
-        // If any of the new precedents transitively depend on addr, it's a cycle
-        return hasPath(from: addr, to: addr, via: newPrecedents)
+    private func wouldCreateCycle(from key: SheetCellAddr, newPrecedents: Set<SheetCellAddr>) -> Bool {
+        // If any of the new precedents transitively depend on key, it's a cycle
+        return hasPath(from: key, to: key, via: newPrecedents)
     }
 
-    private func hasPath(from source: CellAddr, to target: CellAddr, via directPrecedents: Set<CellAddr>) -> Bool {
+    private func hasPath(from source: SheetCellAddr, to target: SheetCellAddr, via directPrecedents: Set<SheetCellAddr>) -> Bool {
         // DFS from each new precedent to see if we can reach `source`
-        var visited = Set<CellAddr>()
+        var visited = Set<SheetCellAddr>()
         var stack = Array(directPrecedents)
 
         while !stack.isEmpty {
@@ -167,22 +242,22 @@ public final class DependencyGraph: @unchecked Sendable {
         return false
     }
 
-    private func buildCycle(from addr: CellAddr, newPrecedents: Set<CellAddr>) -> [CellAddr] {
-        // Build the cycle path: addr ← ... ← precedent ← addr
-        var cycle = [addr]
-        var current = addr
-        var visited = Set<CellAddr>([addr])
+    private func buildCycle(from key: SheetCellAddr, newPrecedents: Set<SheetCellAddr>) -> [SheetCellAddr] {
+        // Build the cycle path: key ← ... ← precedent ← key
+        var current = key
+        _ = current
+        var visited = Set<SheetCellAddr>([key])
 
-        // Find a precedent that leads back to addr
+        // Find a precedent that leads back to key
         var queue = Array(newPrecedents)
-        var parent: [CellAddr: CellAddr] = [:]
+        var parent: [SheetCellAddr: SheetCellAddr] = [:]
 
         while !queue.isEmpty {
             let node = queue.removeFirst()
-            if node == addr {
+            if node == key {
                 // Reconstruct
-                var path = [addr]
-                var cur: CellAddr? = node
+                var path = [key]
+                var cur: SheetCellAddr? = node
                 while let c = cur {
                     cur = parent[c]
                     if let cc = cur { path.append(cc) }
@@ -199,17 +274,17 @@ public final class DependencyGraph: @unchecked Sendable {
             }
         }
 
-        return [addr]
+        return [key]
     }
 
     // MARK: - Queries
 
     /// Topological sort of all cells, or of a specified set of roots.
     /// - Throws: CycleError if a cycle exists in the subgraph.
-    public func evaluationOrder(from roots: [CellAddr]? = nil) throws -> [CellAddr] {
+    public func evaluationOrder(from roots: [SheetCellAddr]? = nil) throws -> [SheetCellAddr] {
         // Kahn's algorithm
-        var inDegree: [CellAddr: Int] = [:]
-        var allNodes: Set<CellAddr> = []
+        var inDegree: [SheetCellAddr: Int] = [:]
+        var allNodes: Set<SheetCellAddr> = []
 
         if let roots = roots {
             allNodes = Set(roots)
@@ -224,8 +299,8 @@ public final class DependencyGraph: @unchecked Sendable {
             inDegree[node] = directPrecedents.count
         }
 
-        var queue: [CellAddr] = allNodes.filter { inDegree[$0] == 0 }
-        var result: [CellAddr] = []
+        var queue: [SheetCellAddr] = allNodes.filter { inDegree[$0] == 0 }
+        var result: [SheetCellAddr] = []
 
         while !queue.isEmpty {
             let node = queue.removeFirst()
@@ -252,8 +327,8 @@ public final class DependencyGraph: @unchecked Sendable {
         return result
     }
 
-    private func collectAllDependents(of addr: CellAddr, into set: inout Set<CellAddr>) {
-        guard let deps = dependents[addr] else { return }
+    private func collectAllDependents(of key: SheetCellAddr, into set: inout Set<SheetCellAddr>) {
+        guard let deps = dependents[key] else { return }
         for dep in deps {
             if !set.contains(dep) {
                 set.insert(dep)
@@ -262,10 +337,10 @@ public final class DependencyGraph: @unchecked Sendable {
         }
     }
 
-    private func buildFullCycle(starting from: CellAddr) -> [CellAddr] {
-        var visited = Set<CellAddr>()
-        var path: [CellAddr] = []
-        var current: CellAddr? = from
+    private func buildFullCycle(starting from: SheetCellAddr) -> [SheetCellAddr] {
+        var visited = Set<SheetCellAddr>()
+        var path: [SheetCellAddr] = []
+        var current: SheetCellAddr? = from
 
         while let c = current {
             if visited.contains(c) {
@@ -286,8 +361,8 @@ public final class DependencyGraph: @unchecked Sendable {
 
     /// BFS propagation from dirty cells to all downstream dependents.
     /// Returns the complete dirty subgraph.
-    public func dirtySubgraph(from dirty: Set<CellAddr>) -> Set<CellAddr> {
-        var result = Set<CellAddr>()
+    public func dirtySubgraph(from dirty: Set<SheetCellAddr>) -> Set<SheetCellAddr> {
+        var result = Set<SheetCellAddr>()
         var queue = Array(dirty)
 
         while !queue.isEmpty {
@@ -305,46 +380,46 @@ public final class DependencyGraph: @unchecked Sendable {
     }
 
     /// Get all cells that depend (directly or transitively) on a cell.
-    public func allDependents(of addr: CellAddr) -> Set<CellAddr> {
-        dirtySubgraph(from: [addr])
+    public func allDependents(of key: SheetCellAddr) -> Set<SheetCellAddr> {
+        dirtySubgraph(from: [key])
     }
 
     /// Get all cells that a cell depends on (direct precedents).
-    public func directPrecedents(of addr: CellAddr) -> Set<CellAddr> {
-        precedents[addr] ?? []
+    public func directPrecedents(of key: SheetCellAddr) -> Set<SheetCellAddr> {
+        precedents[key] ?? []
     }
 
     /// Get all cells that depend on a cell (direct dependents).
-    public func directDependents(of addr: CellAddr) -> Set<CellAddr> {
-        dependents[addr] ?? []
+    public func directDependents(of key: SheetCellAddr) -> Set<SheetCellAddr> {
+        dependents[key] ?? []
     }
 
     /// Get the formula AST for a cell.
-    public func formulaAST(for addr: CellAddr) -> FormulaAST? {
-        formulaASTs[addr]
+    public func formulaAST(for key: SheetCellAddr) -> FormulaAST? {
+        formulaASTs[key]
     }
 
     /// Get all cells with formulas.
-    public var formulaCells: [CellAddr] {
+    public var formulaCells: [SheetCellAddr] {
         Array(formulaASTs.keys)
     }
 
-    /// All tracked cells (with formulas).
-    public var allCells: Set<CellAddr> {
+    /// All tracked cells (with formulas), across every sheet.
+    public var allCells: Set<SheetCellAddr> {
         Set(precedents.keys)
     }
 
     /// Cells containing volatile functions.
-    public var volatile: Set<CellAddr> { volatileCells }
+    public var volatile: Set<SheetCellAddr> { volatileCells }
 
     /// Check if a cell is volatile.
-    public func isVolatile(_ addr: CellAddr) -> Bool {
-        volatileCells.contains(addr)
+    public func isVolatile(_ key: SheetCellAddr) -> Bool {
+        volatileCells.contains(key)
     }
 
     /// Full dirty propagation when any volatile function is triggered.
     /// Marks ALL volatile cells as dirty (they can change without their inputs changing).
-    public func markAllVolatileDirty(_ dirty: inout Set<CellAddr>) {
+    public func markAllVolatileDirty(_ dirty: inout Set<SheetCellAddr>) {
         dirty.formUnion(volatileCells)
     }
 
@@ -364,21 +439,21 @@ public final class DependencyGraph: @unchecked Sendable {
         public let edges: [Edge]
     }
 
-    public func serialized(root: CellAddr? = nil, depth: Int = 1) -> SerializedGraph {
-        var nodesToInclude = Set<CellAddr>()
-        var nodesSet = Set<CellAddr>()
+    public func serialized(root: SheetCellAddr? = nil, depth: Int = 1) -> SerializedGraph {
+        var nodesToInclude = Set<SheetCellAddr>()
+        var nodesSet = Set<SheetCellAddr>()
 
         if let root = root {
             // BFS from root to depth
-            var queue: [(CellAddr, Int)] = [(root, 0)]
+            var queue: [(SheetCellAddr, Int)] = [(root, 0)]
             while !queue.isEmpty {
-                let (addr, d) = queue.removeFirst()
+                let (key, d) = queue.removeFirst()
                 if d > depth { continue }
-                nodesToInclude.insert(addr)
-                if let deps = dependents[addr] {
+                nodesToInclude.insert(key)
+                if let deps = dependents[key] {
                     for dep in deps { queue.append((dep, d + 1)) }
                 }
-                if let preds = precedents[addr] {
+                if let preds = precedents[key] {
                     for pred in preds { queue.append((pred, d + 1)) }
                 }
             }
@@ -387,11 +462,11 @@ public final class DependencyGraph: @unchecked Sendable {
             nodesSet = Set(formulaASTs.keys)
         }
 
-        let nodes = nodesSet.map { addr in
+        let nodes = nodesSet.map { key in
             SerializedGraph.Node(
-                addr: addr.description,
-                hasFormula: formulaASTs[addr] != nil,
-                isVolatile: volatileCells.contains(addr)
+                addr: key.description,
+                hasFormula: formulaASTs[key] != nil,
+                isVolatile: volatileCells.contains(key)
             )
         }
 

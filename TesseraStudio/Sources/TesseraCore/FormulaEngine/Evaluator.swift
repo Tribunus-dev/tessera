@@ -26,8 +26,17 @@ public final class Evaluator {
     // MARK: - Public API
 
     /// Evaluate a formula AST at a given cell address.
-    public func evaluate(_ ast: FormulaAST, at addr: CellAddr, engine: SheetEngineCore) throws -> Value {
-        try recursiveEvaluate(ast, at: addr, depth: 0, engine: engine, env: [:])
+    ///
+    /// `sheet` is the sheet the formula ITSELF lives on - not the
+    /// workbook's active sheet. An unqualified reference inside the
+    /// formula (`=A1`, no `Sheet!` prefix) resolves against `sheet`; a
+    /// qualified one (`=Sheet2!A1`) resolves against whatever it names.
+    /// Passing the active sheet here instead of the formula's own sheet
+    /// is exactly the bug this parameter exists to prevent: a formula on
+    /// an inactive sheet would read the ACTIVE sheet's cells for every
+    /// unqualified reference it makes.
+    public func evaluate(_ ast: FormulaAST, at addr: CellAddr, sheet: String, engine: SheetEngineCore) throws -> Value {
+        try recursiveEvaluate(ast, at: addr, sheet: sheet, depth: 0, engine: engine, env: [:])
     }
 
     /// Names bound by `LET` (and LAMBDA parameters at call time). Looked
@@ -36,7 +45,7 @@ public final class Evaluator {
 
     // MARK: - Recursive Evaluation
 
-    private func recursiveEvaluate(_ ast: FormulaAST, at addr: CellAddr,
+    private func recursiveEvaluate(_ ast: FormulaAST, at addr: CellAddr, sheet: String,
                                   depth: Int, engine: SheetEngineCore,
                                   env: Environment) throws -> Value {
         if depth > config.maxCallDepth {
@@ -67,29 +76,33 @@ public final class Evaluator {
                 // A LET binding shadows a workbook named range, so an
                 // inner name always wins over an outer one.
                 if let bound = env[name.uppercased()] { return bound }
-                return try engine.resolveNamedRange(name, at: addr)
+                return try engine.resolveNamedRange(name, at: addr, fallbackSheet: sheet)
             }
-            return try engine.getCellValue(ref.addr, sheet: ref.sheet)
+            // ref.sheet is nil for an unqualified reference - "same sheet
+            // as this formula", i.e. `sheet`, not the workbook's active
+            // sheet.
+            return try engine.getCellValue(ref.addr, sheet: ref.sheet ?? sheet)
 
         case .range(let range):
-            // Evaluate to array
-            let values = try engine.getRangeValues(range)
+            // Evaluate to array. Same resolution rule as .cell: an
+            // unqualified range resolves against the formula's own sheet.
+            let values = try engine.getRangeValues(range, fallbackSheet: sheet)
             return .array(rows: range.height, cols: range.width, flat: values)
 
         case .binary(let op, let left, let right):
-            return try evalBinary(op: op, left: left, right: right, at: addr, depth: depth, engine: engine, env: env)
+            return try evalBinary(op: op, left: left, right: right, at: addr, sheet: sheet, depth: depth, engine: engine, env: env)
 
         case .unary(let op, let operand):
-            return try evalUnary(op: op, operand: operand, at: addr, depth: depth, engine: engine, env: env)
+            return try evalUnary(op: op, operand: operand, at: addr, sheet: sheet, depth: depth, engine: engine, env: env)
 
         case .function(let name, let args):
-            return try evalFunction(name: name, args: args, at: addr, depth: depth, engine: engine, env: env)
+            return try evalFunction(name: name, args: args, at: addr, sheet: sheet, depth: depth, engine: engine, env: env)
 
         case .arrayLiteral(let rows):
             var flat: [Value] = []
             for row in rows {
                 for cell in row {
-                    flat.append(try recursiveEvaluate(cell, at: addr, depth: depth + 1, engine: engine, env: env))
+                    flat.append(try recursiveEvaluate(cell, at: addr, sheet: sheet, depth: depth + 1, engine: engine, env: env))
                 }
             }
             return .array(rows: rows.count, cols: rows.first?.count ?? 0, flat: flat)
@@ -99,10 +112,10 @@ public final class Evaluator {
     // MARK: - Binary Operations
 
     private func evalBinary(op: BinaryOp, left: FormulaAST, right: FormulaAST,
-                            at addr: CellAddr, depth: Int,
+                            at addr: CellAddr, sheet: String, depth: Int,
                             engine: SheetEngineCore, env: Environment) throws -> Value {
-        let l = try recursiveEvaluate(left, at: addr, depth: depth + 1, engine: engine, env: env)
-        let r = try recursiveEvaluate(right, at: addr, depth: depth + 1, engine: engine, env: env)
+        let l = try recursiveEvaluate(left, at: addr, sheet: sheet, depth: depth + 1, engine: engine, env: env)
+        let r = try recursiveEvaluate(right, at: addr, sheet: sheet, depth: depth + 1, engine: engine, env: env)
 
         switch op {
         case .add:
@@ -177,10 +190,10 @@ public final class Evaluator {
 
     // MARK: - Unary Operations
 
-    private func evalUnary(op: UnaryOp, operand: FormulaAST, at addr: CellAddr,
+    private func evalUnary(op: UnaryOp, operand: FormulaAST, at addr: CellAddr, sheet: String,
                            depth: Int, engine: SheetEngineCore,
                            env: Environment) throws -> Value {
-        let v = try recursiveEvaluate(operand, at: addr, depth: depth + 1, engine: engine, env: env)
+        let v = try recursiveEvaluate(operand, at: addr, sheet: sheet, depth: depth + 1, engine: engine, env: env)
 
         switch op {
         case .negate:
@@ -197,7 +210,7 @@ public final class Evaluator {
 
     // MARK: - Function Calls
 
-    private func evalFunction(name: String, args: [FormulaAST], at addr: CellAddr,
+    private func evalFunction(name: String, args: [FormulaAST], at addr: CellAddr, sheet: String,
                                depth: Int, engine: SheetEngineCore,
                                env: Environment) throws -> Value {
         let upper = name.uppercased()
@@ -206,7 +219,7 @@ public final class Evaluator {
         // the arguments are evaluated - evaluating `x` in `LET(x, 5, ...)`
         // would try to resolve it as a named range and fail.
         if upper == "LET" {
-            return try evalLet(args: args, at: addr, depth: depth, engine: engine, env: env)
+            return try evalLet(args: args, at: addr, sheet: sheet, depth: depth, engine: engine, env: env)
         }
         if upper == "LAMBDA" {
             return evalLambdaDefinition(args: args)
@@ -216,14 +229,14 @@ public final class Evaluator {
         if case .lambda(let params, let body)? = env[upper] {
             return try applyLambda(
                 params: params, body: body, args: args,
-                at: addr, depth: depth, engine: engine, env: env
+                at: addr, sheet: sheet, depth: depth, engine: engine, env: env
             )
         }
 
         // Evaluate arguments first
         var evaluatedArgs: [Value] = []
         for arg in args {
-            let v = try recursiveEvaluate(arg, at: addr, depth: depth + 1, engine: engine, env: env)
+            let v = try recursiveEvaluate(arg, at: addr, sheet: sheet, depth: depth + 1, engine: engine, env: env)
             evaluatedArgs.append(v)
         }
 
@@ -266,7 +279,7 @@ public final class Evaluator {
     /// Each value is evaluated in the scope built so far, so a later
     /// binding can refer to an earlier one. The final argument is the
     /// expression the whole call returns.
-    private func evalLet(args: [FormulaAST], at addr: CellAddr, depth: Int,
+    private func evalLet(args: [FormulaAST], at addr: CellAddr, sheet: String, depth: Int,
                          engine: SheetEngineCore, env: Environment) throws -> Value {
         // (name, value) pairs plus one calculation: an odd count, >= 3.
         guard args.count >= 3, args.count % 2 == 1 else { return .error(.notAvailable) }
@@ -276,12 +289,12 @@ public final class Evaluator {
         while index + 2 < args.count {
             guard let name = bindingName(args[index]) else { return .error(.nameInvalid) }
             scope[name] = try recursiveEvaluate(
-                args[index + 1], at: addr, depth: depth + 1, engine: engine, env: scope
+                args[index + 1], at: addr, sheet: sheet, depth: depth + 1, engine: engine, env: scope
             )
             index += 2
         }
         return try recursiveEvaluate(
-            args[args.count - 1], at: addr, depth: depth + 1, engine: engine, env: scope
+            args[args.count - 1], at: addr, sheet: sheet, depth: depth + 1, engine: engine, env: scope
         )
     }
 
@@ -304,16 +317,16 @@ public final class Evaluator {
     /// calls itself without a base case returns `#NUM!` rather than
     /// running away.
     private func applyLambda(params: [String], body: FormulaAST, args: [FormulaAST],
-                             at addr: CellAddr, depth: Int,
+                             at addr: CellAddr, sheet: String, depth: Int,
                              engine: SheetEngineCore, env: Environment) throws -> Value {
         guard params.count == args.count else { return .error(.notAvailable) }
         var scope = env
         for (i, parameter) in params.enumerated() {
             scope[parameter] = try recursiveEvaluate(
-                args[i], at: addr, depth: depth + 1, engine: engine, env: env
+                args[i], at: addr, sheet: sheet, depth: depth + 1, engine: engine, env: env
             )
         }
-        return try recursiveEvaluate(body, at: addr, depth: depth + 1, engine: engine, env: scope)
+        return try recursiveEvaluate(body, at: addr, sheet: sheet, depth: depth + 1, engine: engine, env: scope)
     }
 }
 
@@ -350,6 +363,11 @@ public struct DeterministicConfig: Sendable {
 /// This protocol lets us avoid circular dependencies.
 public protocol SheetEngineCore {
     func getCellValue(_ addr: CellAddr, sheet: String?) throws -> Value
-    func getRangeValues(_ range: RangeRef) throws -> [Value]
-    func resolveNamedRange(_ name: String, at context: CellAddr) throws -> Value
+    /// `fallbackSheet` is the sheet of the formula making the request -
+    /// used when `range.sheet` is nil (an unqualified range reference).
+    func getRangeValues(_ range: RangeRef, fallbackSheet: String) throws -> [Value]
+    /// `fallbackSheet` is the sheet of the formula making the request -
+    /// used when the named range itself has no explicit sheet
+    /// restriction, mirroring `getRangeValues`'s `fallbackSheet`.
+    func resolveNamedRange(_ name: String, at context: CellAddr, fallbackSheet: String) throws -> Value
 }

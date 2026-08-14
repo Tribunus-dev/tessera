@@ -233,6 +233,229 @@ final class SheetEngineTests: XCTestCase {
         XCTAssertEqual(engine.getValue(sheet: "Sheet2", addr: CellAddr(col: 0, row: 0)), .number(1))
     }
 
+    /// Same (col, row) on two different sheets used to collide in the
+    /// dependency graph - `CellAddr` alone was the graph's node key, with
+    /// no sheet dimension. A formula on Sheet2 reading its own A1 would
+    /// register a precedent edge indistinguishable from a Sheet1!A1
+    /// formula's edge. This is the regression test for that collision:
+    /// both sheets hold a same-address formula, and each must track its
+    /// OWN precedent, not the other's.
+    func testFormulaDependency_doesNotCollideAcrossSheetsAtTheSameAddress() throws {
+        engine.createSheet(name: "Sheet2")
+        let a1 = CellAddr(col: 0, row: 0)
+        let b1 = CellAddr(col: 1, row: 0)
+
+        try engine.setFormula(sheet: "Sheet1", addr: b1, source: "=A1*10")
+        try engine.setFormula(sheet: "Sheet2", addr: b1, source: "=A1*1000")
+
+        engine.setValue(sheet: "Sheet1", addr: a1, value: .number(1))
+        engine.setValue(sheet: "Sheet2", addr: a1, value: .number(1))
+
+        XCTAssertEqual(engine.getValue(sheet: "Sheet1", addr: b1), .number(10),
+                        "Sheet1!B1 must use Sheet1's formula and Sheet1's A1")
+        XCTAssertEqual(engine.getValue(sheet: "Sheet2", addr: b1), .number(1000),
+                        "Sheet2!B1 must use Sheet2's formula and Sheet2's A1, not Sheet1's")
+
+        // Editing Sheet1!A1 must not dirty Sheet2!B1 - they are unrelated
+        // cells that happen to share a (col, row).
+        engine.setValue(sheet: "Sheet1", addr: a1, value: .number(5))
+        XCTAssertEqual(engine.getValue(sheet: "Sheet1", addr: b1), .number(50))
+        XCTAssertEqual(engine.getValue(sheet: "Sheet2", addr: b1), .number(1000),
+                        "editing Sheet1!A1 must not recompute Sheet2!B1")
+    }
+
+    /// A formula that explicitly qualifies another sheet
+    /// (`='Sheet1'!A1*2`) must read and track that sheet - not silently
+    /// resolve against whichever sheet is active when it recalculates.
+    ///
+    /// Quoted, not bare (`=Sheet1!A1*2`): this engine's Lexer only
+    /// recognizes a sheet qualifier when it's single-quoted
+    /// (`scanQuotedSheetRef`) - `scanIdentifier` never looks ahead for
+    /// `!` after a bare name, so an unquoted sheet-qualified reference
+    /// does not parse as one at all. It silently becomes a named-range
+    /// lookup that drops everything after the `!` (`=Sheet1!A1*2`
+    /// parses to a bare reference to a named range called "SHEET1", not
+    /// "Sheet1's A1 times 2"), or throws inside a function call. Quoting
+    /// is not a style choice here; it's the only syntax this parser
+    /// accepts for a cross-sheet reference.
+    func testFormulaDependency_explicitCrossSheetReferenceTracksTheNamedSheet() throws {
+        engine.createSheet(name: "Sheet2")
+        let a1 = CellAddr(col: 0, row: 0)
+        let b1 = CellAddr(col: 1, row: 0)
+
+        engine.setValue(sheet: "Sheet1", addr: a1, value: .number(3))
+        try engine.setFormula(sheet: "Sheet2", addr: b1, source: "='Sheet1'!A1*2")
+        XCTAssertEqual(engine.getValue(sheet: "Sheet2", addr: b1), .number(6))
+
+        // Sheet1 is not active; recalculating Sheet2!B1 must still read
+        // Sheet1!A1, not whatever Sheet2!A1 (the active sheet's A1) holds.
+        engine.setActiveSheet("Sheet1")
+        engine.setValue(sheet: "Sheet2", addr: a1, value: .number(999))
+        XCTAssertEqual(engine.getValue(sheet: "Sheet2", addr: b1), .number(6),
+                        "Sheet2!A1 changing must not affect a formula that reads Sheet1!A1")
+
+        // Changing the cell the formula ACTUALLY reads must dirty it,
+        // even though Sheet1 (not Sheet2) is the active sheet.
+        engine.setValue(sheet: "Sheet1", addr: a1, value: .number(10))
+        XCTAssertEqual(engine.getValue(sheet: "Sheet2", addr: b1), .number(20),
+                        "editing Sheet1!A1 must recompute the Sheet2 formula that reads it")
+    }
+
+    /// Renaming a sheet must preserve every cell on it. A prior version
+    /// removed the old `WorkbookSheet` and immediately replaced it with a
+    /// fresh, empty one under the new name - discarding every cell the
+    /// sheet held.
+    func testRenameSheet_preservesCellData() throws {
+        engine.createSheet(name: "Data")
+        let a1 = CellAddr(col: 0, row: 0)
+        let b1 = CellAddr(col: 1, row: 0)
+        engine.setValue(sheet: "Data", addr: a1, value: .number(42))
+        try engine.setFormula(sheet: "Data", addr: b1, source: "=A1+1")
+
+        XCTAssertTrue(engine.renameSheet(from: "Data", to: "Renamed"))
+
+        XCTAssertEqual(engine.getValue(sheet: "Renamed", addr: a1), .number(42),
+                        "the renamed sheet must keep its literal value")
+        XCTAssertEqual(engine.getValue(sheet: "Renamed", addr: b1), .number(43),
+                        "the renamed sheet must keep its formula and its computed result")
+    }
+
+    /// A formula elsewhere that references the renamed sheet by its OLD
+    /// name must follow the rename - both structurally (the graph edge
+    /// still triggers recalculation) and in its stored TEXT (so
+    /// evaluating it doesn't resolve against a sheet name that no
+    /// longer exists).
+    func testRenameSheet_updatesCrossSheetFormulaReferences() throws {
+        engine.createSheet(name: "Data")
+        let a1 = CellAddr(col: 0, row: 0)
+        let b1 = CellAddr(col: 1, row: 0)
+        engine.setValue(sheet: "Data", addr: a1, value: .number(7))
+        try engine.setFormula(sheet: "Sheet1", addr: b1, source: "='Data'!A1*2")
+        XCTAssertEqual(engine.getValue(sheet: "Sheet1", addr: b1), .number(14))
+
+        XCTAssertTrue(engine.renameSheet(from: "Data", to: "Renamed"))
+
+        XCTAssertEqual(engine.getFormula(sheet: "Sheet1", addr: b1), "='Renamed'!A1*2",
+                        "the formula's own stored text must follow the rename")
+        XCTAssertEqual(engine.getValue(sheet: "Sheet1", addr: b1), .number(14),
+                        "and it must still evaluate correctly right after the rename")
+
+        // The graph edge must have followed the rename too: editing the
+        // renamed sheet's A1 still dirties the referencing formula.
+        engine.setValue(sheet: "Renamed", addr: a1, value: .number(100))
+        XCTAssertEqual(engine.getValue(sheet: "Sheet1", addr: b1), .number(200),
+                        "editing Renamed!A1 must recompute the formula that reads it")
+    }
+
+    /// A formula ON the renamed sheet that references its OWN sheet by
+    /// name (`=ThisSheet!A1`, unusual but legal) must also follow.
+    func testRenameSheet_updatesSelfReferencingFormulaText() throws {
+        engine.createSheet(name: "Data")
+        let a1 = CellAddr(col: 0, row: 0)
+        let b1 = CellAddr(col: 1, row: 0)
+        engine.setValue(sheet: "Data", addr: a1, value: .number(5))
+        try engine.setFormula(sheet: "Data", addr: b1, source: "='Data'!A1+1")
+
+        XCTAssertTrue(engine.renameSheet(from: "Data", to: "Renamed"))
+
+        XCTAssertEqual(engine.getFormula(sheet: "Renamed", addr: b1), "='Renamed'!A1+1")
+        XCTAssertEqual(engine.getValue(sheet: "Renamed", addr: b1), .number(6))
+    }
+
+    /// An UNQUALIFIED reference must never be touched by a rename of some
+    /// OTHER sheet - "same sheet as this formula" must not turn into a
+    /// pointer at the renamed sheet just because the names happened to
+    /// land in the same rewrite pass.
+    func testRenameSheet_leavesUnqualifiedReferencesAlone() throws {
+        engine.createSheet(name: "Data")
+        let a1 = CellAddr(col: 0, row: 0)
+        let b1 = CellAddr(col: 1, row: 0)
+        engine.setValue(sheet: "Sheet1", addr: a1, value: .number(9))
+        try engine.setFormula(sheet: "Sheet1", addr: b1, source: "=A1*3")
+
+        XCTAssertTrue(engine.renameSheet(from: "Data", to: "Renamed"))
+
+        XCTAssertEqual(engine.getFormula(sheet: "Sheet1", addr: b1), "=A1*3")
+        XCTAssertEqual(engine.getValue(sheet: "Sheet1", addr: b1), .number(27))
+    }
+
+    /// The whole rename cascade - however many formulas reference the
+    /// renamed sheet - must collapse into ONE undo step, not one per
+    /// affected formula.
+    func testRenameSheet_cascadingRewritesAreOneUndoStep() throws {
+        engine.createSheet(name: "Data")
+        let a1 = CellAddr(col: 0, row: 0)
+        engine.setValue(sheet: "Data", addr: a1, value: .number(1))
+        try engine.setFormula(sheet: "Sheet1", addr: CellAddr(col: 1, row: 0), source: "='Data'!A1+1")
+        try engine.setFormula(sheet: "Sheet1", addr: CellAddr(col: 2, row: 0), source: "='Data'!A1+2")
+        try engine.setFormula(sheet: "Sheet1", addr: CellAddr(col: 3, row: 0), source: "='Data'!A1+3")
+
+        XCTAssertTrue(engine.renameSheet(from: "Data", to: "Renamed"))
+        XCTAssertEqual(engine.getFormula(sheet: "Sheet1", addr: CellAddr(col: 3, row: 0)), "='Renamed'!A1+3")
+
+        // One undo call reverts every rewritten formula's text at once.
+        _ = engine.undo()
+        XCTAssertEqual(engine.getFormula(sheet: "Sheet1", addr: CellAddr(col: 1, row: 0)), "='Data'!A1+1")
+        XCTAssertEqual(engine.getFormula(sheet: "Sheet1", addr: CellAddr(col: 2, row: 0)), "='Data'!A1+2")
+        XCTAssertEqual(engine.getFormula(sheet: "Sheet1", addr: CellAddr(col: 3, row: 0)), "='Data'!A1+3")
+    }
+
+    /// A cross-sheet RANGE reference must track the range's own sheet
+    /// for every cell it expands to - not just the range node itself.
+    /// `FormulaAST.collectCells()`'s `.range` case used to drop the
+    /// range's sheet when expanding it into individual `CellRef`s
+    /// (defaulting to nil = "current sheet"), which was harmless while
+    /// the graph collapsed sheet+address into one bare `CellAddr`
+    /// anyway, but produced bogus same-sheet precedent edges once the
+    /// graph became sheet-aware: `=SUM('Data'!A1:A3)` on Sheet1 would
+    /// wrongly also depend on Sheet1's own A1:A3.
+    func testFormulaDependency_crossSheetRangeTracksTheRangesOwnSheet() throws {
+        engine.createSheet(name: "Data")
+        engine.setValue(sheet: "Data", addr: CellAddr(col: 0, row: 0), value: .number(1))
+        engine.setValue(sheet: "Data", addr: CellAddr(col: 0, row: 1), value: .number(2))
+        engine.setValue(sheet: "Data", addr: CellAddr(col: 0, row: 2), value: .number(3))
+        // Sheet1's OWN A1:A3 holds different numbers - if the range
+        // expansion wrongly lands on Sheet1 instead of Data, this total
+        // would silently come out as 60 (10+20+30), not 6.
+        engine.setValue(sheet: "Sheet1", addr: CellAddr(col: 0, row: 0), value: .number(10))
+        engine.setValue(sheet: "Sheet1", addr: CellAddr(col: 0, row: 1), value: .number(20))
+        engine.setValue(sheet: "Sheet1", addr: CellAddr(col: 0, row: 2), value: .number(30))
+
+        let total = CellAddr(col: 1, row: 0)
+        try engine.setFormula(sheet: "Sheet1", addr: total, source: "=SUM('Data'!A1:A3)")
+        XCTAssertEqual(engine.getValue(sheet: "Sheet1", addr: total), .number(6))
+
+        // Editing Sheet1's own A1 (same coordinate, wrong sheet) must
+        // NOT dirty the SUM - it only depends on Data's A1:A3.
+        engine.setValue(sheet: "Sheet1", addr: CellAddr(col: 0, row: 0), value: .number(999))
+        XCTAssertEqual(engine.getValue(sheet: "Sheet1", addr: total), .number(6),
+                        "the SUM must not depend on Sheet1's own A1:A3")
+
+        // Editing Data's A2 (the range it actually reads) must dirty it.
+        engine.setValue(sheet: "Data", addr: CellAddr(col: 0, row: 1), value: .number(200))
+        XCTAssertEqual(engine.getValue(sheet: "Sheet1", addr: total), .number(204))
+    }
+
+    /// A named range with no explicit sheet restriction must resolve
+    /// against the CALLING FORMULA's own sheet, not the workbook's
+    /// active tab - the same "which sheet" defect this whole fix exists
+    /// to close, surviving in the named-range path via
+    /// `resolveNamedRangeUnlocked`'s old `_activeSheet` fallback.
+    func testNamedRange_unscoped_resolvesAgainstTheCallingFormulasSheet() throws {
+        engine.createSheet(name: "Sheet2")
+        let a1 = CellAddr(col: 0, row: 0)
+        engine.setValue(sheet: "Sheet1", addr: a1, value: .number(1))
+        engine.setValue(sheet: "Sheet2", addr: a1, value: .number(2))
+        XCTAssertTrue(engine.defineName("MyCell", range: RangeRef(topLeft: a1, bottomRight: a1)))
+
+        let b1 = CellAddr(col: 1, row: 0)
+        try engine.setFormula(sheet: "Sheet2", addr: b1, source: "=MyCell*10")
+
+        engine.setActiveSheet("Sheet1")
+        XCTAssertEqual(engine.getValue(sheet: "Sheet2", addr: b1), .number(20),
+                        "MyCell in a Sheet2 formula must read Sheet2!A1 (2), not the active Sheet1!A1 (1)")
+    }
+
     // MARK: - Ranges
 
     func testGetRange() throws {

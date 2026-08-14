@@ -58,8 +58,15 @@ public indirect enum FormulaAST: Equatable, Sendable, CustomStringConvertible {
         switch self {
         case .cell(let r): set.insert(r)
         case .range(let r):
+            // r.sheet, not the default nil: dropping it turned a
+            // cross-sheet range like "=SUM(Data!A1:B5)" into ten
+            // sheet-less CellRefs indistinguishable from a same-sheet
+            // A1:B5 - harmless while DependencyGraph collapsed sheet
+            // and address into one bare CellAddr anyway, but wrong once
+            // the graph became sheet-aware: every expanded cell landed
+            // on the CURRENT sheet instead of the range's own one.
             for addr in r.cells() {
-                set.insert(CellRef(addr: addr))
+                set.insert(CellRef(sheet: r.sheet, addr: addr))
             }
         case .binary(_, let l, let r):
             l.collectCells(into: &set)

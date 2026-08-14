@@ -14,12 +14,18 @@ import Foundation
 
 // MARK: - Structural edits
 
-/// A row/column insertion or deletion, in 0-based grid coordinates.
+/// A row/column insertion or deletion, in 0-based grid coordinates - or a
+/// sheet rename, which touches the sheet-qualifier prefix instead of the
+/// row/column part of a reference.
 public enum StructuralEdit: Sendable, Equatable {
     case insertRows(at: Int, count: Int)
     case deleteRows(at: Int, count: Int)
     case insertColumns(at: Int, count: Int)
     case deleteColumns(at: Int, count: Int)
+    /// `from`/`to` are the UNESCAPED sheet names (no quotes, no `!`) -
+    /// the same form `AddressParser.unescapeSheetName` produces and
+    /// `escapeSheetName` consumes.
+    case renameSheet(from: String, to: String)
 }
 
 // MARK: - Adjuster
@@ -233,7 +239,52 @@ public enum FormulaReferenceAdjuster {
             if match.column < at { return render(match) }
             if match.column < at + count { return "#REF!" }
             return render(match, column: match.column - count)
+
+        case .renameSheet(let from, let to):
+            var renamed = match
+            renamed.sheetPrefix = renamedPrefix(match.sheetPrefix, from: from, to: to)
+            return render(renamed)
         }
+    }
+
+    /// Rewrite a captured `sheetPrefix` ("" | `Name!` | `'Some Name'!`)
+    /// when it names `from`, to the equivalent prefix naming `to`.
+    ///
+    /// An EMPTY prefix (an unqualified reference) is left empty: renaming
+    /// some other sheet must never turn "same sheet as this formula"
+    /// into a reference that now points somewhere else because it
+    /// happened to share a sheet name with the one just renamed.
+    static func renamedPrefix(_ prefix: String, from: String, to: String) -> String {
+        guard !prefix.isEmpty else { return prefix }
+        let name = unescapeSheetPrefix(prefix)
+        guard name == from else { return prefix }
+        // ALWAYS quoted, not AddressParser.escapeSheetName's
+        // only-when-it-contains-a-special-character rule: this engine's
+        // own Lexer (scanIdentifier) never looks ahead for "!" after a
+        // bare identifier, so an unquoted sheet-qualified reference does
+        // not parse at all - "=Sheet1!A1*2" silently becomes a named-
+        // range lookup that drops "!A1*2" outright, and the same
+        // reference inside a function call throws. escapeSheetName's
+        // narrower rule is correct for whatever it was written for, but
+        // wrong here: every renamed reference this produces gets fed
+        // back into setFormulaUnlocked, which needs it to actually
+        // reparse.
+        let escaped = to.replacingOccurrences(of: "'", with: "''")
+        return "'\(escaped)'!"
+    }
+
+    /// Strip the trailing `!` and any wrapping quotes a matched sheet
+    /// prefix carries, mirroring `AddressParser.unescapeSheetName` (that
+    /// one operates on the parsed `CellRef`, not this scanner's raw
+    /// capture, so the two can't share code directly).
+    static func unescapeSheetPrefix(_ prefix: String) -> String {
+        var s = prefix
+        guard s.hasSuffix("!") else { return s }
+        s.removeLast()
+        if s.hasPrefix("'") && s.hasSuffix("'") && s.count >= 2 {
+            s = String(s.dropFirst().dropLast()).replacingOccurrences(of: "''", with: "'")
+        }
+        return s
     }
 
     /// The replacement text for a `start:end` range.
@@ -281,6 +332,16 @@ public enum FormulaReferenceAdjuster {
                 deletedAt: at, count: count
             ) else { return "#REF!" }
             return "\(render(start, column: newLeft)):\(render(end, column: newRight))"
+
+        case .renameSheet(let from, let to):
+            // Only `start` normally carries a sheet prefix ("Sheet2!A1:B5"
+            // has no prefix on B5), but rewrite both sides independently
+            // in case a formula wrote one out explicitly.
+            var newStart = start
+            newStart.sheetPrefix = renamedPrefix(start.sheetPrefix, from: from, to: to)
+            var newEnd = end
+            newEnd.sheetPrefix = renamedPrefix(end.sheetPrefix, from: from, to: to)
+            return "\(render(newStart)):\(render(newEnd))"
         }
     }
 
