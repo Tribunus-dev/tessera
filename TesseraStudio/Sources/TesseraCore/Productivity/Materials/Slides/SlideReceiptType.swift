@@ -22,6 +22,12 @@ public enum SlideReceiptType: String, Codable, Sendable, CaseIterable {
     case duplicateSlide = "slide_duplicated"
     /// A slide's layout was changed.
     case setSlideLayout = "slide_layout_changed"
+    /// A master page was defined (or replaced) on the deck.
+    case defineMasterPage = "slide_master_page_defined"
+    /// A master page was removed from the deck.
+    case undefineMasterPage = "slide_master_page_undefined"
+    /// A slide's assigned master page was changed (or cleared).
+    case setSlideMasterPage = "slide_master_page_assigned"
     /// The deck was archived.
     case archive = "slide_archived"
     /// The deck was unarchived.

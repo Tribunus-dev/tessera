@@ -107,6 +107,10 @@ public struct SlideDeck: Codable, Sendable, Identifiable, Hashable {
     /// When a root child has no entry the defaults from
     /// ``SlideMeta/default`` apply.
     public var slideMeta: [String: SlideMeta]
+    /// Nil (the implicit default) means no master pages defined - read
+    /// through `effectiveMasterPages` (SlideMasterPage.swift), not
+    /// this field directly.
+    public var masterPages: [String: SlideMasterPage]?
     public var isArchived: Bool
     public var isTrashed: Bool
     public var isFavorite: Bool
@@ -411,17 +415,22 @@ public struct SlideDeck: Codable, Sendable, Identifiable, Hashable {
 public struct SlideMeta: Codable, Sendable, Hashable {
     public var layout: SlideLayout
     public var notes: String
+    /// Which of the deck's `effectiveMasterPages` this slide paints
+    /// behind its content. `nil` = no master (the renderer's own
+    /// default background) - see `SlideDeck.masterPage(forSlideAt:)`.
+    public var masterPageID: UUID?
 
-    public init(layout: SlideLayout = .titleAndContent, notes: String = "") {
+    public init(layout: SlideLayout = .titleAndContent, notes: String = "", masterPageID: UUID? = nil) {
         self.layout = layout
         self.notes = notes
+        self.masterPageID = masterPageID
     }
 
     public static let `default` = SlideMeta(layout: .titleAndContent, notes: "")
 
     /// Returns a copy with the notes field updated.
     public func copyWith(notes newNotes: String) -> SlideMeta {
-        SlideMeta(layout: self.layout, notes: newNotes)
+        SlideMeta(layout: self.layout, notes: newNotes, masterPageID: self.masterPageID)
     }
 }
 
