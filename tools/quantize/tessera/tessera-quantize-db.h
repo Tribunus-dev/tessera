@@ -60,6 +60,40 @@ struct ts_tessera_db {
     ~ts_tessera_db();
 };
 
+// Schema-owner helper (pipeline refactor phase 2): returns the ordered
+// column-name list for `table_name` by querying the LIVE database (post-
+// migration), not by parsing the CREATE TABLE string -- l5_outcome's
+// kurtosis/eff_rank/layer_position columns exist ONLY via an ALTER TABLE
+// migration and never appear in the schema string, so a parser over the
+// DDL would silently miss them. This is what kills the l4_cols drift
+// class: buffer/appender column lists generated (or asserted against)
+// from this instead of hand-copied stay in sync with the table by
+// construction. Returns 0 on success (*out may be empty if the table does
+// not exist -- not itself an error); non-zero only on a real SQL error.
+int ts_tessera_db_table_columns(
+        ts_tessera_db * db,
+        const std::string & table_name,
+        std::vector<std::string> * out,
+        std::string * err);
+
+// Compares `expected` (a caller's hardcoded ts_db_buffer_open column list)
+// against the live schema for `table_name`. Returns true when they match
+// exactly (size and order) OR when the check itself could not run (db ==
+// nullptr, or a SQL error -- an unrelated DB problem should not block the
+// run over a check that could not complete; *mismatch is left empty in
+// both the "matched" and the "could not check" cases). Returns false only
+// on a confirmed drift, with *mismatch set to a human-readable summary
+// naming exactly what differs -- this is the check that turns the l4_cols
+// bug class (a migration added a column to the struct/shim/table but not
+// the buffer's column list, so every flush silently misaligned values
+// against the wrong columns and dropped the whole batch) into a loud,
+// immediate, specific failure instead of a silent one.
+bool ts_tessera_db_check_buffer_columns(
+        ts_tessera_db * db,
+        const std::string & table_name,
+        const std::vector<std::string> & expected,
+        std::string * mismatch);
+
 // Open (or create) the database at `path` and ensure the schema exists.
 // Returns nullptr on failure (message in *err). An in-memory DB (":memory:")
 // is supported for tests.

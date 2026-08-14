@@ -691,13 +691,24 @@ static ts_dispatch_db * ts_dispatch_db_open(
             "run_id", "tensor_name", "generation", "island", "candidate_idx",
             "alpha", "clip", "composite", "mse", "relative_frob", "evaluated_at",
         };
-        wrap->eval_buffer = ts_db_buffer_open(
-            wrap->db, "ga_evaluations", ga_cols,
-            /*flush_threshold=*/65536,
-            std::chrono::milliseconds(1000));
-        if (wrap->eval_buffer == nullptr) {
-            fprintf(stderr, "tessera-dispatch: warning: eval buffer open failed "
-                            "(eval logging disabled; run_lifecycle still works)\n");
+        // Schema-owner check (phase 2): converts a future l4_cols-class
+        // drift on THIS table into a loud, specific failure instead of a
+        // silent one (see the l4_plan_outcome block below for the
+        // historical incident this class of bug caused).
+        std::string mismatch;
+        if (!ts_tessera_db_check_buffer_columns(wrap->db, "ga_evaluations", ga_cols, &mismatch)) {
+            fprintf(stderr, "tessera-dispatch: ERROR: %s -- refusing to open the "
+                            "ga_evaluations buffer (eval logging disabled; "
+                            "run_lifecycle still works)\n", mismatch.c_str());
+        } else {
+            wrap->eval_buffer = ts_db_buffer_open(
+                wrap->db, "ga_evaluations", ga_cols,
+                /*flush_threshold=*/65536,
+                std::chrono::milliseconds(1000));
+            if (wrap->eval_buffer == nullptr) {
+                fprintf(stderr, "tessera-dispatch: warning: eval buffer open failed "
+                                "(eval logging disabled; run_lifecycle still works)\n");
+            }
         }
     }
     // Open the l4_plan_outcome buffer (the L5 feedback loop). Same
@@ -724,13 +735,25 @@ static ts_dispatch_db * ts_dispatch_db_open(
             "mse_before", "mse_after", "frob_before", "frob_after",
             "family", "updated_at",
         };
-        wrap->l4_outcome_buffer = ts_db_buffer_open(
-            wrap->db, "l4_plan_outcome", l4_cols,
-            /*flush_threshold=*/1024,
-            std::chrono::milliseconds(1000));
-        if (wrap->l4_outcome_buffer == nullptr) {
-            fprintf(stderr, "tessera-dispatch: warning: l4_outcome buffer open failed "
-                            "(feedback loop disabled; run_lifecycle still works)\n");
+        // Schema-owner check (phase 2): this is exactly the historical
+        // incident above, made structurally impossible to repeat silently
+        // -- a future drift between this list and the live table refuses
+        // to open the buffer with a specific diagnosis instead of flushing
+        // INSERT(N cols) VALUES(N+1 values) into silence.
+        std::string mismatch;
+        if (!ts_tessera_db_check_buffer_columns(wrap->db, "l4_plan_outcome", l4_cols, &mismatch)) {
+            fprintf(stderr, "tessera-dispatch: ERROR: %s -- refusing to open the "
+                            "l4_plan_outcome buffer (feedback loop disabled; "
+                            "run_lifecycle still works)\n", mismatch.c_str());
+        } else {
+            wrap->l4_outcome_buffer = ts_db_buffer_open(
+                wrap->db, "l4_plan_outcome", l4_cols,
+                /*flush_threshold=*/1024,
+                std::chrono::milliseconds(1000));
+            if (wrap->l4_outcome_buffer == nullptr) {
+                fprintf(stderr, "tessera-dispatch: warning: l4_outcome buffer open failed "
+                                "(feedback loop disabled; run_lifecycle still works)\n");
+            }
         }
     }
     return wrap;
@@ -3560,6 +3583,17 @@ int ts_dispatch_run(const ts_dispatch_params * params,
             ectx.act_scales = item.act;
             ectx.out_dim    = item.out_dim;
             ectx.in_dim     = item.in_dim;
+            // Eval cache (phase 2): same null-guarded pattern every other
+            // db_wrap consumer in this file uses. A re-dispatch of the
+            // same model (same model_hash) reuses every PROXY/REAL score
+            // instead of recomputing -- this is the panel's biggest
+            // deterministic win per docs/tessera-eval-cache-design.md.
+            if (db_wrap != nullptr && db_wrap->db != nullptr &&
+                !db_wrap->model_hash.empty()) {
+                ectx.model_hash = db_wrap->model_hash;
+                ectx.model_role = params->model_role;
+                ectx.db         = db_wrap->db;
+            }
 
             ts_eval_opts popts;
             popts.tier  = TS_EVAL_PROXY;

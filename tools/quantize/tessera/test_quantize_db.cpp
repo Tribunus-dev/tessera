@@ -1255,6 +1255,85 @@ int main(int argc, char ** argv) {
         }
     }
 
+    // ---- Schema-owner helper (Phase 2): ts_tessera_db_table_columns /
+    //      ts_tessera_db_check_buffer_columns must agree with the live
+    //      schema for every table a ts_db_buffer_open call site depends
+    //      on -- this is the direct regression test for the l4_cols
+    //      drift class (a migration adds/reorders a column but the
+    //      hardcoded appender list is never updated, so every flush
+    //      silently misaligns values against the wrong columns).
+    //      Each expected list here is copied verbatim from its call
+    //      site's hardcoded column vector so a real drift between the
+    //      call site and the live schema fails HERE, not just at
+    //      runtime inside llama-quantize/llama-imatrix.
+    {
+        // tessera-dispatch.cpp: ga_cols (ga_evaluations buffer)
+        const std::vector<std::string> ga_cols = {
+            "run_id", "tensor_name", "generation", "island", "candidate_idx",
+            "alpha", "clip", "composite", "mse", "relative_frob", "evaluated_at",
+        };
+        std::vector<std::string> live;
+        std::string terr;
+        CHECK(ts_tessera_db_table_columns(db, "ga_evaluations", &live, &terr) == 0,
+              ("schema-owner: table_columns(ga_evaluations) failed: " + terr).c_str());
+        CHECK(live == ga_cols, "schema-owner: ga_evaluations live columns match ga_cols");
+        std::string mismatch;
+        CHECK(ts_tessera_db_check_buffer_columns(db, "ga_evaluations", ga_cols, &mismatch),
+              ("schema-owner: check_buffer_columns(ga_evaluations) mismatch: " + mismatch).c_str());
+
+        // tessera-dispatch.cpp: l4_cols (l4_plan_outcome buffer)
+        const std::vector<std::string> l4_cols = {
+            "model_hash", "model_role", "name", "layer", "iteration",
+            "plan_id", "strategy",
+            "alpha_before", "alpha_after", "clip_before", "clip_after",
+            "outlier_thresh_before", "outlier_thresh_after",
+            "mse_before", "mse_after", "frob_before", "frob_after",
+            "family", "updated_at",
+        };
+        live.clear();
+        CHECK(ts_tessera_db_table_columns(db, "l4_plan_outcome", &live, &terr) == 0,
+              ("schema-owner: table_columns(l4_plan_outcome) failed: " + terr).c_str());
+        CHECK(live == l4_cols, "schema-owner: l4_plan_outcome live columns match l4_cols");
+        CHECK(ts_tessera_db_check_buffer_columns(db, "l4_plan_outcome", l4_cols, &mismatch),
+              ("schema-owner: check_buffer_columns(l4_plan_outcome) mismatch: " + mismatch).c_str());
+
+        // imatrix.cpp: kAccumCols (imatrix_accum_state buffer)
+        const std::vector<std::string> accum_cols = {
+            "model_hash", "model_role", "tensor_name",
+            "chunks_seen", "accum_sum", "accum_count", "accum_sum_abs",
+            "rms", "mean_abs", "updated_at",
+        };
+        live.clear();
+        CHECK(ts_tessera_db_table_columns(db, "imatrix_accum_state", &live, &terr) == 0,
+              ("schema-owner: table_columns(imatrix_accum_state) failed: " + terr).c_str());
+        CHECK(live == accum_cols, "schema-owner: imatrix_accum_state live columns match kAccumCols");
+        CHECK(ts_tessera_db_check_buffer_columns(db, "imatrix_accum_state", accum_cols, &mismatch),
+              ("schema-owner: check_buffer_columns(imatrix_accum_state) mismatch: " + mismatch).c_str());
+
+        // Deliberate drift must be caught: a stale/extra column name
+        // should flip the result to false with a non-empty mismatch.
+        std::vector<std::string> drifted = accum_cols;
+        drifted.push_back("bogus_extra_column");
+        std::string drift_mismatch;
+        CHECK(!ts_tessera_db_check_buffer_columns(db, "imatrix_accum_state", drifted, &drift_mismatch),
+              "schema-owner: injected drift is detected (returns false)");
+        CHECK(!drift_mismatch.empty(), "schema-owner: drift mismatch string is non-empty");
+
+        // A nonexistent table is not itself an error -- *out is empty,
+        // 0 is returned (matches the documented "table does not exist
+        // is not an error" contract).
+        live.clear();
+        CHECK(ts_tessera_db_table_columns(db, "no_such_table_xyz", &live, &terr) == 0,
+              "schema-owner: table_columns on a nonexistent table returns 0");
+        CHECK(live.empty(), "schema-owner: table_columns on a nonexistent table returns empty list");
+
+        // db == nullptr: check_buffer_columns treats "could not check" as
+        // pass-through true (the caller's own warn-and-continue path is
+        // what handles a missing DB, not this helper).
+        CHECK(ts_tessera_db_check_buffer_columns(nullptr, "ga_evaluations", ga_cols, nullptr),
+              "schema-owner: check_buffer_columns(db=nullptr) passes through as true");
+    }
+
     // ---- Crash-safe shutdown: ~ts_tessera_db() must CHECKPOINT
     //      before tearing down the connection so a SIGKILL on
     //      llama-quantize exit does not leave a stale .wal

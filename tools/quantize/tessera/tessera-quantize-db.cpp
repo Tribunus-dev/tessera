@@ -2221,6 +2221,82 @@ int write_migration_sidecar(const std::string & db_path,
 
 }  // namespace
 
+// Schema-owner helper (phase 2): the ordered column-name list for a table,
+// read from the LIVE schema via information_schema.columns rather than
+// parsed from the CREATE TABLE string -- l5_outcome's kurtosis/eff_rank/
+// layer_position columns exist only via an ALTER TABLE migration
+// (ts_tessera_db_migrate_model_role) and would be invisible to a DDL
+// parser. ordinal_position is DuckDB's column declaration order, which for
+// an ALTER-added column is its append position -- exactly what an
+// INSERT/Appender needs to line values up correctly.
+int ts_tessera_db_table_columns(
+        ts_tessera_db * db,
+        const std::string & table_name,
+        std::vector<std::string> * out,
+        std::string * err) {
+    if (out) out->clear();
+    if (db == nullptr || db->conn == nullptr || out == nullptr) return 0;
+
+    const std::string q =
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_name = '" + sql_escape(table_name) + "' "
+        "ORDER BY ordinal_position";
+    try {
+        auto res = db->conn->Query(q);
+        if (res->HasError()) {
+            if (err) *err = "table_columns(" + table_name + "): " + res->GetError();
+            return 1;
+        }
+        for (idx_t i = 0; i < res->RowCount(); i++) {
+            out->push_back(res->GetValue(0, i).GetValue<std::string>());
+        }
+    } catch (const std::exception & e) {
+        if (err) *err = "table_columns(" + table_name + ") exception: " + std::string(e.what());
+        return 1;
+    } catch (...) {
+        if (err) *err = "table_columns(" + table_name + ") unknown exception";
+        return 1;
+    }
+    return 0;
+}
+
+bool ts_tessera_db_check_buffer_columns(
+        ts_tessera_db * db,
+        const std::string & table_name,
+        const std::vector<std::string> & expected,
+        std::string * mismatch) {
+    if (mismatch) mismatch->clear();
+    if (db == nullptr) return true;  // nothing to check against
+
+    std::vector<std::string> live;
+    std::string err;
+    if (ts_tessera_db_table_columns(db, table_name, &live, &err) != 0) {
+        // An unrelated SQL error should not block the run over a check
+        // that could not complete -- the caller's own warn-and-continue
+        // path around ts_db_buffer_open still applies.
+        return true;
+    }
+    if (live == expected) return true;
+
+    if (mismatch) {
+        std::ostringstream m;
+        m << "'" << table_name << "' column list drift: expected "
+          << expected.size() << " columns {";
+        for (size_t i = 0; i < expected.size(); i++) {
+            if (i) m << ", ";
+            m << expected[i];
+        }
+        m << "}, live schema has " << live.size() << " columns {";
+        for (size_t i = 0; i < live.size(); i++) {
+            if (i) m << ", ";
+            m << live[i];
+        }
+        m << "}";
+        *mismatch = m.str();
+    }
+    return false;
+}
+
 int ts_tessera_db_migrate_model_role(ts_tessera_db * db,
                                       std::string * err) {
     if (db == nullptr || db->conn == nullptr) {

@@ -2751,17 +2751,31 @@ int imatrix_main(int argc, char ** argv) {
                 "chunks_seen", "accum_sum", "accum_count", "accum_sum_abs",
                 "rms", "mean_abs", "updated_at"
             };
-            g_imatrix_buf = ts_db_buffer_open(
-                g_imatrix_db, "imatrix_accum_state", kAccumCols,
-                65536, std::chrono::seconds(5), false);
-            if (g_imatrix_buf == nullptr) {
-                LOG_WRN("%s: ts_db_buffer_open for imatrix_accum_state failed "
-                        "(continuing without DB writes)\n", __func__);
+            // Schema-owner check (pipeline refactor phase 2): the same
+            // l4_cols-class drift is possible here (a migration adds a
+            // column to imatrix_accum_state but not this hardcoded list) --
+            // catch it as a loud, specific failure instead of a silent
+            // per-row/per-batch drop.
+            std::string col_mismatch;
+            if (!ts_tessera_db_check_buffer_columns(g_imatrix_db, "imatrix_accum_state",
+                                                    kAccumCols, &col_mismatch)) {
+                LOG_ERR("%s: %s -- refusing to open the imatrix_accum_state buffer "
+                        "(continuing without DB writes)\n", __func__, col_mismatch.c_str());
                 delete g_imatrix_db;
                 g_imatrix_db = nullptr;
             } else {
-                LOG_INF("%s: --tessera-db=%s, imatrix_accum_state buffer ready\n",
-                        __func__, tessera_db_path.c_str());
+                g_imatrix_buf = ts_db_buffer_open(
+                    g_imatrix_db, "imatrix_accum_state", kAccumCols,
+                    65536, std::chrono::seconds(5), false);
+                if (g_imatrix_buf == nullptr) {
+                    LOG_WRN("%s: ts_db_buffer_open for imatrix_accum_state failed "
+                            "(continuing without DB writes)\n", __func__);
+                    delete g_imatrix_db;
+                    g_imatrix_db = nullptr;
+                } else {
+                    LOG_INF("%s: --tessera-db=%s, imatrix_accum_state buffer ready\n",
+                            __func__, tessera_db_path.c_str());
+                }
             }
         }
     }
