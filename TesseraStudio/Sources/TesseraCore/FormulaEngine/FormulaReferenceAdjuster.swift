@@ -26,6 +26,10 @@ public enum StructuralEdit: Sendable, Equatable {
     /// the same form `AddressParser.unescapeSheetName` produces and
     /// `escapeSheetName` consumes.
     case renameSheet(from: String, to: String)
+    /// `name` is the UNESCAPED sheet name being removed. Any reference
+    /// that qualifies with it becomes `#REF!`, the same way a reference
+    /// into a deleted row or column does.
+    case deleteSheet(name: String)
 }
 
 // MARK: - Adjuster
@@ -244,7 +248,18 @@ public enum FormulaReferenceAdjuster {
             var renamed = match
             renamed.sheetPrefix = renamedPrefix(match.sheetPrefix, from: from, to: to)
             return render(renamed)
+
+        case .deleteSheet(let name):
+            return referencesDeletedSheet(match.sheetPrefix, name) ? "#REF!" : render(match)
         }
+    }
+
+    /// Whether a captured `sheetPrefix` names the sheet being deleted.
+    /// An empty prefix (unqualified - "same sheet as this formula")
+    /// never does: deleting some OTHER sheet must never turn a
+    /// same-sheet reference into an error.
+    static func referencesDeletedSheet(_ prefix: String, _ name: String) -> Bool {
+        !prefix.isEmpty && unescapeSheetPrefix(prefix) == name
     }
 
     /// Rewrite a captured `sheetPrefix` ("" | `Name!` | `'Some Name'!`)
@@ -342,6 +357,15 @@ public enum FormulaReferenceAdjuster {
             var newEnd = end
             newEnd.sheetPrefix = renamedPrefix(end.sheetPrefix, from: from, to: to)
             return "\(render(newStart)):\(render(newEnd))"
+
+        case .deleteSheet(let name):
+            // Same asymmetry as renameSheet above: check both sides
+            // independently even though only `start` normally carries
+            // the prefix in practice.
+            if referencesDeletedSheet(start.sheetPrefix, name) || referencesDeletedSheet(end.sheetPrefix, name) {
+                return "#REF!"
+            }
+            return "\(render(start)):\(render(end))"
         }
     }
 

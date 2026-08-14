@@ -173,7 +173,48 @@ public final class SheetEngine: @unchecked Sendable, SheetEngineCore {
                 _activeSheet = _sheetOrder.first ?? "Sheet1"
             }
             graph.removeSheet(name)
+            // After removing the sheet's own storage: a formula ON the
+            // deleted sheet no longer exists to rewrite, and iterating
+            // the (already-shrunk) _sheets here naturally skips it
+            // rather than wasting work rewriting a formula about to be
+            // discarded anyway.
+            propagateSheetDeletion(of: name)
         }
+    }
+
+    /// Rewrite every formula elsewhere in the workbook that references
+    /// the just-deleted sheet to `#REF!` - the same treatment a
+    /// reference into a deleted row or column already gets.
+    ///
+    /// Without this, `graph.removeSheet` above cleans up the graph's
+    /// own edges, but a formula's stored TEXT still names the sheet
+    /// that no longer exists. It does not throw or refuse to load; it
+    /// silently evaluates every such reference as null and keeps
+    /// computing a plausible-looking wrong answer forever - the same
+    /// silent-corruption failure mode `propagateSheetRename` exists to
+    /// prevent, just via deletion instead of renaming.
+    ///
+    /// Must be called with `lock` already held, and after `_sheets[name]`
+    /// has already been removed.
+    private func propagateSheetDeletion(of name: String) {
+        let edit = StructuralEdit.deleteSheet(name: name)
+        var rewrites: [(sheet: String, addr: CellAddr, source: String)] = []
+        for (sheetName, sheet) in _sheets {
+            for (addr, data) in sheet.cells {
+                guard let source = data.formula?.source else { continue }
+                let rewritten = FormulaReferenceAdjuster.adjust(source, for: edit)
+                if rewritten != source {
+                    rewrites.append((sheetName, addr, rewritten))
+                }
+            }
+        }
+        guard !rewrites.isEmpty else { return }
+
+        undoStack.beginGroup()
+        for r in rewrites {
+            _ = try? setFormulaUnlocked(sheet: r.sheet, addr: r.addr, source: r.source)
+        }
+        undoStack.endGroup()
     }
 
     /// Rename a sheet.

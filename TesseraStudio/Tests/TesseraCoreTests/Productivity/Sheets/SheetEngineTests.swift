@@ -203,6 +203,55 @@ final class SheetEngineTests: XCTestCase {
         XCTAssertFalse(engine.sheetNames.contains("Extra"))
     }
 
+    /// A formula elsewhere that references the deleted sheet must
+    /// become `#REF!`, the same treatment a reference into a deleted
+    /// row or column already gets - not silently keep reading null off
+    /// a sheet that no longer exists.
+    func testDeleteSheet_referencingFormulaBecomesRefError() throws {
+        engine.createSheet(name: "Data")
+        let a1 = CellAddr(col: 0, row: 0)
+        let b1 = CellAddr(col: 1, row: 0)
+        engine.setValue(sheet: "Data", addr: a1, value: .number(7))
+        try engine.setFormula(sheet: "Sheet1", addr: b1, source: "='Data'!A1+1")
+        XCTAssertEqual(engine.getValue(sheet: "Sheet1", addr: b1), .number(8))
+
+        engine.deleteSheet("Data")
+
+        XCTAssertEqual(engine.getFormula(sheet: "Sheet1", addr: b1), "=#REF!+1")
+        XCTAssertEqual(engine.getValue(sheet: "Sheet1", addr: b1), .error(.referenceInvalid))
+    }
+
+    /// An unqualified reference is untouched by deleting some OTHER
+    /// sheet - "same sheet as this formula" must never become #REF!
+    /// just because an unrelated sheet was removed.
+    func testDeleteSheet_leavesUnqualifiedReferencesAlone() throws {
+        engine.createSheet(name: "Data")
+        let a1 = CellAddr(col: 0, row: 0)
+        let b1 = CellAddr(col: 1, row: 0)
+        engine.setValue(sheet: "Sheet1", addr: a1, value: .number(9))
+        try engine.setFormula(sheet: "Sheet1", addr: b1, source: "=A1*3")
+
+        engine.deleteSheet("Data")
+
+        XCTAssertEqual(engine.getFormula(sheet: "Sheet1", addr: b1), "=A1*3")
+        XCTAssertEqual(engine.getValue(sheet: "Sheet1", addr: b1), .number(27))
+    }
+
+    /// A cross-sheet RANGE reference into the deleted sheet must also
+    /// become #REF!, not just a single-cell reference.
+    func testDeleteSheet_referencingRangeBecomesRefError() throws {
+        engine.createSheet(name: "Data")
+        engine.setValue(sheet: "Data", addr: CellAddr(col: 0, row: 0), value: .number(1))
+        engine.setValue(sheet: "Data", addr: CellAddr(col: 0, row: 1), value: .number(2))
+        let total = CellAddr(col: 1, row: 0)
+        try engine.setFormula(sheet: "Sheet1", addr: total, source: "=SUM('Data'!A1:A2)")
+        XCTAssertEqual(engine.getValue(sheet: "Sheet1", addr: total), .number(3))
+
+        engine.deleteSheet("Data")
+
+        XCTAssertEqual(engine.getFormula(sheet: "Sheet1", addr: total), "=SUM(#REF!)")
+    }
+
     func testRenameSheet() {
         engine.createSheet(name: "Old")
         let ok = engine.renameSheet(from: "Old", to: "New")
