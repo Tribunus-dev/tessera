@@ -51,6 +51,7 @@
 #include "tessera-progress.h"
 #include "tessera-vec.h"
 #include "tessera-activation-sidecar.h"
+#include "tessera-kv-migrate.h"
 
 #include "gguf.h"
 #include "ggml.h"
@@ -296,6 +297,14 @@ int ts_dispatch_run_gaprep(
         struct ts_ga_weight_loader {
             struct ggml_tensor * tensor;
             std::vector<float>   buf;
+            // KV-joint reconstruction item 5 (scale migration): the fold
+            // needs a DB handle to look up kv_stats, captured here (not in
+            // the captureless weights_load_fn lambda's environment) since a
+            // raw C function pointer cannot close over anything. Null
+            // kv_db means "no --tessera-db", a safe no-op inside the fold.
+            ts_tessera_db * kv_db = nullptr;
+            std::string     kv_model_hash;
+            std::string     kv_model_role;
         };
         std::vector<ts_ga_weight_loader>   ga_weight_loaders;
         // Streaming activation loader state (real per-tensor activation
@@ -345,6 +354,18 @@ int ts_dispatch_run_gaprep(
 
             const int64_t in_dim  = ne[0];
             const int64_t out_dim = ne[1];
+
+            // KV-joint reconstruction item 5 (scale migration): fold the
+            // same D/E correction the walk (production write) applies, so
+            // the GA's fitness search sees the weight it will actually
+            // ship. No-op when no --tessera-db is open or no kv_stats row
+            // exists yet -- see tessera-kv-migrate.h.
+            if (db_wrap != nullptr && db_wrap->db != nullptr) {
+                ts_kv_migrate_apply_to_tensor(
+                    db_wrap->db, db_wrap->model_hash, params->model_role,
+                    name, w.data(), out_dim, in_dim,
+                    ts_kv_migrate_params{}, nullptr);
+            }
 
             // resolve per-channel activation scales (imatrix, else corpus);
             // a corpus-derived buffer is moved into ga_actbufs to keep the
@@ -524,7 +545,21 @@ int ts_dispatch_run_gaprep(
             layer.weights_load_fn = [](void * ud) -> const float * {
                 auto * ml = static_cast<struct ts_ga_weight_loader *>(ud);
                 ml->buf = ts_tensor_to_f32(ml->tensor);
-                return ml->buf.empty() ? nullptr : ml->buf.data();
+                if (ml->buf.empty()) {
+                    return nullptr;
+                }
+                // KV-joint reconstruction item 5: fold D/E so the GA's
+                // fitness search sees the same weight the walk (production
+                // write) ships. No-op when kv_db is null or no kv_stats row
+                // exists yet -- see tessera-kv-migrate.h.
+                if (ml->kv_db != nullptr) {
+                    ts_kv_migrate_apply_to_tensor(
+                        ml->kv_db, ml->kv_model_hash, ml->kv_model_role,
+                        ggml_get_name(ml->tensor), ml->buf.data(),
+                        ml->tensor->ne[1], ml->tensor->ne[0],
+                        ts_kv_migrate_params{}, nullptr);
+                }
+                return ml->buf.data();
             };
             layer.weights_release_fn = [](void * ud, const float *) {
                 auto * ml = static_cast<struct ts_ga_weight_loader *>(ud);
@@ -536,7 +571,13 @@ int ts_dispatch_run_gaprep(
             // pointer to ga_weight_loaders.back(); a reallocation would dangle
             // every prior pointer and crash the GA workers (SIGSEGV in
             // ggml_nelements via the loader callback).
-            ga_weight_loaders.push_back({ggml_get_tensor(ggml_ctx, name), {}});
+            ga_weight_loaders.push_back(ts_ga_weight_loader{});
+            ga_weight_loaders.back().tensor = ggml_get_tensor(ggml_ctx, name);
+            if (db_wrap != nullptr && db_wrap->db != nullptr) {
+                ga_weight_loaders.back().kv_db         = db_wrap->db;
+                ga_weight_loaders.back().kv_model_hash = db_wrap->model_hash;
+                ga_weight_loaders.back().kv_model_role = params->model_role;
+            }
             layer.weights_user_data = &ga_weight_loaders.back();
             layer.layer_depth = ts_tessera_db_layer_depth(name);
             ga_layers.push_back(layer);

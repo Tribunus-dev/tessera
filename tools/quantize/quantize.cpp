@@ -15,6 +15,7 @@
 #include "tessera/tessera-dpace.h"
 #include "tessera/tessera-unified-writer.h"
 #include "tessera/tessera-quantize-db.h"
+#include "tessera/tessera-kv-migrate.h"
 #include "tessera/tessera-ternary.h"
 #include "tessera/tessera-quant.h"
 #include "tessera/tessera-imatrix.h"
@@ -1116,6 +1117,28 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
         }
     }
 
+    // KV-joint reconstruction item 5 (scale migration): when --tessera-db
+    // is set, open it here so attn_q/attn_output can be folded with K's/V's
+    // migrated scale before ternarizing (see tessera-kv-migrate.h). A
+    // best-effort, non-fatal open: a DB failure here should not block the
+    // export, it just means the fold stays a no-op (mirrors this file's
+    // other --tessera-db paths). model_role is "trunk" -- export-ternary
+    // has no multi-component concept, unlike the unified-writer path.
+    ts_tessera_db * kv_db = nullptr;
+    std::string     kv_model_hash;
+    const std::string kv_model_role = "trunk";
+    if (!tp.tessera_db.empty()) {
+        std::string kv_db_err;
+        kv_db = ts_tessera_db_open(tp.tessera_db, &kv_db_err);
+        if (kv_db != nullptr) {
+            kv_model_hash = ts_tessera_db_hash_gguf(tp.export_in);
+        } else {
+            fprintf(stderr, "export-ternary: warning: --tessera-db: %s "
+                            "(KV scale migration disabled for this run)\n",
+                    kv_db_err.c_str());
+        }
+    }
+
     // quantize each 2D weight via ts_quantize_2d_ternary. 3D MoE experts
     // are exported as one ternary tensor per expert (flattened name suffix
     // .E<j>), matching the dispatch's per-expert quantize convention.
@@ -1220,6 +1243,18 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
             expert_idx = 0;
             full = std::move(dequant);
 
+            // KV-joint reconstruction item 5: fold attn_q/attn_output's
+            // migrated D/E scale before anything else touches `full`.
+            // MoE experts (n_dims == 3) are never attn_q/attn_output, so
+            // this only ever applies to n_dims == 2. No-op when kv_db is
+            // null or no kv_stats row exists yet.
+            if (n_dims == 2 && kv_db != nullptr) {
+                ts_kv_migrate_apply_to_tensor(
+                    kv_db, kv_model_hash, kv_model_role,
+                    cur_name, full.data(), out_dim, in_dim,
+                    ts_kv_migrate_params{}, nullptr);
+            }
+
             if (have_imatrix) {
                 int64_t act_n = 0;
                 act_scales = ts_imatrix_lookup(&imatrix, name, &act_n);
@@ -1300,6 +1335,7 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
     if (!chat_template_path.empty()) {
         std::remove(chat_template_path.c_str());
     }
+    delete kv_db;
     if (mm.mapped) munmap(mm.mapped, mm.size);
     gguf_free(in_ctx);
     ggml_free(ggml_ctx);

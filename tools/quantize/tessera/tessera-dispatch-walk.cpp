@@ -38,6 +38,7 @@
 #include "tessera-policy.h"
 #include "tessera-progress.h"
 #include "tessera-quantize-db.h"
+#include "tessera-kv-migrate.h"
 
 #include "gguf.h"
 #include "ggml.h"
@@ -237,6 +238,21 @@ int ts_dispatch_run_walk(
             n_skipped++;
             ts_progress_inc(prog, 1, name);
             continue;
+        }
+
+        // KV-joint reconstruction item 5 (scale migration): fold K's/V's
+        // static per-channel reconstruction scale into attn_q/attn_output
+        // before anything downstream (regime descriptor, AWQ search,
+        // ternarize) sees the weight. This is the site that writes the
+        // shipped GGUF tensor, so it must be folded here regardless of what
+        // gaprep's separate GA-search copy does. No-op (weights untouched)
+        // when no --tessera-db is open or no kv_stats row exists yet for
+        // this layer/side -- see tessera-kv-migrate.h.
+        if (n_dims == 2 && db_wrap != nullptr && db_wrap->db != nullptr) {
+            ts_kv_migrate_apply_to_tensor(
+                db_wrap->db, db_wrap->model_hash, params->model_role,
+                name, weights.data(), out_dim, in_dim,
+                ts_kv_migrate_params{}, nullptr);
         }
 
         // resolve per-channel AWQ activation scales (imatrix, else corpus)

@@ -148,6 +148,10 @@ add_library(${TARGET}
     ../../common/tessera-debug/tessera-sidecar-v3.cpp
     # DuckDB-backed persistent store (no-op when --quantize-db is not passed)
     tessera/tessera-quantize-db.cpp
+    # KV-joint reconstruction item 5: fold K/V's static per-channel scales
+    # (D, E) into W_q/W_o so the runtime never touches the KV-cache dequant
+    # path. See docs/tessera-kv-joint-reconstruction-design.md section 3.
+    tessera/tessera-kv-migrate.cpp
     # Phase 16 unified GGUF writer for the Gemma4 12B + dspark + dflash +
     # MTP arch (LLM_ARCH_GEMMA4_ASSISTANT). Reads 4+ per-component
     # GGUFs + a calibration policy JSON, writes a single gemma4-assistant
@@ -658,6 +662,17 @@ if(LLAMA_BUILD_TESTS)
     # 30+ tests, runs in <1s on a tiny synthetic GGUF.
     set(TARGET test-tessera-higgs-proxy)
     add_executable(${TARGET} tessera/test_higgs_proxy.cpp)
+    target_link_libraries(${TARGET} PRIVATE llama-quantize-impl)
+    target_compile_features(${TARGET} PRIVATE cxx_std_17)
+    add_test(NAME ${TARGET} COMMAND ${TARGET})
+
+    # KV-joint reconstruction item 5 (scale migration): fit_scale
+    # arithmetic + pair-tying, read_stat dual-name-convention fallback,
+    # forward-math GQA identity checks for the W_q row fold / W_o column
+    # fold, and apply_to_tensor's no-op guards (wrong family, missing
+    # kv_stats row, shape mismatch).
+    set(TARGET test-tessera-kv-migrate)
+    add_executable(${TARGET} tessera/test_kv_migrate.cpp)
     target_link_libraries(${TARGET} PRIVATE llama-quantize-impl)
     target_compile_features(${TARGET} PRIVATE cxx_std_17)
     add_test(NAME ${TARGET} COMMAND ${TARGET})
