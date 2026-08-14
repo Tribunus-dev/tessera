@@ -98,6 +98,11 @@ public struct Sheet: Codable, Sendable, Identifiable, Hashable {
     /// not this field directly.
     public var conditionalFormats: [SheetConditionalFormat]?
 
+    /// Nil (the implicit default, like the fields above) means no
+    /// pivot table definitions - read through `effectivePivotDefinitions`
+    /// (SheetPivotDefinition.swift), not this field directly.
+    public var pivotDefinitions: [SheetPivotDefinition]?
+
     public init(
         id: UUID = UUID(),
         title: String = "",

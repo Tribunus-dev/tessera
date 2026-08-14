@@ -39,11 +39,16 @@ import Foundation
 /// **Single-sheet callers keep working unchanged.** `apply`/
 /// `displayText`/`value`/`hasFormula` with no sheet argument target
 /// whichever sheet was hydrated most recently (via `SheetEngine`'s own
-/// `activeSheet`), exactly like before `hydrate` became additive -
-/// today's editor UI only ever has one sheet open, so nothing about its
-/// call sites needs to change. The `in sheetID:` overloads exist for a
-/// caller that has more than one sheet loaded at once (tabs UI - not yet
-/// built; see studio-expansion-plan.md 0.1).
+/// `activeSheet`), exactly like before `hydrate` became additive - a
+/// single-sheet editor session needs no change to its call sites. The
+/// `in sheetID:` overloads, plus `sheetOrder`/`orderedSheets` below, are
+/// for a caller with more than one sheet loaded at once -
+/// `SheetEditorViewModel.switchActiveSheet(to:)` and `SheetTabBarView`
+/// (Mac/iOS) are that caller. What is still NOT built: any flow for the
+/// user to choose which OTHER sheets belong in a workbook alongside the
+/// one they opened - `hydrate(from:)` only ever loads what a caller
+/// explicitly hands it, and nothing populates that beyond the sheet the
+/// editor opened with yet (see studio-expansion-plan.md 0.1).
 @MainActor
 public final class SheetWorkbook: ObservableObject {
 
@@ -63,6 +68,19 @@ public final class SheetWorkbook: ObservableObject {
     /// Every sheet currently loaded into this workbook, keyed by its
     /// product-layer identity.
     public private(set) var sheets: [UUID: Sheet] = [:]
+
+    /// `sheets`' keys in load order - a plain `[UUID: Sheet]` has none,
+    /// and a tab strip needs one stable order to render, not whatever
+    /// order `Dictionary` happens to iterate in. Appended to on first
+    /// `hydrate` of a sheet (a refresh of an already-loaded one does not
+    /// move it), trimmed on `unload(_:)`/`unload()`.
+    public private(set) var sheetOrder: [UUID] = []
+
+    /// `sheetOrder` resolved to `Sheet`s, for a tab strip to render
+    /// directly.
+    public var orderedSheets: [Sheet] {
+        sheetOrder.compactMap { sheets[$0] }
+    }
 
     /// `Sheet.id` -> the `SheetEngine` sheet name it was loaded under.
     /// Chosen once at first load from `Sheet.title` (uniquified on
@@ -154,6 +172,9 @@ public final class SheetWorkbook: ObservableObject {
         namedRangeNamesBySheetID[sheet.id] = registeredNames
 
         sheets[sheet.id] = sheet
+        if !sheetOrder.contains(sheet.id) {
+            sheetOrder.append(sheet.id)
+        }
         sheetID = sheet.id
         engine.setActiveSheet(name)
         revision &+= 1
@@ -165,6 +186,7 @@ public final class SheetWorkbook: ObservableObject {
     public func unload() {
         engine = SheetEngine()
         sheets = [:]
+        sheetOrder = []
         engineSheetName = [:]
         namedRangeNamesBySheetID = [:]
         sheetID = nil
@@ -184,6 +206,7 @@ public final class SheetWorkbook: ObservableObject {
         engine.deleteSheet(name)
         engineSheetName.removeValue(forKey: sheetID)
         sheets.removeValue(forKey: sheetID)
+        sheetOrder.removeAll { $0 == sheetID }
         for oldName in namedRangeNamesBySheetID.removeValue(forKey: sheetID) ?? [] {
             engine.undefineName(oldName)
         }
@@ -194,6 +217,21 @@ public final class SheetWorkbook: ObservableObject {
             }
         }
         revision &+= 1
+    }
+
+    /// Point the no-`sheetID` convenience API (`apply`/`displayText`/
+    /// `value`/`hasFormula`) at an already-loaded sheet, without
+    /// re-hydrating it - a tab switch, where the grid changes which
+    /// sheet it shows but nothing about that sheet's calculation state
+    /// needs to change. A no-op (returns false) if `sheetID` isn't
+    /// loaded.
+    @discardableResult
+    public func setActive(_ sheetID: UUID) -> Bool {
+        guard let name = engineSheetName[sheetID] else { return false }
+        self.sheetID = sheetID
+        engine.setActiveSheet(name)
+        revision &+= 1
+        return true
     }
 
     private func clearCells(sheetName: String) {

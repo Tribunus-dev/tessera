@@ -507,6 +507,62 @@ public final class SheetEditorViewModel: ObservableObject {
         workbook.hydrate(from: sheet)
     }
 
+    // MARK: - Multi-sheet workbook (tabs)
+
+    /// Every sheet currently loaded into this editor's `workbook`, in
+    /// tab order. `sheet` (the one the grid renders) is always one of
+    /// these once at least one `hydrate` has happened - which `init`
+    /// already did, for the sheet this editor opened with.
+    public var openSheets: [Sheet] {
+        workbook.orderedSheets
+    }
+
+    /// Load `sheet` into the same live workbook as an additional tab,
+    /// without switching the grid away from whichever sheet is
+    /// currently active - e.g. to prime cross-sheet formula references
+    /// before the user opens that tab. Loading a sheet that is already
+    /// open just refreshes its calculation state (matching
+    /// `hydrate(from:)`'s own refresh behaviour) rather than
+    /// duplicating a tab.
+    ///
+    /// What this does NOT do: decide which sheets belong in a
+    /// workbook together, or offer the user any way to pick one -
+    /// that flow doesn't exist yet (see `SheetWorkbook`'s doc comment).
+    /// This just makes an already-chosen sheet available as a tab.
+    public func loadAdditionalSheet(_ sheet: Sheet) {
+        let activeID = self.sheet.id
+        workbook.hydrate(from: sheet)
+        if activeID != sheet.id {
+            // hydrate() just made the newly-loaded sheet the workbook's
+            // active pointer; restore the one the grid is actually
+            // showing; loading a tab in the background must not also
+            // switch the grid out from under the user.
+            workbook.setActive(activeID)
+        }
+    }
+
+    /// Switch which loaded sheet the grid renders.
+    ///
+    /// Flushes any pending debounced body save for the OUTGOING sheet
+    /// first: `commitBody`'s debounce task captures `sheet.id` only
+    /// implicitly, by reading `self.sheet` when it finally fires, which
+    /// would otherwise persist the old body text under the NEW sheet's
+    /// id once `sheet` has moved on to it.
+    ///
+    /// A no-op if `sheetID` isn't already loaded into `workbook` (see
+    /// `loadAdditionalSheet(_:)`) or is already the active sheet.
+    public func switchActiveSheet(to sheetID: UUID) async {
+        guard sheetID != sheet.id, let target = workbook.sheets[sheetID] else { return }
+        await flushBody()
+        workbook.setActive(sheetID)
+        self.sheet = target
+        self.document = target.body
+        self.draftTitle = target.title
+        self.selectedCell = nil
+        self.editingCell = nil
+        self.editingText = ""
+    }
+
     // MARK: - Body
 
     /// Debounced persist. Cancels any in-flight save, then schedules a

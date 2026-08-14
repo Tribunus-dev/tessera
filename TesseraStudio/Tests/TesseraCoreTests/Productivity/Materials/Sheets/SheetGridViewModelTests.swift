@@ -95,6 +95,78 @@ final class SheetGridViewModelTests: XCTestCase {
         XCTAssertEqual(vm.draftTitle, "Updated")
     }
 
+    // MARK: - Multi-sheet workbook (tabs)
+
+    func testOpenSheetsStartsWithJustTheOpenedSheet() {
+        let sheet = blank(rows: 2, cols: 2)
+        let store = SheetStore(dataLayer: TesseraDataLayer())
+        let vm = SheetEditorViewModel(sheet: sheet, store: store, userID: UUID())
+        XCTAssertEqual(vm.openSheets.map(\.id), [sheet.id])
+    }
+
+    func testLoadAdditionalSheetAddsATabWithoutSwitchingTheGrid() {
+        let sheet = blank(rows: 2, cols: 2)
+        let store = SheetStore(dataLayer: TesseraDataLayer())
+        let vm = SheetEditorViewModel(sheet: sheet, store: store, userID: UUID())
+        let other = Sheet.makeBlank(title: "Budget", rows: 2, cols: 2)
+
+        vm.loadAdditionalSheet(other)
+
+        XCTAssertEqual(vm.openSheets.map(\.id), [sheet.id, other.id])
+        XCTAssertEqual(vm.sheet.id, sheet.id, "the grid must keep showing the sheet the editor opened with")
+        XCTAssertEqual(vm.workbook.sheetID, sheet.id, "workbook's default target must not move either")
+    }
+
+    func testSwitchActiveSheetChangesWhatTheGridRenders() async {
+        let sheet = blank(rows: 2, cols: 2)
+        let store = SheetStore(dataLayer: TesseraDataLayer())
+        let vm = SheetEditorViewModel(sheet: sheet, store: store, userID: UUID())
+        let other = Sheet.makeBlank(title: "Budget", rows: 3, cols: 3)
+        vm.loadAdditionalSheet(other)
+
+        await vm.switchActiveSheet(to: other.id)
+
+        XCTAssertEqual(vm.sheet.id, other.id)
+        XCTAssertEqual(vm.draftTitle, "Budget")
+        XCTAssertEqual(vm.workbook.sheetID, other.id)
+    }
+
+    func testSwitchActiveSheetResetsGridEditingState() async {
+        let sheet = blank(rows: 2, cols: 2)
+        let store = SheetStore(dataLayer: TesseraDataLayer())
+        let vm = SheetEditorViewModel(sheet: sheet, store: store, userID: UUID())
+        let other = Sheet.makeBlank(title: "Budget", rows: 2, cols: 2)
+        vm.loadAdditionalSheet(other)
+        vm.selectCell(SheetCellCoord(row: 0, col: 0))
+        vm.beginEditingCell(SheetCellCoord(row: 0, col: 0))
+
+        await vm.switchActiveSheet(to: other.id)
+
+        XCTAssertNil(vm.selectedCell)
+        XCTAssertNil(vm.editingCell)
+    }
+
+    func testSwitchActiveSheetToAnUnloadedIDIsANoOp() async {
+        let sheet = blank(rows: 2, cols: 2)
+        let store = SheetStore(dataLayer: TesseraDataLayer())
+        let vm = SheetEditorViewModel(sheet: sheet, store: store, userID: UUID())
+
+        await vm.switchActiveSheet(to: UUID())
+
+        XCTAssertEqual(vm.sheet.id, sheet.id)
+    }
+
+    func testSwitchActiveSheetToTheAlreadyActiveSheetIsANoOp() async {
+        let sheet = blank(rows: 2, cols: 2)
+        let store = SheetStore(dataLayer: TesseraDataLayer())
+        let vm = SheetEditorViewModel(sheet: sheet, store: store, userID: UUID())
+        vm.draftTitle = "unchanged marker"
+
+        await vm.switchActiveSheet(to: sheet.id)
+
+        XCTAssertEqual(vm.draftTitle, "unchanged marker", "switching to the already-active sheet must not reload it")
+    }
+
     func testSheetListFilterApplyAllSorted() {
         let a = Sheet(title: "A", body: .empty, updatedAt: Date(timeIntervalSince1970: 1_000))
         let b = Sheet(title: "B", body: .empty, updatedAt: Date(timeIntervalSince1970: 3_000))

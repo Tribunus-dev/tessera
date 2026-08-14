@@ -150,6 +150,69 @@ final class SheetWorkbookTests: XCTestCase {
         XCTAssertFalse(workbook.hasFormula(row: 1, col: 0))
     }
 
+    // MARK: - Multi-sheet ordering and active-sheet switching
+
+    func testHydrateAppendsToSheetOrder() {
+        let a = Sheet.makeBlank(title: "A", rows: 2, cols: 2)
+        let b = Sheet.makeBlank(title: "B", rows: 2, cols: 2)
+        workbook.hydrate(from: a)
+        workbook.hydrate(from: b)
+        XCTAssertEqual(workbook.sheetOrder, [a.id, b.id])
+        XCTAssertEqual(workbook.orderedSheets.map(\.title), ["A", "B"])
+    }
+
+    /// Re-hydrating an already-loaded sheet (a refresh) must not move
+    /// it in the tab order or duplicate its entry.
+    func testRefreshingAnAlreadyLoadedSheetDoesNotReorder() {
+        let a = Sheet.makeBlank(title: "A", rows: 2, cols: 2)
+        let b = Sheet.makeBlank(title: "B", rows: 2, cols: 2)
+        workbook.hydrate(from: a)
+        workbook.hydrate(from: b)
+        workbook.hydrate(from: a)
+        XCTAssertEqual(workbook.sheetOrder, [a.id, b.id])
+    }
+
+    func testUnloadingOneSheetRemovesItFromOrder() {
+        let a = Sheet.makeBlank(title: "A", rows: 2, cols: 2)
+        let b = Sheet.makeBlank(title: "B", rows: 2, cols: 2)
+        workbook.hydrate(from: a)
+        workbook.hydrate(from: b)
+        workbook.unload(a.id)
+        XCTAssertEqual(workbook.sheetOrder, [b.id])
+    }
+
+    func testUnloadingEverythingClearsOrder() {
+        workbook.hydrate(from: Sheet.makeBlank(title: "A", rows: 2, cols: 2))
+        workbook.unload()
+        XCTAssertTrue(workbook.sheetOrder.isEmpty)
+    }
+
+    /// `setActive` switches the no-`sheetID` convenience API's target
+    /// without touching either sheet's calculation state.
+    func testSetActiveSwitchesTheDefaultSheetWithoutRehydrating() {
+        var a = Sheet.makeBlank(title: "A", rows: 2, cols: 2)
+        a = setText(a, row: 0, col: 0, "1")
+        var b = Sheet.makeBlank(title: "B", rows: 2, cols: 2)
+        b = setText(b, row: 0, col: 0, "2")
+        workbook.hydrate(from: a)
+        workbook.hydrate(from: b)
+        XCTAssertEqual(workbook.value(row: 0, col: 0), .number(2), "B was hydrated last, so it starts active")
+
+        XCTAssertTrue(workbook.setActive(a.id))
+        XCTAssertEqual(workbook.value(row: 0, col: 0), .number(1))
+        XCTAssertEqual(workbook.sheetID, a.id)
+
+        // B's own state is untouched by switching away from it.
+        XCTAssertEqual(workbook.value(row: 0, col: 0, in: b.id), .number(2))
+    }
+
+    func testSetActiveOnAnUnloadedSheetIsANoOp() {
+        workbook.hydrate(from: Sheet.makeBlank(title: "A", rows: 2, cols: 2))
+        let before = workbook.sheetID
+        XCTAssertFalse(workbook.setActive(UUID()))
+        XCTAssertEqual(workbook.sheetID, before)
+    }
+
     // MARK: - Literal typing
 
     func testLiteralTypingMatchesSpreadsheetConventions() {

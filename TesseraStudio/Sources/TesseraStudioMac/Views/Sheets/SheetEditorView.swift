@@ -58,6 +58,11 @@ public struct SheetEditorView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
+            if viewModel.openSheets.count > 1 {
+                tabBarSection
+                Divider()
+            }
+
             gridSection
 
             if hasTextBody {
@@ -68,6 +73,19 @@ public struct SheetEditorView: View {
             Divider()
             linkedSection
         }
+    }
+
+    // MARK: - Tabs
+
+    /// Only rendered once a second sheet has actually been loaded into
+    /// `viewModel.workbook` - see `body`'s guard above. The common
+    /// case, a single open sheet, shows none of this.
+    private var tabBarSection: some View {
+        SheetTabBarView(
+            sheets: viewModel.openSheets,
+            activeSheetID: viewModel.sheet.id,
+            onSelect: { id in Task { await viewModel.switchActiveSheet(to: id) } }
+        )
     }
 
     // MARK: - Grid
