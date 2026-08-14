@@ -14,6 +14,13 @@
 
 #include <vulkan/vulkan.h>
 
+struct ggml_amd_vulkan_import_owner {
+    VkDevice device;
+    VkBuffer buffer;
+    VkDeviceMemory memory;
+    int fd;
+};
+
 struct ggml_amd_vulkan_context {
     VkInstance instance;
     VkPhysicalDevice physical_device;
@@ -240,6 +247,26 @@ static void ggml_amd_vulkan_release_allocation_owner(void * context) {
     delete owner;
 }
 
+static void ggml_amd_vulkan_release_import_owner(void * context) {
+    auto owner = (ggml_amd_vulkan_import_owner *)context;
+    if (!owner) {
+        return;
+    }
+
+    if (owner->device != VK_NULL_HANDLE) {
+        if (owner->buffer != VK_NULL_HANDLE) {
+            vkDestroyBuffer(owner->device, owner->buffer, nullptr);
+        }
+        if (owner->memory != VK_NULL_HANDLE) {
+            vkFreeMemory(owner->device, owner->memory, nullptr);
+        }
+    }
+    if (owner->fd >= 0) {
+        close(owner->fd);
+    }
+    delete owner;
+}
+
 static ggml_status ggml_amd_vulkan_allocate_exportable(
     struct ggml_amd_provider * provider,
     size_t size,
@@ -393,7 +420,7 @@ static bool ggml_amd_vulkan_probe_impl(struct ggml_amd_provider * provider, stru
         result->memory_total = memory_total;
         result->memory_free = memory_total;
         result->supports_external_memory = 1;
-        result->supports_dma_buf_import = 0;
+        result->supports_dma_buf_import = 1;
     }
 
     return true;
@@ -406,26 +433,193 @@ static bool ggml_amd_vulkan_supports_op_impl(struct ggml_amd_provider * provider
 }
 
 static bool ggml_amd_vulkan_supports_import_impl(struct ggml_amd_provider * provider, struct ggml_amd_allocation * alloc) {
-    (void)provider;
-    (void)alloc;
-    return false;
+    if (!provider || !provider->context || !alloc || alloc->dma_buf_fd < 0) {
+        return false;
+    }
+    if (alloc->external_handle_kind == GGML_AMD_EXTERNAL_HANDLE_KIND_NONE) {
+        return false;
+    }
+    if (alloc->coherency != GGML_AMD_COHERENCY_GPU_ONLY && alloc->coherency != GGML_AMD_COHERENCY_SHARED) {
+        return false;
+    }
+    if (alloc->external_handle_kind == GGML_AMD_EXTERNAL_HANDLE_KIND_UNKNOWN) {
+#if !defined(VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT) && !defined(VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT)
+        return false;
+#endif
+    }
+    if (alloc->external_handle_kind != GGML_AMD_EXTERNAL_HANDLE_KIND_UNKNOWN &&
+        alloc->external_handle_kind != GGML_AMD_EXTERNAL_HANDLE_KIND_VULKAN_OPAQUE_FD) {
+        return false;
+    }
+
+    return alloc->domain == GGML_AMD_DOMAIN_IMPORTED_EXTERNAL ||
+           alloc->domain == GGML_AMD_DOMAIN_SHARED_SYSTEM ||
+           alloc->domain == GGML_AMD_DOMAIN_GPU_LOCAL_EXPORTABLE;
 }
 
 static ggml_status ggml_amd_vulkan_import_allocation_impl(
     struct ggml_amd_provider * provider,
     struct ggml_amd_allocation * alloc,
     struct ggml_amd_import ** out_import) {
-    (void)provider;
-    (void)alloc;
-    (void)out_import;
-    return GGML_STATUS_FAILED;
+    auto ctx = static_cast<ggml_amd_vulkan_context *>(provider ? provider->context : nullptr);
+    if (!ctx || !alloc || !out_import || alloc->dma_buf_fd < 0 || alloc->size == 0) {
+        return GGML_STATUS_FAILED;
+    }
+    *out_import = nullptr;
+    if (!ggml_amd_vulkan_context_ensure(provider)) {
+        return GGML_STATUS_FAILED;
+    }
+    if (!ggml_amd_vulkan_supports_import_impl(provider, alloc)) {
+        return GGML_STATUS_FAILED;
+    }
+
+    if (!provider->iface) {
+        return GGML_STATUS_FAILED;
+    }
+
+    const auto alignment = alloc->alignment == 0 ? 1 : alloc->alignment;
+    const size_t aligned_size = (alloc->size + alignment - 1) / alignment * alignment;
+
+    VkExternalMemoryHandleTypeFlagBits handle_types[3] = {};
+    int handle_type_count = 0;
+    const bool explicit_opaque = alloc->external_handle_kind == GGML_AMD_EXTERNAL_HANDLE_KIND_VULKAN_OPAQUE_FD;
+#if defined(VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT)
+    if (!explicit_opaque) {
+        handle_types[handle_type_count++] = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
+    }
+#endif
+#if defined(VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT)
+    handle_types[handle_type_count++] = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
+#endif
+#if defined(VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT)
+    if (explicit_opaque) {
+        handle_types[handle_type_count++] = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
+    }
+#endif
+
+    if (handle_type_count == 0) {
+        return GGML_STATUS_FAILED;
+    }
+
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    int active_fd = -1;
+    bool imported = false;
+
+    for (int attempt = 0; attempt < handle_type_count; ++attempt) {
+        const auto handle_type = handle_types[attempt];
+        active_fd = ggml_amd_allocation_dup_fd(alloc);
+        if (active_fd < 0) {
+            break;
+        }
+
+        VkExternalMemoryBufferCreateInfo external_buffer = {};
+        external_buffer.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO;
+        external_buffer.handleTypes = handle_type;
+
+        VkBufferCreateInfo buffer_info = {};
+        buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        buffer_info.pNext = &external_buffer;
+        buffer_info.size = aligned_size;
+        buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+        buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        if (vkCreateBuffer(ctx->device, &buffer_info, nullptr, &buffer) != VK_SUCCESS) {
+            close(active_fd);
+            active_fd = -1;
+            continue;
+        }
+
+        VkMemoryRequirements requirements = {};
+        vkGetBufferMemoryRequirements(ctx->device, buffer, &requirements);
+
+        uint32_t memory_type = 0;
+        if (!ggml_amd_vulkan_select_memory_type(ctx->physical_device, requirements, &memory_type)) {
+            vkDestroyBuffer(ctx->device, buffer, nullptr);
+            buffer = VK_NULL_HANDLE;
+            close(active_fd);
+            active_fd = -1;
+            continue;
+        }
+
+        VkImportMemoryFdInfoKHR import_info = {};
+        import_info.sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_FD_INFO_KHR;
+        import_info.handleType = handle_type;
+        import_info.fd = active_fd;
+        import_info.pNext = nullptr;
+
+        VkResult error = VK_ERROR_UNKNOWN;
+        VkMemoryAllocateInfo alloc_info = {};
+        alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        alloc_info.pNext = &import_info;
+        alloc_info.allocationSize = requirements.size;
+        alloc_info.memoryTypeIndex = memory_type;
+
+        error = vkAllocateMemory(ctx->device, &alloc_info, nullptr, &memory);
+        if (error != VK_SUCCESS) {
+            vkDestroyBuffer(ctx->device, buffer, nullptr);
+            buffer = VK_NULL_HANDLE;
+            close(active_fd);
+            active_fd = -1;
+            continue;
+        }
+
+        error = vkBindBufferMemory(ctx->device, buffer, memory, 0);
+        if (error != VK_SUCCESS) {
+            vkFreeMemory(ctx->device, memory, nullptr);
+            memory = VK_NULL_HANDLE;
+            vkDestroyBuffer(ctx->device, buffer, nullptr);
+            buffer = VK_NULL_HANDLE;
+            close(active_fd);
+            active_fd = -1;
+            continue;
+        }
+
+        imported = true;
+        break;
+    }
+
+    if (!imported || buffer == VK_NULL_HANDLE || memory == VK_NULL_HANDLE) {
+        if (buffer != VK_NULL_HANDLE) {
+            vkDestroyBuffer(ctx->device, buffer, nullptr);
+        }
+        if (memory != VK_NULL_HANDLE) {
+            vkFreeMemory(ctx->device, memory, nullptr);
+        }
+        if (active_fd >= 0) {
+            close(active_fd);
+        }
+        return GGML_STATUS_FAILED;
+    }
+
+    auto owner = new ggml_amd_vulkan_import_owner();
+    owner->device = ctx->device;
+    owner->buffer = buffer;
+    owner->memory = memory;
+    owner->fd = active_fd;
+
+    auto import = new ggml_amd_import();
+    import->allocation = alloc;
+    import->provider = provider;
+    import->native_handle = owner;
+    import->ref_count = 1;
+    ggml_amd_allocation_retain(alloc);
+
+    *out_import = import;
+    return GGML_STATUS_SUCCESS;
 }
 
 static void ggml_amd_vulkan_release_import_impl(struct ggml_amd_provider * provider, struct ggml_amd_import * import) {
     (void)provider;
-    if (import) {
-        delete import;
+    if (!import) {
+        return;
     }
+
+    if (import->native_handle) {
+        ggml_amd_vulkan_release_import_owner(import->native_handle);
+    }
+    ggml_amd_allocation_release(import->allocation);
+    delete import;
 }
 
 static ggml_status ggml_amd_vulkan_submit_region_impl(

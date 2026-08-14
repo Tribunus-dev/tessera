@@ -18,7 +18,7 @@ hipinfo
 
 # Add ROCm to PATH
 export PATH=/opt/rocm/bin:$PATH
-export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=/opt/rocm/lib:${LD_LIBRARY_PATH-}
 
 # Re-run CMake with the ROCm prefix
 cmake -S . -B build-amd -DGGML_AMD=ON -DGGML_AMD_HIP=ON -DROCM_PATH=/opt/rocm
@@ -257,6 +257,58 @@ cmake --build /tmp/tessera-amd-test --parallel
 
 The line should print `HIP imports a system dma-buf` when your HIP stack
 can import system dma-buf allocations.
+
+## Environment bootstrap (distrobox)
+
+If `cmake` is missing in the container, install it first:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y cmake g++ make ninja-build pkg-config
+```
+
+If `GGML_AMD_VULKAN=ON` still fails in configure with
+`Could NOT find Vulkan`, install Vulkan headers and libraries:
+
+```bash
+sudo apt-get install -y libvulkan-dev vulkan-tools libvulkan1
+```
+
+If you are validating HIP-only behavior first, you can temporarily disable Vulkan
+to avoid this dependency:
+
+```bash
+cmake -S "$WORKDIR" -B /tmp/tessera-amd-test \
+  -DGGML_AMD=ON -DGGML_AMD_HIP=ON -DGGML_AMD_VULKAN=OFF -DGGML_BUILD_TESTS=ON -DROCM_PATH=$ROCM_PATH
+```
+
+You can also run the full flow with the repository helper:
+
+```bash
+WORKDIR="$(git rev-parse --show-toplevel)"
+cd "$WORKDIR"
+./scripts/ggml-amd-linux-build-test.sh /tmp/tessera-amd-test ON
+```
+
+The script:
+- installs nothing;
+- configures with `GGML_AMD=ON`, `GGML_AMD_HIP=ON`;
+- runs `test-amd-registry` with a robust `GGML_AMD_DMA_HEAP_PATH` default.
+
+Then re-run the build with the exact same workspace path (not `/path/to/tessera`):
+
+```bash
+WORKDIR=$(git rev-parse --show-toplevel)
+export ROCM_PATH=/opt/rocm-7.1.1
+export PATH=$ROCM_PATH/bin:$PATH
+export LD_LIBRARY_PATH=$ROCM_PATH/lib:$ROCM_PATH/lib64:${LD_LIBRARY_PATH-}
+
+rm -rf /tmp/tessera-amd-test
+cmake -S "$WORKDIR" -B /tmp/tessera-amd-test \
+  -DGGML_AMD=ON -DGGML_AMD_HIP=ON -DGGML_AMD_VULKAN=ON -DGGML_BUILD_TESTS=ON -DROCM_PATH=$ROCM_PATH
+cmake --build /tmp/tessera-amd-test --parallel
+/tmp/tessera-amd-test/bin/test-amd-registry
+```
 
 #### Import Fails
 

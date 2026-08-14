@@ -47,6 +47,85 @@ static bool ggml_amd_hip_try_shared_system_import(
     struct ggml_amd_provider * provider,
     const std::string & heap_path);
 
+static ggml_status ggml_amd_hip_import_allocation_impl(
+    struct ggml_amd_provider * provider,
+    struct ggml_amd_allocation * alloc,
+    struct ggml_amd_import ** out_import);
+
+static void ggml_amd_hip_release_import_impl(struct ggml_amd_provider * provider, struct ggml_amd_import * import);
+
+static bool ggml_amd_hip_get_external_memory_handle_type(
+#ifdef __HIP_PLATFORM_AMD__
+    enum ggml_amd_external_handle_kind kind,
+    hipExternalMemoryHandleType * out_type
+#else
+    int,
+    void *
+#endif
+) {
+#ifdef __HIP_PLATFORM_AMD__
+    if (!out_type) {
+        return false;
+    }
+
+    if (kind == GGML_AMD_EXTERNAL_HANDLE_KIND_VULKAN_OPAQUE_FD) {
+        *out_type = hipExternalMemoryHandleTypeOpaqueFd;
+        return true;
+    }
+
+    if (kind == GGML_AMD_EXTERNAL_HANDLE_KIND_UNKNOWN) {
+#if defined(hipExternalMemoryHandleTypeDmaBuf)
+        *out_type = hipExternalMemoryHandleTypeDmaBuf;
+#elif defined(hipExternalMemoryHandleTypeDmaBufFd)
+        *out_type = hipExternalMemoryHandleTypeDmaBufFd;
+#else
+        *out_type = hipExternalMemoryHandleTypeOpaqueFd;
+#endif
+        return true;
+    }
+
+    return false;
+#else
+    return false;
+#endif
+}
+
+static bool ggml_amd_hip_get_unknown_handle_type_candidates(
+#ifdef __HIP_PLATFORM_AMD__
+    hipExternalMemoryHandleType * out_types,
+#else
+    int,
+#endif
+    int * out_count) {
+#ifdef __HIP_PLATFORM_AMD__
+    if (!out_types || !out_count) {
+        return false;
+    }
+
+    int count = 0;
+#if defined(hipExternalMemoryHandleTypeDmaBuf)
+    if (!count || out_types[count - 1] != hipExternalMemoryHandleTypeDmaBuf) {
+        out_types[count++] = hipExternalMemoryHandleTypeDmaBuf;
+    }
+#endif
+#if defined(hipExternalMemoryHandleTypeOpaqueFd)
+    if (!count || out_types[count - 1] != hipExternalMemoryHandleTypeOpaqueFd) {
+        out_types[count++] = hipExternalMemoryHandleTypeOpaqueFd;
+    }
+#endif
+#if defined(hipExternalMemoryHandleTypeDmaBufFd) && (!defined(hipExternalMemoryHandleTypeDmaBuf) || hipExternalMemoryHandleTypeDmaBufFd != hipExternalMemoryHandleTypeDmaBuf)
+    if (!count || out_types[count - 1] != hipExternalMemoryHandleTypeDmaBufFd) {
+        out_types[count++] = hipExternalMemoryHandleTypeDmaBufFd;
+    }
+#endif
+    *out_count = count;
+    return count > 0;
+#else
+    (void)out_count;
+    return false;
+#endif
+}
+
 int ggml_amd_hip_get_last_import_error(void) {
 #ifdef __HIP_PLATFORM_AMD__
     return g_ggml_amd_hip_last_import_error;
@@ -304,32 +383,28 @@ static bool ggml_amd_hip_supports_import_impl(struct ggml_amd_provider * provide
     if (!alloc || alloc->dma_buf_fd < 0) {
         return false;
     }
+    if (alloc->external_handle_kind == GGML_AMD_EXTERNAL_HANDLE_KIND_NONE) {
+        return false;
+    }
+    if (alloc->external_handle_kind == GGML_AMD_EXTERNAL_HANDLE_KIND_UNKNOWN) {
+#if !defined(hipExternalMemoryHandleTypeDmaBuf) && !defined(hipExternalMemoryHandleTypeDmaBufFd) && !defined(hipExternalMemoryHandleTypeOpaqueFd)
+        return false;
+#endif
+    }
     if (alloc->domain == GGML_AMD_DOMAIN_SHARED_SYSTEM && !ctx->supports_dma_buf_import) {
         return false;
     }
-    (void)ctx;
+    if (alloc->domain != GGML_AMD_DOMAIN_IMPORTED_EXTERNAL &&
+        alloc->domain != GGML_AMD_DOMAIN_SHARED_SYSTEM &&
+        alloc->domain != GGML_AMD_DOMAIN_GPU_LOCAL_EXPORTABLE) {
+        return false;
+    }
+    return alloc->external_handle_kind != GGML_AMD_EXTERNAL_HANDLE_KIND_NONE;
 #else
     (void)provider;
-    if (!alloc || alloc->dma_buf_fd < 0) {
-        return false;
-    }
-    if (alloc->domain != GGML_AMD_DOMAIN_IMPORTED_EXTERNAL &&
-        alloc->domain != GGML_AMD_DOMAIN_SHARED_SYSTEM &&
-        alloc->domain != GGML_AMD_DOMAIN_GPU_LOCAL_EXPORTABLE) {
-        return false;
-    }
-    return alloc->external_handle_kind != GGML_AMD_EXTERNAL_HANDLE_KIND_NONE;
+    (void)alloc;
+    return false;
 #endif
-
-    if (!alloc || alloc->dma_buf_fd < 0) {
-        return false;
-    }
-    if (alloc->domain != GGML_AMD_DOMAIN_IMPORTED_EXTERNAL &&
-        alloc->domain != GGML_AMD_DOMAIN_SHARED_SYSTEM &&
-        alloc->domain != GGML_AMD_DOMAIN_GPU_LOCAL_EXPORTABLE) {
-        return false;
-    }
-    return alloc->external_handle_kind != GGML_AMD_EXTERNAL_HANDLE_KIND_NONE;
 }
 
 static ggml_status ggml_amd_hip_import_allocation_impl(
@@ -374,16 +449,64 @@ static ggml_status ggml_amd_hip_import_allocation_impl(
         return GGML_STATUS_FAILED;
     }
 
-    hipExternalMemoryHandleDesc handle_desc = {};
-    handle_desc.type = hipExternalMemoryHandleTypeOpaqueFd;
-    handle_desc.handle.fd = dup_fd;
-    handle_desc.size = alloc->size;
-
-    hipExternalMemory_t external_memory = nullptr;
-    const auto import_error = hipImportExternalMemory(&external_memory, &handle_desc);
-    if (import_error != hipSuccess) {
-        g_ggml_amd_hip_last_import_error = import_error;
+    hipExternalMemoryHandleType handle_type_candidates[4] = {};
+    int candidate_count = 0;
+    if (alloc->external_handle_kind == GGML_AMD_EXTERNAL_HANDLE_KIND_UNKNOWN) {
+        if (!ggml_amd_hip_get_unknown_handle_type_candidates(handle_type_candidates, &candidate_count)) {
+#if defined(hipExternalMemoryHandleTypeOpaqueFd)
+            candidate_count = 1;
+            handle_type_candidates[0] = hipExternalMemoryHandleTypeOpaqueFd;
+#else
+            g_ggml_amd_hip_last_import_error = hipErrorInvalidValue;
+            close(dup_fd);
+            return GGML_STATUS_FAILED;
+#endif
+        }
+    } else if (!ggml_amd_hip_get_external_memory_handle_type(alloc->external_handle_kind, &handle_type_candidates[0])) {
+        g_ggml_amd_hip_last_import_error = hipErrorInvalidValue;
         close(dup_fd);
+        return GGML_STATUS_FAILED;
+    } else {
+        candidate_count = 1;
+    }
+
+    hipExternalMemoryHandleType handle_type = hipExternalMemoryHandleTypeOpaqueFd;
+    hipExternalMemory_t external_memory = nullptr;
+    hipError_t import_error = hipErrorInvalidValue;
+    int active_fd = dup_fd;
+    bool imported = false;
+    for (int i = 0; i < candidate_count; ++i) {
+        if (i > 0) {
+            active_fd = ggml_amd_allocation_dup_fd(alloc);
+            if (active_fd < 0) {
+                break;
+            }
+        } else {
+            active_fd = dup_fd;
+        }
+
+        handle_type = handle_type_candidates[i];
+        hipExternalMemoryHandleDesc handle_desc = {};
+        handle_desc.type = handle_type;
+        handle_desc.handle.fd = active_fd;
+        handle_desc.size = alloc->size;
+
+        import_error = hipImportExternalMemory(&external_memory, &handle_desc);
+        if (import_error == hipSuccess) {
+            imported = true;
+            break;
+        }
+
+        g_ggml_amd_hip_last_import_error = import_error;
+        close(active_fd);
+        active_fd = -1;
+        external_memory = nullptr;
+    }
+
+    if (!imported) {
+        if (active_fd >= 0) {
+            close(active_fd);
+        }
         return GGML_STATUS_FAILED;
     }
 
@@ -393,16 +516,71 @@ static ggml_status ggml_amd_hip_import_allocation_impl(
     mapped_buffer_desc.flags = 0;
 
     void * mapped_ptr = nullptr;
-    const auto map_error = hipExternalMemoryGetMappedBuffer(&mapped_ptr, external_memory, &mapped_buffer_desc);
+    auto map_error = hipExternalMemoryGetMappedBuffer(&mapped_ptr, external_memory, &mapped_buffer_desc);
     if (map_error != hipSuccess) {
         g_ggml_amd_hip_last_import_error = map_error;
         (void)hipDestroyExternalMemory(external_memory);
-        close(dup_fd);
+        external_memory = nullptr;
+        close(active_fd);
+        active_fd = -1;
+        imported = false;
+
+        for (int i = 1; i < candidate_count; ++i) {
+            const auto retry_handle_type = handle_type_candidates[i];
+            active_fd = ggml_amd_allocation_dup_fd(alloc);
+            if (active_fd < 0) {
+                break;
+            }
+
+            hipExternalMemoryHandleDesc handle_desc = {};
+            handle_desc.type = retry_handle_type;
+            handle_desc.handle.fd = active_fd;
+            handle_desc.size = alloc->size;
+
+            import_error = hipImportExternalMemory(&external_memory, &handle_desc);
+            if (import_error != hipSuccess) {
+                g_ggml_amd_hip_last_import_error = import_error;
+                close(active_fd);
+                active_fd = -1;
+                continue;
+            }
+
+            map_error = hipExternalMemoryGetMappedBuffer(&mapped_ptr, external_memory, &mapped_buffer_desc);
+            if (map_error != hipSuccess) {
+                g_ggml_amd_hip_last_import_error = map_error;
+                (void)hipDestroyExternalMemory(external_memory);
+                external_memory = nullptr;
+                close(active_fd);
+                active_fd = -1;
+                continue;
+            }
+
+            imported = true;
+            handle_type = retry_handle_type;
+            break;
+        }
+
+        if (!imported) {
+            if (external_memory != nullptr) {
+                (void)hipDestroyExternalMemory(external_memory);
+            }
+            if (active_fd >= 0) {
+                close(active_fd);
+            }
+            return GGML_STATUS_FAILED;
+        }
+    }
+
+    if (external_memory == nullptr) {
+        g_ggml_amd_hip_last_import_error = hipErrorInvalidValue;
+        if (active_fd >= 0) {
+            close(active_fd);
+        }
         return GGML_STATUS_FAILED;
     }
     (void)mapped_ptr;
     g_ggml_amd_hip_last_import_error = hipSuccess;
-    close(dup_fd);
+    close(active_fd);
 
     auto import = new ggml_amd_import();
     import->allocation = alloc;
