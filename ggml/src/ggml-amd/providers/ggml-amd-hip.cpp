@@ -215,6 +215,9 @@ static bool ggml_amd_hip_supports_import_impl(struct ggml_amd_provider * provide
     if (!alloc || alloc->dma_buf_fd < 0) {
         return false;
     }
+    if (alloc->domain != GGML_AMD_DOMAIN_IMPORTED_EXTERNAL) {
+        return false;
+    }
     return alloc->external_handle_kind == GGML_AMD_EXTERNAL_HANDLE_KIND_VULKAN_OPAQUE_FD;
 }
 
@@ -228,8 +231,12 @@ static ggml_status ggml_amd_hip_import_allocation_impl(
     if (!provider || !alloc || !out_import) {
         return GGML_STATUS_FAILED;
     }
+    *out_import = nullptr;
 
     if (alloc->external_handle_kind != GGML_AMD_EXTERNAL_HANDLE_KIND_VULKAN_OPAQUE_FD) {
+        return GGML_STATUS_FAILED;
+    }
+    if (alloc->domain != GGML_AMD_DOMAIN_IMPORTED_EXTERNAL) {
         return GGML_STATUS_FAILED;
     }
 

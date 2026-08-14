@@ -4,6 +4,9 @@
 #include <cstring>
 #include <cerrno>
 
+extern void ggml_amd_fence_release(struct ggml_amd_fence * fence);
+extern int ggml_amd_fence_wait(struct ggml_amd_fence * fence, int timeout_ms);
+
 #ifdef __linux__
 #include <fcntl.h>
 #include <unistd.h>
@@ -11,11 +14,11 @@
 #include <sys/mman.h>
 #include <linux/dma-heap.h>
 #include <linux/dma-buf.h>
-#include <drm/drm.h>
 #endif
 
 static int ggml_amd_dma_heap_alloc(size_t size, size_t alignment) {
 #ifdef __linux__
+    (void)alignment;
     int fd = open("/dev/dma_heap/system", O_RDWR | O_CLOEXEC);
     if (fd < 0) {
         return -1;
@@ -35,29 +38,6 @@ static int ggml_amd_dma_heap_alloc(size_t size, size_t alignment) {
     close(fd);
     return alloc_data.fd;
 #else
-    (void)size;
-    (void)alignment;
-    return -1;
-#endif
-}
-
-static int ggml_amd_gem_alloc_export(int drm_fd, size_t size, size_t alignment) {
-#ifdef __linux__
-    struct drm_gem_close close_data = {};
-    (void)close_data;
-
-    struct drm_prime_handle prime = {};
-    prime.handle = 0;
-    prime.flags = DRM_CLOEXEC | DRM_RDWR;
-    prime.fd = -1;
-
-    if (ioctl(drm_fd, DRM_IOCTL_PRIME_HANDLE_TO_FD, &prime) < 0) {
-        return -1;
-    }
-
-    return prime.fd;
-#else
-    (void)drm_fd;
     (void)size;
     (void)alignment;
     return -1;
@@ -119,26 +99,34 @@ struct ggml_amd_allocation * ggml_amd_allocation_create(
     alloc->coherency = coherency;
     alloc->cpu_mapping = nullptr;
     alloc->generation = 0;
+    alloc->external_handle_kind = GGML_AMD_EXTERNAL_HANDLE_KIND_NONE;
+    alloc->producer_context = nullptr;
+    alloc->producer_cleanup = nullptr;
     alloc->ref_count = 1;
+    memset(&alloc->last_writer, 0, sizeof(alloc->last_writer));
     alloc->last_writer.kind = GGML_AMD_FENCE_NONE;
-    alloc->last_writer.sequence = 0;
+    alloc->last_writer.sync_file_fd = -1;
 
     switch (domain) {
         case GGML_AMD_DOMAIN_SHARED_SYSTEM:
             alloc->dma_buf_fd = ggml_amd_dma_heap_alloc(size, alignment);
             alloc->fd_ownership = GGML_AMD_FD_OWNERSHIP_OWNED;
+            alloc->external_handle_kind = GGML_AMD_EXTERNAL_HANDLE_KIND_UNKNOWN;
             break;
         case GGML_AMD_DOMAIN_GPU_LOCAL_EXPORTABLE:
             alloc->dma_buf_fd = -1;
             alloc->fd_ownership = GGML_AMD_FD_OWNERSHIP_OWNED;
+            alloc->external_handle_kind = GGML_AMD_EXTERNAL_HANDLE_KIND_NONE;
             break;
         case GGML_AMD_DOMAIN_PROVIDER_PRIVATE:
             alloc->dma_buf_fd = -1;
             alloc->fd_ownership = GGML_AMD_FD_OWNERSHIP_BORROWED;
+            alloc->external_handle_kind = GGML_AMD_EXTERNAL_HANDLE_KIND_NONE;
             break;
         case GGML_AMD_DOMAIN_IMPORTED_EXTERNAL:
             alloc->dma_buf_fd = -1;
             alloc->fd_ownership = GGML_AMD_FD_OWNERSHIP_BORROWED;
+            alloc->external_handle_kind = GGML_AMD_EXTERNAL_HANDLE_KIND_UNKNOWN;
             break;
     }
 
@@ -155,22 +143,111 @@ void ggml_amd_allocation_release(struct ggml_amd_allocation * alloc) {
         return;
     }
 
-    std::lock_guard<std::mutex> lock(alloc->mutex);
-    alloc->ref_count--;
+    void * cpu_mapping = nullptr;
+    int dma_buf_fd = -1;
+    enum ggml_amd_fd_ownership fd_ownership = GGML_AMD_FD_OWNERSHIP_BORROWED;
+    enum ggml_amd_coherency coherency = GGML_AMD_COHERENCY_CPU_ONLY;
+    struct ggml_amd_fence last_writer = {};
+    void (*producer_cleanup)(void * context) = nullptr;
+    void * producer_context = nullptr;
 
-    if (alloc->ref_count > 0) {
+    {
+        std::lock_guard<std::mutex> lock(alloc->mutex);
+        alloc->ref_count--;
+
+        if (alloc->ref_count > 0) {
+            return;
+        }
+
+        cpu_mapping = alloc->cpu_mapping;
+        alloc->cpu_mapping = nullptr;
+        dma_buf_fd = alloc->dma_buf_fd;
+        alloc->dma_buf_fd = -1;
+        fd_ownership = alloc->fd_ownership;
+        coherency = alloc->coherency;
+        last_writer = alloc->last_writer;
+        producer_cleanup = alloc->producer_cleanup;
+        producer_context = alloc->producer_context;
+        memset(&alloc->last_writer, 0, sizeof(alloc->last_writer));
+        alloc->last_writer.kind = GGML_AMD_FENCE_NONE;
+        alloc->last_writer.sync_file_fd = -1;
+        alloc->producer_cleanup = nullptr;
+        alloc->producer_context = nullptr;
+    }
+
+    if (cpu_mapping) {
+        if (coherency == GGML_AMD_COHERENCY_SHARED && dma_buf_fd >= 0) {
+            ggml_amd_sync_fd(dma_buf_fd, 0);
+        }
+        ggml_amd_munmap_fd(cpu_mapping, alloc->size);
+    }
+
+    ggml_amd_fence_release(&last_writer);
+    if (producer_cleanup) {
+        producer_cleanup(producer_context);
+    }
+
+#ifdef __linux__
+    if (dma_buf_fd >= 0 && fd_ownership != GGML_AMD_FD_OWNERSHIP_BORROWED) {
+        close(dma_buf_fd);
+    }
+#else
+    (void)dma_buf_fd;
+    (void)fd_ownership;
+#endif
+    delete alloc;
+}
+
+void ggml_amd_allocation_retain(struct ggml_amd_allocation * alloc) {
+    if (!alloc) {
         return;
     }
 
-    if (alloc->cpu_mapping) {
-        ggml_amd_munmap_fd(alloc->cpu_mapping, alloc->size);
+    std::lock_guard<std::mutex> lock(alloc->mutex);
+    alloc->ref_count++;
+}
+
+void ggml_amd_allocation_set_cleanup(
+    struct ggml_amd_allocation * alloc,
+    void * producer_context,
+    void (*producer_cleanup)(void * context)) {
+    if (!alloc) {
+        return;
     }
 
-    if (alloc->dma_buf_fd >= 0 && alloc->fd_ownership != GGML_AMD_FD_OWNERSHIP_BORROWED) {
-        close(alloc->dma_buf_fd);
+    std::lock_guard<std::mutex> lock(alloc->mutex);
+    alloc->producer_context = producer_context;
+    alloc->producer_cleanup = producer_cleanup;
+}
+
+struct ggml_amd_allocation * ggml_amd_allocation_wrap_external_fd(
+    int fd,
+    size_t size,
+    size_t alignment,
+    enum ggml_amd_external_handle_kind external_handle_kind,
+    enum ggml_amd_fd_ownership fd_ownership,
+    enum ggml_amd_coherency coherency) {
+    if (fd < 0) {
+        return nullptr;
     }
 
-    delete alloc;
+    auto alloc = new ggml_amd_allocation();
+    alloc->size = size;
+    alloc->alignment = alignment;
+    alloc->domain = GGML_AMD_DOMAIN_IMPORTED_EXTERNAL;
+    alloc->coherency = coherency;
+    alloc->external_handle_kind = external_handle_kind;
+    alloc->producer_context = nullptr;
+    alloc->producer_cleanup = nullptr;
+    alloc->cpu_mapping = nullptr;
+    alloc->generation = 0;
+    alloc->ref_count = 1;
+    memset(&alloc->last_writer, 0, sizeof(alloc->last_writer));
+    alloc->last_writer.kind = GGML_AMD_FENCE_NONE;
+    alloc->last_writer.sync_file_fd = -1;
+    alloc->dma_buf_fd = fd;
+    alloc->fd_ownership = fd_ownership;
+    return alloc;
 }
 
 void * ggml_amd_allocation_map_cpu(struct ggml_amd_allocation * alloc) {
@@ -192,13 +269,24 @@ void * ggml_amd_allocation_map_cpu(struct ggml_amd_allocation * alloc) {
         return nullptr;
     }
 
-    void * ptr = ggml_amd_mmap_fd(alloc->dma_buf_fd, alloc->size);
-    if (!ptr) {
+    if (alloc->last_writer.kind != GGML_AMD_FENCE_NONE && alloc->last_writer.kind != GGML_AMD_FENCE_HOST) {
+        // Cache synchronization does not establish producer completion.
+        if (ggml_amd_fence_wait(&alloc->last_writer, -1) != 0) {
+            return nullptr;
+        }
+        ggml_amd_fence_release(&alloc->last_writer);
+    }
+
+    if (alloc->coherency == GGML_AMD_COHERENCY_SHARED && ggml_amd_sync_fd(alloc->dma_buf_fd, 1) != 0) {
         return nullptr;
     }
 
-    if (alloc->last_writer.kind != GGML_AMD_FENCE_NONE && alloc->last_writer.kind != GGML_AMD_FENCE_HOST) {
-        ggml_amd_sync_fd(alloc->dma_buf_fd, 1);
+    void * ptr = ggml_amd_mmap_fd(alloc->dma_buf_fd, alloc->size);
+    if (!ptr) {
+        if (alloc->coherency == GGML_AMD_COHERENCY_SHARED) {
+            ggml_amd_sync_fd(alloc->dma_buf_fd, 0);
+        }
+        return nullptr;
     }
 
     alloc->cpu_mapping = ptr;
@@ -216,7 +304,7 @@ void ggml_amd_allocation_unmap_cpu(struct ggml_amd_allocation * alloc) {
         return;
     }
 
-    if (alloc->coherency != GGML_AMD_COHERENCY_CPU_ONLY) {
+    if (alloc->coherency == GGML_AMD_COHERENCY_SHARED) {
         ggml_amd_sync_fd(alloc->dma_buf_fd, 0);
     }
 
