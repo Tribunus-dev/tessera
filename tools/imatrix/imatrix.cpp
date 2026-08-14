@@ -23,6 +23,7 @@
 #include <clocale>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <thread>
@@ -199,6 +200,21 @@ struct observer_transfer_state {
     bool probe_active = false;
 };
 
+// kv_stats (Phase 3 "KV-joint plumbing", collector-side capture): running
+// per-channel accumulators for one captured "blk.<il>.attn_k" / "attn_v"
+// row. Channel axis is head_dim (ne[0] of the Kcur-<il>/Vcur-<il> node),
+// matching the pair-tied-diagonal-scale convention in
+// docs/tessera-kv-joint-reconstruction-design.md section 3 ("K leg...
+// diagonal over head-dim channels"): stats are pooled across heads and
+// tokens into one head_dim-length vector per layer per side.
+struct kv_stat_accum {
+    int32_t layer_depth = 0;
+    int32_t n_channels  = 0;
+    int64_t n_samples   = 0;
+    std::vector<float> sum2;
+    std::vector<float> maxabs;
+};
+
 class IMatrixCollector {
 public:
     IMatrixCollector() = default;
@@ -266,6 +282,25 @@ public:
     // derived quantities stored explicitly for query convenience.
     // Writes are best-effort: a failed append logs and continues.
     void write_accum_state_to_db(int32_t checkpoint_chunk) const;
+    // kv_stats (Phase 3 "KV-joint plumbing"): write one row per captured
+    // (scope, "blk.<il>.attn_k"/"attn_v") accumulator in m_kv_stats to the
+    // kv_stats table via ts_tessera_db_upsert_kv_stat. Called from
+    // save_imatrix() alongside write_accum_state_to_db(); best-effort and a
+    // no-op when no tessera DB is open or nothing has been captured.
+    void write_kv_stats_to_db() const;
+    // kv_stats (Phase 3, graph-side sibling capture): the same table, fed
+    // instead from m_stats entries whose name matches the synthetic
+    // "blk.<il>.kv_k" / "blk.<il>.kv_v" pattern -- these are ordinary
+    // ggml_imatrix_observer nodes inserted directly in build_attn
+    // (src/llama-graph.cpp), so they flow through the SAME async
+    // reduction/staging pipeline every other dense observer uses; this
+    // function is the only new code the graph-side path needs here.
+    // source="graph_observer" distinguishes these rows from the
+    // collector-side path's "collector_legacy" rows written above. Does
+    // NOT remove the entries from m_stats -- they are harmless, if unused,
+    // extra rows in the regular imatrix.gguf output (a real GGUF consumer
+    // looks up specific weight names and will never match "kv_k"/"kv_v").
+    void write_kv_stats_graph_observers_to_db() const;
     // Phase imatrix-crash-safe: resume from a DuckDB checkpoint. Reads
     // imatrix_accum_state rows for m_model_hash and seeds the in-memory
     // m_stats map with stored accumulators so the run picks up where it
@@ -297,7 +332,14 @@ private:
     bool load_transfer_ledger(
             const std::string & imatrix_path,
             int32_t checkpoint_chunk);
+    // kv_stats (Phase 3 "KV-joint plumbing"): accumulate one claimed
+    // Kcur-<il>/Vcur-<il> node's OUTPUT (t->data, not a src[] operand) into
+    // m_kv_stats. Called from collect_imatrix's ask=false branch.
+    void collect_kv_stat(const struct ggml_tensor * t, bool is_k, int32_t il);
     std::unordered_map<stats_key, Stats, stats_key_hash> m_stats;
+    // kv_stats running accumulators, bucketed the same way as m_stats
+    // (scope, name) with name = "blk.<il>.attn_k" / "blk.<il>.attn_v".
+    std::unordered_map<stats_key, kv_stat_accum, stats_key_hash> m_kv_stats;
     // Scope the collector attributes incoming observers to. The imatrix tool
     // sets this together with llama_set_imatrix_observer_scope so the two
     // stay in sync without the collector having to inspect the graph.
@@ -327,6 +369,56 @@ private:
     int32_t                                m_observer_chunk = 0;
     bool                                   m_observer_topology_changed = false;
 };
+
+// kv_stats (Phase 3 "KV-joint plumbing"): opt-in switch for the
+// collector-side Kcur-<il>/Vcur-<il> capture. m_params.imatrix_observers
+// cannot serve as this gate by itself -- it is unconditionally forced true
+// for every run of this tool (see the params-ordering-trap comment at the
+// imatrix_observers assignment in main()), so it does not distinguish a
+// KV-joint capture run from an ordinary one. Follows this file's existing
+// TESSERA_* env-override convention (e.g. TESSERA_G6_MARGIN in
+// tessera-dispatch.cpp) rather than adding new CLI plumbing outside this
+// file. Checked once and cached: the env var is read at process start and
+// does not change mid-run. Unset or "0" = disabled, matching
+// src/llama-graph.cpp's identical check for the sibling graph-side capture
+// path -- the explicit "0" carve-out means TESSERA_KV_STATS_CAPTURE=0 (the
+// value someone would naturally type to disable this) doesn't silently
+// enable it instead.
+static bool kv_stats_capture_enabled() {
+    static const bool enabled = [] {
+        const char * value = std::getenv("TESSERA_KV_STATS_CAPTURE");
+        return value && strcmp(value, "0") != 0;
+    }();
+    return enabled;
+}
+
+// kv_stats: parse a "Kcur-<il>" / "Vcur-<il>" node name -- graph_get_cb's
+// "%s-%d" format (src/llama-context.cpp:2676-2679) -- into (is_k, il).
+// Returns false for anything else, including the per-arch variants
+// (Kcur_normed-<il>, Kcur_clamped-<il>, Vcur_clamped-<il>, ...), which
+// carry a different prefix and are intentionally out of scope here.
+static bool kv_stats_parse_name(const char * name, bool * is_k, int32_t * il) {
+    const char * rest;
+    if (strncmp(name, "Kcur-", 5) == 0) {
+        *is_k = true;
+        rest = name + 5;
+    } else if (strncmp(name, "Vcur-", 5) == 0) {
+        *is_k = false;
+        rest = name + 5;
+    } else {
+        return false;
+    }
+    if (*rest == '\0') {
+        return false;
+    }
+    char * end = nullptr;
+    long v = strtol(rest, &end, 10);
+    if (end == rest || *end != '\0' || v < 0) {
+        return false;
+    }
+    *il = (int32_t) v;
+    return true;
+}
 
 // remove any prefix and suffixes from the name
 // CUDA0#blk.0.attn_k.weight#0 => blk.0.attn_k.weight
@@ -496,6 +588,48 @@ bool IMatrixCollector::collect_imatrix(struct ggml_tensor * t, bool ask, void * 
             m_graph_observers.push_back(t);
             return false;
         }
+
+        // kv_stats (Phase 3 "KV-joint plumbing"): claim post-RoPE K / V
+        // projection OUTPUT nodes by name. Unlike the regular_observer
+        // path above, this is a plain per-node claim/read (return true on
+        // ask, read t itself on ask=false) rather than deferral through
+        // the m_graph_observers staging ring -- these are ordinary
+        // ROPE/VIEW/RESHAPE nodes, not GGML_OP_IMATRIX_OBSERVER nodes, so
+        // there is nothing to stage. Claiming forces a graph split at each
+        // matched node (the scheduler syncs up to and including it before
+        // continuing), which is the documented cost of this seam relative
+        // to the graph-side hook.
+        if (kv_stats_capture_enabled()) {
+            bool kv_is_k = false;
+            int32_t kv_il = -1;
+            // K: build_qkv (llama-graph.cpp) and its caller (e.g.
+            // src/models/llama.cpp) both cb() intermediate pre-RoPE
+            // tensors as "Kcur-<il>" before the caller applies RoPE and
+            // cb()s the result under the same name again; op==ROPE picks
+            // out exactly the post-RoPE node among the same-named
+            // duplicates. V has no RoPE marker, so the ne[2]>=16 shape
+            // check below (identical to the small-batch filter) does
+            // double duty: every pre-final duplicate ("Vcur-<il>" cb'd
+            // before the bias-add / clamp / final reshape) is 2D with
+            // ne[2]==1, so it is excluded the same way a real decode-time
+            // single-token batch would be; only the final reshaped
+            // (head_dim, n_head_kv, n_tokens) node passes.
+            if (kv_stats_parse_name(t->name, &kv_is_k, &kv_il) &&
+                (!kv_is_k || t->op == GGML_OP_ROPE) &&
+                t->type == GGML_TYPE_F32) {
+                if (ask) {
+                    // Small-batch filter, mirrors the legacy path's
+                    // src1->ne[1] < 16 reject (this file, dense-accumulate
+                    // branch): only capture prefill-sized ubatches, not
+                    // decode-time single-token activations. ne[2] is the
+                    // token axis here (t is (head_dim, n_head_kv, n_tokens)).
+                    return t->ne[2] >= 16;
+                }
+                collect_kv_stat(t, kv_is_k, kv_il);
+                return true;
+            }
+        }
+
         if (ask) {
             // Synchronize once at the ordinary graph output, after all compact
             // observer nodes for this internal ubatch have executed.
@@ -1516,6 +1650,19 @@ void IMatrixCollector::save_imatrix(int32_t n_chunk) const {
     const int32_t ckpt = n_chunk > 0 ? n_chunk : m_last_chunk;
     write_accum_state_to_db(ckpt);
 
+    // kv_stats (Phase 3 "KV-joint plumbing"): upserts directly against
+    // g_imatrix_db (not the g_imatrix_buf buffer closed below), so unlike
+    // write_accum_state_to_db above this keeps writing on every save_imatrix
+    // call for the rest of the run, not just the first. No-op when capture
+    // was never enabled (m_kv_stats stays empty).
+    write_kv_stats_to_db();
+    // kv_stats, graph-side sibling: no-op unless TESSERA_KV_STATS_CAPTURE
+    // was set (build_kv_stats_observer, src/llama-graph.cpp) -- in that
+    // case m_stats picked up "blk.<il>.kv_k"/"kv_v" entries alongside the
+    // regular per-weight ones via the existing observer pipeline, and this
+    // call is what actually routes them into kv_stats.
+    write_kv_stats_graph_observers_to_db();
+
     // Flush and close the buffer so the DuckDB connection is clean at exit.
     // The flusher thread will wake up on close, see the closed flag, and exit.
     // DuckDB's destructor flushes the WAL on connection close, so all pending
@@ -1572,6 +1719,193 @@ void IMatrixCollector::write_accum_state_to_db(int32_t checkpoint_chunk) const {
             imatrix_now_ts(),
         };
         ts_db_buffer_append(g_imatrix_buf, row);
+    }
+}
+
+void IMatrixCollector::collect_kv_stat(const struct ggml_tensor * t, bool is_k, int32_t il) {
+    // t is (head_dim, n_head_kv, n_tokens[, 1]) -- see build_qkv
+    // (src/llama-graph.cpp) and its post-RoPE cb() site in the per-arch
+    // model file. Channel axis = ne[0] (head_dim); ne[1] (heads) and
+    // ne[2] (tokens) are pooled into the per-channel sum2/maxabs, per the
+    // struct comment on kv_stat_accum above.
+    const int64_t n_channels = t->ne[0];
+    const int64_t n_head_kv  = t->ne[1];
+    const int64_t n_tokens   = t->ne[2];
+    const int64_t n_extra    = t->ne[3];
+
+    if (n_channels <= 0 || n_head_kv <= 0 || n_tokens <= 0 || n_extra <= 0) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    // Copy off-device if needed, same pattern as the legacy src1 read above.
+    const bool is_host = ggml_backend_buffer_is_host(t->buffer);
+    std::vector<char> host_buf;
+    const char * data;
+    if (!is_host) {
+        const size_t nbytes = ggml_nbytes(t);
+        host_buf.resize(nbytes);
+        ggml_backend_tensor_get(t, host_buf.data(), 0, nbytes);
+        data = host_buf.data();
+    } else {
+        data = (const char *) t->data;
+    }
+    GGML_ASSERT(t->nb[0] == ggml_element_size(t));
+
+    const std::string name = std::string("blk.") + std::to_string(il) +
+                              (is_k ? ".attn_k" : ".attn_v");
+    auto & acc = m_kv_stats[stats_key{ m_observer_scope, name }];
+
+    if (acc.sum2.empty()) {
+        acc.layer_depth = il;
+        acc.n_channels  = (int32_t) n_channels;
+        acc.sum2.assign(n_channels, 0.0f);
+        acc.maxabs.assign(n_channels, 0.0f);
+    } else if (acc.n_channels != (int32_t) n_channels) {
+        LOG_ERR("%s: inconsistent kv_stats channel count for %s (%d vs %d)\n",
+                __func__, name.c_str(), acc.n_channels, (int) n_channels);
+        exit(1);
+    }
+
+    for (int64_t i3 = 0; i3 < n_extra; ++i3) {
+        for (int64_t i2 = 0; i2 < n_tokens; ++i2) {
+            for (int64_t i1 = 0; i1 < n_head_kv; ++i1) {
+                const float * x = (const float *) (data + i1*t->nb[1] + i2*t->nb[2] + i3*t->nb[3]);
+                for (int64_t j = 0; j < n_channels; ++j) {
+                    const float v = x[j];
+                    if (!std::isfinite(v)) {
+                        LOG_ERR("%s: non-finite kv activation detected in %s\n", __func__, name.c_str());
+                        exit(1);
+                    }
+                    acc.sum2[j] += v * v;
+                    const float av = std::fabs(v);
+                    if (av > acc.maxabs[j]) {
+                        acc.maxabs[j] = av;
+                    }
+                }
+            }
+        }
+    }
+    acc.n_samples += n_head_kv * n_tokens * n_extra;
+}
+
+void IMatrixCollector::write_kv_stats_to_db() const {
+    if (g_imatrix_db == nullptr) {
+        LOG_INF("%s: g_imatrix_db is null (DB not open?)\n", __func__);
+        return;
+    }
+    if (m_model_hash.empty()) {
+        LOG_INF("%s: m_model_hash is empty\n", __func__);
+        return;
+    }
+    if (m_kv_stats.empty()) {
+        return;
+    }
+
+    // "" for the default F16/F16 cache, else "ctk=<t>,ctv=<t>" -- matches
+    // the params_digest convention documented in
+    // docs/tessera-refactor-implementation-spec.md section 3.
+    std::string kv_codec_digest;
+    if (m_params.cache_type_k != GGML_TYPE_F16 || m_params.cache_type_v != GGML_TYPE_F16) {
+        kv_codec_digest = std::string("ctk=") + ggml_type_name(m_params.cache_type_k) +
+                           ",ctv=" + ggml_type_name(m_params.cache_type_v);
+    }
+
+    LOG_INF("%s: writing %zu kv_stats rows to DuckDB\n", __func__, m_kv_stats.size());
+    for (const auto & kv : m_kv_stats) {
+        ts_tessera_db_kv_stat row;
+        row.model_hash      = m_model_hash;
+        row.model_role      = scope_to_model_role(kv.first.scope);
+        row.name             = kv.first.name;
+        row.layer_depth      = kv.second.layer_depth;
+        row.n_channels       = kv.second.n_channels;
+        row.n_samples        = kv.second.n_samples;
+        row.sum2              = kv.second.sum2;
+        row.maxabs           = kv.second.maxabs;
+        // quantile_sketch left empty: a streaming per-channel quantile
+        // sketch is out of scope for this capture path -- sum2/maxabs
+        // satisfy the phase-3 gate ("kv_stats populates for every layer").
+        row.kv_codec_digest = kv_codec_digest;
+        row.source            = "collector_legacy";
+
+        std::string err;
+        if (ts_tessera_db_upsert_kv_stat(g_imatrix_db, row, &err) != 0) {
+            LOG_WRN("%s: kv_stats upsert failed for %s: %s\n", __func__, row.name.c_str(), err.c_str());
+        }
+    }
+}
+
+void IMatrixCollector::write_kv_stats_graph_observers_to_db() const {
+    if (g_imatrix_db == nullptr || m_model_hash.empty()) {
+        return;
+    }
+
+    // "" for the default F16/F16 cache, else "ctk=<t>,ctv=<t>" -- same
+    // convention write_kv_stats_to_db above already uses.
+    std::string kv_codec_digest;
+    if (m_params.cache_type_k != GGML_TYPE_F16 || m_params.cache_type_v != GGML_TYPE_F16) {
+        kv_codec_digest = std::string("ctk=") + ggml_type_name(m_params.cache_type_k) +
+                           ",ctv=" + ggml_type_name(m_params.cache_type_v);
+    }
+
+    size_t n_written = 0;
+    for (const auto & kv : m_stats) {
+        const std::string & name = kv.first.name;
+        const bool is_k = name.size() > 5 && name.compare(name.size() - 5, 5, ".kv_k") == 0;
+        const bool is_v = !is_k && name.size() > 5 && name.compare(name.size() - 5, 5, ".kv_v") == 0;
+        if (!is_k && !is_v) {
+            continue;
+        }
+        // "blk.<il>.kv_k" / "blk.<il>.kv_v" -- parse the layer index back
+        // out of the name build_kv_stats_observer (src/llama-graph.cpp)
+        // constructed. A parse failure here would mean the naming
+        // convention on the two sides has drifted; skip rather than write
+        // a row with a bogus layer_depth.
+        int32_t il = -1;
+        if (name.rfind("blk.", 0) == 0) {
+            const size_t dot2 = name.find('.', 4);
+            if (dot2 != std::string::npos) {
+                try {
+                    il = std::stoi(name.substr(4, dot2 - 4));
+                } catch (const std::exception &) {
+                    il = -1;
+                }
+            }
+        }
+        if (il < 0) {
+            LOG_WRN("%s: could not parse layer index from '%s', skipping\n", __func__, name.c_str());
+            continue;
+        }
+
+        const Stats & stats = kv.second;
+        if (stats.values.empty() || stats.max_values.empty() || stats.counts.empty()) {
+            continue;
+        }
+
+        ts_tessera_db_kv_stat row;
+        row.model_hash      = m_model_hash;
+        row.model_role      = scope_to_model_role(kv.first.scope);
+        row.name             = name;
+        row.layer_depth      = il;
+        row.n_channels       = (int32_t) stats.values.size();
+        row.n_samples        = stats.counts[0];
+        row.sum2              = stats.values;
+        row.maxabs           = stats.max_values;
+        // quantile_sketch left empty, same rationale as the
+        // collector-side path above.
+        row.kv_codec_digest = kv_codec_digest;
+        row.source            = "graph_observer";
+
+        std::string err;
+        if (ts_tessera_db_upsert_kv_stat(g_imatrix_db, row, &err) != 0) {
+            LOG_WRN("%s: kv_stats upsert failed for %s: %s\n", __func__, row.name.c_str(), err.c_str());
+            continue;
+        }
+        n_written++;
+    }
+    if (n_written > 0) {
+        LOG_INF("%s: writing %zu graph-observer kv_stats rows to DuckDB\n", __func__, n_written);
     }
 }
 

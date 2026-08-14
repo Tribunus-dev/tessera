@@ -609,7 +609,36 @@ static const char * TS_QDB_SCHEMA_SQL =
     "                 evaluator, params_digest, input_digest, eval_version)\n"
     ");\n"
     "CREATE INDEX IF NOT EXISTS idx_eval_cache_model\n"
-    "    ON eval_cache(model_hash, model_role);\n";
+    "    ON eval_cache(model_hash, model_role);\n"
+    // ---- kv_stats: per-(layer, K-or-V-side) KV-cache calibration stats
+    // (Phase 3 "KV-joint plumbing", additive) ----
+    // Mirrors tensor_stats' shape. One row per (model_hash, model_role,
+    // name) where name is "blk.<il>.attn_k" / "blk.<il>.attn_v" -- one
+    // row per (layer, K-or-V side), NOT one row per layer with both
+    // sides combined. sum2/maxabs/quantile_sketch are per-channel F32
+    // arrays (n_channels long) stored as BLOB, same hex-escape encoding
+    // tensor_stats.absq_sketch and v2_hessian_cache.h_inv_diag already
+    // use. kv_codec_digest is informational (which -ctk/-ctv codec was
+    // configured during the capture run); source records which capture
+    // path wrote the row. model_role ships from day one -- this table
+    // is NOT part of the 7-table Phase-16 migration map.
+    "CREATE TABLE IF NOT EXISTS kv_stats (\n"
+    "    model_hash        TEXT NOT NULL,\n"
+    "    model_role        TEXT NOT NULL DEFAULT 'trunk',\n"
+    "    name              TEXT NOT NULL,\n"
+    "    layer_depth       INTEGER,\n"
+    "    n_channels        INTEGER,\n"
+    "    n_samples         BIGINT,\n"
+    "    sum2              BLOB,\n"
+    "    maxabs            BLOB,\n"
+    "    quantile_sketch   BLOB,\n"
+    "    kv_codec_digest   TEXT,\n"
+    "    source            TEXT,\n"
+    "    updated_at        TIMESTAMP,\n"
+    "    PRIMARY KEY (model_hash, model_role, name)\n"
+    ");\n"
+    "CREATE INDEX IF NOT EXISTS idx_kv_stats_role_name\n"
+    "    ON kv_stats(model_role, name);\n";
 
 // Phase 16.7: per-component (model_role, name) covering index
 // statements. Kept as a separate constant from TS_QDB_SCHEMA_SQL
@@ -1273,6 +1302,237 @@ int ts_tessera_db_read_tensor_stat(
         return 1;
     } catch (...) {
         if (err) *err = "read_tensor_stat unknown exception";
+        return 1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// kv_stats upsert: per-(layer, K-or-V-side) KV-cache calibration stats
+// (Phase 3 "KV-joint plumbing")
+// ---------------------------------------------------------------------------
+
+int ts_tessera_db_upsert_kv_stat(
+    ts_tessera_db * db,
+    const ts_tessera_db_kv_stat & row,
+    std::string * err) {
+    if (db == nullptr || db->conn == nullptr) return 0;
+    // Same unsynchronized-Connection hazard tensor_stats guards against --
+    // see the eval_cache_mutex comment on ts_tessera_db_upsert_tensor_stat.
+    // Taking the lock here even though the current caller is single-
+    // threaded means a future concurrent caller can't reintroduce the
+    // hazard without anyone having to remember why.
+    std::lock_guard<std::mutex> lock(db->eval_cache_mutex);
+    // PRIMARY KEY (model_hash, model_role, name). The ON CONFLICT DO
+    // UPDATE clause overwrites every column on a re-write. Default
+    // "trunk" preserves the tensor_stats model_role contract when the
+    // caller leaves the field empty.
+    const std::string role = row.model_role.empty()
+        ? std::string("trunk")
+        : row.model_role;
+
+    // sum2: raw F32 bytes hex-escaped into a BLOB literal, same encoding
+    // tensor_stats.absq_sketch uses (see ts_tessera_db_upsert_tensor_stat)
+    // -- an empty vector becomes SQL NULL rather than an empty BLOB so
+    // "no data" and "empty array" aren't ambiguous to a reader.
+    std::string sum2_lit = "NULL";
+    if (!row.sum2.empty()) {
+        const size_t blob_bytes = row.sum2.size() * sizeof(float);
+        std::string lit;
+        lit.reserve(blob_bytes * 4 + 8);
+        lit += "'";
+        static const char HEX[] = "0123456789abcdef";
+        const uint8_t * bytes = (const uint8_t *) row.sum2.data();
+        for (size_t i = 0; i < blob_bytes; i++) {
+            lit += "\\x";
+            lit += HEX[bytes[i] >> 4];
+            lit += HEX[bytes[i] & 0x0f];
+        }
+        lit += "'::BLOB";
+        sum2_lit = lit;
+    }
+    // maxabs: same encoding as sum2 above.
+    std::string maxabs_lit = "NULL";
+    if (!row.maxabs.empty()) {
+        const size_t blob_bytes = row.maxabs.size() * sizeof(float);
+        std::string lit;
+        lit.reserve(blob_bytes * 4 + 8);
+        lit += "'";
+        static const char HEX[] = "0123456789abcdef";
+        const uint8_t * bytes = (const uint8_t *) row.maxabs.data();
+        for (size_t i = 0; i < blob_bytes; i++) {
+            lit += "\\x";
+            lit += HEX[bytes[i] >> 4];
+            lit += HEX[bytes[i] & 0x0f];
+        }
+        lit += "'::BLOB";
+        maxabs_lit = lit;
+    }
+    // quantile_sketch: same encoding as sum2 above.
+    std::string sketch_lit = "NULL";
+    if (!row.quantile_sketch.empty()) {
+        const size_t blob_bytes = row.quantile_sketch.size() * sizeof(float);
+        std::string lit;
+        lit.reserve(blob_bytes * 4 + 8);
+        lit += "'";
+        static const char HEX[] = "0123456789abcdef";
+        const uint8_t * bytes = (const uint8_t *) row.quantile_sketch.data();
+        for (size_t i = 0; i < blob_bytes; i++) {
+            lit += "\\x";
+            lit += HEX[bytes[i] >> 4];
+            lit += HEX[bytes[i] & 0x0f];
+        }
+        lit += "'::BLOB";
+        sketch_lit = lit;
+    }
+
+    std::ostringstream q;
+    q << "INSERT INTO kv_stats (model_hash, model_role, name, "
+         "layer_depth, n_channels, n_samples, sum2, maxabs, "
+         "quantile_sketch, kv_codec_digest, source, updated_at) VALUES ("
+      << "'" << sql_escape(row.model_hash) << "', "
+      << "'" << sql_escape(role) << "', "
+      << "'" << sql_escape(row.name) << "', "
+      << row.layer_depth << ", "
+      << row.n_channels << ", "
+      << row.n_samples << ", "
+      << sum2_lit << ", "
+      << maxabs_lit << ", "
+      << sketch_lit << ", "
+      << "'" << sql_escape(row.kv_codec_digest) << "', "
+      << "'" << sql_escape(row.source) << "', "
+      << ts_now_ts()
+      << ") ON CONFLICT (model_hash, model_role, name) DO UPDATE SET "
+         "layer_depth=excluded.layer_depth, "
+         "n_channels=excluded.n_channels, "
+         "n_samples=excluded.n_samples, "
+         "sum2=excluded.sum2, maxabs=excluded.maxabs, "
+         "quantile_sketch=excluded.quantile_sketch, "
+         "kv_codec_digest=excluded.kv_codec_digest, "
+         "source=excluded.source, "
+         "updated_at=excluded.updated_at";
+    try {
+        auto res = db->conn->Query(q.str());
+        if (res->HasError()) {
+            if (err) *err = "upsert_kv_stat failed: " + res->GetError();
+            return 1;
+        }
+    } catch (const std::exception & e) {
+        if (err) *err = std::string("upsert_kv_stat failed: ") + e.what();
+        return 1;
+    } catch (...) {
+        if (err) *err = "upsert_kv_stat failed: unknown exception";
+        return 1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// kv_stats read: single-row keyed lookup (Phase 3 "KV-joint plumbing")
+// ---------------------------------------------------------------------------
+//
+// Mirrors ts_tessera_db_read_tensor_stat's hit/miss contract: db == nullptr
+// is a safe no-op, an absent row is a miss (not an error), and only a real
+// SQL/decode failure returns non-zero.
+int ts_tessera_db_read_kv_stat(
+        ts_tessera_db * db,
+        const std::string & model_hash,
+        const std::string & model_role,
+        const std::string & name,
+        ts_tessera_db_kv_stat * out,
+        bool * hit,
+        std::string * err) {
+    if (hit) *hit = false;
+    if (db == nullptr || db->conn == nullptr || out == nullptr) return 0;
+    const std::string role = model_role.empty() ? std::string("trunk") : model_role;
+
+    // Same unsynchronized-Connection hazard tensor_stats guards against --
+    // see the eval_cache_mutex comment on ts_tessera_db_read_tensor_stat.
+    std::lock_guard<std::mutex> lock(db->eval_cache_mutex);
+
+    std::ostringstream q;
+    q << "SELECT layer_depth, n_channels, n_samples, sum2, maxabs, "
+         "quantile_sketch, kv_codec_digest, source "
+         "FROM kv_stats WHERE model_hash = '" << sql_escape(model_hash)
+      << "' AND model_role = '" << sql_escape(role)
+      << "' AND name = '" << sql_escape(name) << "'";
+    try {
+        auto res = db->conn->Query(q.str());
+        if (res->HasError()) {
+            if (err) *err = "read_kv_stat: " + res->GetError();
+            return 1;
+        }
+        if (res->RowCount() == 0) return 0;   // miss, not an error
+
+        out->model_hash = model_hash;
+        out->model_role = role;
+        out->name       = name;
+        auto getstr = [&](idx_t col) -> std::string {
+            auto v = res->GetValue(col, 0);
+            return v.IsNull() ? std::string() : v.GetValue<std::string>();
+        };
+        auto getint = [&](idx_t col) -> int64_t {
+            auto v = res->GetValue(col, 0);
+            return v.IsNull() ? 0 : v.GetValue<int64_t>();
+        };
+        out->layer_depth = (int32_t) getint(0);
+        out->n_channels  = (int32_t) getint(1);
+        out->n_samples   = getint(2);
+
+        // sum2: raw F32 bytes decoded from the BLOB, same pattern
+        // tensor_stats.absq_sketch's reader uses.
+        out->sum2.clear();
+        auto sum2_v = res->GetValue(3, 0);
+        if (!sum2_v.IsNull()) {
+            auto s = sum2_v.GetValueUnsafe<duckdb::string_t>();
+            if (s.GetSize() % sizeof(float) != 0) {
+                if (err) *err = "read_kv_stat: sum2 blob size not a multiple of sizeof(float) for " + name;
+                return 1;
+            }
+            const size_t np = s.GetSize() / sizeof(float);
+            out->sum2.resize(np);
+            if (np > 0) {
+                std::memcpy(out->sum2.data(), s.GetData(), np * sizeof(float));
+            }
+        }
+        // maxabs: same decode pattern as sum2 above.
+        out->maxabs.clear();
+        auto maxabs_v = res->GetValue(4, 0);
+        if (!maxabs_v.IsNull()) {
+            auto s = maxabs_v.GetValueUnsafe<duckdb::string_t>();
+            if (s.GetSize() % sizeof(float) != 0) {
+                if (err) *err = "read_kv_stat: maxabs blob size not a multiple of sizeof(float) for " + name;
+                return 1;
+            }
+            const size_t np = s.GetSize() / sizeof(float);
+            out->maxabs.resize(np);
+            if (np > 0) {
+                std::memcpy(out->maxabs.data(), s.GetData(), np * sizeof(float));
+            }
+        }
+        // quantile_sketch: same decode pattern as sum2 above.
+        out->quantile_sketch.clear();
+        auto sketch_v = res->GetValue(5, 0);
+        if (!sketch_v.IsNull()) {
+            auto s = sketch_v.GetValueUnsafe<duckdb::string_t>();
+            if (s.GetSize() % sizeof(float) != 0) {
+                if (err) *err = "read_kv_stat: quantile_sketch blob size not a multiple of sizeof(float) for " + name;
+                return 1;
+            }
+            const size_t np = s.GetSize() / sizeof(float);
+            out->quantile_sketch.resize(np);
+            if (np > 0) {
+                std::memcpy(out->quantile_sketch.data(), s.GetData(), np * sizeof(float));
+            }
+        }
+        out->kv_codec_digest = getstr(6);
+        out->source           = getstr(7);
+        if (hit) *hit = true;
+    } catch (const std::exception & e) {
+        if (err) *err = std::string("read_kv_stat exception: ") + e.what();
+        return 1;
+    } catch (...) {
+        if (err) *err = "read_kv_stat unknown exception";
         return 1;
     }
     return 0;

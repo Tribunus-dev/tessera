@@ -723,6 +723,86 @@ int main(int argc, char ** argv) {
         }
     }
 
+    // ---- Phase 3 "KV-joint plumbing": kv_stats upsert/read round-trip ----
+    {
+        ts_tessera_db_kv_stat row;
+        row.model_hash      = "kv_model";
+        row.model_role      = "trunk";
+        row.name            = "blk.0.attn_k";
+        row.layer_depth     = 0;
+        row.n_channels      = 8;
+        row.n_samples       = 4096;
+        for (int i = 0; i < 8; i++) {
+            row.sum2.push_back((float) i * 1.5f + 0.25f);
+            row.maxabs.push_back((float) i * 0.3f + 1.0f);
+            row.quantile_sketch.push_back((float) i * 0.1f);
+        }
+        row.kv_codec_digest = "ctk=q8_0,ctv=q8_0";
+        row.source          = "graph_observer";
+        std::string err;
+        CHECK(ts_tessera_db_upsert_kv_stat(db, row, &err) == 0,
+              ("kv_stats: upsert failed: " + err).c_str());
+
+        ts_tessera_db_kv_stat out;
+        bool hit = false;
+        CHECK(ts_tessera_db_read_kv_stat(db, "kv_model", "trunk",
+                "blk.0.attn_k", &out, &hit, &err) == 0,
+              ("kv_stats: read failed: " + err).c_str());
+        CHECK(hit, "kv_stats: read hits the just-written row");
+        CHECK(out.layer_depth == row.layer_depth, "kv_stats: layer_depth round-trips");
+        CHECK(out.n_channels == row.n_channels, "kv_stats: n_channels round-trips");
+        CHECK(out.n_samples == row.n_samples, "kv_stats: n_samples round-trips");
+        CHECK(out.kv_codec_digest == row.kv_codec_digest, "kv_stats: kv_codec_digest round-trips");
+        CHECK(out.source == row.source, "kv_stats: source round-trips");
+
+        CHECK(out.sum2.size() == row.sum2.size(), "kv_stats: sum2 length round-trips");
+        bool sum2_matches = out.sum2.size() == row.sum2.size();
+        if (sum2_matches) {
+            for (size_t i = 0; i < out.sum2.size(); i++) {
+                if (std::fabs(out.sum2[i] - row.sum2[i]) > 1e-6f) { sum2_matches = false; break; }
+            }
+        }
+        CHECK(sum2_matches, "kv_stats: sum2 contents round-trip exactly");
+
+        CHECK(out.maxabs.size() == row.maxabs.size(), "kv_stats: maxabs length round-trips");
+        bool maxabs_matches = out.maxabs.size() == row.maxabs.size();
+        if (maxabs_matches) {
+            for (size_t i = 0; i < out.maxabs.size(); i++) {
+                if (std::fabs(out.maxabs[i] - row.maxabs[i]) > 1e-6f) { maxabs_matches = false; break; }
+            }
+        }
+        CHECK(maxabs_matches, "kv_stats: maxabs contents round-trip exactly");
+
+        CHECK(out.quantile_sketch.size() == row.quantile_sketch.size(),
+              "kv_stats: quantile_sketch length round-trips");
+        bool sketch_matches = out.quantile_sketch.size() == row.quantile_sketch.size();
+        if (sketch_matches) {
+            for (size_t i = 0; i < out.quantile_sketch.size(); i++) {
+                if (std::fabs(out.quantile_sketch[i] - row.quantile_sketch[i]) > 1e-6f) { sketch_matches = false; break; }
+            }
+        }
+        CHECK(sketch_matches, "kv_stats: quantile_sketch contents round-trip exactly");
+
+        // Miss: a name with no row is hit=false, return 0 (not an error).
+        ts_tessera_db_kv_stat miss_out;
+        bool miss_hit = true;  // pre-seed true to prove the function clears it
+        CHECK(ts_tessera_db_read_kv_stat(db, "kv_model", "trunk",
+                "no_such_kv_tensor", &miss_out, &miss_hit, &err) == 0,
+              ("kv_stats: miss read returned an error: " + err).c_str());
+        CHECK(!miss_hit, "kv_stats: read on an absent key clears hit to false");
+
+        // db == nullptr: safe no-op, hit=false, return 0.
+        bool null_hit = true;
+        CHECK(ts_tessera_db_read_kv_stat(nullptr, "kv_model", "trunk",
+                "blk.0.attn_k", &miss_out, &null_hit, &err) == 0,
+              "kv_stats: db==nullptr read returns 0");
+        CHECK(!null_hit, "kv_stats: db==nullptr read never hits");
+
+        // db == nullptr upsert: safe no-op, return 0.
+        CHECK(ts_tessera_db_upsert_kv_stat(nullptr, row, &err) == 0,
+              "kv_stats: db==nullptr upsert returns 0");
+    }
+
     // ---- Phase 16: model_role round-trip on the 4 C++ structs ----
     // The unified Gemma4 12B + dspark + dflash + MTP arch has
     // tensors with the same name in both the trunk and the

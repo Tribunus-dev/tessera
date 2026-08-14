@@ -3588,6 +3588,27 @@ int ts_dispatch_run(const ts_dispatch_params * params,
         const int64_t acc_heldout_cutoff = (int64_t)work.size()
             - std::max<int64_t>(1, (int64_t)(0.2 * (double)work.size()));
 
+        // Pipeline refactor phase 3 ("KV-joint plumbing"): fold the
+        // panel's active KV cache codec into every eval_opts.kv_codec_digest
+        // below, so a run under a non-default -l5-joint-ctk/-ctv produces
+        // eval_cache rows distinct from a plain f16 run of the same
+        // tensor/params (ts_eval_digest_params, tessera-expert-eval.cpp,
+        // already folds this field in -- it just needs a real value here).
+        // Empty when both are unset/default, matching the "" = weights-
+        // only convention the seam already documents.
+        std::string acc_kv_codec_digest;
+        if (!params->l5_joint_type_k.empty() || !params->l5_joint_type_v.empty() ||
+            !params->l5_joint_type_k_draft.empty() || !params->l5_joint_type_v_draft.empty()) {
+            const std::string k = params->l5_joint_type_k.empty() ? "f16" : params->l5_joint_type_k;
+            const std::string v = params->l5_joint_type_v.empty() ? "f16" : params->l5_joint_type_v;
+            acc_kv_codec_digest = "ctk=" + k + ",ctv=" + v;
+            if (!params->l5_joint_type_k_draft.empty() || !params->l5_joint_type_v_draft.empty()) {
+                const std::string kd = params->l5_joint_type_k_draft.empty() ? "f16" : params->l5_joint_type_k_draft;
+                const std::string vd = params->l5_joint_type_v_draft.empty() ? "f16" : params->l5_joint_type_v_draft;
+                acc_kv_codec_digest += ",ctkd=" + kd + ",ctvd=" + vd;
+            }
+        }
+
         // Score one tensor's full panel (PROXY for all 5 experts, the
         // kernel-direct measurement, and -- for held-out tensors -- REAL
         // tier for the 4 non-AWQ experts). Shared by the serial and
@@ -3624,6 +3645,7 @@ int ts_dispatch_run(const ts_dispatch_params * params,
             popts.alpha = alpha;
             popts.clip  = clip;
             popts.seed  = seed;
+            popts.kv_codec_digest = acc_kv_codec_digest;
 
             ts_eval_result er;
             ts_expert_eval(item.routed_expert, ectx, popts, &er); at.composite_t2 = er.t2;

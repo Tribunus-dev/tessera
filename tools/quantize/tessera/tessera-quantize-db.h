@@ -268,6 +268,53 @@ int ts_tessera_db_read_tensor_stat(
     bool * hit,
     std::string * err);
 
+// --- kv_stats: per-(layer, K-or-V-side) KV-cache calibration stats ---
+//
+// Phase 3 "KV-joint plumbing": mirrors tensor_stats' shape for the KV
+// cache's own per-channel statistics. One row per (model_hash,
+// model_role, name) where name is "blk.<il>.attn_k" / "blk.<il>.attn_v"
+// -- one row per (layer, K-or-V side), NOT one row per layer with both
+// sides combined. sum2/maxabs/quantile_sketch are per-channel F32
+// arrays of length n_channels (the K or V projection's out_dim), same
+// BLOB encoding as tensor_stats.absq_sketch. kv_codec_digest is
+// informational: which -ctk/-ctv codec was configured during the run
+// that captured this row (e.g. "ctk=q8_0,ctv=q8_0", empty for the
+// default f16/f16). source records which capture path wrote the row
+// ("graph_observer" / "collector_legacy"). The capture-side code that
+// populates real sum2/maxabs/quantile_sketch values lives elsewhere;
+// this struct and the upsert/read helpers below are the storage
+// plumbing only.
+struct ts_tessera_db_kv_stat {
+    std::string  model_hash;
+    std::string  model_role;   // Phase 16 enum, default "trunk" (see
+                               // ts_tessera_db_tensor_stat::model_role).
+    std::string  name;
+    int32_t      layer_depth = 0;
+    int32_t      n_channels  = 0;
+    int64_t      n_samples   = 0;
+    std::vector<float> sum2;
+    std::vector<float> maxabs;
+    std::vector<float> quantile_sketch;
+    std::string  kv_codec_digest;
+    std::string  source;      // "graph_observer" / "collector_legacy"
+};
+int ts_tessera_db_upsert_kv_stat(ts_tessera_db * db,
+                                 const ts_tessera_db_kv_stat & row,
+                                 std::string * err);
+
+// Single-row keyed read for a kv_stats row (model_hash, model_role,
+// name) -- mirrors ts_tessera_db_read_tensor_stat's hit/miss contract:
+// hit=false with return 0 means "no row for this key" (not an error);
+// db == nullptr is a safe no-op (hit=false, return 0).
+int ts_tessera_db_read_kv_stat(
+    ts_tessera_db * db,
+    const std::string & model_hash,
+    const std::string & model_role,
+    const std::string & name,
+    ts_tessera_db_kv_stat * out,
+    bool * hit,
+    std::string * err);
+
 // Builds an ascending sketch of |w| (up to max_points entries) by taking a
 // bounded deterministic-stride sample (at most sample_cap elements, not
 // the full n) and sorting the sample. This is O(n) (the stride pass) +

@@ -42,6 +42,22 @@ static bool tessera_paged_attn_enabled() {
     return !value || strcmp(value, "0") != 0;
 }
 
+// TESSERA_KV_STATS_CAPTURE: opt-in for the graph-side kv_stats observer
+// (pipeline refactor phase 3, "KV-joint plumbing" -- see build_attn below
+// and tools/imatrix/imatrix.cpp's collector-side sibling capture path).
+// Unset or "0" = disabled; any other value = enabled. Deliberately matches
+// tools/imatrix/imatrix.cpp's kv_stats_capture_enabled() check exactly, so
+// the same env var toggles both capture paths identically -- diverging
+// semantics between the two would be a silent footgun for anyone trying to
+// enable "the" kv_stats capture and only getting half of it. The explicit
+// "0" carve-out matches this file's TESSERA_PAGED_ATTN convention a few
+// lines up: without it, TESSERA_KV_STATS_CAPTURE=0 -- the value someone
+// would naturally type to turn this off -- would silently turn it ON.
+static bool tessera_kv_stats_capture_enabled() {
+    const char * value = std::getenv("TESSERA_KV_STATS_CAPTURE");
+    return value && strcmp(value, "0") != 0;
+}
+
 // dedup helpers
 
 static ggml_tensor * build_attn_inp_kq_mask(
@@ -1456,6 +1472,37 @@ void llm_graph_context::build_imatrix_observer_dense(
     }
     ggml_build_forward_expand(gf, observer);
     imatrix_dense_observers.emplace(cur, observer);
+}
+
+void llm_graph_context::build_kv_stats_observer(
+        ggml_tensor * cur,
+        ggml_tensor * weight_anchor,
+        int           il,
+        bool          is_k) const {
+    if (!cparams.imatrix_observers || !tessera_kv_stats_capture_enabled()) {
+        return;
+    }
+
+    const std::string name = "blk." + std::to_string(il) + (is_k ? ".kv_k" : ".kv_v");
+
+    // weight_anchor is not read by the observer kernel (see
+    // ggml_imatrix_observer's doc comment in ggml.h) -- it only pins
+    // backend scheduling. Several architectures call the build_attn
+    // overload this is invoked from with wo == nullptr (e.g.
+    // src/models/bitnet.cpp, afmoe.cpp's gated-output path, several
+    // qwen3.5/qwen3-next/step3.5 sites), which the surrounding code
+    // already tolerates (`if (wo) { cur = build_lora_mm(...); }` a few
+    // lines below this call site) -- ggml_imatrix_observer itself accepts
+    // a null weight_anchor without issue, so skip only the scheduling hint
+    // when there is nothing to anchor to, rather than dereferencing it.
+    ggml_tensor * observer = ggml_imatrix_observer(ctx0, cur, nullptr, weight_anchor, 1);
+    ggml_set_name(observer, name.c_str());
+    ggml_set_output(observer);
+    if (weight_anchor && weight_anchor->buffer &&
+        ggml_backend_buffer_is_host(weight_anchor->buffer)) {
+        ggml_backend_sched_set_tensor_backend(sched, observer, backend_cpu);
+    }
+    ggml_build_forward_expand(gf, observer);
 }
 
 ggml_tensor * llm_graph_context::build_imatrix_observer_cast_dense(
@@ -3031,6 +3078,16 @@ ggml_tensor * llm_graph_context::build_attn(
     ggml_build_forward_expand(gf, q_cur);
     ggml_build_forward_expand(gf, v_cur);
     ggml_build_forward_expand(gf, k_cur);
+
+    // Pipeline refactor phase 3, "KV-joint plumbing": graph-side kv_stats
+    // capture. Observes k_cur/v_cur here -- after any Hadamard rotation
+    // above, i.e. exactly what the KV codec would store -- rather than
+    // re-deriving them from a name-based node search post hoc. No-op
+    // (see build_kv_stats_observer) unless both cparams.imatrix_observers
+    // and TESSERA_KV_STATS_CAPTURE are set, so this is zero-cost for every
+    // ordinary inference/quantization run.
+    build_kv_stats_observer(k_cur, wo, il, /*is_k=*/true);
+    build_kv_stats_observer(v_cur, wo, il, /*is_k=*/false);
 
     const auto * mctx_cur = inp->mctx;
 
