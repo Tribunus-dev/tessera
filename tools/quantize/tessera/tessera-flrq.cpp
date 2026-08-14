@@ -294,15 +294,27 @@ int ts_train_flrq(const float * weight, int64_t K, int64_t N,
     }
     std::sort(candidates.begin(), candidates.end());
     candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
-    // Clamp candidates to the feasible rank range.
+    // Clamp candidates into the feasible rank range -- do not drop oversized
+    // ones. Python's flrq_sketch clamps r = min(target_rank, K, N)
+    // internally, so an oversized candidate still gets tried (at the
+    // clamped rank) and can win the smallest-clearing-rank race below.
+    // Dropping it instead (the prior behavior here) silently shipped a
+    // worse-than-necessary decomposition whenever min(K,N) fell strictly
+    // between two default candidates (e.g. min(K,N)=20 against
+    // {4,8,16,32,64}: the true near-perfect rank-20 fit was never
+    // attempted, and chosen_rank fell back to 16 without clearing
+    // mse_threshold, while still returning success).
     std::vector<int64_t> feasible;
+    const int64_t max_rank = std::min(K, N);
     for (int64_t r : candidates) {
-        if (r >= 1 && r <= std::min(K, N)) {
-            feasible.push_back(r);
+        if (r >= 1) {
+            feasible.push_back(std::min(r, max_rank));
         }
     }
+    std::sort(feasible.begin(), feasible.end());
+    feasible.erase(std::unique(feasible.begin(), feasible.end()), feasible.end());
     if (feasible.empty()) {
-        feasible.push_back(std::max((int64_t)1, std::min(K, N)));
+        feasible.push_back(std::max((int64_t)1, max_rank));
     }
 
     // ||W||_F^2  (with 1e-12 floor, matching Python).
