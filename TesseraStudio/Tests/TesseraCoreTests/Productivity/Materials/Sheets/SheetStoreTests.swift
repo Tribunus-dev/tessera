@@ -30,6 +30,8 @@ final class SheetStoreTests: XCTestCase {
         XCTAssertEqual(SheetReceiptType.link.rawValue, "sheet_link_created")
         XCTAssertEqual(SheetReceiptType.unlink.rawValue, "sheet_link_deleted")
         XCTAssertEqual(SheetReceiptType.import.rawValue, "sheet_imported")
+        XCTAssertEqual(SheetReceiptType.setCellFormat.rawValue, "sheet_cell_format_changed")
+        XCTAssertEqual(SheetReceiptType.setProtection.rawValue, "sheet_protection_changed")
     }
 
     // MARK: - JSON helpers
@@ -72,6 +74,14 @@ final class SheetStoreTests: XCTestCase {
         XCTAssertEqual(SheetStoreError.cannotDeleteLastColumn, SheetStoreError.cannotDeleteLastColumn)
         XCTAssertEqual(SheetStoreError.cellNotFound(row: 1, col: 2), SheetStoreError.cellNotFound(row: 1, col: 2))
         XCTAssertNotEqual(SheetStoreError.cellNotFound(row: 1, col: 2), SheetStoreError.cellNotFound(row: 1, col: 3))
+        XCTAssertEqual(
+            SheetStoreError.sheetProtected(sheetID: id, reason: "locked"),
+            SheetStoreError.sheetProtected(sheetID: id, reason: "locked")
+        )
+        XCTAssertNotEqual(
+            SheetStoreError.sheetProtected(sheetID: id, reason: "locked"),
+            SheetStoreError.sheetProtected(sheetID: id, reason: nil)
+        )
     }
 
     func testCellOutOfBoundsEquality() {

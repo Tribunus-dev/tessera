@@ -164,11 +164,43 @@ public struct SheetStore: Sendable {
 
     // MARK: - Grid mutations
 
+    /// Refuse a mutation against a locked sheet. Every cell/format
+    /// mutation path (the UI's two `commitEditingCell`s and the agent's
+    /// `applyAgentEdit`) converges on `setCell`/`setCellFormat`, so this
+    /// one call site is the real choke point despite there being three
+    /// Swift call sites above it.
+    private func guardUnlocked(_ sheet: Sheet) throws {
+        let protection = sheet.effectiveProtection
+        guard protection.isLocked else { return }
+        throw SheetStoreError.sheetProtected(sheetID: sheet.id, reason: protection.reason)
+    }
+
+    /// Lock or unlock a sheet against further cell/format mutations.
+    /// Setting protection itself is never blocked by protection - only
+    /// cell/format edits are.
+    public func setProtection(_ protection: SheetProtection?, for sheetID: UUID) async throws -> Sheet {
+        var sheet = try await loadOrFail(id: sheetID)
+        let previous = sheet.effectiveProtection
+        sheet.protection = protection
+        sheet.updatedAt = Date()
+        _ = try await upsert(sheet)
+        try await appendReceipt(
+            entityID: sheetID,
+            receiptType: SheetReceiptType.setProtection.rawValue,
+            payload: [
+                "wasLocked": .bool(previous.isLocked),
+                "isLocked": .bool(sheet.effectiveProtection.isLocked),
+            ]
+        )
+        return sheet
+    }
+
     /// Set the plain text value of the cell at (row, col) in the
     /// primary table. Rows and cols are 0-indexed. The cell's
     /// block content is replaced with a single run holding `value`.
     public func setCell(row: Int, col: Int, value: String, for sheetID: UUID) async throws -> Sheet {
         var sheet = try await loadOrFail(id: sheetID)
+        try guardUnlocked(sheet)
         guard let tableDims = tableDimensions(of: sheet.body) else {
             throw SheetStoreError.noTable(sheetID: sheetID)
         }
@@ -222,6 +254,7 @@ public struct SheetStore: Sendable {
         for sheetID: UUID
     ) async throws -> Sheet {
         var sheet = try await loadOrFail(id: sheetID)
+        try guardUnlocked(sheet)
         guard let tableDims = tableDimensions(of: sheet.body) else {
             throw SheetStoreError.noTable(sheetID: sheetID)
         }
@@ -657,6 +690,7 @@ public struct SheetStore: Sendable {
             return try await setCell(row: row, col: col, value: value, for: sheetID)
         }
         var sheet = try await loadOrFail(id: sheetID)
+        try guardUnlocked(sheet)
         guard let tableDims = tableDimensions(of: sheet.body) else {
             throw SheetStoreError.cellNotFound(row: row, col: col)
         }
@@ -757,6 +791,7 @@ public enum SheetStoreError: Error, Sendable, Equatable {
     case columnOutOfBounds(index: Int, cols: Int)
     case cannotDeleteLastRow
     case cannotDeleteLastColumn
+    case sheetProtected(sheetID: UUID, reason: String?)
 }
 
 // JSONValue accessors are provided by TesseraTool.swift; no local extension.

@@ -73,6 +73,11 @@ public struct Sheet: Codable, Sendable, Identifiable, Hashable {
     /// before provenance existed still decode.
     public var provenance: SourceProvenance?
 
+    /// Nil (the implicit default, like `provenance` above) means
+    /// unprotected - read through `effectiveProtection`
+    /// (SheetProtection.swift), not this field directly.
+    public var protection: SheetProtection?
+
     public init(
         id: UUID = UUID(),
         title: String = "",

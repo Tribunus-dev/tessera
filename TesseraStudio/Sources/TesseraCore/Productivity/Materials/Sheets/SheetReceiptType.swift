@@ -54,4 +54,7 @@ public enum SheetReceiptType: String, Codable, Sendable, CaseIterable {
     /// The sheet was imported from an external format
     /// (openpyxl XLSX, CSV).
     case `import` = "sheet_imported"
+    /// The sheet was locked or unlocked against further cell/format
+    /// mutations.
+    case setProtection = "sheet_protection_changed"
 }
