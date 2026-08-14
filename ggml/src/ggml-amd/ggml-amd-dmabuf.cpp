@@ -22,17 +22,46 @@ extern int ggml_amd_fence_wait(struct ggml_amd_fence * fence, int timeout_ms);
 
 namespace {
 
+static bool ggml_amd_is_empty_string(const std::string & str) {
+    for (unsigned char c : str) {
+        if (!std::isspace(c)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool ggml_amd_has_path(std::vector<std::string> const & paths, const std::string & path) {
+    for (const auto & existing : paths) {
+        if (existing == path) {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::vector<std::string> ggml_amd_dma_heap_paths(void) {
 #ifdef __linux__
+    const std::vector<std::string> fallback_paths = {
+        "/dev/dma_heap/system",
+        "/dev/dma_heap/system-uncached",
+        "/dev/dma_heap/cma",
+        "/dev/dma_heap/default_cma_region",
+        "/dev/dma_heap/system_cc_shared",
+        "/dev/dma_heap/reserved",
+    };
+
     const char * env_paths = std::getenv("GGML_AMD_DMA_HEAP_PATH");
     if (env_paths && env_paths[0]) {
         std::vector<std::string> paths;
         std::string current;
         const char * cursor = env_paths;
         while (*cursor) {
-            if (std::isspace(static_cast<unsigned char>(*cursor)) || *cursor == ':' || *cursor == ',') {
+            if (std::isspace(static_cast<unsigned char>(*cursor)) || *cursor == ':' || *cursor == ',' || *cursor == ';') {
                 if (!current.empty()) {
-                    paths.push_back(current);
+                    if (!ggml_amd_is_empty_string(current) && !ggml_amd_has_path(paths, current)) {
+                        paths.push_back(current);
+                    }
                     current.clear();
                 }
                 ++cursor;
@@ -42,7 +71,7 @@ std::vector<std::string> ggml_amd_dma_heap_paths(void) {
             ++cursor;
         }
 
-        if (!current.empty()) {
+        if (!current.empty() && !ggml_amd_is_empty_string(current) && !ggml_amd_has_path(paths, current)) {
             paths.push_back(current);
         }
 
@@ -51,7 +80,7 @@ std::vector<std::string> ggml_amd_dma_heap_paths(void) {
         }
     }
 
-    return {"/dev/dma_heap/system"};
+    return fallback_paths;
 #else
     return {};
 #endif

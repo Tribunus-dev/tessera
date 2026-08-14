@@ -263,6 +263,7 @@ static struct ggml_amd_device_context * find_amd_device_context_for_provider(
 }
 
 static void test_hip_dma_buf_import(void) {
+    const char * dma_heap_paths = std::getenv("GGML_AMD_DMA_HEAP_PATH");
     ggml_backend_reg_t reg = ggml_backend_amd_reg();
     if (!reg) {
         std::fprintf(stdout, "     HIP dma-buf import skipped (no AMD device)\n");
@@ -301,6 +302,7 @@ static void test_hip_dma_buf_import(void) {
 #ifdef __HIP_PLATFORM_AMD__
         const auto last_error = static_cast<hipError_t>(ggml_amd_hip_get_last_import_error());
         std::fprintf(stderr, "     HIP import failed: last_error=%d %s\n", static_cast<int>(last_error), hipGetErrorString(last_error));
+        std::fprintf(stderr, "     GGML_AMD_DMA_HEAP_PATH=%s\n", dma_heap_paths ? dma_heap_paths : "<unset>");
 #else
         std::fprintf(stderr, "     HIP import failed on non-HIP runtime build\n");
 #endif

@@ -206,7 +206,7 @@ the ROCm toolchain and `/dev` handles match your runtime.
 4. Try alternate heap list via environment:
 
 ```bash
-export GGML_AMD_DMA_HEAP_PATH=/dev/dma_heap/system-uncached:/dev/dma_heap/system
+export GGML_AMD_DMA_HEAP_PATH=/dev/dma_heap/system-uncached:/dev/dma_heap/system:/dev/dma_heap/default_cma_region:/dev/dma_heap/cma:/dev/dma_heap/reserved
 ```
 
 5. Try GEM PRIME fallback (requires DRM device access)
