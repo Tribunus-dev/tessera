@@ -24,6 +24,41 @@ final class AddressParserTests: XCTestCase {
         let ref = try AddressParser.parseCell("$A$1")
         XCTAssertEqual(ref.addr.col, 0)
         XCTAssertEqual(ref.addr.row, 0)
+        XCTAssertTrue(ref.colAbsolute)
+        XCTAssertTrue(ref.rowAbsolute)
+    }
+
+    /// A bare, non-absolute reference must NOT come back marked
+    /// absolute. The `($?)` capture group always participates in a
+    /// successful match (it can match zero characters), so checking
+    /// only whether the group had a position in the match - rather
+    /// than whether it actually captured a "$" - marked every parsed
+    /// cell absolute, "A1" included.
+    func testPlainReferenceIsNotMarkedAbsolute() throws {
+        let ref = try AddressParser.parseCell("A1")
+        XCTAssertFalse(ref.colAbsolute, "A1 has no $ on the column")
+        XCTAssertFalse(ref.rowAbsolute, "A1 has no $ on the row")
+    }
+
+    /// The two dollar signs are independent - each must reflect only
+    /// its own presence, not "some $ appeared somewhere in the string."
+    func testMixedAbsoluteReferenceTracksEachDollarIndependently() throws {
+        let colOnly = try AddressParser.parseCell("$A1")
+        XCTAssertTrue(colOnly.colAbsolute)
+        XCTAssertFalse(colOnly.rowAbsolute)
+
+        let rowOnly = try AddressParser.parseCell("A$1")
+        XCTAssertFalse(rowOnly.colAbsolute)
+        XCTAssertTrue(rowOnly.rowAbsolute)
+    }
+
+    /// A sheet-qualified reference with no `$` must be just as
+    /// unabsolute as an unqualified one - the sheet prefix and the
+    /// absolute flags are unrelated parts of the grammar.
+    func testSheetQualifiedPlainReferenceIsNotMarkedAbsolute() throws {
+        let ref = try AddressParser.parseCell("Sheet2!C3")
+        XCTAssertFalse(ref.colAbsolute)
+        XCTAssertFalse(ref.rowAbsolute)
     }
 
     func testParsesSheetQualifiedReference() throws {

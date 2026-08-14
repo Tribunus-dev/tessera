@@ -239,9 +239,22 @@ public enum AddressParser {
             sheet = unescapeSheetName(sheetStr)
         }
 
-        // Extract absolute flags and values
-        let colAbsolute = match.range(at: 2).location != NSNotFound
-        let rowAbsolute = match.range(at: 4).location != NSNotFound
+        // Extract absolute flags and values.
+        //
+        // .length > 0, not .location != NSNotFound: group 2/4 are
+        // `(\$?)` - the `?` is INSIDE the parens, so the group always
+        // PARTICIPATES in a successful match, capturing an empty string
+        // when there's no "$". `.location` is therefore never
+        // NSNotFound for these two groups regardless of whether "$" was
+        // typed, and colAbsolute/rowAbsolute came out `true` for every
+        // cell reference ever parsed here - including a bare "A1" with
+        // no dollar sign anywhere. `.length` reflects what was actually
+        // captured, which is what "was $ present" actually means. (Group
+        // 1, the sheet prefix, is a genuinely OPTIONAL group - `(...)?`,
+        // the `?` OUTSIDE the parens - so `.location != NSNotFound` on
+        // it above is the correct check and needs no change.)
+        let colAbsolute = match.range(at: 2).length > 0
+        let rowAbsolute = match.range(at: 4).length > 0
 
         guard let colRange = Range(match.range(at: 3), in: s),
               let rowRange = Range(match.range(at: 5), in: s),
