@@ -599,7 +599,7 @@ Productivity/Materials/Slides/AnimationEffectList.swift`; P2
 introduces `SMILAnimationTree.swift` and the list moves to be a
 serialization of the tree.
 
-### 6c. Phase 2 - the advanced features (12 deliverables)
+### 6c. Phase 2 - the advanced features (21 deliverables)
 
 | # | Deliverable | Surface |
 |---|---|---|
@@ -615,29 +615,47 @@ serialization of the tree.
 | 2.10 | Custom shows (data only, no UI) | Impress |
 | 2.11 | Master documents (uses `Doc.linkedEntityIDs` + a new `MasterDoc` material) | Writer |
 | 2.12 | Draw advanced (annotations, measure/dimension lines, Draw-side tables, bullet lists inside shape text) | Draw |
+| 2.13 | `MacroCompatLayer` (VBA/Basic macro read + limited execution) - promoted from out-of-scope 2026-08-14 for corporate-adoption reasons; the original objection stands as a real constraint, not just a priority call: `basic/source/comp/*` is a separate language and runtime, embedding it balloons the binary. Needs its own design pass before implementation - most likely a read-and-flag-for-agent-tool-rewrite path rather than a real VBA interpreter, not a small addition. | Writer + Calc + Impress |
+| 2.14 | `StarMathEditor` (equation authoring/editing UI over a real equation engine) - promoted from out-of-scope 2026-08-14. `starmath/` is its own sibling module with a custom TeX-like engine; `BlockType.equation`'s `latex` string already covers read/round-trip (shipped), this adds the authoring UI + engine on top. | Writer |
+| 2.15 | Form controls (new material or `BlockType` addition - design TBD) - promoted from out-of-scope 2026-08-14. Ties into the XForms / UNO control hierarchy; Tessera materials are document-shaped today, not form-shaped, so this is the "Tessera Forms" track the original plan deferred, now pulled into P2 scope rather than left as a someday idea. | Writer + Calc |
+| 2.16 | Database connectivity (`DatabaseConnector` - design TBD) - promoted from out-of-scope 2026-08-14. `connectivity/` + SDBC + ODBC + JDBC; the original objection ("the no-egress doctrine says no SDBC") is a policy conflict, not a complexity one - this needs an explicit decision on how egress/credentials/audit are handled before implementation starts, not just a Swift wrapper around SDBC. | Calc |
+| 2.17 | Draw 3D objects (extrusion, lathe, sphere, cube - `fucon3d.cxx`) - promoted from out-of-scope 2026-08-14. | Draw |
+| 2.18 | Draw morph (shape-to-shape interpolation - `fumorph.cxx`) - promoted from out-of-scope 2026-08-14. | Draw |
+| 2.19 | OpenGL transition effects (`slideshow/source/engine/opengl/`) - promoted from out-of-scope 2026-08-14. The P1 `TransitionStore` catalog (SwiftUI tween) already covers the preset-transition case; this adds true OpenGL-rendered transitions on top of it. | Impress |
+| 2.20 | Tagged PDF / Section 508 / PDF-UA export (`EnhancedPDFExportHelper.cxx` parity) - promoted from out-of-scope 2026-08-14 for corporate/government compliance reasons (can be a hard procurement blocker, not a nice-to-have, for public-sector or publicly-traded customers). A distinct code path from plain PDF export, not an extension of it. | Writer + Calc + Impress |
+| 2.21 | Mail-merge wizard UI (`mailmergewizard.cxx`-equivalent guided flow) - promoted from out-of-scope 2026-08-14. Layers a guided UI on top of 2.4's `MailMergeCoordinator` single-submit endpoint, which stays the underlying engine either way. | Writer |
 
 P2 = the long tail. The features that a power user expects and that round-
 trip real-world files, but that are not day-one must-haves. Note that 2.1,
 2.2, and 2.3 are architect-locked substantial pieces (3-5K LoC each, per
-the upstream references in the sibling reports); the rest are smaller.
+the upstream references in the sibling reports); 2.13-2.21 were promoted
+from §6d's out-of-scope list on 2026-08-14 (see that section for what's
+left there and why) - three of them (2.13 `MacroCompatLayer`, 2.15 Forms,
+2.16 database connectivity) carry real open design questions, not just
+unscoped effort, and need their own design pass before implementation
+starts, the same way 2.1-2.3 do. The rest are smaller.
 
 ### 6d. Out of scope (P3+ / never)
 
+**2026-08-14: nine items moved from this table to P2** (§6c, 2.13-2.21) -
+VBA/Basic macro compatibility, the StarMath equation editor, form controls,
+database connectivity, Draw 3D objects, Draw morph, OpenGL transitions,
+Section 508/tagged-PDF export, and the mail-merge wizard UI - on the
+reasoning that several of these are genuine corporate-adoption blockers
+(VBA and DB connectivity for enterprise Excel/Access workflows; tagged PDF
+for government/public-company compliance procurement) rather than pure
+nice-to-haves, even though the underlying implementation challenges each
+was excluded for still apply. Legacy `.ppt` write stays out of scope below
+- LO's own import path already covers reading it, and there's no
+compelling reason to ever write back to a legacy binary format tessera
+didn't originate.
+
 | Item | Why |
 |---|---|
-| Full Basic / VBA macro compatibility | `basic/source/comp/*` is a separate language and runtime; embedding balloons the binary. The agent tool surface IS the scripting model. |
-| Full StarMath equation editor | `starmath/` is its own sibling module with a custom TeX-like engine. `BlockType.equation` with a `latex` string covers the read/round-trip case. |
-| Forms (`sw/source/ui/form/`, `form/source/`) | Form controls tie into the XForms / UNO control hierarchy. Tessera materials are document-shaped, not form-shaped. Future "Tessera Forms" track. |
-| Database connectivity wizard | `connectivity/` + SDBC + ODBC + JDBC. Punt to Python pandas for ad-hoc. The no-egress doctrine says no SDBC. |
 | Full chart wizard (14 chart types, trendlines, 100+ formatting properties) | Ship all 14 chart types via `ChartRenderer` CoreGraphics; full formatting properties at P2 if real demand surfaces. |
 | Solved-style scenario manager | `dpshttab.hxx`; rarely used in modern spreadsheets. |
-| **Draw 3D objects** (extrusion, lathe, sphere, cube - `fucon3d.cxx`) | Architect decision: 3D on a productivity surface is unusual; the use case is dominated by 2D. Out of scope for the initial Draw expansion; revisit only if a future "Tessera 3D" track is greenlit. The P0-P2 plan covers the full 2D capability set. |
-| **Draw morph** (shape-to-shape interpolation - `fumorph.cxx`) | Architect decision: uncommon in the productivity use case. Out of scope for the initial Draw expansion. |
-| OpenGL transition effects | `slideshow/source/engine/opengl/`; SwiftUI tween is enough. |
 | PPT (legacy binary) round-trip | One-way import through LO; never write `.ppt` from tessera. |
-| Section 508 / PDF/UA tagged PDF | `EnhancedPDFExportHelper.cxx` is deep work; native tagged-PDF export is a separate accessibility track. |
 | Auto-text / glossary blocks | `sw/source/core/swg/SwXMLTextBlocks{,1}.cxx`; `Doc.tags` + the document search index subsume most uses. |
-| Mail-merge wizard UI | `mailmergewizard.cxx` is a 5-page wizard; we don't need a wizard. `MailMergeCoordinator` with a single submit endpoint is the right shape. |
 | Scenarios UI | `scenwnd.cxx`; rare in modern spreadsheets. |
 
 ---
@@ -661,13 +679,19 @@ above, run in three waves:
   TransformController, SnapEngine, ODG/SVG/PDF-export bridge filters,
   text frames on shapes**. Plus the flat `AnimationEffectList` as a SMIL
   interim.
-- **P2 (12 items, advanced + architect-locked substantial work)**:
+- **P2 (21 items, advanced + architect-locked substantial work)**:
   SMILAnimationTree (full XAnimationNode tree, 3-5K LoC),
   PivotTableStore (full ScDPObject schema, 4-6K LoC),
   **BezierPathController (Draw custom-geometry paths)**, mail merge,
   ToC/index, solver, subtotals, statistics wizards, change-track reviewer
   UI, custom shows, master documents, **Draw advanced (annotations,
-  measure, Draw tables, bullet lists inside shape text)**.
+  measure, Draw tables, bullet lists inside shape text)**. Promoted
+  2026-08-14 from out-of-scope: **MacroCompatLayer (VBA/Basic macros),
+  StarMathEditor, form controls, database connectivity, Draw 3D objects,
+  Draw morph, OpenGL transitions, tagged-PDF/Section 508 export, and the
+  mail-merge wizard UI** - MacroCompatLayer, form controls, and database
+  connectivity still need their own design pass before implementation
+  (see §6c's 2.13/2.15/2.16 notes).
 
 The ordering is by:
 
