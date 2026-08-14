@@ -233,17 +233,25 @@ public final class DocumentExporter: Sendable {
             return "<li>\(inner)</li>"
 
         case .table:
-            var rows: [String] = []
-            for childID in block.children {
-                guard let cellBlock = ast.blocks[childID] else { continue }
-                let inner = try renderInlineRuns(cellBlock.content)
-                rows.append("<td>\(inner)</td>")
+            var rowsHTML: [String] = []
+            for row in TableLayout.rows(for: block, in: ast) {
+                var cellsHTML: [String] = []
+                for placement in row {
+                    guard let cellBlock = ast.blocks[placement.cellID] else { continue }
+                    let inner = try renderTableCellContent(cellBlock, in: ast)
+                    var spanAttrs = ""
+                    if placement.rowSpan > 1 { spanAttrs += " rowspan=\"\(placement.rowSpan)\"" }
+                    if placement.colSpan > 1 { spanAttrs += " colspan=\"\(placement.colSpan)\"" }
+                    cellsHTML.append("<td\(spanAttrs)>\(inner)</td>")
+                }
+                rowsHTML.append("<tr>\(cellsHTML.joined(separator: ""))</tr>")
             }
-            return "<table><tr>\(rows.joined(separator: ""))</tr></table>"
+            return "<table>\(rowsHTML.joined(separator: "\n"))</table>"
 
         case .tableCell:
-            // Rendered by parent table.
-            let inner = try renderInlineRuns(block.content)
+            // Rendered by parent table when walked as part of one; this
+            // path only runs if a cell is ever rendered standalone.
+            let inner = try renderTableCellContent(block, in: ast)
             return "<td>\(inner)</td>"
 
         case .image:
@@ -319,6 +327,24 @@ public final class DocumentExporter: Sendable {
             let style = "position:absolute;left:\(f?.x ?? 0)px;top:\(f?.y ?? 0)px;width:\(f?.width ?? 0)px;height:\(f?.height ?? 0)px;"
             return "<div class=\"frame\" style=\"\(style)\">\n\(items.joined(separator: "\n"))\n</div>"
         }
+    }
+
+    /// A table cell's content: nested block children (paragraphs,
+    /// lists, even a nested table) when it has any, walked through the
+    /// same recursive dispatch every other container block uses -
+    /// otherwise its flat inline runs, exactly as before. Every table
+    /// cell created today has empty `children`, so this is a strict
+    /// addition: no existing table's export output changes.
+    private func renderTableCellContent(_ cell: Block, in ast: DocumentAST) throws -> String {
+        guard !cell.children.isEmpty else {
+            return try renderInlineRuns(cell.content)
+        }
+        var items: [String] = []
+        for childID in cell.children {
+            guard let child = ast.blocks[childID] else { continue }
+            items.append(try renderBlock(child, in: ast))
+        }
+        return items.joined(separator: "\n")
     }
 
     private func renderInlineRuns(_ runs: [InlineRun]) throws -> String {

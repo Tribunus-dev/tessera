@@ -31,11 +31,19 @@ public enum BlockType: String, Codable, Sendable, Hashable, CaseIterable {
     case list
     /// A single item in a list. `content` holds the inline runs.
     case listItem
-    /// Table. `attributes["rows"]`, `attributes["cols"]`, `attributes["cells"]`
-    /// (a nested array of block IDs). The spec's `cells: [[BlockID]]` is the
-    /// 1:1 mirror of the visible grid.
+    /// Table. `attributes["rows"]`/`attributes["cols"]` give the grid
+    /// size; `children` is a FLAT, row-major list of `.tableCell`
+    /// blocks (no per-cell row/col attribute) - see ``TableLayout``,
+    /// which resolves that flat list into actual grid positions and is
+    /// what any code walking a table's cells should use rather than
+    /// re-deriving `row * cols + col` by hand.
     case table
-    /// One cell in a table. `content` holds the inline runs.
+    /// One cell in a table. `content` holds the inline runs, unless
+    /// `children` is non-empty, in which case those nested blocks
+    /// (paragraphs, lists, even a nested table) are the cell's real
+    /// content instead - see `DocumentExporter.renderTableCellContent`.
+    /// `rowSpan`/`colSpan` (``Block/rowSpan``/``Block/colSpan``) merge
+    /// this cell across multiple grid slots; absent means 1x1.
     case tableCell
     /// Image. `attributes["source"]` is the URL, `attributes["alt"]` the
     /// accessibility text, `width` / `height` are optional pixel hints.
