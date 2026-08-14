@@ -1,7 +1,13 @@
 # Tessera Studio Writer Expansion - LibreOffice Capability Map (raw, from explore agent)
 
-> Status: second of three sibling reports. Calc report still in flight.
-> Source agent: bg_e330e0d3-108b-49ce-8977-4deb384e59d4
+> Status: one of three sibling reports; all three are now complete (see
+> `lo-calc-report.md`, `lo-impress-report.md`). This report's own "Calc report
+> still in flight" line was never updated after Calc finished - a stale
+> cross-reference between sibling reports, caught during the 2026-08-13 review.
+> Source agent: bg_e330e0d3-108b-49ce-8977-4deb384e59d4 (uncorroborated - this
+> ID appears nowhere else in the repo, and it does not match the agent ID
+> `lo-calc-report.md` cites for itself; treat with the same caution as the
+> stale status line above).
 
 ## 1. Scope and methodology
 

@@ -91,7 +91,7 @@ The expansion evolves this surface. Recap of what already exists (paths relative
 - `Productivity/Materials/Slides/SlideLayout` - 4-case enum (`title`, `titleAndContent`,
   `image`, `blank`). Comment at `SlideDeck.swift:9` punts master layouts, transitions,
   animations.
-- `Productivity/Materials/Slides/SlideStore.swift` (547 lines),
+- `Productivity/Materials/Slides/SlideStore.swift` (571 lines),
   `SlidesViewModel.swift` (618 lines), `SlideReceiptType.swift`,
   `SlidesGraphConnector.swift`.
 
@@ -142,22 +142,33 @@ The existing tesseracore surface has:
   Phase 2 target.
 - `Productivity/ImportExport/{TesseraImporter,TesseraExporter}.swift` - Python
   subprocess pipeline.
-- `Productivity/ImportExport/SpreadsheetDigester.swift` - csv/tsv/xlsx digest path.
+- `Productivity/ImportExport/SpreadsheetDigester.swift` - csv/tsv digest path only;
+  `digest(fileAt:)` throws `.unsupportedFormat` for xlsx today ("XLSX goes through
+  the import pipeline" - i.e. the Python bridge below, not this native path). No
+  native XLS-binary or ODS reader exists in Swift anywhere in the tree.
 - `DocumentProcessing/LibreOffice/LibreOfficeBootstrap.swift` (174 lines) - LO
   bundle discovery (`.app`/system install) and in-process UNO bootstrap.
 - `DocumentProcessing/LibreOffice/EmbeddedPythonBridge.swift` (673 lines) -
   CPython lifecycle and URE bootstrap.
 - `DocumentProcessing/LibreOffice/tessera_lo_service.py` (745 lines) - in-process
-  UNO service; today exposes `writer_get_text`, `writer_get_paragraphs`,
-  `writer_set_paragraph_style`, `writer_insert_text` and the format-agnostic
-  `open_document` / `save_document`.
+  UNO service. Further along than earlier drafts of this plan assumed: it
+  already exposes `writer_get_text`, `writer_get_paragraphs`,
+  `writer_set_paragraph_style`, `writer_insert_text`, the format-agnostic
+  `open_document` / `save_document`, AND `calc_get_sheet_names`,
+  `calc_read_cells`, `calc_write_cell`, `impress_get_slides`,
+  `bridge_calc_get_cells`, `bridge_impress_get_slides` - all landed together
+  in the same commit (5ef6b0961). The Writer/Calc/Impress bridge functions
+  exist; `CalcBridgeFilter`/`LOBridgeDeckIO` (P0/P1 below) still need to be
+  built on top of them, but the raw UNO calls are not the missing piece.
 
 ### 1g. Already-merged adjacent plans (read before writing the next evolution)
 
 - `TesseraStudio/docs/word-class-document-processor-implementation-plan.md` - 772-
   line, 12-phase plan for the Writer side, locked in pre-LO-study.
 - `TesseraStudio/docs/phase12-hig-review-sheets-slides-code.md` - HIG sweep of
-  current sheets/slides views, 9 must-fix items.
+  current sheets/slides views, 10 must-fix items (that doc's own prose summary
+  line says 9; its own table two lines below says 10 and is the one that
+  matches direct enumeration - the 9 was a miscount in that doc, not here).
 - `TesseraStudio/docs/phase11-integration-plan.md` - 4-agent parallel execution
   plan; defines the `GhostTextProvider` / `DiffProvider` interface contracts the
   editor surface consumes.
@@ -259,7 +270,7 @@ no-versioned-implementations check.
 | 1 | `SheetWorkbook` multi-sheet model | `TesseraCore/Productivity/Materials/Sheets/SheetWorkbook.swift` | **evolves** `SheetWorkbook` (adds `sheets: [SheetID: SheetSnapshot]`, workbook-wide named ranges, validation/CF registries, pivot list). Name stays per architect decision. | P0 |
 | 2 | `RecalcScheduler` | `TesseraCore/FormulaEngine/RecalcScheduler.swift` | **evolves** `DependencyGraph` (adds cell-level `RecalcState`, dirty-cone plan, shared-formula group cache) | P0 |
 | 3 | `TokenArray` IR | `TesseraCore/FormulaEngine/TokenArray.swift` | **peer of** `FormulaAST` (canonical IR for `DependencyGraph` + shared formula groups; AST stays the authoring surface) | P0 |
-| 4 | `CellValue` + `CellFormat` + per-cell `NumberFormat` | `TesseraCore/Productivity/Materials/Sheets/{CellValue,CellFormat}.swift` | **evolves** `SheetColumn` / `SheetColumnType` (no v2 column type) | P0 |
+| 4 | `CellValue` + `CellFormat` + per-cell `NumberFormat` | `TesseraCore/Productivity/Materials/Sheets/{CellValue,CellFormat}.swift` | **evolves** `SheetColumn` / `SheetColumnType` (no v2 column type). **Update (session of 2026-08-13, after this row was written):** `SheetCellFormat.swift` already shipped, covering number format (general/number/comma/currency/percent/scientific/date/text), decimals, bold/italic, fill, borders, alignment - most of what "CellFormat" was scoped to do here. Do not build a second `CellFormat` type; either rename the plan's target to `SheetCellFormat` or evolve the shipped type in place. `CellValue` (a typed cell value, distinct from the format) and the full locale-aware `NumberFormatEngine` (row 5 below) are still unbuilt and still needed - `SheetCellFormat.numberFormat` is a categorical enum, not `svl/source/numbers/`-parity parsing. | P0 |
 | 5 | `NumberFormatEngine` (full parser, locale-aware) | `TesseraCore/FormulaEngine/NumberFormatEngine.swift` | **peer of** `FunctionRegistry` (full parity with `svl/source/numbers/zforlist.cxx` + `zformat.cxx`; not the 80% subset. Owns its own per-locale token table) | P0 |
 | 6 | `BlockType` evolutions: `.section`, `.frame`, `.field`, `.footnote`, `.endnote`, `.shape`, `.shapeGroup`, `.chart`, `.media` | `TesseraCore/Productivity/Block.swift` | **evolves** `BlockType` enum (adds cases; no v2 enum). `.shape` and `.shapeGroup` move to P0 because Draw needs them; the rest stay where the original plan put them. | P0 (section, frame, shape, shapeGroup) / P1 (field, footnote, endnote, chart, media) |
 | 7 | `MasterPageStore` | `TesseraCore/Productivity/Materials/Slides/MasterPageStore.swift` | **peer of** `SlideStore`; lives next to it (not in v2) | P0 |
@@ -429,7 +440,7 @@ The 63 capability rows roll up into a four-phase plan. Each phase is a
 |---|---|---|
 | 0.1 | `SheetWorkbook` multi-sheet model (multi-sheet identity, workbook-wide named ranges, validation + CF registries, pivot list, protection) | Calc |
 | 0.2 | `RecalcScheduler` + `TokenArray` IR + shared formula groups (cell-level `RecalcState`, dirty-cone plan) | Calc |
-| 0.3 | `CellValue` + `CellFormat` + per-cell `NumberFormat` index (extends `SheetColumn`; no v2) | Calc |
+| 0.3 | `CellValue` + `CellFormat` + per-cell `NumberFormat` index (extends `SheetColumn`; no v2) - see §3 row 4's note: `SheetCellFormat.swift` already shipped, reconcile before building a second type | Calc |
 | 0.4 | `NumberFormatEngine` (full locale-aware parser, parity with `svl/source/numbers/`) | Calc |
 | 0.5 | `BlockType.section` + `BlockType.frame` (the 2 new cases that unblock real-world DOCX import) | Writer |
 | 0.6 | `BlockType.table` extension: `rowSpans`, `colSpans`, nested `children` | Writer + Calc |
@@ -614,7 +625,7 @@ waves cite this section; the wave briefs do not re-ask.
 |---|---|---|---|
 | 1 | DOCX import: bridge or native? | **Bridge** (`WriterBridgeFilter` via UNO). | The pure-Swift ODT/DOCX reader is out of scope. Bridge gets 95% of round-trip fidelity for 2-3 weeks of work. Markdown / plain text remain Swift-native. |
 | 2 | Rename `SheetWorkbook` to `Workbook`? | **Keep the name.** | Per the no-versioned-implementations rule. The single-sheet proxy case is a workbook with one sheet, not a different type. |
-| 3 | `BlockType` enum growth (16 -> ~24 over P0-P1)? | **Approved.** | New cases are surface-specific (`.field` Writer, `.chart` Calc+Impress, `.media` Impress, `.shape`/`.shapeGroup` Draw+Impress). `BlockType` is the union; per-material surface checks for the cases it cares about. |
+| 3 | `BlockType` enum growth (16 -> 25 over P0-P1)? | **Approved.** | New cases are surface-specific (`.field` Writer, `.chart` Calc+Impress, `.media` Impress, `.shape`/`.shapeGroup` Draw+Impress). `BlockType` is the union; per-material surface checks for the cases it cares about. Corrected from an original "~24": §3 row 6 and §6a/6b enumerate exactly 9 new cases (`.section`, `.frame`, `.field`, `.footnote`, `.endnote`, `.shape`, `.shapeGroup`, `.chart`, `.media`); 16+9=25. The ~24 estimate was never reconciled against the case list it's approving. |
 | 4 | Number formats: 80% parser or full? | **Full parser** (`NumberFormatEngine`, parity with `svl/source/numbers/`). | Token table per locale, full `nf_*` code coverage. Bigger P0 deliverable but the only path to round-trip parity for XLSX/ODS files with locale-specific number formats. |
 | 5 | Master pages: data-only or full picker UI? | **Full picker UI** (`MasterPageLayoutPicker` at P1). | The SwiftUI surface consumes `MasterPageStore` and exposes LO's full layout catalog (25+ AutoLayouts from `sd/source/core/sdpage.cxx:1397`). Wired into `SlideDetailView` per the phase12 HIG review. |
 | 6 | Chart engine: Swift Charts or CoreGraphics? | **CoreGraphics, long-term.** | `ChartRenderer` draws with `CGContext`; parity with all 14 LO chart types. Per the architect: ages better than Swift Charts for the long-term document parity goal. |

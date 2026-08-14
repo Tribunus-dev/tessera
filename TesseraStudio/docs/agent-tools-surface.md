@@ -10,7 +10,7 @@
 
 ## TL;DR
 
-Tessera Studio already has a working tool contract (`TesseraTool` protocol, `JSONValue`, `JSONSchema`, `ToolResult`, `ApprovalLevel`) and one shipped surface: `SheetTools.swift` (3 tools). The expansion adds the parallel surfaces for **Document**, **SlideDeck**, **Drawing**, and the cross-cutting / lifecycle / pipeline tools. Total target: ~65 tools across all surfaces, no versioned implementations, every tool follows the same protocol.
+Tessera Studio already has a working tool contract (`TesseraTool` protocol, `JSONValue`, `JSONSchema`, `ToolResult`, `ApprovalLevel`) and one shipped material-surface tool file: `SheetTools.swift` (3 tools; `Tools/` also holds ~41 other `TesseraTool` conformers for the calibration/harness/learning side of the agent, unrelated to the four product materials). The expansion adds the parallel surfaces for **Document**, **SlideDeck**, **Drawing**, and the cross-cutting / lifecycle / pipeline tools. Original target was ~65 tools; as drafted, the per-surface tables in §4-9 enumerate 79 (see the corrected count in §2) — reconcile before wave-splitting. No versioned implementations, every tool follows the same protocol.
 
 The agent-ux-fatigue audit rules bind every new tool: tier policy, notification budget, inline stop, audit log, citation + uncertainty. There are no new "tool shapes" being introduced; this is an *enumeration* of what the existing shape means for the four product surfaces.
 
@@ -32,20 +32,21 @@ public protocol TesseraTool: Sendable {
 }
 ```
 
-`ToolResult` is the return shape (`TesseraTool.swift:140`):
+`ToolResult` is the return shape (`TesseraTool.swift:140`) — corrected against the actual struct, which does not match an earlier draft of this doc:
 
 ```swift
 public struct ToolResult: Sendable {
-    public enum Outcome: Sendable { case ok, fail }
-    public let outcome: Outcome
-    public let text: String           // human-readable summary for the chat
-    public let data: [String: JSONValue]  // structured result the model can use
-    public let confidenceBand: ConfidenceBand?  // audit 2D wire field
-    public let sources: [Citation]    // audit 3A wire field
+    public let success: Bool
+    public let output: String         // human-readable summary for the chat
+    public let data: [String: JSONValue]?  // structured result the model can use
+    public let error: String?
+    public let confidenceBand: ConfidenceBand?  // audit 2D wire field; real, present today
 }
 ```
 
-`ApprovalLevel` is the existing two-state tier (`.auto` for read, `.prompt` for mutate). The new `TesseraTier` enum (4-state, from the agent-ux-fatigue audit Wave 1) is *orthogonal* to `ApprovalLevel` — `ApprovalLevel` is the *call-site* default that the agent loop reads; `TesseraTier` is the *risk-rating* the user (or the policy) has assigned. The mapping is in §7.
+There is no `sources: [Citation]` field on `ToolResult` today. `Citation` and `sources` exist on `ToolResultPayload` (`Models/ChatMessage.swift`, the chat-layer wrapper), not on the tool-layer return type — so a tool implementation cannot attach a citation directly yet. Either the per-tool code below should read citations off `ToolResultPayload` at the call site that wraps a `ToolResult`, or `ToolResult` needs a `sources` field added as part of this wave; that's an open question for whoever lands the first `doc_*`/`slide_*` read tool, not yet decided here.
+
+`ApprovalLevel` is a 4-state enum (`.auto`, `.notify`, `.prompt`, `.denied` — `TesseraApprovalEngine.swift:5`), not the two-state `.auto`/`.prompt` split this doc assumed elsewhere. The new `TesseraTier` enum (4-state, from the agent-ux-fatigue audit Wave 1) is *orthogonal* to `ApprovalLevel` regardless of that correction — `ApprovalLevel` is the *call-site* default that the agent loop reads; `TesseraTier` is the *risk-rating* the user (or the policy) has assigned. The mapping is in §11 (misnumbered §7 in an earlier draft of this doc).
 
 Existing reference implementation: `Tools/SheetTools.swift`. Read it once; every new tool follows the same shape.
 
@@ -55,15 +56,15 @@ Five categories. The categorization is the binding structure; tools within a cat
 
 | Prefix | Category | Surface | Default tier | Approximate count |
 |---|---|---|---|---|
-| `doc_*` | Document tools | Writer (Doc material) | read = auto, write = prompt, export = prompt | ~18 |
-| `sheet_*` | Spreadsheet tools | Calc (SheetWorkbook material) | read = auto, write = prompt, export = prompt | ~14 |
-| `slide_*` | Slides tools | Impress (SlideDeck material) | read = auto, write = prompt, export = prompt | ~12 |
-| `drawing_*` | Drawing tools | Draw (Drawing material) | read = auto, write = prompt, export = prompt | ~12 |
-| `materials_*` | Cross-cutting | All materials + audit log | read = auto, write = prompt | ~6 |
-| `lifecycle_*` | Material lifecycle | Create / archive / trash / favorite | prompt (all are mutating) | ~3 |
-| **Total** | | | | **~65** |
+| `doc_*` | Document tools | Writer (Doc material) | read = auto, write = prompt, export = prompt | 19 (§4a 8 + §4b 8 + §4c 3) |
+| `sheet_*` | Spreadsheet tools | Calc (SheetWorkbook material) | read = auto, write = prompt, export = prompt | 19 (§5a 8 + §5b 8 + §5c 3; 3 existing + 16 new, not "+11" as §5's body text originally said) |
+| `slide_*` | Slides tools | Impress (SlideDeck material) | read = auto, write = prompt, export = prompt | 15 (§6a 4 + §6b 8 + §6c 3) |
+| `drawing_*` | Drawing tools | Draw (Drawing material) | read = auto, write = prompt, export = prompt | 17 (§7a 4 + §7b 10 + §7c 3) |
+| `materials_*` | Cross-cutting | All materials + audit log | read = auto, write = prompt | 6 |
+| `lifecycle_*` | Material lifecycle | Create / archive / trash / favorite | prompt (all are mutating) | 3 |
+| **Total** | | | | **79** |
 
-(The count is an upper bound; some tools compose others and we should err toward fewer tools with broader arguments, not more narrow tools. The final count per wave is a wave-level decision, not a hard target.)
+Corrected count: the per-surface tables in §4-9 enumerate 79 tools, not the ~65 originally estimated in the TL;DR — the estimate was made before the tables were drafted out and never reconciled against them. 79 is itself an upper bound before pruning: some tools compose others and the wave-level work should err toward fewer tools with broader arguments, not more narrow tools. Treat 79 as "what's enumerated," not a target; the final per-wave count is still a wave-level decision.
 
 ## 3. Naming convention
 
@@ -95,7 +96,7 @@ Prefix: `doc_*`. The Doc material is at `Productivity/Materials/Docs/Doc.swift`;
 | Tool | Arguments | Result | Notes |
 |---|---|---|---|
 | `doc_write` | `blockID`, `inlineRuns: [InlineRun]` | the new block | Single-block inline write; composed for paragraphs / headings |
-| `doc_insert_block` | `parent: blockID`, `index: Int`, `block: Block` | the inserted block id | The new `BlockType.section` / `.frame` / `.field` / `.footnote` / `.shape` / `.chart` all land here |
+| `doc_insert_block` | `parent: blockID`, `index: Int`, `block: Block` | the inserted block id | Once the planned `BlockType.section` / `.frame` / `.field` / `.footnote` / `.shape` / `.chart` cases land (studio-expansion-plan.md §8 decision #3 — none exist on `BlockType` today; it is still the original 16-case enum) they route through this tool |
 | `doc_delete_block` | `blockID` | the deleted block id | Cascades to children; one receipt per cascade |
 | `doc_set_style` | `blockIDs: [blockID]`, `styleRef: UUID` | the affected block ids | The new `StyleRegistry` consumer |
 | `doc_set_section` | `range: [blockID]`, `section: Section` | the new section id | The new `Section` consumer; multi-column lives here |
@@ -113,7 +114,9 @@ Prefix: `doc_*`. The Doc material is at `Productivity/Materials/Docs/Doc.swift`;
 
 ## 5. Spreadsheet tools (Calc surface, ~14 tools)
 
-Prefix: `sheet_*`. `SheetTools.swift` ships `SheetReadTool`, `SheetWriteTool`, `SheetDescribeTool`; the expansion adds 11 more. The SheetWorkbook material at `Productivity/Materials/Sheets/SheetWorkbook.swift` carries the multi-sheet identity after the P0 evolution.
+Prefix: `sheet_*`. `SheetTools.swift` ships `SheetReadTool`, `SheetWriteTool`, `SheetDescribeTool`; the expansion adds 16 more (see the corrected §2 count). `SheetWorkbook` (`Productivity/Materials/Sheets/SheetWorkbook.swift`) is single-sheet today — one `engine: SheetEngine` and one `sheetID: UUID?`, `hydrate(from:)` replaces the whole engine per load. It WILL carry the multi-sheet identity once the P0 evolution (`sheets: [SheetID: SheetSnapshot]`) lands, but that has not been built; `sheet_list_sheets`/`sheet_pick_sheet` below are not callable against anything today.
+
+Note also: `SheetCellFormat` (number format, decimals, bold/italic, fill, borders, alignment) already shipped this session at `Productivity/Materials/Sheets/SheetCellFormat.swift`, ahead of this plan's P0 item #4 (`CellValue` + `CellFormat`, studio-expansion-plan.md). `sheet_format`'s `cellFormat: CellFormat` argument below should bind to `SheetCellFormat` — building a separate `CellFormat` type would be exactly the parallel-implementation this doc's naming rules forbid. Reconcile before P0 work starts on cell formatting; see the note added to studio-expansion-plan.md's component table.
 
 ### 5a. Read tools (auto)
 
@@ -185,7 +188,7 @@ Prefix: `slide_*`. The SlideDeck material at `Productivity/Materials/Slides/Slid
 
 ## 7. Drawing tools (Draw surface, ~12 tools)
 
-Prefix: `drawing_*`. The Drawing material at `Productivity/Materials/Draw/Drawing.swift` is the durable `graph_entity` row for a single-page vector graphic; `Shape` (peer of `Block`, at `Productivity/Shape.swift`) is the per-shape value type.
+Prefix: `drawing_*`. Entirely planned, not built: `Materials/Draw/` does not exist, and neither does `Productivity/Shape.swift`. This whole section describes the P0 Draw quartet from studio-expansion-plan.md (the `Drawing` material as the durable `graph_entity` row for a single-page vector graphic; `Shape`, peer of `Block`, as the per-shape value type) before any of it lands — every tool below is a proposal, not a wrapper around existing code.
 
 ### 7a. Read tools (auto)
 
@@ -263,7 +266,7 @@ The `materials_diff` and `materials_receipts` tools are read-shaped; they do not
 
 ## 11. Tier mapping
 
-The new `TesseraTier` enum (audit Wave 1, `TesseraCore/Agent/TesseraTier.swift`) is the 4-state risk rating. The existing `ApprovalLevel` is the 2-state call-site default. The mapping is:
+The new `TesseraTier` enum (audit Wave 1, `TesseraCore/Agent/TesseraTier.swift`) is the 4-state risk rating. `ApprovalLevel` is a separate 4-state call-site default (see §1's correction) — the two enums are orthogonal in purpose, not in cardinality. The mapping is:
 
 | `ApprovalLevel` (call-site default) | `TesseraTier` (risk rating, post-mitigation) | Examples |
 |---|---|---|
@@ -272,7 +275,7 @@ The new `TesseraTier` enum (audit Wave 1, `TesseraCore/Agent/TesseraTier.swift`)
 | `.prompt` | `tier2` (when import / export is the action) | `doc_import`, `doc_export`, `sheet_import`, `sheet_export`, `slide_import`, `slide_export`, `drawing_import`, `drawing_export`, `lifecycle_trash`. Importing a file overwrites the user's local view; the `ConfirmationPanel` surfaces this with a tier label. |
 | `.prompt` | `tier3` (when a confirmable destructive action is queued) | `lifecycle_trash` on a non-empty material (this is the audit's paradox-1 / paradox-5 concern). |
 
-The mapping is set by `TesseraSafetyDecision.tier(forActionClass:)` (`TesseraCore/Agent/TesseraSafetyDecision.swift:113-122`) and is the single auditable surface. The architect-approved rule from the audit Wave 1 holds: the only path that lowers a tier is `TesseraTier.revoke()`; direct reassignment is tier-boundary drift and fails review.
+`TesseraSafetyDecision.tier(forActionClass:)` (`TesseraCore/Agent/TesseraSafetyDecision.swift:113-115`) is a 3-line delegate to `TesseraTier.compute(risk:irreversible:)` (`TesseraTier.swift:69-95`) — the actual mapping logic, and the single auditable surface per that type's own doc comment. Neither function today special-cases on the action-verb strings ("import"/"export"/"lifecycle_trash") this table uses; the import/export -> tier2 and non-empty-trash -> tier3 rules exist only as the prose above, not as code yet. Implementing this table is itself P0-adjacent work. The architect-approved rule from the audit Wave 1 still holds regardless: the only path that lowers a tier is `TesseraTier.revoke()`; direct reassignment is tier-boundary drift and fails review.
 
 ## 12. Citation + uncertainty
 
@@ -313,7 +316,8 @@ TesseraCore/Tools/
   DrawingTools.swift              (new — ~12 tools, drawing_*)
   MaterialsTools.swift            (new — ~6 tools, materials_*)
   LifecycleTools.swift            (new — ~3 tools, lifecycle_*)
-  Harness/                        (existing — file / bash / inspect-sidecar tools)
+  Harness/                        (existing — BashTool.swift, FileTool.swift)
+  InspectSidecarTool.swift        (existing — a sibling of Harness/, not inside it)
   PythonTools/                    (existing — Python-driven calibration tools)
   Learning/                       (existing — record-outcome / playbook / escalate tools)
   QuantizeTool.swift              (existing)
@@ -343,4 +347,4 @@ These are the items I'd like the architect's call on before the rollout begins. 
 - **Not an implementation guide.** The doc sketches the *shape* of the tool API. The implementation lands in waves alongside the corresponding tesseracore components (per the expansion plan's P0/P1/P2 list).
 - **Not a replacement for `studio-expansion-plan.md`.** The expansion plan is the architecture / capability map; this doc is the agent-facing API on top of that architecture. They are read together.
 - **Not a final word on every tool.** The doc enumerates ~65 tools at the *categorization* level. Each wave adds the per-tool arguments + result shape + test contract in a wave brief.
-- **Not a backwards-compatibility story.** This is a green-field surface (the only existing tool is `SheetTools`); there is nothing to be backwards-compatible with. The plan is to evolve `SheetTools` in place (no `_v2`); the existing 3 tools stay; the new 11 ride the same `TesseraTool` protocol.
+- **Not a backwards-compatibility story.** `SheetTools.swift` is the only existing tool file under `Productivity/Materials/` (the four product-material surfaces this doc extends); there is nothing THERE to be backwards-compatible with, even though ~41 other `TesseraTool` conformers already exist elsewhere in the tree for calibration/harness/learning. The plan is to evolve `SheetTools` in place (no `_v2`); the existing 3 tools stay; the new 16 (corrected count, §2) ride the same `TesseraTool` protocol.
