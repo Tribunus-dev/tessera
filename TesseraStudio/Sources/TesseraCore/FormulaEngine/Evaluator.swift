@@ -116,76 +116,9 @@ public final class Evaluator {
                             engine: SheetEngineCore, env: Environment) throws -> Value {
         let l = try recursiveEvaluate(left, at: addr, sheet: sheet, depth: depth + 1, engine: engine, env: env)
         let r = try recursiveEvaluate(right, at: addr, sheet: sheet, depth: depth + 1, engine: engine, env: env)
-
-        switch op {
-        case .add:
-            return evalArithmetic(l, r, op: +)
-        case .subtract:
-            return evalArithmetic(l, r, op: -)
-        case .multiply:
-            return evalArithmetic(l, r, op: *)
-        case .divide:
-            return evalDivide(l, r)
-        case .power:
-            return evalPower(l, r)
-        case .concat:
-            return .string(l.asString + r.asString)
-        case .equal:
-            return .bool(l.asString == r.asString)
-        case .notEqual:
-            return .bool(l.asString != r.asString)
-        case .less:
-            return .bool(Comparison.compare(l, r, op: .less))
-        case .greater:
-            return .bool(Comparison.compare(l, r, op: .greater))
-        case .lessOrEqual:
-            return .bool(Comparison.compare(l, r, op: .lessOrEqual))
-        case .greaterOrEqual:
-            return .bool(Comparison.compare(l, r, op: .greaterOrEqual))
-        case .rangeOp, .intersect:
-            return l // Range operator handled at parse level
-        }
-    }
-
-    private func evalArithmetic(_ lhs: Value, _ rhs: Value, op: (Double, Double) -> Double) -> Value {
-        if let e = propagatedError(lhs, rhs) { return .error(e) }
-        guard let l = arithmeticOperand(lhs), let r = arithmeticOperand(rhs) else {
-            return .error(.notAvailable)
-        }
-        return .number(op(l, r))
-    }
-
-    private func evalDivide(_ lhs: Value, _ rhs: Value) -> Value {
-        if let e = propagatedError(lhs, rhs) { return .error(e) }
-        guard let l = arithmeticOperand(lhs), let r = arithmeticOperand(rhs) else {
-            return .error(.notAvailable)
-        }
-        if r == 0 { return .error(.divisionByZero) }
-        return .number(l / r)
-    }
-
-    /// An error in either operand is the result of the whole expression.
-    /// Without this a precedent's `#DIV/0!` reached a dependent cell as a
-    /// bare non-numeric operand and was reported as `#N/A`, losing the
-    /// original cause the user needs in order to find the broken cell.
-    private func propagatedError(_ lhs: Value, _ rhs: Value) -> ValueError? {
-        if case .error(let e) = lhs { return e }
-        if case .error(let e) = rhs { return e }
-        return nil
-    }
-
-    /// Numeric coercion for arithmetic operands. An empty cell counts as
-    /// 0, matching Excel: `=A1+A2` over two blank cells is 0, not `#N/A`.
-    /// `asNumber` already coerces numbers, booleans, dates, and numeric
-    /// strings.
-    private func arithmeticOperand(_ v: Value) -> Double? {
-        if case .null = v { return 0 }
-        return v.asNumber
-    }
-
-    private func evalPower(_ lhs: Value, _ rhs: Value) -> Value {
-        guard let l = lhs.asNumber, let r = rhs.asNumber else { return .error(.notAvailable) }
-        return .number(pow(l, r))
+        // Shared with TokenArrayEvaluator's RPN stack machine
+        // (TokenArray.swift) - see BinaryEvaluator's doc comment.
+        return BinaryEvaluator.apply(op, l, r)
     }
 
     // MARK: - Unary Operations
@@ -194,18 +127,7 @@ public final class Evaluator {
                            depth: Int, engine: SheetEngineCore,
                            env: Environment) throws -> Value {
         let v = try recursiveEvaluate(operand, at: addr, sheet: sheet, depth: depth + 1, engine: engine, env: env)
-
-        switch op {
-        case .negate:
-            guard let n = v.asNumber else { return .error(.notAvailable) }
-            return .number(-n)
-        case .positive:
-            guard let n = v.asNumber else { return .error(.notAvailable) }
-            return .number(n)
-        case .percent:
-            guard let n = v.asNumber else { return .error(.notAvailable) }
-            return .number(n / 100.0)
-        }
+        return UnaryEvaluator.apply(op, v)
     }
 
     // MARK: - Function Calls

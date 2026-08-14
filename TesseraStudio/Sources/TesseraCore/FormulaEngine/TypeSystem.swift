@@ -313,7 +313,7 @@ public enum TypeCoercion {
 
 // MARK: - BinaryOp
 
-public enum BinaryOp: String, Sendable, CaseIterable {
+public enum BinaryOp: String, Sendable, CaseIterable, Hashable {
     case add     = "+"
     case subtract = "-"
     case multiply = "*"
@@ -382,7 +382,7 @@ public enum BinaryOp: String, Sendable, CaseIterable {
 
 // MARK: - UnaryOp
 
-public enum UnaryOp: String, Sendable {
+public enum UnaryOp: String, Sendable, Hashable {
     case negate  = "-"
     case positive = "+"
     case percent  = "%"
@@ -393,6 +393,91 @@ public enum UnaryOp: String, Sendable {
         case "+": return .positive
         case "%": return .percent
         default:  return nil
+        }
+    }
+}
+
+// MARK: - BinaryEvaluator / UnaryEvaluator
+
+/// Pure evaluation of an already-resolved `BinaryOp`/`UnaryOp` over
+/// `Value`s - no cell/sheet/environment context needed, since both
+/// operands are already `Value`s by the time an operator applies.
+/// Shared between `Evaluator`'s recursive AST walk and
+/// `TokenArrayEvaluator`'s RPN stack machine (TokenArray.swift) so the
+/// two can never silently diverge on what "+" means.
+public enum BinaryEvaluator {
+    public static func apply(_ op: BinaryOp, _ lhs: Value, _ rhs: Value) -> Value {
+        switch op {
+        case .add: return arithmetic(lhs, rhs, op: +)
+        case .subtract: return arithmetic(lhs, rhs, op: -)
+        case .multiply: return arithmetic(lhs, rhs, op: *)
+        case .divide: return divide(lhs, rhs)
+        case .power: return power(lhs, rhs)
+        case .concat: return .string(lhs.asString + rhs.asString)
+        case .equal: return .bool(lhs.asString == rhs.asString)
+        case .notEqual: return .bool(lhs.asString != rhs.asString)
+        case .less: return .bool(Comparison.compare(lhs, rhs, op: .less))
+        case .greater: return .bool(Comparison.compare(lhs, rhs, op: .greater))
+        case .lessOrEqual: return .bool(Comparison.compare(lhs, rhs, op: .lessOrEqual))
+        case .greaterOrEqual: return .bool(Comparison.compare(lhs, rhs, op: .greaterOrEqual))
+        case .rangeOp, .intersect: return lhs // Range operator handled at parse level
+        }
+    }
+
+    private static func arithmetic(_ lhs: Value, _ rhs: Value, op: (Double, Double) -> Double) -> Value {
+        if let e = propagatedError(lhs, rhs) { return .error(e) }
+        guard let l = arithmeticOperand(lhs), let r = arithmeticOperand(rhs) else {
+            return .error(.notAvailable)
+        }
+        return .number(op(l, r))
+    }
+
+    private static func divide(_ lhs: Value, _ rhs: Value) -> Value {
+        if let e = propagatedError(lhs, rhs) { return .error(e) }
+        guard let l = arithmeticOperand(lhs), let r = arithmeticOperand(rhs) else {
+            return .error(.notAvailable)
+        }
+        if r == 0 { return .error(.divisionByZero) }
+        return .number(l / r)
+    }
+
+    private static func power(_ lhs: Value, _ rhs: Value) -> Value {
+        guard let l = lhs.asNumber, let r = rhs.asNumber else { return .error(.notAvailable) }
+        return .number(pow(l, r))
+    }
+
+    /// An error in either operand is the result of the whole expression.
+    /// Without this a precedent's `#DIV/0!` reached a dependent cell as a
+    /// bare non-numeric operand and was reported as `#N/A`, losing the
+    /// original cause the user needs in order to find the broken cell.
+    private static func propagatedError(_ lhs: Value, _ rhs: Value) -> ValueError? {
+        if case .error(let e) = lhs { return e }
+        if case .error(let e) = rhs { return e }
+        return nil
+    }
+
+    /// Numeric coercion for arithmetic operands. An empty cell counts as
+    /// 0, matching Excel: `=A1+A2` over two blank cells is 0, not `#N/A`.
+    /// `asNumber` already coerces numbers, booleans, dates, and numeric
+    /// strings.
+    private static func arithmeticOperand(_ v: Value) -> Double? {
+        if case .null = v { return 0 }
+        return v.asNumber
+    }
+}
+
+public enum UnaryEvaluator {
+    public static func apply(_ op: UnaryOp, _ v: Value) -> Value {
+        switch op {
+        case .negate:
+            guard let n = v.asNumber else { return .error(.notAvailable) }
+            return .number(-n)
+        case .positive:
+            guard let n = v.asNumber else { return .error(.notAvailable) }
+            return .number(n)
+        case .percent:
+            guard let n = v.asNumber else { return .error(.notAvailable) }
+            return .number(n / 100.0)
         }
     }
 }
