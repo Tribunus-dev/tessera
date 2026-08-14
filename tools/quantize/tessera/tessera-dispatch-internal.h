@@ -9,9 +9,12 @@
 // include this file.
 //
 
+#include <atomic>
+#include <deque>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 #include <cstdint>
 
@@ -20,6 +23,41 @@
 #include "tessera-quantize-db.h" // ts_tessera_db, ts_tessera_db_l5_weight_list_entry
 #include "tessera-db-buffer.h"   // ts_db_buffer
 #include "tessera-regime.h"      // ts_regime_family_thresholds
+#include "tessera-l1-fitness.h"  // ts_l1_fitness_config
+#include "tessera-sharded-map.h" // ts_sharded_map
+
+// Fixed quantization knobs shared across all GA candidate evaluations, plus
+// the S5 kernel-direct fitness state. sidecar_cache holds the kernel dequant
+// per tensor (loaded once; an empty vector means no sidecar is present) so the
+// evaluator does not re-read disk per candidate. best_t2 / best_pair track,
+// per tensor, the best-scoring candidate's blended t_l^2 and its
+// (offline, kernel-direct) components, to feed the A/B harness after evolution.
+//
+// The caches are sharded concurrent maps (ts_sharded_map). The GA fans
+// per-tensor work across threads; each tensor is written by exactly one
+// worker, but a plain unordered_map would race on rehash across different
+// keys. Sharding by key hash gives lock-free operation for the common case
+// (two threads touching different keys land in different shards) and a
+// fine-grained lock for the rare same-shard collision. The `mode_prints`
+// counter is the only remaining shared mutable state; it uses a relaxed
+// atomic since the exact count does not matter (just a log-rate cap).
+//
+// Pipeline refactor phase 4: moved here (from tessera-dispatch.cpp) since
+// both ts_dispatch_awq_eval (stays in tessera-dispatch.cpp, the GA
+// callback passed to ts_awq_evolve_all) and tessera-dispatch-gaprep.cpp
+// (which constructs the eval_ctx instance and calls ts_awq_evolve_all)
+// need the full definition.
+struct ts_dispatch_eval_ctx {
+    float    outlier_thresh;
+    uint32_t seed;
+    ts_l1_fitness_config l1;
+    bool     verbose;
+    std::atomic<int> mode_prints{0};   // tensors whose fitness mode has been logged
+    ts_sharded_map<std::string, std::vector<float>>      sidecar_cache;
+    ts_sharded_map<std::string, float>                   best_t2;
+    ts_sharded_map<std::string, std::pair<float, float>> best_pair;
+    const std::unordered_map<std::string, int> * modality = nullptr;  // per-tensor operative modality (read-only)
+};
 
 // One captured 2D quantizable tensor from the step-7 walk. Stored once per
 // tensor and indexed by name so the L5 refine loop can target tensors without
@@ -118,6 +156,13 @@ bool ts_dispatch_layer_skip(const struct ts_awq_layer * layer,
                             struct ts_awq_evolve_result * out_result,
                             void * user);
 
+// GA evaluator: quantize the layer under a candidate's genes and score it.
+// Defined in tessera-dispatch.cpp (non-static since tessera-dispatch-
+// gaprep.cpp passes it as the eval_fn to ts_awq_evolve_all).
+struct ts_awq_score ts_dispatch_awq_eval(const struct ts_awq_candidate * cand,
+                                         const struct ts_awq_layer * layer,
+                                         void * ctx);
+
 // ---------------------------------------------------------------------------
 // Shared helpers (pipeline refactor phase 4: moved out of
 // tessera-dispatch.cpp so tessera-dispatch-gaprep.cpp, tessera-dispatch-
@@ -178,3 +223,79 @@ std::string ts_join(const std::vector<std::string> & parts,
 // Exact storage footprint (bits) of a 2D quant result: every GGUF component
 // the format writes.
 int64_t ts_dispatch_result_bits(const ts_quant_result_2d * qr);
+
+// Pipeline refactor phase 4: the GA-prep walk (steps 5b HIGGS estimation
+// + 5c the evolutionary per-tensor alpha search), extracted from
+// ts_dispatch_run's body. Runs unconditionally (step 5b's HIGGS
+// estimation always ran in the original; step 5c's real work is gated
+// internally by need_ga, re-derived from params). Returns 0 on success;
+// 4 on a HIGGS cache-only miss, 5 on ts_awq_evolve_all failure -- both
+// error paths already free in_ctx/ggml_ctx themselves (matching the
+// original inline behavior), so the caller must NOT free them again on
+// a non-zero return. result->archive_json is written directly by this
+// function when the GA ran; step 10's "was archive populated" check
+// should read !result->archive_json.empty() instead of a separate flag.
+int ts_dispatch_run_gaprep(
+        const struct ts_dispatch_params * params,
+        struct ts_dispatch_result * result,
+        std::string * err_msg,
+        struct gguf_context * in_ctx,
+        struct ggml_context * ggml_ctx,
+        int64_t n_tensors,
+        bool have_imatrix, const struct ts_imatrix & imatrix,
+        bool have_mm_imatrix, const struct ts_mm_imatrix & mm_imatrix,
+        const std::vector<float> & calib_X, int64_t calib_in_dim, int64_t calib_n_tokens,
+        ts_dispatch_db * db_wrap,
+        struct ts_progress * prog,
+        std::unordered_map<std::string, float> * ga_alpha_out,
+        std::unordered_map<std::string, struct ts_mm_awq_result> * mm_awq_out);
+
+// Pipeline refactor phase 4: the dispatch walk (steps 6 through
+// 7a-legacy), extracted from ts_dispatch_run's body. Returns 0 on
+// success; 1 on output-context init failure, 2 on a quantize failure --
+// both error paths already free out_ctx/out_ggml_ctx/in_ctx/ggml_ctx
+// themselves (matching the original inline behavior), so the caller must
+// NOT free them again on a non-zero return, and must not read
+// *out_ctx_out/*out_ggml_ctx_out (left unset) in that case either.
+int ts_dispatch_run_walk(
+        const struct ts_dispatch_params * params,
+        struct ts_dispatch_result * result,
+        std::string * err_msg,
+        struct gguf_context * in_ctx,
+        struct ggml_context * ggml_ctx,
+        int64_t n_tensors,
+        bool have_imatrix, const struct ts_imatrix & imatrix,
+        bool have_mm_imatrix, const struct ts_mm_imatrix & mm_imatrix,
+        const std::vector<float> & calib_X, int64_t calib_in_dim, int64_t calib_n_tokens,
+        float default_alpha,
+        bool have_policy, const struct ts_policy & policy,
+        const std::unordered_map<std::string, float> & ga_alpha,
+        std::unordered_map<std::string, struct ts_mm_awq_result> & mm_awq,
+        ts_dispatch_db * db_wrap,
+        struct ts_progress * prog,
+        struct gguf_context ** out_ctx_out,
+        struct ggml_context ** out_ggml_ctx_out,
+        std::deque<ts_quant_result_2d> * cluster_results_out,
+        std::deque<std::vector<ts_quant_result_2d>> * moe_results_out,
+        float * total_mse_out,
+        int64_t * n_quantized_out,
+        int64_t * n_skipped_out,
+        std::string * policy_json_out);
+
+// Pipeline refactor phase 4: the G6 acceptance gate (step 7b), extracted
+// from ts_dispatch_run's body. Populates result->acceptance /
+// result->acceptance_ran and (when db_wrap is non-null) one acceptance row
+// per tensor. imatrix may be nullptr; calib_X may be nullptr (with
+// calib_in_dim/calib_n_tokens ignored in that case). Always returns 0 (no
+// error-return path in the original inline block).
+int ts_dispatch_run_acceptance(
+        const ts_dispatch_params * params,
+        struct ts_dispatch_result * result,
+        struct gguf_context * in_ctx,
+        struct ggml_context * ggml_ctx,
+        int64_t n_tensors,
+        const struct ts_imatrix * imatrix,
+        const float * calib_X, int64_t calib_in_dim, int64_t calib_n_tokens,
+        float default_alpha,
+        ts_dispatch_db * db_wrap,
+        struct ts_progress * prog);
