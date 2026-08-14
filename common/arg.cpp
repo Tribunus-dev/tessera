@@ -78,17 +78,34 @@ enum tessera_subcommand common_tessera_active_subcommand() {
 }
 
 // Tessera fork: classify a flag registered for LLAMA_EXAMPLE_TESSERA.
-// Returns 0 if `flag` is not a tessera flag, 1 if it is a switch (no value),
-// 2 if it takes a value. Lets the legacy quantize argv loop skip
-// tessera-owned flags that common_tessera_params_parse already consumed.
+// Returns 0 if `flag` is not registered for the TESSERA example, 1 if it is
+// a switch (no value), 2 if it takes a value. Lets the legacy quantize argv
+// loop (and common_tessera_params_parse's own flag/positional splitter, see
+// below) skip flags that common_params_parse (called from
+// common_tessera_params_parse) already consumed.
 //
 // Reconstructs the registered option list for the TESSERA example (with the
 // active subcommand applied so the per-subcommand filter matches what
 // common_tessera_params_parse exposed) and classifies by which handler the
 // option carries: void/bool handlers are switches, the int/string/str_str
 // handlers take 1 (or 2) values.
+//
+// pipeline refactor phase 4: this used to bail to 0 (i) whenever no
+// subcommand was active, and (ii) for any flag with an empty tessera_sc
+// (reasoning: "empty means generally visible, so the legacy loop's own
+// explicit-flag chain should handle it"). Both were wrong for a flag like
+// --tessera-db: it is registered only for {TESSERA, IMATRIX} (not COMMON,
+// so it is not "generally visible" in any meaningful sense) with an empty
+// tessera_sc (it is not scoped to a specific subcommand), and it has no
+// case in quantize.cpp's explicit chain. Net effect: --tessera-db (and any
+// other top-level, non-subcommand-scoped Tessera flag) hard-errored with
+// "unrecognized argument" whenever it appeared before the positional
+// <input> <output> <ftype> args on the main quantize path -- verified via
+// `llama-tessera --tessera-db x.duckdb model.gguf Q4_K` exiting 1. Any flag
+// this function finds in the TESSERA option set was already parsed and
+// stored by common_params_parse, so it is always safe for a caller to skip.
 int common_tessera_flag_kind(const char * flag) {
-    if (!flag || flag[0] != '-' || tessera_active_sc == TESSERA_SC_NONE) {
+    if (!flag || flag[0] != '-') {
         return 0;
     }
     common_params dummy_params{};
@@ -104,13 +121,6 @@ int common_tessera_flag_kind(const char * flag) {
             }
         }
         if (!match) continue;
-        // tessera-scoped flags are the tessera-owned ones; an empty tessera_sc
-        // means the flag is generally visible (not tessera-exclusive), so it
-        // is not "owned" by the tessera parser and the legacy loop should
-        // still handle it.
-        if (opt.tessera_sc.empty()) {
-            return 0;
-        }
         if (opt.handler_void || opt.handler_bool) {
             return 1;
         }
@@ -1397,11 +1407,41 @@ bool common_tessera_params_parse(int argc, char ** argv, common_params & params,
         }
     }
 
-    // Filter out positional args (and rebuild argv so positional args are
-    // at the end). This lets common_params_parse see only the flag set
-    // (which it knows about) and not error on `model.gguf` etc. The
-    // rebuilt argv is heap-allocated; the caller uses the original argv
-    // via the indices printed in --help.
+    // Filter out positional args and classic quantize-only flags (rebuild
+    // argv so common_params_parse sees only flags it actually has options
+    // for). common_params_parse throws "invalid argument" on any `--flag`
+    // token it does not recognize, so both bare positionals (`model.gguf`)
+    // and flags owned by llama_quantize's own hand-rolled chain
+    // (--prune-layers, --override-kv, --tensor-type, ...) must be kept out
+    // of flag_argv; they reach llama_quantize through the caller's
+    // original, unmodified argv.
+    //
+    // pipeline refactor phase 4: this used to (i) route every `-`-prefixed
+    // token into flag_argv unconditionally, and (ii) decide whether to
+    // peek the next token as a value via a "next token doesn't start with
+    // -" heuristic blind to the flag's actual arity. Two bugs followed:
+    // - Classic-only flags (never registered as a common_arg option, e.g.
+    //   --prune-layers) landed in flag_argv anyway, so common_params_parse
+    //   threw "invalid argument: --prune-layers" and aborted the ENTIRE
+    //   parse -- verified via `llama-tessera --prune-layers 2,3 model.gguf
+    //   Q4_K` (and the trailing form) both exiting 1, in any position.
+    // - A registered switch flag (handler_void/handler_bool, no value)
+    //   immediately followed by a positional had its positional swallowed
+    //   as a bogus value: `--dry-run model.gguf` fed common_params_parse
+    //   flag_argv = [..., "--dry-run", "model.gguf"], which produced
+    //   "error: invalid argument: model.gguf" (a dangling value after a
+    //   void handler) and also dropped model.gguf from pos_argv.
+    //
+    // Fix: classify every `-`-prefixed token with common_tessera_flag_kind
+    // (matched against the flag name only -- a `--flag=value` token is
+    // split at the first `=` before lookup, since the option table stores
+    // bare flag names) before deciding where it goes:
+    //   kind 0 (unregistered, i.e. classic-only)   -> pos_argv, no peek
+    //   kind 1 (registered switch)                 -> flag_argv, no peek
+    //   kind 2 (registered, takes a value)          -> flag_argv, peek
+    //                                                  unless the value is
+    //                                                  already embedded via
+    //                                                  `--flag=value`
     std::vector<char *> flag_argv;
     std::vector<char *> pos_argv;
     flag_argv.reserve(argc);
@@ -1409,44 +1449,36 @@ bool common_tessera_params_parse(int argc, char ** argv, common_params & params,
     flag_argv.push_back(argv[0]);
     for (int i = 1; i < argc; ) {
         const char * a = argv[i];
-        if (a != nullptr && a[0] == '-') {
-            flag_argv.push_back(argv[i]);
-            i++;
-            // Heuristic: if the previous flag's value-hint would be a
-            // string, take the next token too. We can't know without
-            // the flag table, so a simpler rule: a flag with `=` in it
-            // is self-contained (e.g. --tensor-type attn_q=q8_0), no
-            // peek needed; otherwise we peek and include the next token
-            // if it doesn't start with `-`. This is the same heuristic
-            // getopt uses and matches the existing parse_cli_args
-            // behavior (where check_arg(i) reads argv[++i]).
-            if (a[0] == '-' && a[1] == '-' && std::strchr(a, '=') == nullptr) {
-                if (i < argc) {
-                    const char * next = argv[i];
-                    if (next == nullptr || next[0] != '-') {
-                        flag_argv.push_back(argv[i]);
-                        i++;
-                    }
-                }
-            } else if (a[0] == '-' && a[1] == '-' && std::strchr(a, '=') != nullptr) {
-                // has =, no peek
-            } else if (a[0] == '-' && a[1] != '-') {
-                // short flag like -h, -t 4 — but the existing llama-cli
-                // doesn't use short flags with values, so just take the
-                // flag alone.
-            }
-        } else {
+        if (a == nullptr || a[0] != '-') {
             pos_argv.push_back(argv[i]);
             i++;
+            continue;
+        }
+        std::string flag_name = a;
+        const size_t eq_pos = flag_name.find('=');
+        const bool   has_eq = eq_pos != std::string::npos;
+        if (has_eq) {
+            flag_name.resize(eq_pos);
+        }
+        const int kind = common_tessera_flag_kind(flag_name.c_str());
+        if (kind == 0) {
+            pos_argv.push_back(argv[i]);
+            i++;
+            continue;
+        }
+        flag_argv.push_back(argv[i]);
+        i++;
+        if (kind == 2 && !has_eq && i < argc) {
+            const char * next = argv[i];
+            if (next == nullptr || next[0] != '-') {
+                flag_argv.push_back(argv[i]);
+                i++;
+            }
         }
     }
-    // Positionals stay out of common_params_parse (it rejects unknown
-    // non-flag args) and reach the quantize subroutine through the
-    // caller's original argv, which is unmodified here. Additive merge:
-    // - local fix kept positionals out because the quantize path re-reads
-    //   the original argv (llama_quantize parses <input> <ftype> directly)
-    // - remote fix did the same via flag_argv-only dispatch. Both guards
-    //   are preserved; positionals are never passed to common_params_parse.
+    // Positionals (and classic-only flags, now routed alongside them)
+    // stay out of common_params_parse and reach the quantize subroutine
+    // through the caller's original argv, which is unmodified here.
     (void) pos_argv;
 
     // The user-supplied print_usage (if any) runs first; the
