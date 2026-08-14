@@ -18,6 +18,9 @@
 //      unchanged, validating the "score in the transformed space, normalize
 //      against the ORIGINAL frob2" assumption both real-tier adapters make.
 //   5. KERNEL_DIRECT falls back to REAL when no sidecar is configured.
+//   6. Eval cache (phase 2): miss -> compute -> hit round-trips t2/aux
+//      exactly, tags from_cache, and a distinct params_digest (different
+//      alpha) is a separate cache row, not a collision.
 //
 
 #include "tessera-expert-eval.h"
@@ -28,6 +31,7 @@
 #include "tessera-dartquant.h"
 #include "tessera-champq.h"
 #include "tessera-septq.h"
+#include "tessera-quantize-db.h"
 
 #include "ggml-quants.h"
 
@@ -313,7 +317,60 @@ int main() {
               "kernel_direct: falls back to real when no sidecar_dir set");
     }
 
-    // ---- 7. Invalid args: rc != 0 ----
+    // ---- 7. Eval cache: miss -> compute -> hit, distinct params_digest ----
+    {
+        std::string db_err;
+        ts_tessera_db * cdb = ts_tessera_db_open(":memory:", &db_err);
+        CHECK(cdb != nullptr, "eval cache: opened an in-memory db");
+        if (cdb != nullptr) {
+            ts_eval_tensor_ctx cctx = ctx;
+            cctx.model_hash = "test_model_hash";
+            cctx.model_role = "trunk";
+            cctx.db = cdb;
+
+            ts_eval_opts opts;
+            opts.tier = TS_EVAL_REAL;
+            opts.alpha = 0.5f; opts.clip = 0.95f; opts.seed = 7;
+
+            ts_eval_result out1;
+            const int rc1 = ts_expert_eval(TS_EXPERT_SEPTQ, cctx, opts, &out1);
+            CHECK(rc1 == 0, "eval cache: first (miss) call rc == 0");
+            CHECK(!out1.from_cache, "eval cache: first call is a genuine miss");
+
+            ts_eval_result out2;
+            const int rc2 = ts_expert_eval(TS_EXPERT_SEPTQ, cctx, opts, &out2);
+            CHECK(rc2 == 0, "eval cache: second (hit) call rc == 0");
+            CHECK(out2.from_cache, "eval cache: second call is a cache hit");
+            char msg[160];
+            std::snprintf(msg, sizeof(msg),
+                         "eval cache: hit t2 matches the original computation (orig=%.9f cached=%.9f)",
+                         (double)out1.t2, (double)out2.t2);
+            CHECK(std::fabs(out1.t2 - out2.t2) < 1e-9f, msg);
+            CHECK(std::strcmp(out1.aux, out2.aux) == 0,
+                  "eval cache: hit aux matches the original computation exactly");
+
+            // A different params_digest (different alpha) is a SEPARATE
+            // key -- must genuinely recompute, not spuriously hit.
+            ts_eval_opts opts_diff = opts;
+            opts_diff.alpha = 0.7f;
+            ts_eval_result out3;
+            const int rc3 = ts_expert_eval(TS_EXPERT_SEPTQ, cctx, opts_diff, &out3);
+            CHECK(rc3 == 0, "eval cache: different-alpha call rc == 0");
+            CHECK(!out3.from_cache,
+                  "eval cache: different params_digest (alpha) is a miss, not a collision");
+
+            // db == nullptr (the default in `ctx`) must behave identically
+            // to before caching existed -- always a fresh computation.
+            ts_eval_result out4;
+            const int rc4 = ts_expert_eval(TS_EXPERT_SEPTQ, ctx, opts, &out4);
+            CHECK(rc4 == 0, "eval cache: db==nullptr call rc == 0");
+            CHECK(!out4.from_cache, "eval cache: db==nullptr never caches (opt-in only)");
+
+            delete cdb;
+        }
+    }
+
+    // ---- 8. Invalid args: rc != 0 ----
     {
         ts_eval_tensor_ctx bad_ctx;
         bad_ctx.weights = nullptr;

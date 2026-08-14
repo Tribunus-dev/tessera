@@ -3024,6 +3024,20 @@ int ts_tessera_db_write_hessian_cache(
 
 // --- Eval cache: forward-only memoization for the ts_expert_eval seam (Phase 2) ---
 
+// std::ostringstream defaults to 6 significant digits for floating point --
+// enough to silently truncate a t2 score (e.g. 0.151114255 -> "0.151114"
+// in the SQL literal), which a memoization cache cannot afford to lose
+// (unlike v2_hessian_cache's ridge_fraction, which only ever feeds a
+// 1e-6-tolerant comparison and so never surfaced this). 9 significant
+// digits is the standard round-trip guarantee for IEEE 754 single
+// precision (matches ts_acc_json_float's "%.9g" convention in
+// tessera-acceptance.cpp).
+static std::string ts_float_sql_literal(float v) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.9g", (double)v);
+    return buf;
+}
+
 static std::string eval_cache_ledger_path(const std::string & db_path) {
     std::string stem = db_path;
     auto slash = stem.find_last_of("/\\");
@@ -3193,7 +3207,7 @@ int ts_tessera_db_write_eval_cache(
          "'" << sql_escape(e.params_digest) << "', "
          "'" << sql_escape(e.input_digest) << "', "
          << e.eval_version << ", "
-         << e.t2 << ", "
+         << ts_float_sql_literal(e.t2) << ", "
          "'" << sql_escape(e.aux) << "', "
          << ts_now_ts() << ") "
          "ON CONFLICT DO NOTHING";

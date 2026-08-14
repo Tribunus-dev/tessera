@@ -15,6 +15,7 @@
 #include "tessera-champq.h"
 #include "tessera-septq.h"
 #include "tessera-l1-fitness.h"   // ts_l1_load_sidecar, ts_l1_kernel_direct_t2_tail
+#include "tessera-quantize-db.h"  // ts_tessera_db_read/write_eval_cache (phase 2)
 
 #include "ggml-quants.h"          // dequantize_row_tessera_t640_with_meta,
                                    // ts_decode_per_row_meta,
@@ -24,6 +25,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <vector>
 
@@ -460,6 +462,79 @@ static int ts_eval_run_kernel_direct(ts_expert_id expert,
 }
 
 // ---------------------------------------------------------------------------
+// Eval-cache digest helpers (phase 2). None of these touch the DB -- pure
+// string/hash functions of the call's own inputs, so the seam's
+// determinism/purity contract is unaffected by whether caching is active.
+// ---------------------------------------------------------------------------
+
+static const char * ts_eval_tier_name(ts_eval_tier tier) {
+    switch (tier) {
+        case TS_EVAL_REAL:           return "real";
+        case TS_EVAL_KERNEL_DIRECT:  return "kernel_direct";
+        case TS_EVAL_PROXY:
+        default:                     return "proxy";
+    }
+}
+
+// "expert:<Name>:<tier>" -- distinguishes PROXY/REAL/KERNEL_DIRECT
+// measurements of the same expert so they never collide in the cache.
+static std::string ts_eval_digest_evaluator(ts_expert_id expert, ts_eval_tier tier) {
+    std::string s = "expert:";
+    s += ts_expert_name(expert);
+    s += ":";
+    s += ts_eval_tier_name(tier);
+    return s;
+}
+
+// Grid-quantizes the continuous knobs to 1e-4 so near-duplicate candidates
+// (once the GA converts to the seam) collapse onto the same cache row
+// instead of missing on floating-point noise -- matches the "genes grid-
+// quantized at 1e-4" adoption-order note in the implementation spec.
+static std::string ts_eval_digest_params(const ts_eval_opts & opts) {
+    auto q = [](float v) -> int64_t {
+        return (int64_t)std::lround((double)v * 1.0e4);
+    };
+    char buf[192];
+    std::snprintf(buf, sizeof(buf),
+                 "a=%lld,c=%lld,s=%u,tt=%lld,tw=%lld",
+                 (long long)q(opts.alpha), (long long)q(opts.clip),
+                 (unsigned)opts.seed, (long long)q(opts.l6_tail_tau),
+                 (long long)q(opts.l6_tail_weight));
+    std::string digest = buf;
+    if (!opts.kv_codec_digest.empty()) {
+        digest += ",kv=";
+        digest += opts.kv_codec_digest;
+    }
+    return digest;
+}
+
+// FNV-1a: not cryptographic, just needs to distinguish "same bytes" from
+// "different bytes" cheaply. Used only as a fallback when the caller has
+// not supplied a more precise ctx.input_digest (e.g. an imatrix digest).
+static uint64_t ts_eval_fnv1a(const void * data, size_t n) {
+    const uint8_t * p = (const uint8_t *)data;
+    uint64_t h = 1469598103934665603ull;
+    for (size_t i = 0; i < n; i++) {
+        h ^= p[i];
+        h *= 1099511628211ull;
+    }
+    return h;
+}
+
+static std::string ts_eval_digest_input(const ts_eval_tensor_ctx & ctx) {
+    if (!ctx.input_digest.empty()) {
+        return ctx.input_digest;  // caller-supplied, e.g. an imatrix digest
+    }
+    if (ctx.act_scales == nullptr || ctx.in_dim <= 0) {
+        return "no_act_scales";
+    }
+    const uint64_t h = ts_eval_fnv1a(ctx.act_scales, (size_t)ctx.in_dim * sizeof(float));
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "act:%016llx", (unsigned long long)h);
+    return buf;
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point.
 // ---------------------------------------------------------------------------
 
@@ -472,13 +547,67 @@ int ts_expert_eval(ts_expert_id expert,
         return -1;
     }
 
+    // Eval cache (phase 2): memoized read-through. Any of
+    // db/model_hash/name missing means "run fresh, do not cache" -- the
+    // same db==nullptr-is-a-safe-no-op convention every other DB helper in
+    // this codebase follows.
+    const bool cache_eligible = ctx.db != nullptr && !ctx.model_hash.empty()
+                               && ctx.name != nullptr;
+    std::string evaluator, params_digest, input_digest;
+    const std::string model_role = ctx.model_role.empty() ? "trunk" : ctx.model_role;
+
+    if (cache_eligible) {
+        evaluator     = ts_eval_digest_evaluator(expert, opts.tier);
+        params_digest = ts_eval_digest_params(opts);
+        input_digest  = ts_eval_digest_input(ctx);
+
+        float cached_t2 = 0.0f;
+        std::string cached_aux;
+        bool hit = false;
+        ts_tessera_db_read_eval_cache(ctx.db, ctx.model_hash, model_role,
+            ctx.name, evaluator, params_digest, input_digest,
+            TS_EXPERT_EVAL_VERSION, &cached_t2, &cached_aux, &hit, nullptr);
+        if (hit) {
+            out->t2  = cached_t2;
+            out->mse = 0.0f;  // not cached (see ts_eval_result::mse comment)
+            out->from_cache = true;
+            std::snprintf(out->aux, sizeof(out->aux), "%s", cached_aux.c_str());
+            return 0;
+        }
+    }
+
+    int rc;
     switch (opts.tier) {
         case TS_EVAL_KERNEL_DIRECT:
-            return ts_eval_run_kernel_direct(expert, ctx, opts, out);
+            rc = ts_eval_run_kernel_direct(expert, ctx, opts, out);
+            break;
         case TS_EVAL_REAL:
-            return ts_eval_run_real(expert, ctx, opts, out);
+            rc = ts_eval_run_real(expert, ctx, opts, out);
+            break;
         case TS_EVAL_PROXY:
         default:
-            return ts_eval_run_proxy(expert, ctx, opts, out);
+            rc = ts_eval_run_proxy(expert, ctx, opts, out);
+            break;
     }
+
+    if (rc == 0 && cache_eligible) {
+        ts_tessera_db_append_eval_cache_ledger(ctx.db, "cache_compute",
+            ctx.model_hash, model_role, ctx.name, evaluator,
+            params_digest, input_digest, TS_EXPERT_EVAL_VERSION, nullptr);
+
+        ts_tessera_db_eval_cache_entry e;
+        e.model_hash    = ctx.model_hash;
+        e.model_role    = model_role;
+        e.tensor_name   = ctx.name;
+        e.evaluator     = evaluator;
+        e.params_digest = params_digest;
+        e.input_digest  = input_digest;
+        e.eval_version  = TS_EXPERT_EVAL_VERSION;
+        e.t2            = out->t2;
+        e.aux           = out->aux;
+        bool stored = false;
+        ts_tessera_db_write_eval_cache(ctx.db, e, &stored, nullptr);
+    }
+
+    return rc;
 }
