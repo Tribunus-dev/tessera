@@ -106,6 +106,29 @@ else
     echo "SKIP (needs CMake build for libggml)"
 fi
 
+# --- Real per-tensor activation capture sidecar (pipeline refactor stage 2) ---
+# Write/read round-trip for the v3-format-compatible train/heldout
+# activation sidecar consumed by ts_dispatch_run_gaprep (stage 3) and
+# produced by llama-imatrix --activation-capture (stage 5). Needs libggml
+# for ggml_fp32_to_fp16/ggml_fp16_to_fp32 (test fixture data only; the
+# sidecar itself has no ggml dependency).
+printf "  %-30s" "activation_sidecar"
+if [ -f build-ane/bin/libggml.dylib ] || [ -f build/bin/libggml.dylib ]; then
+    if [ -f build-ane/bin/libggml.dylib ]; then
+        GGML_LIB="-L build-ane/bin -Wl,-rpath,build-ane/bin -lggml -lggml-base"
+    else
+        GGML_LIB="-L build/bin -Wl,-rpath,build/bin -lggml -lggml-base"
+    fi
+    compile_and_run activation_sidecar \
+        $T/test_activation_sidecar.cpp \
+        $T/tessera-activation-sidecar.cpp \
+        $C/tessera-sidecar-v3.cpp \
+        -I common -I $C -I ggml/include \
+        $GGML_LIB
+else
+    echo "SKIP (needs CMake build for libggml)"
+fi
+
 # --- L5 joint calibration set generator (v1 of plan-sess_57d0ae24-05b7-4442-b516-8175bc46df1d) ---
 # Writes JSONL with synthetic text + synthetic audio targets. v3 wires
 # the real text-to-audio target mapping. Schema-only at v1.
