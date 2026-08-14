@@ -215,8 +215,19 @@ static int ts_eval_real_champq(const ts_eval_tensor_ctx & ctx,
     }
 
     ts_champq_params cp;
-    cp.max_iters      = 100;   // header default
-    cp.sinkhorn_iters = 25;    // header default
+    // Panel budget (matching the DartQuant real-tier arm's bounded max_iters
+    // 30 vs. the library's own unrestrained defaults): CHAMP-Q's cost is
+    // O(max_iters x evals_per_iter x out_dim x in_dim^2) with no bound on
+    // in_dim the way DartQuant caps its block size or FLRQ caps its rank
+    // candidates -- on a real 3072x3072 attention tensor the header
+    // defaults (max_iters=100, sinkhorn_iters=25) measured ~4.4 minutes per
+    // tensor (clean, single-process timing); across the acceptance panel's
+    // ~20% held-out set that is hours, not minutes, and is what stalled the
+    // first phase-1 Orpheus gate run. max_iters=20/sinkhorn_iters=15
+    // measured ~40s on the same tensor -- still genuine L-BFGS refinement,
+    // not the init-only bypass, just bounded.
+    cp.max_iters      = 20;
+    cp.sinkhorn_iters = 15;
     cp.use_lbfgs      = true;
     cp.seed           = opts.seed;
     cp.act_scales     = ctx.act_scales;

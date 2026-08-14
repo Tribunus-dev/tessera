@@ -162,7 +162,7 @@ int main() {
         CHECK(!has_fallback(out.aux), "champq+act_scales: no silent proxy fallback");
 
         ts_champq_params cp;
-        cp.max_iters = 100; cp.sinkhorn_iters = 25; cp.use_lbfgs = true;
+        cp.max_iters = 20; cp.sinkhorn_iters = 15; cp.use_lbfgs = true;  // matches the adapter's panel budget
         cp.seed = 7; cp.act_scales = act.data(); cp.binariness = 1.0e-3f;
         cp.history = 8; cp.projection = 0; cp.init = 0;
         ts_champq_result cr;
