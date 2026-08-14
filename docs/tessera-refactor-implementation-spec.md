@@ -71,8 +71,10 @@ verified against main @ f86e6114d._
   below when complete. If it did NOT match, the equivalence gate
   re-baselines on the repro artifact and the mismatch cause must be
   understood before phase 1 lands.
-  - REPRO VERDICT: [pending at handoff -- check
-    /tmp/orpheus-repro.log and compare hashes; update this line]
+  - REPRO VERDICT (2026-08-13): **MATCHED** -- the current binary,
+    serial-pinned, reproduced the reference byte-for-byte
+    (`20a2273a...` == `20a2273a...`). The equivalence gate is armed;
+    any hash change during the refactor indicts the refactor.
 
 ## 1. The seam: `ts_expert_eval` (phase 1)
 
@@ -134,9 +136,18 @@ Behavioral contract:
     whip 0.1), `ts_dartquant_apply`, then T640-core MSE on the rotated
     weights; t2 against the ORIGINAL frob2 (orthogonal invariance).
     Migrate the existing `ts_dispatch_tier2_t2` DARTQUANT arm verbatim.
-  - FLRQ/LRQ: `ts_train_lrq` (rank = clamp(min(out,in)/8, 1, 32),
-    max_iters 50), residual = W - U*V, T640-core MSE on the residual,
-    t2 against original frob2. Migrate the existing tier2 arm.
+  - FLRQ (low-rank) -- **CORRECTED RECIPE, do not migrate the existing
+    tier2 arm as-is**: the current `ts_dispatch_tier2_t2` FLRQ arm
+    wrongly treats `ts_train_lrq`'s U,V as an additive factorization;
+    that module actually trains a MULTIPLICATIVE scale field
+    (loss = mean((ternarize_recon(W*S) - W)^2), S = U@V -- see the
+    contracts appendix). The production consequence is on record: the
+    first real-panel Orpheus run scored lr=406.377 (t2 should be <= ~1).
+    Use `ts_train_flrq` instead (sketch + BLC): it is genuinely
+    additive (residual = W - U@V) and returns `reconstruction_mse`
+    directly; t2 = reconstruction_mse * n / ||W||_F^2. Defaults per the
+    appendix (rank_candidates default {4,8,16,32,64}, qbits 4,
+    blc_iters 4).
   - SEPTQ (the new work): `ts_septq_quantize_2d` with act_scales, then
     reconstruct via the T640 reference dequant
     (`dequantize_row_tessera_t640_with_meta`, ggml/src/ggml-quants.c:362)
@@ -162,6 +173,23 @@ label conditional or remove it and note the change in the commit).
 The GA's `eval` callback (`ts_dispatch_awq_eval`) converts in phase 2
 (it needs the cache to be worth routing; converting it in phase 1 is
 allowed but must not change scores -- assert parity on a fixture).
+
+Phase 1 known-issues to resolve (evidence: the 2026-08-13 repro run's
+acceptance line, recorded in /tmp/orpheus-repro.log):
+- The lr=406.377 blowup above (fixed by the FLRQ recipe correction).
+- rot came back EXACTLY equal to awq on the 39 Orpheus held-out tensors
+  (0.203561) despite differing on the small fixture. Determine which:
+  (a) DartQuant's 30-iter fit stays ~identity on these tensors
+  (legitimate -- then rotated MSE == original MSE), or (b) the -1
+  fallback silently kept the proxy (block-size selection or fit
+  failure). Instrument the seam to LOG tier fallbacks; silent proxy
+  fallback in a REAL-tier call must at minimum count and report.
+- Novelty sanity clamp: the garbage lr vector made novelty fire
+  (method_dis=0.9906) -- min|tau| lets ONE broken vector fake
+  disagreement. In ts_acceptance_run, exclude method vectors whose mean
+  t2 exceeds a sanity bound (suggest 1.5) from the pairwise-tau set and
+  report the exclusion in the verdict; a method that cannot be sanely
+  scored must not be able to pass the gate for you.
 
 Phase 1 tests:
 - New `test_expert_eval.cpp` (orphan-style or CMake target): per expert,
