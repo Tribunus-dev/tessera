@@ -867,9 +867,31 @@ static bool common_params_parse_ex(int argc, char ** argv, common_params_context
     }
 
     // handle command line arguments
+    //
+    // Guards a value-taking flag's argv[i+1] against two failure modes:
+    // no token left at all, and -- the fix here -- the value being
+    // omitted with the NEXT token being another REGISTERED flag, which
+    // would otherwise be silently consumed as this flag's bogus value
+    // instead of erroring. E.g. `--model --dry-run model.gguf Q4_K`
+    // (omitted --model value) used to set the model path to the literal
+    // string "--dry-run" and silently drop the real model path, rather
+    // than erroring clearly. Checking membership in arg_to_options
+    // (rather than just "does it start with '-'") is deliberate: a
+    // legitimate value that merely LOOKS like a flag (a negative number
+    // for a numeric arg, e.g. `--rope-freq-scale -1`) is never itself a
+    // REGISTERED flag name, so this only rejects tokens that actually
+    // are recognized options, not any '-'-prefixed value.
     auto check_arg = [&](int i) {
         if (i+1 >= argc) {
             throw std::invalid_argument("expected value for argument");
+        }
+        std::string next = argv[i+1];
+        if (next.compare(0, 2, "--") == 0) {
+            std::replace(next.begin(), next.end(), '_', '-');
+        }
+        if (arg_to_options.find(next) != arg_to_options.end()) {
+            throw std::invalid_argument(string_format(
+                "expected a value, but got another argument: %s", next.c_str()));
         }
     };
 
@@ -1261,9 +1283,21 @@ bool common_params_to_map(int argc, char ** argv, llama_example ex, std::map<com
     // TODO @ngxson : find a way to deduplicate this code
 
     // handle command line arguments
+    // Same omitted-value guard as common_params_parse_ex's check_arg (see
+    // that function for the full rationale): reject argv[i+1] when it is
+    // itself a registered flag name, not just any '-'-prefixed token, so
+    // legitimate negative-number values keep working.
     auto check_arg = [&](int i) {
         if (i+1 >= argc) {
             throw std::invalid_argument("expected value for argument");
+        }
+        std::string next = argv[i+1];
+        if (next.compare(0, 2, "--") == 0) {
+            std::replace(next.begin(), next.end(), '_', '-');
+        }
+        if (arg_to_options.find(next) != arg_to_options.end()) {
+            throw std::invalid_argument(string_format(
+                "expected a value, but got another argument: %s", next.c_str()));
         }
     };
 
