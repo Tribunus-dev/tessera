@@ -92,6 +92,12 @@ public struct Sheet: Codable, Sendable, Identifiable, Hashable {
     /// (SheetValidationRule.swift), not this field directly.
     public var validationRules: [SheetValidationRule]?
 
+    /// Nil (the implicit default, like the fields above) means no
+    /// conditional-formatting rules - read through
+    /// `effectiveConditionalFormats` (SheetConditionalFormat.swift),
+    /// not this field directly.
+    public var conditionalFormats: [SheetConditionalFormat]?
+
     public init(
         id: UUID = UUID(),
         title: String = "",
