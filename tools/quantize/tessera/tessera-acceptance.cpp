@@ -112,11 +112,12 @@ int ts_acceptance_run(const ts_acceptance_config * config,
 
     // --- Test 2 (v2): cross-METHOD novelty on the held-out Tier-2 panel ---
     // The methods must rank the held-out tensors differently somewhere:
-    // novelty = 1 - min |kendall tau| over the 6 method pairs. The v1
+    // novelty = 1 - min |kendall tau| over the 10 method pairs. The v1
     // prong compared the offline proxy against the kernel-direct ranking;
     // that comparison remains below as a kernel-fidelity DIAGNOSTIC. The
     // most-disagreeing pair is used so one degenerate slot (a score still
     // carried by a proxy) cannot suppress signal from real pairs.
+    result->excluded_methods[0] = '\0';
     {
         std::vector<float> va, vr, vl, vh, vc;
         for (int64_t i = 0; i < n_tensors; i++) {
@@ -128,12 +129,42 @@ int ts_acceptance_run(const ts_acceptance_config * config,
             vc.push_back(work[i].champq_t2);
         }
         const int64_t m = (int64_t)va.size();
+
+        struct method_slot { const char * label; const std::vector<float> * v; };
+        const method_slot slots[5] = {
+            { "awq", &va }, { "rot", &vr }, { "lr", &vl }, { "hess", &vh }, { "champq", &vc },
+        };
+
+        // Novelty sanity clamp: a method whose mean t2 exceeds the sanity
+        // bound cannot be sanely scored (a broken/degenerate fit) and must
+        // not be able to fake disagreement by contributing a pairwise tau.
+        bool excluded[5] = { false, false, false, false, false };
+        if (m > 0) {
+            for (int s = 0; s < 5; s++) {
+                double sum = 0.0;
+                for (int64_t i = 0; i < m; i++) {
+                    sum += (double)(*slots[s].v)[(size_t)i];
+                }
+                const float mean_t2 = (float)(sum / (double)m);
+                if (mean_t2 > TS_ACCEPTANCE_NOVELTY_SANITY_BOUND) {
+                    excluded[s] = true;
+                    if (result->excluded_methods[0] != '\0') {
+                        strncat(result->excluded_methods, ",",
+                               sizeof(result->excluded_methods) - strlen(result->excluded_methods) - 1);
+                    }
+                    strncat(result->excluded_methods, slots[s].label,
+                           sizeof(result->excluded_methods) - strlen(result->excluded_methods) - 1);
+                }
+            }
+        }
+
         float tau_min = 1.0f;
         if (m >= 2) {
-            const float * vs[5] = { va.data(), vr.data(), vl.data(), vh.data(), vc.data() };
             for (int a = 0; a < 5; a++) {
+                if (excluded[a]) continue;
                 for (int b = a + 1; b < 5; b++) {
-                    const float t = ts_ab_kendall_tau(vs[a], vs[b], m);
+                    if (excluded[b]) continue;
+                    const float t = ts_ab_kendall_tau(slots[a].v->data(), slots[b].v->data(), m);
                     if (fabsf(t) < fabsf(tau_min)) {
                         tau_min = t;
                     }
@@ -171,7 +202,7 @@ int ts_acceptance_run(const ts_acceptance_config * config,
     // slot, not a profile-scaled AWQ-core proxy clone.
     snprintf(result->verdict, sizeof(result->verdict),
              "G6 %s | composite_t2=%.6g best_single=%.6g (%.1f%% %s, margin %.1f%%) | "
-             "method_dis=%.4f (tau_min=%.4f) novelty=%s | kernel_fid_dis=%.4f | "
+             "method_dis=%.4f (tau_min=%.4f) novelty=%s excluded=%s | kernel_fid_dis=%.4f | "
              "tier2: awq=%.6g rot=%.6g lr=%.6g hess=%.6g champq=%.6g | "
              "held_out=%lld/%lld",
              result->acceptance_passed ? "PASS" : "FAIL",
@@ -183,6 +214,7 @@ int ts_acceptance_run(const ts_acceptance_config * config,
              (double)result->method_disagreement,
              (double)result->method_tau_min,
              result->novelty_survives ? "survives" : "null",
+             result->excluded_methods[0] != '\0' ? result->excluded_methods : "none",
              (double)result->ranking_disagreement,
              (double)result->awq_t2,
              (double)result->rotation_t2,
@@ -272,6 +304,10 @@ int ts_acceptance_write_json(const char * path,
 
     j += ",\"novelty_survives\":";
     j += result->novelty_survives ? "true" : "false";
+
+    j += ",\"excluded_methods\":\"";
+    ts_acc_json_escape(&j, result->excluded_methods);
+    j += "\"";
 
     j += ",\"per_proxy\":{\"awq\":";
     ts_acc_json_float(&j, result->awq_t2);

@@ -28,8 +28,7 @@
 #include "tessera-mm-awq.h"
 #include "tessera-w4a4.h"
 #include "tessera-acceptance.h"
-#include "tessera-dartquant.h"
-#include "tessera-lrq.h"
+#include "tessera-expert-eval.h"
 #include "tessera-policy.h"
 #include "tessera-progress.h"
 #include "tessera-sharded-map.h"
@@ -439,178 +438,16 @@ static ts_awq_score ts_dispatch_awq_eval(const ts_awq_candidate * cand,
     return score;
 }
 
-// Quantize a tensor with a forced expert profile and return relative
-// Frobenius t_l^2 = ||W_hat - W||_F^2 / ||W||_F^2.
-static float ts_dispatch_forced_t2(const float * weights, const float * act_scales,
-                                   int64_t out_dim, int64_t in_dim,
-                                   ts_expert_id expert, float base_alpha,
-                                   float base_clip, float outlier_thresh,
-                                   uint32_t seed) {
-    ts_expert_profile prof = ts_expert_default_profile(expert);
-
-    float resolved_alpha = base_alpha * prof.alpha_scale;
-    float resolved_clip  = base_clip * prof.clip_scale;
-
-    // Streaming MSE path: ~132 KB scratch instead of 700 MB.
-    float mse = ts_quantize_mse_streaming(
-        weights, act_scales, resolved_alpha, resolved_clip,
-        out_dim, in_dim);
-    if (mse < 0.0f) {
-        return 1.0f;  // worst case
-    }
-
-    const int64_t n = out_dim * in_dim;
-    float frob2 = ts_vec_dotpr(weights, weights, n);
-    return (frob2 > 0.0f) ? (mse * (float)n / frob2) : mse;
-}
-
-// Compute the kernel-direct t_l^2 for one tensor when an L1 sidecar
-// is available. Returns the tail-weighted t_l^2 (t_l^2_tail, the
-// Frobenius + lambda * mean-tail-MSE form from spec section 11);
-// when no sidecar is present, returns -1 as the "no measurement"
-// sentinel so the caller can fall back to the offline proxy.
-//
-// The acceptance verdict (step 7b in the dispatch) used to hardcode
-// at.kernel_direct_t2 = at.composite_t2 (the offline proxy as a
-// stand-in for the kernel-direct measurement). That made the
-// ranking-disagreement test in ts_acceptance_run vacuous. This
-// helper is the principled replacement: the kernel-direct t2 is
-// computed from the L1 sidecar when one exists, and the
-// tail-weighted form is the production t_l^2 (per the
-// runtime-aware-pipeline.md spec).
-//
-// The implementation is two-pass: pass 1 reads the sidecar and
-// computes the Frobenius term; pass 2 reads the sidecar again
-// and computes the tail MSE on the |W_l[i]| > tau indices. The
-// sidecar is loaded once via ts_l1_load_sidecar (from
-// tessera-l1-fitness.h) which copies the F32 data into a local
-// std::vector, so the second pass walks the local copy, not
-// the file.
-//
-// The acceptance verdict has the source `w` but no separate `w_hat`
-// reconstruction, so both arguments of the underlying tail metric are
-// the same buffer: `ts_l1_kernel_direct_t2_tail` measures
-// ||w_hat - dequant_kernel||^2 / ||w_original||^2, and with
-// w_hat == w_original == w that reduces to the source-vs-dequant
-// Frobenius, which is the measurement we want. This helper takes one
-// `w` so a call site cannot pass the two apart.
-static float ts_dispatch_kernel_direct_t2(
-        const char * tensor_name,
-        const char * sidecar_dir,
-        const float * w,
-        int64_t n,
-        float tau,
-        float lambda_tail) {
-    if (sidecar_dir == nullptr || sidecar_dir[0] == '\0' ||
-        tensor_name == nullptr || w == nullptr || n <= 0) {
-        return -1.0f;  // sentinel: no measurement available
-    }
-    std::vector<float> kdeq;
-    int64_t rows = 0;
-    int64_t cols = 0;
-    if (ts_l1_load_sidecar(sidecar_dir, tensor_name, &kdeq, &rows, &cols) != 0) {
-        return -1.0f;  // sentinel: sidecar absent or malformed
-    }
-    if ((int64_t)kdeq.size() != n) {
-        return -1.0f;  // sentinel: shape mismatch
-    }
-    return ts_l1_kernel_direct_t2_tail(w, w, kdeq.data(),
-                                       n, tau, lambda_tail);
-}
-
-// Tier-2 REAL per-expert evaluation for the G6 panel. ts_dispatch_forced_t2
-// only scales alpha/clip through the same T640 core -- the rotation never
-// rotates, the low-rank never factorizes -- so the per-method scores could
-// not disagree (measured: rotation and Hessian bit-identical to AWQ on
-// 197/197 Orpheus tensors) and the novelty prong was structurally null.
-// This helper runs the expert's ACTUAL algorithm and scores the full
-// reconstruction against the original weights in t2 units (mse * n /
-// ||W||_F^2), matching forced_t2's convention:
-//   DARTQUANT: fit the block rotation (QR-Orth), rotate, quantize the
-//     rotated weights with the T640 core. Orthogonality makes the rotated-
-//     space error equal the original-space error, and ||W|| invariant.
-//   FLRQ/low-rank: fit U,V (LRQ), quantize the residual W - UV with the
-//     T640 core; the reconstruction is UV (carried high-precision) +
-//     Q(residual), so the residual's MSE is the reconstruction error.
-//   AWQ needs no Tier-2 path: forced_t2 with the AWQ profile IS the real
-//     AWQ-core measurement (actual alpha/clip through the actual core).
-//   SEPTQ scoring is not yet plumbed (needs a dequant of its packed
-//     output); its slot keeps the proxy and the verdict labels it.
-// Returns -1 on any failure so the caller keeps the proxy value.
-static float ts_dispatch_tier2_t2(ts_expert_id expert, const float * w,
-                                  const float * act_scales,
-                                  int64_t out_dim, int64_t in_dim,
-                                  float alpha, float clip, uint32_t seed) {
-    const int64_t n = out_dim * in_dim;
-    if (w == nullptr || n <= 0) return -1.0f;
-    const float frob2 = ts_vec_dotpr(w, w, n);
-    if (frob2 <= 0.0f) return -1.0f;
-
-    switch (expert) {
-        case TS_EXPERT_DARTQUANT: {
-            int64_t K = 0;
-            for (int64_t cand : {(int64_t)128, (int64_t)64, (int64_t)32,
-                                 (int64_t)16, (int64_t)8}) {
-                if (in_dim % cand == 0) { K = cand; break; }
-            }
-            if (K == 0) return -1.0f;
-            ts_dartquant_params dp;
-            dp.block_size  = K;
-            dp.max_iters   = 30;   // panel budget: enough to leave identity,
-                                   // bounded so 4 experts x holdout stays
-                                   // minutes, not hours
-            dp.lr          = 1.0e-2f;
-            dp.whip_weight = 0.1f;
-            dp.seed        = seed;
-            ts_dartquant_result dr;
-            if (ts_dartquant_qr_orth(w, out_dim, in_dim, &dp, &dr) != 0) {
-                return -1.0f;
-            }
-            std::vector<float> wrot((size_t)n);
-            ts_dartquant_apply(w, dr.R.data(), wrot.data(), out_dim, in_dim, K);
-            const float mse = ts_quantize_mse_streaming(
-                wrot.data(), act_scales, alpha, clip, out_dim, in_dim);
-            if (mse < 0.0f) return -1.0f;
-            return mse * (float)n / frob2;
-        }
-        case TS_EXPERT_FLRQ: {
-            ts_lrq_params lp;
-            lp.rank      = std::max<int64_t>(1,
-                std::min<int64_t>(32, std::min(out_dim, in_dim) / 8));
-            lp.max_iters = 50;
-            lp.lr        = 1.0e-3f;
-            lp.tol       = 1.0e-6f;
-            lp.seed      = seed;
-            ts_lrq_result lres;
-            if (ts_train_lrq(w, out_dim, in_dim, &lp, &lres) != 0) {
-                return -1.0f;
-            }
-            const int64_t r = lres.rank;
-            if (r <= 0 || (int64_t)lres.U.size() < out_dim * r ||
-                (int64_t)lres.V.size() < r * in_dim) {
-                return -1.0f;
-            }
-            std::vector<float> resid((size_t)n);
-            for (int64_t i = 0; i < out_dim; i++) {
-                for (int64_t j = 0; j < in_dim; j++) {
-                    float uv = 0.0f;
-                    for (int64_t k = 0; k < r; k++) {
-                        uv += lres.U[(size_t)(i * r + k)] *
-                              lres.V[(size_t)(k * in_dim + j)];
-                    }
-                    resid[(size_t)(i * in_dim + j)] =
-                        w[(size_t)(i * in_dim + j)] - uv;
-                }
-            }
-            const float mse = ts_quantize_mse_streaming(
-                resid.data(), act_scales, alpha, clip, out_dim, in_dim);
-            if (mse < 0.0f) return -1.0f;
-            return mse * (float)n / frob2;
-        }
-        default:
-            return -1.0f;
-    }
-}
+// forced_t2 / kernel_direct_t2 / tier2_t2 (the pipeline refactor's phase-1
+// seam extraction) are gone: every caller below routes through
+// ts_expert_eval (tessera-expert-eval.h) instead. PROXY tier reproduces
+// forced_t2's algorithm exactly; REAL tier replaces tier2_t2 (DARTQUANT
+// migrated verbatim, FLRQ corrected to ts_train_flrq, CHAMP-Q and SEPTQ
+// newly real); KERNEL_DIRECT tier replaces kernel_direct_t2 and falls back
+// to REAL (not the offline proxy) when no sidecar is available -- the seam
+// caller below only invokes KERNEL_DIRECT when a sidecar dir is actually
+// configured, preserving the original cost profile for the common
+// no-sidecar case.
 
 // ---------------------------------------------------------------------------
 // L5 adaptive requantize refine loop (dispatch L2 -> L5 -> re-quantize)
@@ -3580,7 +3417,7 @@ int ts_dispatch_run(const ts_dispatch_params * params,
         // Two phases:
         //   (a) serial: load each 2D quantizable tensor's weights + act scales
         //       (touches the ggml ctx, must be single-threaded).
-        //   (b) parallel: the 6 ts_dispatch_forced_t2 calls per tensor are
+        //   (b) parallel: the ts_expert_eval PROXY-tier calls per tensor are
         //       CPU-bound and independent across tensors. Fan out across the
         //       same thread budget as the GA.
         // Acceptance gate work items: store only metadata + the ggml tensor
@@ -3600,7 +3437,6 @@ int ts_dispatch_run(const ts_dispatch_params * params,
 
         const float alpha = default_alpha;
         const float clip  = params->awq_clip;
-        const float othresh = params->outlier_frac;
         const uint32_t seed = (uint32_t)params->evolve_seed;
 
         // Resolve the L1 sidecar dir for the kernel-direct t_l^2
@@ -3676,12 +3512,22 @@ int ts_dispatch_run(const ts_dispatch_params * params,
 
         std::vector<ts_acceptance_tensor> acc_tensors(work.size());
 
-        // Parallel 6x re-quantize per tensor. Each worker loads the tensor
-        // from the mmap'd GGUF on demand (streaming), evaluates 6 experts
-        // via ts_quantize_mse_streaming (132 KB scratch each), then the
-        // loaded weights go out of scope. Peak: 4 x 180 MB + 4 x 132 KB.
+        // Fallback telemetry (phase-1 known issue): a REAL/KERNEL_DIRECT
+        // request that ts_expert_eval could not deliver still returns a
+        // usable proxy t2 (see tessera-expert-eval.h), but a SILENT
+        // fallback in a REAL-tier call is exactly what produced the
+        // ambiguous "rot came back EXACTLY equal to awq" measurement this
+        // seam exists to resolve -- count and report it instead of losing
+        // it. Counted across both the serial and threaded branches below
+        // (only one runs per acceptance pass).
+        std::atomic<int64_t> real_tier_fallbacks(0);
+
+        // Parallel PROXY-tier re-quantize per tensor. Each worker loads the
+        // tensor from the mmap'd GGUF on demand (streaming), evaluates 5
+        // experts via ts_quantize_mse_streaming (132 KB scratch each), then
+        // the loaded weights go out of scope. Peak: 4 x 180 MB + 4 x 132 KB.
         ts_progress_set_phase(prog, "accept-run", (int64_t)work.size(),
-                              "acceptance gate (6 experts per tensor, streaming)");
+                              "acceptance gate (5 experts per tensor, streaming)");
 
         const int32_t acc_threads = std::max(1, std::min(
             (int32_t) std::thread::hardware_concurrency(),
@@ -3695,54 +3541,98 @@ int ts_dispatch_run(const ts_dispatch_params * params,
         const int64_t acc_heldout_cutoff = (int64_t)work.size()
             - std::max<int64_t>(1, (int64_t)(0.2 * (double)work.size()));
 
+        // Score one tensor's full panel (PROXY for all 5 experts, the
+        // kernel-direct measurement, and -- for held-out tensors -- REAL
+        // tier for the 4 non-AWQ experts). Shared by the serial and
+        // threaded branches below so the two paths cannot drift (the
+        // l4_cols drift-class bug this codebase has hit once already,
+        // tessera-quantize-db.cpp gotchas, is exactly what duplicated
+        // per-branch logic risks).
+        auto score_one = [&](const acc_work_item & item, const float * w,
+                             int64_t n_w, bool held_out) -> ts_acceptance_tensor {
+            ts_acceptance_tensor at;
+            memset(&at, 0, sizeof(at));
+            snprintf(at.name, sizeof(at.name), "%s", item.name.c_str());
+
+            ts_eval_tensor_ctx ectx;
+            ectx.name       = item.name.c_str();
+            ectx.weights    = w;
+            ectx.act_scales = item.act;
+            ectx.out_dim    = item.out_dim;
+            ectx.in_dim     = item.in_dim;
+
+            ts_eval_opts popts;
+            popts.tier  = TS_EVAL_PROXY;
+            popts.alpha = alpha;
+            popts.clip  = clip;
+            popts.seed  = seed;
+
+            ts_eval_result er;
+            ts_expert_eval(item.routed_expert, ectx, popts, &er); at.composite_t2 = er.t2;
+            ts_expert_eval(TS_EXPERT_AWQ,       ectx, popts, &er); at.awq_t2       = er.t2;
+            ts_expert_eval(TS_EXPERT_DARTQUANT, ectx, popts, &er); at.rotation_t2  = er.t2;
+            ts_expert_eval(TS_EXPERT_FLRQ,      ectx, popts, &er); at.lowrank_t2   = er.t2;
+            ts_expert_eval(TS_EXPERT_SEPTQ,     ectx, popts, &er); at.hessian_t2   = er.t2;
+            ts_expert_eval(TS_EXPERT_CHAMPQ,    ectx, popts, &er); at.champq_t2    = er.t2;
+            at.offline_proxy_mse = at.composite_t2;
+
+            // Real kernel-direct t2 from the L1 sidecar when one is
+            // configured; ts_expert_eval's KERNEL_DIRECT tier falls back
+            // to REAL (not the offline proxy) when a sidecar is missing or
+            // malformed for a SPECIFIC tensor, which is the right behavior
+            // for that rare per-tensor case -- but calling it at all when
+            // no sidecar dir is configured for the whole run would turn
+            // every tensor's kernel-direct measurement into an expensive
+            // REAL-tier computation. Match the original cost profile: only
+            // invoke KERNEL_DIRECT when a sidecar dir is actually set,
+            // otherwise reuse the composite proxy directly (identical to
+            // the pre-seam behavior).
+            if (!kf_dir_buf.empty()) {
+                ts_eval_opts kopts = popts;
+                kopts.tier = TS_EVAL_KERNEL_DIRECT;
+                kopts.l6_tail_tau    = params->l6_tail_tau;
+                kopts.l6_tail_weight = params->l6_tail_weight;
+                ts_eval_tensor_ctx kctx = ectx;
+                kctx.sidecar_dir = kf_dir_buf.c_str();
+                ts_eval_result kr;
+                ts_expert_eval(item.routed_expert, kctx, kopts, &kr);
+                at.kernel_direct_t2 = kr.t2;
+            } else {
+                at.kernel_direct_t2 = at.composite_t2;
+            }
+
+            at.held_out = held_out;
+            // Tier-2 real panel on the held-out set: every expert but AWQ
+            // (REAL == PROXY for AWQ by construction, already computed
+            // above). ts_expert_eval always returns a usable t2 even when
+            // the real algorithm fails (falls back to the same proxy value
+            // this tensor already has), so the overwrite is unconditional;
+            // the fallback is still counted via aux for the phase-1 known
+            // issue on silent proxy fallbacks.
+            if (held_out) {
+                ts_eval_opts ropts = popts;
+                ropts.tier = TS_EVAL_REAL;
+                ts_eval_result rr;
+                ts_expert_eval(TS_EXPERT_DARTQUANT, ectx, ropts, &rr); at.rotation_t2 = rr.t2;
+                if (strstr(rr.aux, "\"fallback\"") != nullptr) real_tier_fallbacks.fetch_add(1, std::memory_order_relaxed);
+                ts_expert_eval(TS_EXPERT_FLRQ,      ectx, ropts, &rr); at.lowrank_t2  = rr.t2;
+                if (strstr(rr.aux, "\"fallback\"") != nullptr) real_tier_fallbacks.fetch_add(1, std::memory_order_relaxed);
+                ts_expert_eval(TS_EXPERT_SEPTQ,     ectx, ropts, &rr); at.hessian_t2  = rr.t2;
+                if (strstr(rr.aux, "\"fallback\"") != nullptr) real_tier_fallbacks.fetch_add(1, std::memory_order_relaxed);
+                ts_expert_eval(TS_EXPERT_CHAMPQ,    ectx, ropts, &rr); at.champq_t2   = rr.t2;
+                if (strstr(rr.aux, "\"fallback\"") != nullptr) real_tier_fallbacks.fetch_add(1, std::memory_order_relaxed);
+            }
+            (void)n_w;
+            return at;
+        };
+
         if (acc_threads <= 1 || work.size() < 2) {
             for (size_t idx = 0; idx < work.size(); idx++) {
                 const auto & item = work[idx];
                 std::vector<float> w = ts_tensor_to_f32(item.tensor);
                 if (w.empty()) continue;
-                ts_acceptance_tensor at;
-                memset(&at, 0, sizeof(at));
-                snprintf(at.name, sizeof(at.name), "%s", item.name.c_str());
-                at.composite_t2 = ts_dispatch_forced_t2(w.data(), item.act, item.out_dim, item.in_dim, item.routed_expert, alpha, clip, othresh, seed);
-                at.awq_t2       = ts_dispatch_forced_t2(w.data(), item.act, item.out_dim, item.in_dim, TS_EXPERT_AWQ,       alpha, clip, othresh, seed);
-                at.rotation_t2  = ts_dispatch_forced_t2(w.data(), item.act, item.out_dim, item.in_dim, TS_EXPERT_DARTQUANT, alpha, clip, othresh, seed);
-                at.lowrank_t2   = ts_dispatch_forced_t2(w.data(), item.act, item.out_dim, item.in_dim, TS_EXPERT_FLRQ,      alpha, clip, othresh, seed);
-                at.hessian_t2   = ts_dispatch_forced_t2(w.data(), item.act, item.out_dim, item.in_dim, TS_EXPERT_SEPTQ,     alpha, clip, othresh, seed);
-                at.offline_proxy_mse = at.composite_t2;
-                // Compute the real kernel-direct t2 from the L1 sidecar
-                // when one is available. The shipped behavior was
-                // at.kernel_direct_t2 = at.composite_t2 which made
-                // the G6 ranking-disagreement test vacuous. Now we
-                // produce a real measurement; if no sidecar is
-                // present, fall back to the composite (offline proxy)
-                // so the existing G6 contract is preserved.
-                {
-                    const float kd = ts_dispatch_kernel_direct_t2(
-                        item.name.c_str(), kf_dir_buf.c_str(),
-                        w.data(), (int64_t)w.size(),
-                        params->l6_tail_tau, params->l6_tail_weight);
-                    if (kd >= 0.0f) {
-                        at.kernel_direct_t2 = kd;
-                    } else {
-                        at.kernel_direct_t2 = at.composite_t2;
-                    }
-                }
-                at.held_out = ((int64_t)idx >= acc_heldout_cutoff);
-                // Tier-2 real panel on the held-out set: rotation and
-                // low-rank run their actual algorithms; -1 keeps the
-                // profile proxy (AWQ's proxy IS the real AWQ-core
-                // measurement; SEPTQ scoring not yet plumbed).
-                if (at.held_out) {
-                    const float rt = ts_dispatch_tier2_t2(
-                        TS_EXPERT_DARTQUANT, w.data(), item.act,
-                        item.out_dim, item.in_dim, alpha, clip, seed);
-                    if (rt >= 0.0f) at.rotation_t2 = rt;
-                    const float lt = ts_dispatch_tier2_t2(
-                        TS_EXPERT_FLRQ, w.data(), item.act,
-                        item.out_dim, item.in_dim, alpha, clip, seed);
-                    if (lt >= 0.0f) at.lowrank_t2 = lt;
-                }
-                acc_tensors[idx] = at;
+                acc_tensors[idx] = score_one(item, w.data(), (int64_t)w.size(),
+                                             (int64_t)idx >= acc_heldout_cutoff);
                 ts_progress_inc(prog, 1, item.name.c_str());
             }
         } else {
@@ -3755,40 +3645,8 @@ int ts_dispatch_run(const ts_dispatch_params * params,
                     // Load weights from mmap'd GGUF on demand.
                     std::vector<float> w = ts_tensor_to_f32(item.tensor);
                     if (w.empty()) continue;
-                    ts_acceptance_tensor at;
-                    memset(&at, 0, sizeof(at));
-                    snprintf(at.name, sizeof(at.name), "%s", item.name.c_str());
-                    at.composite_t2 = ts_dispatch_forced_t2(w.data(), item.act, item.out_dim, item.in_dim, item.routed_expert, alpha, clip, othresh, seed);
-                    at.awq_t2       = ts_dispatch_forced_t2(w.data(), item.act, item.out_dim, item.in_dim, TS_EXPERT_AWQ,       alpha, clip, othresh, seed);
-                    at.rotation_t2  = ts_dispatch_forced_t2(w.data(), item.act, item.out_dim, item.in_dim, TS_EXPERT_DARTQUANT, alpha, clip, othresh, seed);
-                    at.lowrank_t2   = ts_dispatch_forced_t2(w.data(), item.act, item.out_dim, item.in_dim, TS_EXPERT_FLRQ,      alpha, clip, othresh, seed);
-                    at.hessian_t2   = ts_dispatch_forced_t2(w.data(), item.act, item.out_dim, item.in_dim, TS_EXPERT_SEPTQ,     alpha, clip, othresh, seed);
-                    at.offline_proxy_mse = at.composite_t2;
-                    {
-                        const float kd = ts_dispatch_kernel_direct_t2(
-                            item.name.c_str(), kf_dir_buf.c_str(),
-                            w.data(), (int64_t)w.size(),
-                            params->l6_tail_tau, params->l6_tail_weight);
-                        if (kd >= 0.0f) {
-                            at.kernel_direct_t2 = kd;
-                        } else {
-                            at.kernel_direct_t2 = at.composite_t2;
-                        }
-                    }
-                    at.held_out = ((int64_t)idx >= acc_heldout_cutoff);
-                    // Tier-2 real panel on the held-out set (see the
-                    // serial branch for the contract).
-                    if (at.held_out) {
-                        const float rt = ts_dispatch_tier2_t2(
-                            TS_EXPERT_DARTQUANT, w.data(), item.act,
-                            item.out_dim, item.in_dim, alpha, clip, seed);
-                        if (rt >= 0.0f) at.rotation_t2 = rt;
-                        const float lt = ts_dispatch_tier2_t2(
-                            TS_EXPERT_FLRQ, w.data(), item.act,
-                            item.out_dim, item.in_dim, alpha, clip, seed);
-                        if (lt >= 0.0f) at.lowrank_t2 = lt;
-                    }
-                    acc_tensors[idx] = at;
+                    acc_tensors[idx] = score_one(item, w.data(), (int64_t)w.size(),
+                                                 (int64_t)idx >= acc_heldout_cutoff);
                     ts_progress_inc(prog, 1, item.name.c_str());
                 }
             };
@@ -3798,6 +3656,14 @@ int ts_dispatch_run(const ts_dispatch_params * params,
             for (auto & th : pool) th.join();
         }
         // work is destroyed here; acc_tensors owns the results.
+
+        if (real_tier_fallbacks.load(std::memory_order_relaxed) > 0) {
+            fprintf(stderr,
+                   "tessera-dispatch: acceptance: %lld REAL-tier call(s) fell back to "
+                   "proxy scoring (see each tensor's Tier-2 aux for the reason; rerun "
+                   "with --verbose or inspect the acceptance report)\n",
+                   (long long)real_tier_fallbacks.load(std::memory_order_relaxed));
+        }
 
         if (!acc_tensors.empty()) {
             // Margin floor (option B element): an unset/zero-initialized

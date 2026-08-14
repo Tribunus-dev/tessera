@@ -271,6 +271,41 @@ int main() {
     }
 
     // ------------------------------------------------------------------
+    // Case 10: novelty sanity clamp -- a garbage method vector (mean t2
+    // way past TS_ACCEPTANCE_NOVELTY_SANITY_BOUND, mirroring the
+    // historical FLRQ lr=406.377 blowup) must be excluded from Test 2's
+    // pairwise-tau search entirely, not merely down-weighted. awq/rot/
+    // hess/champq form the case1-style "each tensor has exactly one
+    // winning proxy" pattern (every pair among them has exactly one
+    // discordant comparison out of 6 -> tau = -1/6 for every pair), while
+    // lowrank_t2 carries varying garbage values with a mean of 340 --
+    // without the clamp this could fake spurious agreement/disagreement;
+    // with it, lr must not move method_tau_min/method_disagreement at all.
+    // ------------------------------------------------------------------
+    {
+        ts_acceptance_tensor tensors[4] = {
+            // name, comp,  awq,   rot,   lr,     hess,  offline, kernel, held, champq
+            make_tensor("t0", 0.01f, 0.01f, 0.05f, 500.0f, 0.05f, 0.1f, 0.1f, true, 0.05f),
+            make_tensor("t1", 0.01f, 0.05f, 0.01f,  10.0f, 0.05f, 0.2f, 0.2f, true, 0.05f),
+            make_tensor("t2", 0.01f, 0.05f, 0.05f, 800.0f, 0.01f, 0.3f, 0.3f, true, 0.05f),
+            make_tensor("t3", 0.01f, 0.05f, 0.05f,  50.0f, 0.05f, 0.4f, 0.4f, true, 0.01f),
+        };
+
+        ts_acceptance_config cfg;
+        ts_acceptance_default_config(&cfg);
+
+        ts_acceptance_result res;
+        int rc = ts_acceptance_run(&cfg, tensors, 4, &res);
+        check("case10: rc == 0", rc == 0);
+        check("case10: lr excluded", strcmp(res.excluded_methods, "lr") == 0);
+        check_close("case10: method_tau_min unaffected by the excluded garbage vector",
+                   res.method_tau_min, -1.0f / 6.0f, 1e-5f);
+        check("case10: novelty survives from the real methods alone", res.novelty_survives);
+        check("case10: verdict reports the exclusion",
+              strstr(res.verdict, "excluded=lr") != nullptr);
+    }
+
+    // ------------------------------------------------------------------
     // Case 6: Kendall tau sanity (reuse ts_ab_kendall_tau directly)
     // ------------------------------------------------------------------
     {

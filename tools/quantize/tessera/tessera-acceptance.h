@@ -15,6 +15,15 @@
 
 #include <cstdint>
 
+// Novelty sanity clamp bound (Test 2): a method whose mean held-out t2
+// exceeds this is excluded from the pairwise-tau search -- 1.5 in t2 units
+// (relative Frobenius error, mse*n/||W||_F^2) is well above any legitimate
+// quantization result (t2 > 1 already means the reconstruction is worse
+// than an all-zero output). Motivating case: the FLRQ lr=406.377 blowup
+// that made min|tau| register fake disagreement (method_dis=0.9906) from
+// one broken vector.
+#define TS_ACCEPTANCE_NOVELTY_SANITY_BOUND 1.5f
+
 struct ts_acceptance_config {
     int   n_heldout_tensors;     // number of held-out tensors for evaluation
     float heldout_fraction;      // default 0.2 (20% of tensors held out)
@@ -63,6 +72,14 @@ struct ts_acceptance_result {
     float method_tau_min;        // the most-disagreeing pair's tau
     float method_disagreement;   // 1 - |method_tau_min|
     bool  novelty_survives;      // method_disagreement > 0.05 (non-trivial)
+
+    // Novelty sanity clamp: a method whose mean held-out t2 exceeds
+    // TS_ACCEPTANCE_NOVELTY_SANITY_BOUND (1.5) is a broken/degenerate fit
+    // (the historical lr=406.377 blowup is the motivating case) and is
+    // excluded from the pairwise-tau search above -- one garbage vector
+    // must not be able to fake disagreement. Comma-joined method labels
+    // ("awq"/"rot"/"lr"/"hess"/"champq"); empty string = none excluded.
+    char  excluded_methods[64];
 
     // Per-proxy breakdown (mean t_l^2 over held-out tensors)
     float awq_t2;
