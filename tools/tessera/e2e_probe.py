@@ -156,7 +156,8 @@ _SAMETOP_RE   = re.compile(r"^Same top p:\s*(-?[\d.]+)", re.M)
 
 def run_kl_divergence(llama_perplexity: str, bf16: str, quantized: str,
                       bank_text_file: str, n_ctx: int,
-                      extra_args: list[str]) -> dict:
+                      extra_args: list[str],
+                      cache_type_k: str = "", cache_type_v: str = "") -> dict:
     """Two-pass KL divergence: save BF16 logits, then score the
     quantized model against them.
 
@@ -187,6 +188,15 @@ def run_kl_divergence(llama_perplexity: str, bf16: str, quantized: str,
             "-c", str(n_ctx), "--kl-divergence-base", base_logits,
             "--kl-divergence", *extra_args,
         ]
+        # The score leg represents "the deployed composition" -- unlike
+        # the save leg above (the model as intended), it gets the
+        # candidate's KV cache codec. K and V are forwarded independently
+        # (each -c* flag has its own llama-perplexity default) so setting
+        # only one is not silently dropped.
+        if cache_type_k:
+            score += ["-ctk", cache_type_k]
+        if cache_type_v:
+            score += ["-ctv", cache_type_v]
         proc = subprocess.run(score, capture_output=True, text=True, check=False)
         if proc.returncode != 0:
             raise ProbeError(
@@ -246,21 +256,42 @@ def main() -> int:
                     help="exact-match only (fast path for a per-PR gate)")
     ap.add_argument("--extra-arg", action="append", default=[],
                     help="pass through to both binaries; repeatable")
+    ap.add_argument("--cache-type-k", default="",
+                    help="KV cache quantization type for K (e.g. \"q8_0\", \"f16\"), "
+                         "applied to the CANDIDATE (quantized) model leg only. "
+                         "Empty string means don't pass the flag -- use "
+                         "llama-perplexity/llama-cli's own default.")
+    ap.add_argument("--cache-type-v", default="",
+                    help="KV cache quantization type for V (e.g. \"q8_0\", \"f16\"), "
+                         "applied to the CANDIDATE (quantized) model leg only. "
+                         "Empty string means don't pass the flag -- use "
+                         "llama-perplexity/llama-cli's own default.")
     args = ap.parse_args()
 
     t0 = time.monotonic()
     try:
         prompts = load_bank(Path(args.bank))
 
+        # Exact-match testing has no "reference must stay canonical"
+        # requirement (unlike the PPL leg below), so both legs get the
+        # same cache-type flags applied uniformly when set. K and V are
+        # forwarded independently so setting only one is not silently
+        # dropped (matches the PPL leg's handling below).
+        gen_extra_args = list(args.extra_arg)
+        if args.cache_type_k:
+            gen_extra_args += ["-ctk", args.cache_type_k]
+        if args.cache_type_v:
+            gen_extra_args += ["-ctv", args.cache_type_v]
+
         results = []
         n_mismatch = 0
         for p in prompts:
             ref = greedy_generate(args.llama_cli, args.bf16, p["path"],
                                   p["n_tokens"], args.seed, args.n_ctx,
-                                  args.extra_arg)
+                                  gen_extra_args)
             got = greedy_generate(args.llama_cli, args.quantized, p["path"],
                                   p["n_tokens"], args.seed, args.n_ctx,
-                                  args.extra_arg)
+                                  gen_extra_args)
             match = (ref == got)
             if not match:
                 n_mismatch += 1
@@ -285,7 +316,8 @@ def main() -> int:
             try:
                 divergence = run_kl_divergence(
                     args.llama_perplexity, args.bf16, args.quantized,
-                    bank_text, args.n_ctx, args.extra_arg)
+                    bank_text, args.n_ctx, args.extra_arg,
+                    args.cache_type_k, args.cache_type_v)
             finally:
                 os.unlink(bank_text)
 
@@ -303,6 +335,8 @@ def main() -> int:
         "quantized_model": args.quantized,
         "bank": args.bank,
         "seed": args.seed,
+        "cache_type_k": args.cache_type_k,
+        "cache_type_v": args.cache_type_v,
         "n_prompts": len(prompts),
         "n_mismatch": n_mismatch,
         "duration_s": round(time.monotonic() - t0, 2),

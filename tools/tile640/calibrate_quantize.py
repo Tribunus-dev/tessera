@@ -76,6 +76,10 @@ def run_l4_gate(args) -> None:
         "--llama-perplexity", args.l4_llama_perplexity,
         "--out", report,
     ]
+    if args.l4_cache_type_k:
+        command += ["--cache-type-k", args.l4_cache_type_k]
+    if args.l4_cache_type_v:
+        command += ["--cache-type-v", args.l4_cache_type_v]
     if args.l4_skip_ppl:
         command.append("--skip-ppl")
 
@@ -238,6 +242,18 @@ def main() -> None:
     parser.add_argument(
         "--l4-skip-ppl", action="store_true",
         help="Exact-match only; skips the KL/perplexity pass (faster CI gate).",
+    )
+    parser.add_argument(
+        "--l4-cache-type-k", default="",
+        help="KV cache quantization type for K (e.g. \"q8_0\", \"f16\"), forwarded "
+             "to the L4 probe's --cache-type-k. Empty string uses the probe's "
+             "own default.",
+    )
+    parser.add_argument(
+        "--l4-cache-type-v", default="",
+        help="KV cache quantization type for V (e.g. \"q8_0\", \"f16\"), forwarded "
+             "to the L4 probe's --cache-type-v. Empty string uses the probe's "
+             "own default.",
     )
     parser.add_argument(
         "--l4-report", default=None,

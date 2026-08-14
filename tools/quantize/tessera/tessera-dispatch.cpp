@@ -3892,6 +3892,7 @@ int ts_dispatch_run(const ts_dispatch_params * params,
 // full cross-model hidden state sharing is v3.5+ via the ADAPTIVE
 // muxer's graph-injection infrastructure.
 
+#include "common.h"  // common_kv_cache_type_from_str (KV-joint plumbing, phase 3)
 #include "tessera-ppl-harness.h"
 #include "tessera-l5-joint.h"
 
@@ -3992,6 +3993,28 @@ int ts_dispatch_run_l5_joint(
             || !params->talker_gguf_path.empty();
     bool use_real_forwards = false;
     if (any_drafter_path) {
+        // Pipeline refactor phase 3 ("KV-joint plumbing"): parse the
+        // string KV cache types from CLI-derived params into ggml_type.
+        // Empty (the default) resolves to F16, identical to
+        // llama_context_default_params -- today's behavior when no
+        // -l5-joint-ctk/-ctv flag was passed. An invalid type name is a
+        // hard error here (not a silent fallback) so a typo surfaces
+        // immediately instead of quietly running under the wrong codec.
+        auto parse_kv_type = [](const char * field, const std::string & s) -> ggml_type {
+            if (s.empty()) return GGML_TYPE_F16;
+            try {
+                return common_kv_cache_type_from_str(s);
+            } catch (const std::exception & e) {
+                fprintf(stderr, "tessera-dispatch: ERROR: L5 joint %s: %s "
+                                "(falling back to f16)\n", field, e.what());
+                return GGML_TYPE_F16;
+            }
+        };
+        const ggml_type l5_type_k       = parse_kv_type("--l5-joint-ctk",  params->l5_joint_type_k);
+        const ggml_type l5_type_v       = parse_kv_type("--l5-joint-ctv",  params->l5_joint_type_v);
+        const ggml_type l5_type_k_draft = parse_kv_type("--l5-joint-ctkd", params->l5_joint_type_k_draft);
+        const ggml_type l5_type_v_draft = parse_kv_type("--l5-joint-ctvd", params->l5_joint_type_v_draft);
+
         std::string load_err;
         const int load_rc = ts_l5_joint_models_load(
                 params->input_path,
@@ -4002,7 +4025,8 @@ int ts_dispatch_run_l5_joint(
                 /*n_ctx=*/512,
                 /*n_threads=*/params->nthreads > 0 ? params->nthreads : 1,
                 &models,
-                &load_err);
+                &load_err,
+                l5_type_k, l5_type_v, l5_type_k_draft, l5_type_v_draft);
         if (load_rc == 0) {
             use_real_forwards = true;
             // Bind the harness's per-model context slots to the

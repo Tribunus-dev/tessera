@@ -76,6 +76,28 @@ struct common_tessera_params {
     std::string l5_joint_drafter_dspark;   // empty = DSPark inactive
     std::string l5_joint_drafter_mtp;      // empty = MTP inactive
     std::string l5_joint_drafter_talker;   // empty = talker inactive
+    // Pipeline refactor phase 3, "KV-joint plumbing": the L5 joint harness
+    // builds llama_context_params by hand (ts_l5_joint_models_load bypasses
+    // common_init_from_params for weight-streaming reasons -- see that
+    // function's comment) and so never inherits -ctk/-ctv the way
+    // llama-imatrix/llama-perplexity do via common_context_params_to_llama.
+    // Empty = default F16/F16 (matches llama_context_default_params),
+    // identical to today's behavior. Stored as a string, not ggml_type, so
+    // this header does not need to pull in ggml.h; parsed with
+    // common_kv_cache_type_from_str (common.h). The CLI handler
+    // (common/arg.cpp) already validates at parse time (so a typo is
+    // caught immediately), and tessera-dispatch.cpp's call site parses
+    // again at the point of use as a defensive second check (a value
+    // reaching this field any other way, e.g. a future non-CLI caller,
+    // still fails safely instead of propagating a bogus ggml_type).
+    std::string l5_joint_type_k;
+    std::string l5_joint_type_v;
+    // -ctkd/-ctvd draft-cache equivalents, applied to whichever of the L5
+    // joint harness's 4 optional drafter contexts are active (dflash/
+    // dspark/mtp/talker) -- the target context always uses type_k/type_v
+    // above. Empty = default F16/F16, same as the target.
+    std::string l5_joint_type_k_draft;
+    std::string l5_joint_type_v_draft;
     // L5 Hessian scorer dispatch (v3.1 spec section 9.4). When non-empty,
     // the main quantize dispatch parses this as a weighted scorer spec
     // "hessian:0.5,imatrix:0.3,grad:0.2" and joins the named scorers via

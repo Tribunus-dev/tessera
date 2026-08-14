@@ -17,6 +17,8 @@
 // to run the actual model and extract logits. The harness slots
 // are wired with these real forwards via the dispatch.
 
+#include "ggml.h"  // ggml_type, for the KV cache codec parameters below
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -306,6 +308,11 @@ struct ts_l5_joint_models {
 // Returns 0 on success, -1 on any failure (caller should call
 // ts_l5_joint_models_free to release whatever was loaded before
 // the failure).
+// type_k/type_v: KV cache quantized type for the target context (default
+// GGML_TYPE_F16, matching llama_context_default_params). type_k_draft/
+// type_v_draft: same, applied to the 4 optional drafter contexts (dflash/
+// dspark/mtp/talker) instead -- the target and the drafters may run under
+// different KV codecs (pipeline refactor phase 3, "KV-joint plumbing").
 int ts_l5_joint_models_load(
         const std::string & target_path,
         const std::string & dflash_path,
@@ -315,7 +322,11 @@ int ts_l5_joint_models_load(
         int32_t n_ctx,
         int32_t n_threads,
         ts_l5_joint_models * out_models,
-        std::string * err_msg);
+        std::string * err_msg,
+        enum ggml_type type_k = GGML_TYPE_F16,
+        enum ggml_type type_v = GGML_TYPE_F16,
+        enum ggml_type type_k_draft = GGML_TYPE_F16,
+        enum ggml_type type_v_draft = GGML_TYPE_F16);
 
 // Free the 5 models. Safe to call on a partially-loaded models
 // struct (any nullptr slot is skipped).

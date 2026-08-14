@@ -1816,6 +1816,42 @@ struct llama_model_params common_model_params_to_llama(common_params & params) {
     return mparams;
 }
 
+// Promoted from a `static` local of the same name in arg.cpp (where -ctk/
+// -ctv/-ctkd/-ctvd still use it) so the Tessera L5 joint harness can parse
+// the same KV cache type strings without duplicating the list or the parse
+// logic -- see the declaration in common.h for the full rationale.
+const std::vector<ggml_type> common_kv_cache_types = {
+    GGML_TYPE_F32,
+    GGML_TYPE_F16,
+    GGML_TYPE_BF16,
+    GGML_TYPE_Q8_0,
+    GGML_TYPE_Q4_0,
+    GGML_TYPE_Q4_1,
+    GGML_TYPE_IQ4_NL,
+    GGML_TYPE_Q5_0,
+    GGML_TYPE_Q5_1,
+    GGML_TYPE_Q2_K,
+    GGML_TYPE_Q3_K,
+    GGML_TYPE_Q4_K,
+};
+
+ggml_type common_kv_cache_type_from_str(const std::string & s) {
+    for (const auto & type : common_kv_cache_types) {
+        if (ggml_type_name(type) == s) {
+            return type;
+        }
+    }
+    throw std::runtime_error("Unsupported cache type: " + s);
+}
+
+std::string common_get_all_kv_cache_types() {
+    std::ostringstream msg;
+    for (const auto & type : common_kv_cache_types) {
+        msg << ggml_type_name(type) << (&type == &common_kv_cache_types.back() ? "" : ", ");
+    }
+    return msg.str();
+}
+
 struct llama_context_params common_context_params_to_llama(const common_params & params) {
     auto cparams = llama_context_default_params();
 

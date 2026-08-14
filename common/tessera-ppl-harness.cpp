@@ -323,7 +323,11 @@ int ts_l5_joint_models_load(
         int32_t n_ctx,
         int32_t n_threads,
         ts_l5_joint_models * out_models,
-        std::string * err_msg) {
+        std::string * err_msg,
+        enum ggml_type type_k,
+        enum ggml_type type_v,
+        enum ggml_type type_k_draft,
+        enum ggml_type type_v_draft) {
     if (!out_models) {
         if (err_msg) *err_msg = "ts_l5_joint_models_load: null out_models";
         return -1;
@@ -384,6 +388,17 @@ int ts_l5_joint_models_load(
         cparams.n_ctx      = n_ctx;
         cparams.n_threads  = n_threads;
         cparams.n_threads_batch = n_threads;
+        // Pipeline refactor phase 3, "KV-joint plumbing": this loader builds
+        // cparams by hand (see the WEIGHT STREAMING comment above for why
+        // it bypasses common_init_from_params), so it must set type_k/
+        // type_v itself -- common_context_params_to_llama's assignment
+        // never runs on this path. The target context gets type_k/type_v;
+        // the 4 drafter contexts (dflash/dspark/mtp/talker) get the
+        // separate draft pair, mirroring upstream's -ctkd/-ctvd split
+        // between the main and speculative-draft KV caches.
+        const bool is_target = (m == TS_L5_MODEL_TARGET);
+        cparams.type_k = is_target ? type_k : type_k_draft;
+        cparams.type_v = is_target ? type_v : type_v_draft;
         llama_context * ctx = llama_init_from_model(model, cparams);
         if (!ctx) {
             if (err_msg) *err_msg = "failed to create context for: " + path;

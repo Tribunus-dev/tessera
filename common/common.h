@@ -1096,6 +1096,17 @@ struct llama_model_params     common_model_params_to_llama  (      common_params
 struct llama_context_params   common_context_params_to_llama(const common_params & params);
 struct ggml_threadpool_params ggml_threadpool_params_from_cpu_params(const common_cpu_params & params);
 
+// KV cache quantized-type name <-> ggml_type. Shared by the -ctk/-ctv/-ctkd/
+// -ctvd flag handlers in arg.cpp and by callers that build llama_context_params
+// by hand instead of going through common_context_params_to_llama (e.g. the
+// Tessera L5 joint harness, common/tessera-ppl-harness.cpp) and therefore need
+// to parse a KV cache type string themselves. common_kv_cache_type_from_str
+// throws std::runtime_error on an unrecognized name, matching arg.cpp's
+// existing -ctk/-ctv parse-time validation.
+extern const std::vector<ggml_type> common_kv_cache_types;
+ggml_type common_kv_cache_type_from_str(const std::string & s);
+std::string common_get_all_kv_cache_types();
+
 // True when the 2-slot IOSurface weight pool is eligible to engage:
 // Apple Silicon with Metal present and the ANE IOSurface buft available.
 // Probes the registered backend devices (independent of params.devices),

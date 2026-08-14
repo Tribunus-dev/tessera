@@ -427,37 +427,10 @@ struct handle_model_result {
     std::string preset_path;
 };
 
-const std::vector<ggml_type> kv_cache_types = {
-    GGML_TYPE_F32,
-    GGML_TYPE_F16,
-    GGML_TYPE_BF16,
-    GGML_TYPE_Q8_0,
-    GGML_TYPE_Q4_0,
-    GGML_TYPE_Q4_1,
-    GGML_TYPE_IQ4_NL,
-    GGML_TYPE_Q5_0,
-    GGML_TYPE_Q5_1,
-    GGML_TYPE_Q2_K,
-    GGML_TYPE_Q3_K,
-    GGML_TYPE_Q4_K,
-};
-
-static ggml_type kv_cache_type_from_str(const std::string & s) {
-    for (const auto & type : kv_cache_types) {
-        if (ggml_type_name(type) == s) {
-            return type;
-        }
-    }
-    throw std::runtime_error("Unsupported cache type: " + s);
-}
-
-static std::string get_all_kv_cache_types() {
-    std::ostringstream msg;
-    for (const auto & type : kv_cache_types) {
-        msg << ggml_type_name(type) << (&type == &kv_cache_types.back() ? "" : ", ");
-    }
-    return msg.str();
-}
+// kv_cache_type_from_str / get_all_kv_cache_types were promoted to
+// common_kv_cache_type_from_str / common_get_all_kv_cache_types in
+// common.h/common.cpp (Tessera Phase 3) so the L5 joint harness can parse
+// the same KV cache type strings without duplicating this list.
 
 static bool parse_bool_value(const std::string & value) {
     if (is_truthy(value)) {
@@ -2723,11 +2696,11 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             "KV cache data type for K\n"
             "allowed values: %s\n"
             "(default: %s)",
-            get_all_kv_cache_types().c_str(),
+            common_get_all_kv_cache_types().c_str(),
             ggml_type_name(params.cache_type_k)
         ),
         [](common_params & params, const std::string & value) {
-            params.cache_type_k = kv_cache_type_from_str(value);
+            params.cache_type_k = common_kv_cache_type_from_str(value);
         }
     ).set_env("LLAMA_ARG_CACHE_TYPE_K"));
     add_opt(common_arg(
@@ -2736,11 +2709,11 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             "KV cache data type for V\n"
             "allowed values: %s\n"
             "(default: %s)",
-            get_all_kv_cache_types().c_str(),
+            common_get_all_kv_cache_types().c_str(),
             ggml_type_name(params.cache_type_v)
         ),
         [](common_params & params, const std::string & value) {
-            params.cache_type_v = kv_cache_type_from_str(value);
+            params.cache_type_v = common_kv_cache_type_from_str(value);
         }
     ).set_env("LLAMA_ARG_CACHE_TYPE_V"));
     add_opt(common_arg(
@@ -5171,6 +5144,69 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_L5}));
     add_opt(common_arg(
+        {"--l5-joint-ctk", "--l5-joint-cache-type-k"}, "TYPE",
+        string_format(
+            "Tessera: KV cache data type for K in the L5 joint harness's "
+            "target context (pipeline refactor phase 3, \"KV-joint "
+            "plumbing\"). The L5 joint harness builds its own "
+            "llama_context_params by hand and does not inherit the "
+            "top-level -ctk/-ctv (those apply to llama-imatrix / "
+            "llama-perplexity, not this subcommand's harness).\n"
+            "allowed values: %s\n"
+            "(default: f16)",
+            common_get_all_kv_cache_types().c_str()
+        ),
+        [](common_params &, const std::string & value) {
+            common_kv_cache_type_from_str(value);  // validate; throws on a bad name
+            tessera_params.l5_joint_type_k = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_L5}));
+    add_opt(common_arg(
+        {"--l5-joint-ctv", "--l5-joint-cache-type-v"}, "TYPE",
+        string_format(
+            "Tessera: KV cache data type for V in the L5 joint harness's "
+            "target context. See --l5-joint-ctk.\n"
+            "allowed values: %s\n"
+            "(default: f16)",
+            common_get_all_kv_cache_types().c_str()
+        ),
+        [](common_params &, const std::string & value) {
+            common_kv_cache_type_from_str(value);
+            tessera_params.l5_joint_type_v = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_L5}));
+    add_opt(common_arg(
+        {"--l5-joint-ctkd", "--l5-joint-cache-type-k-draft"}, "TYPE",
+        string_format(
+            "Tessera: KV cache data type for K in the L5 joint harness's "
+            "4 drafter contexts (dflash/dspark/mtp/talker) -- the target "
+            "context uses --l5-joint-ctk instead. Mirrors upstream's "
+            "-ctkd/--spec-draft-type-k split between the main and "
+            "speculative-draft KV caches.\n"
+            "allowed values: %s\n"
+            "(default: f16)",
+            common_get_all_kv_cache_types().c_str()
+        ),
+        [](common_params &, const std::string & value) {
+            common_kv_cache_type_from_str(value);
+            tessera_params.l5_joint_type_k_draft = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_L5}));
+    add_opt(common_arg(
+        {"--l5-joint-ctvd", "--l5-joint-cache-type-v-draft"}, "TYPE",
+        string_format(
+            "Tessera: KV cache data type for V in the L5 joint harness's "
+            "4 drafter contexts. See --l5-joint-ctkd.\n"
+            "allowed values: %s\n"
+            "(default: f16)",
+            common_get_all_kv_cache_types().c_str()
+        ),
+        [](common_params &, const std::string & value) {
+            common_kv_cache_type_from_str(value);
+            tessera_params.l5_joint_type_v_draft = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_L5}));
+    add_opt(common_arg(
         {"--calibration", "--l5-calibration"}, "PATH",
         "Tessera: joint calibration set JSONL (text + talker_targets per "
         "record). Empty = synthetic fixture (v1 schema; v3 wires the "
@@ -5570,11 +5606,11 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             "KV cache data type for K for the draft model\n"
             "allowed values: %s\n"
             "(default: %s)",
-            get_all_kv_cache_types().c_str(),
+            common_get_all_kv_cache_types().c_str(),
             ggml_type_name(params.speculative.draft.cache_type_k)
         ),
         [](common_params & params, const std::string & value) {
-            params.speculative.draft.cache_type_k = kv_cache_type_from_str(value);
+            params.speculative.draft.cache_type_k = common_kv_cache_type_from_str(value);
         }
     ).set_env("LLAMA_ARG_SPEC_DRAFT_CACHE_TYPE_K"));
     add_opt(common_arg(
@@ -5583,11 +5619,11 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             "KV cache data type for V for the draft model\n"
             "allowed values: %s\n"
             "(default: %s)",
-            get_all_kv_cache_types().c_str(),
+            common_get_all_kv_cache_types().c_str(),
             ggml_type_name(params.speculative.draft.cache_type_v)
         ),
         [](common_params & params, const std::string & value) {
-            params.speculative.draft.cache_type_v = kv_cache_type_from_str(value);
+            params.speculative.draft.cache_type_v = common_kv_cache_type_from_str(value);
         }
     ).set_env("LLAMA_ARG_SPEC_DRAFT_CACHE_TYPE_V"));
     add_opt(common_arg(
