@@ -84,6 +84,9 @@ add_library(${TARGET}
     # policy I/O + dispatch + GGUF writer
     tessera/tessera-policy.cpp
     tessera/tessera-dispatch.cpp
+    tessera/tessera-dispatch-common.cpp
+    tessera/tessera-dispatch-db.cpp
+    tessera/tessera-dispatch-l5.cpp
     tessera/tessera-dispatch-l15.cpp
     tessera/tessera-gguf-writer.cpp
     # structured progress reporting (terminal live line + NDJSON for UI)
