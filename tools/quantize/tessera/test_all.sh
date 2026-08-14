@@ -50,7 +50,7 @@ echo ""
 # --- Standalone (test + own module) ---
 compile_and_run linalg      $T/test_linalg.cpp      $T/tessera-linalg.cpp -framework Accelerate
 compile_and_run lbfgs       $T/test_lbfgs.cpp       $T/tessera-lbfgs.cpp
-compile_and_run awq         $T/test_awq.cpp         $T/tessera-awq.cpp $T/tessera-policy.cpp -I common -I vendor
+compile_and_run awq         $T/test_awq.cpp         $T/tessera-awq.cpp $T/tessera-awq-fitness.cpp $T/tessera-policy.cpp -I common -I vendor -framework Accelerate
 # AWQ GA fitness port (parity vs Python awq-evolve.py + GA convergence).
 # Links the standalone port against tessera-policy (for ts_policy_genes) +
 # the awq sources + nlohmann/json (fixture loader).

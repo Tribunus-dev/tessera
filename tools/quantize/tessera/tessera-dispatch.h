@@ -29,6 +29,11 @@ struct ts_dispatch_params {
     std::string policy_path;      // empty = run GA
     std::string policy_out_path;
     std::string calib_corpus;     // empty = use built-in mini-corpus
+    // Real per-tensor activation capture sidecar directory (written by
+    // llama-imatrix --activation-capture; see tessera-activation-sidecar.h).
+    // Empty = no real per-layer activations available; GA fitness falls
+    // back to the diagonal weight-space error (unchanged default behavior).
+    std::string activation_capture_dir;
     std::string higgs_alpha_mode; // "auto", "uniform", "cache-only" (default: "uniform")
     std::string higgs_cache_dir;  // empty = default (~/.cache/tessera/higgs_alpha/)
     uint64_t    evolve_seed;

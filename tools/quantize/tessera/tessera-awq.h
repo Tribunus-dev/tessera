@@ -123,6 +123,27 @@ struct ts_awq_layer {
     const float * (* weights_load_fn)(void * user_data);
     void          (* weights_release_fn)(void * user_data, const float * buf);
     void         * weights_user_data;
+    // Streaming activation loading (pipeline: real per-tensor activation
+    // capture): mirrors weights_load_fn/weights_release_fn above. When
+    // non-null, the GA worker calls this before evaluating the layer's
+    // population to fetch real captured train/heldout activations (and,
+    // optionally, precomputed reference outputs -- activations @
+    // original_weight^T) on demand. Returns true and fills the out-pointers
+    // (train/n_tokens always; heldout/n_tokens_h and the two ref_* pointers
+    // may be left null even on success) when capture data is available for
+    // this layer; false when none exists (e.g. no sidecar for this tensor).
+    // On false, the caller leaves train_activations/heldout_activations
+    // null -- ts_awq_evaluate_layer already falls back to the diagonal
+    // weight-space error in that case, so no other code needs to change.
+    // When null, activations must be pre-loaded into the *_activations
+    // pointers above (or left null for the same fallback).
+    bool (* activations_load_fn)(void * user_data,
+                                 const float ** out_train, int64_t * out_n_tokens,
+                                 const float ** out_heldout, int64_t * out_n_tokens_h,
+                                 const float ** out_ref_train,
+                                 const float ** out_ref_heldout);
+    void (* activations_release_fn)(void * user_data);
+    void  * activations_user_data;
 };
 
 // Evaluator callback: quantize with candidate, return score.

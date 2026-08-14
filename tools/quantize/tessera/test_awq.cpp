@@ -18,6 +18,7 @@
 #include <cstring>
 #include <fstream>
 #include <string>
+#include <vector>
 
 static int g_failures = 0;
 
@@ -237,6 +238,107 @@ int main() {
                 CHECK(brc == 0, "GA runs after policy seed");
             }
         }
+    }
+
+    // --- activation-capture stage 1: streaming activations_load_fn/
+    // activations_release_fn plumbing, mirroring weights_load_fn/
+    // weights_release_fn. Proves (a) ts_awq_evolve_all actually calls the
+    // loader once per layer and the releaser once per successful load
+    // (matching the existing weight-streaming call/release discipline), and
+    // (b) the loaded activations have a real effect on the GA's result --
+    // not just structural plumbing that gets called and ignored.
+    {
+        struct activation_state {
+            std::vector<float> train;
+            int64_t n_tokens;
+            int     load_calls    = 0;
+            int     release_calls = 0;
+        };
+
+        auto loader = [](void * ud,
+                         const float ** out_train, int64_t * out_n_tokens,
+                         const float ** out_heldout, int64_t * out_n_tokens_h,
+                         const float ** out_ref_train,
+                         const float ** out_ref_heldout) -> bool {
+            auto * st = static_cast<activation_state *>(ud);
+            st->load_calls++;
+            *out_train      = st->train.data();
+            *out_n_tokens   = st->n_tokens;
+            *out_heldout    = nullptr;
+            *out_n_tokens_h = 0;
+            *out_ref_train  = nullptr;
+            *out_ref_heldout = nullptr;
+            return true;
+        };
+        auto releaser = [](void * ud) {
+            static_cast<activation_state *>(ud)->release_calls++;
+        };
+
+        const int64_t out_dim = 4, in_dim = 8, n_tokens = 6;
+        std::vector<float> w1(out_dim * in_dim), w2(out_dim * in_dim);
+        std::vector<float> sm1(in_dim, 1.0f), sm2(in_dim, 1.0f);
+        for (int64_t i = 0; i < out_dim * in_dim; i++) {
+            w1[i] = (float)(i % 7) - 3.0f;
+            w2[i] = (float)((i * 3) % 7) - 3.0f;
+        }
+        activation_state st1, st2;
+        st1.n_tokens = n_tokens;
+        st1.train.assign(n_tokens * in_dim, 0.0f);
+        for (auto & v : st1.train) v = 0.3f;
+        st2 = st1;  // same shape, distinct instance (independent call counters)
+
+        ts_awq_layer layers[2] = {};
+        layers[0].name = "act_L0"; layers[0].family = "ffn";
+        layers[0].weights = w1.data(); layers[0].second_moment = sm1.data();
+        layers[0].out_dim = out_dim;   layers[0].in_dim = in_dim;
+        layers[0].activations_load_fn    = loader;
+        layers[0].activations_release_fn = releaser;
+        layers[0].activations_user_data  = &st1;
+
+        layers[1].name = "act_L1"; layers[1].family = "ffn";
+        layers[1].weights = w2.data(); layers[1].second_moment = sm2.data();
+        layers[1].out_dim = out_dim;   layers[1].in_dim = in_dim;
+        layers[1].activations_load_fn    = loader;
+        layers[1].activations_release_fn = releaser;
+        layers[1].activations_user_data  = &st2;
+
+        ts_awq_evolve_params ap = {};
+        ap.population = 8; ap.generations = 6; ap.islands = 2;
+        ap.migration_interval = 10; ap.mutation_sigma = 0.1f;
+        ap.crossover_rate = 0.7f; ap.heldout_weight = 2.0f;
+        ap.seed = 7; ap.n_threads = 1;  // serial path
+
+        std::vector<ts_awq_evolve_result> res_with;
+        int rc = ts_awq_evolve_all(layers, 2, ts_awq_default_eval, nullptr, &ap, &res_with);
+        CHECK(rc == 0, "activation-loader evolve_all rc==0");
+        CHECK(st1.load_calls == 1 && st1.release_calls == 1,
+              "activations_load_fn/release_fn called exactly once (layer 0)");
+        CHECK(st2.load_calls == 1 && st2.release_calls == 1,
+              "activations_load_fn/release_fn called exactly once (layer 1)");
+        CHECK(layers[0].train_activations == nullptr && layers[0].n_tokens == 0,
+              "release resets train_activations/n_tokens on layer 0");
+        CHECK(layers[1].train_activations == nullptr && layers[1].n_tokens == 0,
+              "release resets train_activations/n_tokens on layer 1");
+
+        // Control: identical layers/params/seed, no loader wired -- proves
+        // the loaded activations are not just plumbed through inertly.
+        ts_awq_layer layers_ctrl[2] = {};
+        layers_ctrl[0] = layers[0]; layers_ctrl[0].activations_load_fn = nullptr;
+        layers_ctrl[0].activations_release_fn = nullptr; layers_ctrl[0].activations_user_data = nullptr;
+        layers_ctrl[1] = layers[1]; layers_ctrl[1].activations_load_fn = nullptr;
+        layers_ctrl[1].activations_release_fn = nullptr; layers_ctrl[1].activations_user_data = nullptr;
+
+        std::vector<ts_awq_evolve_result> res_ctrl;
+        int rc2 = ts_awq_evolve_all(layers_ctrl, 2, ts_awq_default_eval, nullptr, &ap, &res_ctrl);
+        CHECK(rc2 == 0, "control evolve_all rc==0");
+        std::printf("[activation-loader] load_calls=%d/%d release_calls=%d/%d "
+                    "composite with=(%.6f,%.6f) ctrl=(%.6f,%.6f)\n",
+                    st1.load_calls, st2.load_calls, st1.release_calls, st2.release_calls,
+                    res_with[0].best_score.composite, res_with[1].best_score.composite,
+                    res_ctrl[0].best_score.composite, res_ctrl[1].best_score.composite);
+        CHECK(res_with[0].best_score.composite != res_ctrl[0].best_score.composite ||
+              res_with[1].best_score.composite != res_ctrl[1].best_score.composite,
+              "activations_load_fn changes at least one layer's GA result vs. no-loader control");
     }
 
     if (g_failures == 0) {
