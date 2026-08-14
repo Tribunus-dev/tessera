@@ -8,15 +8,7 @@
 extern "C" {
 #endif
 
-#ifdef GGML_BACKEND_DL
-#ifdef GGML_BACKEND_SHARED
-#define GGML_AMD_API GGML_BACKEND_API_EXPORT
-#else
-#define GGML_AMD_API GGML_BACKEND_API_IMPORT
-#endif
-#else
 #define GGML_AMD_API GGML_BACKEND_API
-#endif
 
 GGML_AMD_API ggml_backend_reg_t ggml_backend_amd_reg(void);
 GGML_AMD_API bool ggml_backend_is_amd(ggml_backend_t backend);

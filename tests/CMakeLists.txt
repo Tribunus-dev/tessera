@@ -703,63 +703,37 @@ endif()
 # and gate hardware-dependent paths with #ifdef guards.
 ggml_backend_is_linkable(ggml-amd _amd_linkable)
 if (_amd_linkable)
+    function(llama_amd_test target source)
+        add_executable(${target} ${source})
+        target_link_libraries(${target} PRIVATE ggml-amd ggml ggml-base)
+        target_include_directories(${target} PRIVATE
+            ${PROJECT_SOURCE_DIR}/ggml/include
+            ${PROJECT_SOURCE_DIR}/ggml/src
+            ${PROJECT_SOURCE_DIR}/ggml/src/ggml-amd)
+    endfunction()
+
     # Registry test: uses public API only
-    llama_build(test-amd-registry.cpp)
-    if (TARGET test-amd-registry)
-        target_link_libraries(test-amd-registry PRIVATE ggml-amd)
-        target_include_directories(test-amd-registry PRIVATE
-            ${PROJECT_SOURCE_DIR}/ggml/include)
-    endif()
+    llama_amd_test(test-amd-registry test-amd-registry.cpp)
     llama_test(test-amd-registry)
 
     # Dma-buf test: allocation and fence logic
-    llama_build(test-amd-dmabuf.cpp)
-    if (TARGET test-amd-dmabuf)
-        target_link_libraries(test-amd-dmabuf PRIVATE ggml-amd)
-        target_include_directories(test-amd-dmabuf PRIVATE
-            ${PROJECT_SOURCE_DIR}/ggml/include
-            ${PROJECT_SOURCE_DIR}/ggml/src/ggml-amd)
-    endif()
+    llama_amd_test(test-amd-dmabuf test-amd-dmabuf.cpp)
     llama_test(test-amd-dmabuf)
 
     # Scheduler test: region formation and cost model
-    llama_build(test-amd-scheduler.cpp)
-    if (TARGET test-amd-scheduler)
-        target_link_libraries(test-amd-scheduler PRIVATE ggml-amd)
-        target_include_directories(test-amd-scheduler PRIVATE
-            ${PROJECT_SOURCE_DIR}/ggml/include
-            ${PROJECT_SOURCE_DIR}/ggml/src/ggml-amd)
-    endif()
+    llama_amd_test(test-amd-scheduler test-amd-scheduler.cpp)
     llama_test(test-amd-scheduler)
 
     # Packing cache test: LRU cache logic
-    llama_build(test-amd-packing-cache.cpp)
-    if (TARGET test-amd-packing-cache)
-        target_link_libraries(test-amd-packing-cache PRIVATE ggml-amd)
-        target_include_directories(test-amd-packing-cache PRIVATE
-            ${PROJECT_SOURCE_DIR}/ggml/include
-            ${PROJECT_SOURCE_DIR}/ggml/src/ggml-amd)
-    endif()
+    llama_amd_test(test-amd-packing-cache test-amd-packing-cache.cpp)
     llama_test(test-amd-packing-cache)
 
     # Residency test: eviction and pinning logic
-    llama_build(test-amd-residency.cpp)
-    if (TARGET test-amd-residency)
-        target_link_libraries(test-amd-residency PRIVATE ggml-amd)
-        target_include_directories(test-amd-residency PRIVATE
-            ${PROJECT_SOURCE_DIR}/ggml/include
-            ${PROJECT_SOURCE_DIR}/ggml/src/ggml-amd)
-    endif()
+    llama_amd_test(test-amd-residency test-amd-residency.cpp)
     llama_test(test-amd-residency)
 
     # Tiered memory test: tier selection and budget logic
-    llama_build(test-amd-tiered-memory.cpp)
-    if (TARGET test-amd-tiered-memory)
-        target_link_libraries(test-amd-tiered-memory PRIVATE ggml-amd)
-        target_include_directories(test-amd-tiered-memory PRIVATE
-            ${PROJECT_SOURCE_DIR}/ggml/include
-            ${PROJECT_SOURCE_DIR}/ggml/src/ggml-amd)
-    endif()
+    llama_amd_test(test-amd-tiered-memory test-amd-tiered-memory.cpp)
     llama_test(test-amd-tiered-memory)
 endif() # _amd_linkable
 

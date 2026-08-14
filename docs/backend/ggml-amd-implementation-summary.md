@@ -1,8 +1,10 @@
-# ggml-amd Implementation Summary
+# ggml-amd Scaffold Inventory
 
-## Implementation Complete
+## Current Status
 
-All 10 waves of the ggml-amd backend have been implemented. The implementation includes:
+This document is a historical inventory of the initial scaffold, not evidence that all 10 implementation waves are complete. The current backend has registry, configuration, HIP device-buffer lifecycle, dma-buf ownership, HIP external-memory import, and scheduler safety work in progress. The HIP graph path dispatches the Tile640 operations only. Provider residency, Vulkan execution, and XDNA compiled-region execution remain incomplete.
+
+The inventory below records files introduced by the scaffold. Each wave remains subject to its functional, numerical, scheduling, and hardware acceptance gates.
 
 ### Wave 0: Cleanup ✓
 - Removed ~20 copied source files from `ggml/src/ggml-amd/` (19k+ lines of copied Vulkan/ZenDNN sources)
@@ -27,12 +29,12 @@ All 10 waves of the ggml-amd backend have been implemented. The implementation i
 - CMake integration: `GGML_AMD` option + sub-options, `ggml_add_backend(AMD)`
 - Backend registration: Added to `ggml-backend-reg.cpp`
 
-### Wave 3: HIP Provider Adapter ✓
-- `providers/ggml-amd-hip.cpp`: HIP provider with probe, import, submit, wait, memory query
+### Wave 3: HIP Provider Adapter (partial)
+- `providers/ggml-amd-hip.cpp`: HIP provider with probe, device allocation and transfers, external-memory import, Tile640 graph dispatch, wait, memory query
 - Conditional compilation on `GGML_AMD_HIP`
 - HIP runtime integration (when available)
 
-### Wave 4: Region Scheduler + Residency ✓
+### Wave 4: Region Scheduler + Residency (partial)
 - `ggml-amd-region.cpp`: Region formation from maximal supported subgraphs
 - `ggml-amd-scheduler.cpp`: Scheduler with modes (deterministic, adaptive, diagnostic, single-provider)
 - `ggml-amd-cost-model.cpp`: Cost estimation with exponential moving average
@@ -43,11 +45,11 @@ All 10 waves of the ggml-amd backend have been implemented. The implementation i
 - Atomic write-validate-rename semantics
 - Cache statistics tracking
 
-### Wave 6: Vulkan Provider Adapter ✓
+### Wave 6: Vulkan Provider Adapter (scaffold)
 - `providers/ggml-amd-vulkan.cpp`: Vulkan provider skeleton
 - Conditional compilation on `GGML_AMD_VULKAN`
 
-### Wave 7: XDNA Provider Adapter ✓
+### Wave 7: XDNA Provider Adapter (scaffold)
 - `providers/ggml-amd-xdna.cpp`: XDNA provider skeleton
 - `xdna/ggml-amd-xdna-ir.h`: IR structure definitions
 - `xdna/ggml-amd-xdna-translate.cpp`: Region translation
@@ -56,7 +58,7 @@ All 10 waves of the ggml-amd backend have been implemented. The implementation i
 - `xdna/ggml-amd-xdna-cache.cpp`: Compiled region cache
 - Conditional compilation on `GGML_AMD_XDNA`
 
-### Wave 8: Discrete GPU + Tiered Memory ✓
+### Wave 8: Discrete GPU + Tiered Memory (policy only)
 - `ggml-amd-tiered-memory.cpp`: Tier selection (SYSTEM, VRAM, NPU), budget management, prefetch/eviction policies
 - UMA, discrete GPU, and NPU policies
 
@@ -132,12 +134,9 @@ All copied sources from the superseded monolithic direction:
 - `ggml/src/ggml-amd/fastflow/`
 - `ggml/src/ggml-amd/tile/`
 
-## Compilation Status
+## Historical Compilation Claim
 
-All files pass syntax checking with `g++ -std=c++17`:
-- ✓ Core implementation (16 files)
-- ✓ Provider adapters (4 files)
-- ✓ XDNA subsystem (4 files)
+The original claim that all files passed syntax checking was not a complete build or execution gate. The backend must be configured with the HIP development toolchain and tested through its CMake targets before it can be considered functional.
 
 ## What Needs Adjustment on AMD Hardware
 
@@ -186,8 +185,8 @@ ls -l /dev/dma_heap/system
 # Verify HIP external memory support
 hipinfo | grep -i external
 
-# Adjust import logic in ggml-amd-hip.cpp if needed
-# Current implementation uses hipImportExternalMemory
+# The HIP provider imports an opaque dma-buf fd with hipImportExternalMemory.
+# Run the focused tests before relying on a new kernel/ROCm combination.
 ```
 
 ### 5. Profile XDNA Regions

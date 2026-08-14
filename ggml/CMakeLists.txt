@@ -220,11 +220,11 @@ option(GGML_HIP_NO_VMM                      "ggml: do not try to use HIP VMM"   
 option(GGML_HIP_MMQ_MFMA                    "ggml: enable MFMA MMA for CDNA in MMQ"           ON)
 option(GGML_HIP_EXPORT_METRICS              "ggml: enable kernel perf metrics output"         OFF)
 
-option(GGML_AMD                             "ggml: use AMD platform backend"                  OFF)
-option(GGML_AMD_HIP                         "ggml: AMD backend with HIP provider"             OFF)
-option(GGML_AMD_VULKAN                      "ggml: AMD backend with Vulkan provider"          OFF)
-option(GGML_AMD_ZENDNN                      "ggml: AMD backend with ZenDNN provider"          OFF)
-option(GGML_AMD_XDNA                        "ggml: AMD backend with XDNA provider"            OFF)
+option(GGML_AMD                             "ggml: use AMD platform backend (Linux, requires HIP)" OFF)
+option(GGML_AMD_HIP                         "ggml: AMD backend with HIP provider (ROCm 6.1+, rocBLAS, hipBLAS)" OFF)
+option(GGML_AMD_VULKAN                      "ggml: build experimental AMD Vulkan adapter (requires Vulkan SDK)" OFF)
+option(GGML_AMD_ZENDNN                      "ggml: build experimental AMD ZenDNN adapter (requires ZENDNN_ROOT)" OFF)
+option(GGML_AMD_XDNA                        "ggml: build experimental AMD XDNA adapter (requires XRT headers and library)" OFF)
 option(GGML_AMD_METRICS                     "ggml: AMD backend with detailed metrics"         OFF)
 option(GGML_MUSA_GRAPHS                     "ggml: use MUSA graph, experimental, unstable"    OFF)
 option(GGML_MUSA_MUDNN_COPY                 "ggml: enable muDNN for accelerated copy"         OFF)
@@ -338,7 +338,7 @@ add_subdirectory(src)
 # tests and examples
 #
 
-if (GGML_BUILD_TESTS)
+if (GGML_BUILD_TESTS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests")
     enable_testing()
     add_subdirectory(tests)
 endif ()

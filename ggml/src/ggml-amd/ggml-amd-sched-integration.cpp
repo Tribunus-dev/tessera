@@ -8,6 +8,7 @@
 #include "ggml-amd.h"
 #include "ggml-backend.h"
 #include "ggml.h"
+#include "ggml-impl.h"
 
 // Forward declarations from ggml-amd-scheduler.cpp
 struct ggml_amd_scheduler;
@@ -43,6 +44,10 @@ extern "C" int ggml_backend_amd_schedule_graph(
         return 0;
     }
 
+    if (phase != GGML_AMD_PHASE_PREFILL && phase != GGML_AMD_PHASE_DECODE) {
+        return 0;
+    }
+
     struct ggml_amd_reg_context * reg_ctx = ggml_amd_get_reg_context(amd_backend);
     if (!reg_ctx) {
         return 0;
@@ -55,7 +60,7 @@ extern "C" int ggml_backend_amd_schedule_graph(
     }
 
     // Plan regions
-    int n_regions = ggml_amd_scheduler_plan(amd_sched, graph, phase);
+    int n_regions = ggml_amd_scheduler_plan(amd_sched, graph, (enum ggml_amd_phase) phase);
     if (n_regions <= 0) {
         ggml_amd_scheduler_destroy(amd_sched);
         return 0;
@@ -65,18 +70,16 @@ extern "C" int ggml_backend_amd_schedule_graph(
     // The AMD scheduler forms contiguous regions of nodes that should
     // run on AMD providers. We assign each node in each region to the
     // AMD backend via the public API.
-    int n_assigned = 0;
     int actual_regions = ggml_amd_scheduler_get_region_count(amd_sched);
     for (int r = 0; r < actual_regions; ++r) {
         struct ggml_amd_region * region = ggml_amd_scheduler_get_region(amd_sched, r);
-        if (!region) {
+        if (!region || !region->provider) {
             continue;
         }
         for (int i = region->node_start; i <= region->node_end && i < graph->n_nodes; ++i) {
             struct ggml_tensor * node = graph->nodes[i];
             if (node && !ggml_amd_is_view_op(node->op)) {
                 ggml_backend_sched_set_tensor_backend(sched, node, amd_backend);
-                ++n_assigned;
             }
         }
     }

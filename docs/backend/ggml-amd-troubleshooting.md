@@ -6,7 +6,7 @@
 
 #### "HIP compiler not found"
 
-**Symptom:** CMake warns "HIP compiler not found, disabling GGML_AMD_HIP"
+**Symptom:** CMake stops with "GGML_AMD_HIP=ON requires a ROCm HIP compiler"
 
 **Cause:** ROCm/HIP not installed or not in PATH
 
@@ -20,9 +20,12 @@ hipinfo
 export PATH=/opt/rocm/bin:$PATH
 export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH
 
-# Re-run CMake
-cmake .. -DGGML_AMD=ON -DGGML_AMD_HIP=ON
+# Re-run CMake with the ROCm prefix
+cmake -S . -B build-amd -DGGML_AMD=ON -DGGML_AMD_HIP=ON -DROCM_PATH=/opt/rocm
 ```
+
+The AMD backend intentionally fails configuration rather than silently building
+without a compute provider.
 
 #### "Vulkan SDK not found"
 
@@ -62,6 +65,10 @@ sudo rpm -i build/xdna.rpm
 # Verify
 xrt-smi examine
 ```
+
+The current adapter only validates that XRT is installed. It is not linked to
+XRT until its runtime owns actual XRT handles, so enabling the option does not
+enable NPU execution yet.
 
 ### Runtime Failures
 
@@ -220,6 +227,30 @@ zcat /proc/config.gz | grep DMA_HEAP
    ```
 3. Verify kernel config includes `CONFIG_DMA_HEAP=y`
 4. Fall back to GEM PRIME (requires DRM device access)
+
+### Stale Test Binary
+
+**Symptom:** A test message still says `HIP imports a system dma-buf` even though
+the current source rejects non-brokered imports.
+
+**Cause:** You are still running a previously built `test-amd-registry` binary
+that does not include the current dma-buf contract checks.
+
+**Resolution:**
+
+1. Remove any prior build trees (including `/tmp/tessera-amd-test`).
+2. Rebuild with `GGML_AMD_HIP=ON`.
+3. Run the rebuilt test directly from the matching build directory.
+
+```bash
+rm -rf /tmp/tessera-amd-test
+cmake -S . -B /tmp/tessera-amd-test -DGGML_AMD=ON -DGGML_AMD_HIP=ON -DGGML_BUILD_TESTS=ON -DROCM_PATH=/opt/rocm-7.1.1
+cmake --build /tmp/tessera-amd-test --parallel
+/tmp/tessera-amd-test/bin/test-amd-registry
+```
+
+The line should now print `HIP rejects a non-brokered dma-buf` when the
+contract is respected.
 
 #### Import Fails
 

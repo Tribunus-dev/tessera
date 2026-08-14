@@ -35,30 +35,28 @@ struct ggml_amd_packing_key {
 
 struct ggml_amd_packing_cache;
 
-extern "C" {
-    struct ggml_amd_packing_cache * ggml_amd_packing_cache_create(size_t max_size_bytes);
-    void ggml_amd_packing_cache_destroy(struct ggml_amd_packing_cache * cache);
+struct ggml_amd_packing_cache * ggml_amd_packing_cache_create(size_t max_size_bytes);
+void ggml_amd_packing_cache_destroy(struct ggml_amd_packing_cache * cache);
 
-    bool ggml_amd_packing_cache_lookup(
-        struct ggml_amd_packing_cache * cache,
-        const struct ggml_amd_packing_key * key,
-        std::vector<uint8_t> * out_data);
+bool ggml_amd_packing_cache_lookup(
+    struct ggml_amd_packing_cache * cache,
+    const struct ggml_amd_packing_key * key,
+    std::vector<uint8_t> * out_data);
 
-    void ggml_amd_packing_cache_insert(
-        struct ggml_amd_packing_cache * cache,
-        const struct ggml_amd_packing_key * key,
-        const std::vector<uint8_t> & data);
+void ggml_amd_packing_cache_insert(
+    struct ggml_amd_packing_cache * cache,
+    const struct ggml_amd_packing_key * key,
+    const std::vector<uint8_t> & data);
 
-    void ggml_amd_packing_cache_invalidate(
-        struct ggml_amd_packing_cache * cache,
-        const struct ggml_amd_packing_key * key);
+void ggml_amd_packing_cache_invalidate(
+    struct ggml_amd_packing_cache * cache,
+    const struct ggml_amd_packing_key * key);
 
-    void ggml_amd_packing_cache_get_stats(
-        struct ggml_amd_packing_cache * cache,
-        size_t * out_hits,
-        size_t * out_misses,
-        size_t * out_current_size);
-}
+void ggml_amd_packing_cache_get_stats(
+    struct ggml_amd_packing_cache * cache,
+    size_t * out_hits,
+    size_t * out_misses,
+    size_t * out_current_size);
 
 static int g_failures = 0;
 

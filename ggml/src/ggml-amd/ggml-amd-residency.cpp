@@ -39,7 +39,7 @@ void ggml_amd_residency_manager_register(
     struct ggml_amd_provider * provider,
     size_t size_bytes) {
 
-    if (!mgr || !tensor_name || !allocation) {
+    if (!mgr || !tensor_name) {
         return;
     }
 

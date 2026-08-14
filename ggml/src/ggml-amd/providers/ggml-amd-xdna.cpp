@@ -4,19 +4,27 @@
 
 #include <cstring>
 
+#if defined(__linux__)
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
 #ifdef GGML_AMD_XDNA
 
-struct ggml_amd_xdna_context {
-    bool initialized;
-    int accel_fd;
-};
-
 static bool ggml_amd_xdna_probe_impl(struct ggml_amd_provider * provider, struct ggml_amd_probe_result * result) {
-    auto ctx = new ggml_amd_xdna_context();
-    ctx->initialized = false;
-    ctx->accel_fd = -1;
+    provider->context = nullptr;
 
-    provider->context = ctx;
+    if (result) {
+        memset(result, 0, sizeof(*result));
+    }
+
+#if !defined(__linux__)
+    return false;
+#else
+    const int accel_fd = open("/dev/accel/accel0", O_RDWR | O_CLOEXEC);
+    if (accel_fd < 0) {
+        return false;
+    }
 
     if (result) {
         result->provider_name = "xdna";
@@ -32,7 +40,9 @@ static bool ggml_amd_xdna_probe_impl(struct ggml_amd_provider * provider, struct
         result->supports_dma_buf_import = 0;
     }
 
-    return false;
+    close(accel_fd);
+    return true;
+#endif
 }
 
 static bool ggml_amd_xdna_supports_op_impl(struct ggml_amd_provider * provider, const struct ggml_tensor * op) {

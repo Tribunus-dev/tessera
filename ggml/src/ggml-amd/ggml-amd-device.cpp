@@ -1,8 +1,63 @@
 #include "ggml-amd-internal.h"
+#include "providers/ggml-amd-hip.h"
 #include "ggml.h"
 
 #include <cstring>
 #include <cstdio>
+
+extern ggml_backend_buffer_type_t ggml_amd_buffer_type(ggml_backend_dev_t device);
+extern ggml_backend_buffer_type_t ggml_amd_host_buffer_type(ggml_backend_dev_t device);
+
+struct ggml_amd_backend_context {
+    ggml_backend_dev_t device;
+};
+
+static const char * ggml_amd_backend_get_name(ggml_backend_t backend) {
+    return backend->device->iface.get_name(backend->device);
+}
+
+static void ggml_amd_backend_free(ggml_backend_t backend) {
+    delete (struct ggml_amd_backend_context *)backend->context;
+    delete backend;
+}
+
+static enum ggml_status ggml_amd_backend_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph) {
+    if (!backend || !backend->context) {
+        return GGML_STATUS_FAILED;
+    }
+
+    auto ctx = (struct ggml_amd_backend_context *)backend->context;
+    auto device_ctx = (struct ggml_amd_device_context *)ctx->device->context;
+    if (ggml_amd_hip_is_provider(device_ctx->provider)) {
+        return ggml_amd_hip_graph_compute(device_ctx->provider, cgraph);
+    }
+
+    return GGML_STATUS_FAILED;
+}
+
+static ggml_guid_t ggml_amd_backend_guid(void) {
+    static ggml_guid guid = { 0x17, 0x5e, 0x3a, 0x4f, 0x42, 0x6b, 0x4c, 0xdb, 0xa3, 0x4a, 0x91, 0x01, 0xc9, 0x52, 0x5f, 0xe8 };
+    return &guid;
+}
+
+static const struct ggml_backend_i ggml_amd_backend_i = {
+    .get_name = ggml_amd_backend_get_name,
+    .free = ggml_amd_backend_free,
+    .set_tensor_async = nullptr,
+    .get_tensor_async = nullptr,
+    .set_tensor_2d_async = nullptr,
+    .get_tensor_2d_async = nullptr,
+    .cpy_tensor_async = nullptr,
+    .synchronize = nullptr,
+    .graph_plan_create = nullptr,
+    .graph_plan_free = nullptr,
+    .graph_plan_update = nullptr,
+    .graph_plan_compute = nullptr,
+    .graph_compute = ggml_amd_backend_graph_compute,
+    .event_record = nullptr,
+    .event_wait = nullptr,
+    .graph_optimize = nullptr,
+};
 
 static const char * ggml_amd_device_type_name(enum ggml_amd_device_type type) {
     switch (type) {
@@ -67,32 +122,37 @@ static enum ggml_backend_dev_type ggml_amd_device_get_type(ggml_backend_dev_t de
 }
 
 static void ggml_amd_device_get_props(ggml_backend_dev_t dev, struct ggml_backend_dev_props * props) {
-    struct ggml_amd_device_context * ctx = (struct ggml_amd_device_context *)dev->context;
     props->name = ggml_amd_device_get_name_static(dev);
     props->description = ggml_amd_device_get_description_static(dev);
     ggml_amd_device_get_memory(dev, &props->memory_free, &props->memory_total);
     props->type = ggml_amd_device_get_type(dev);
     props->device_id = nullptr;
-    props->caps.async = true;
+    props->caps.async = false;
     props->caps.host_buffer = true;
     props->caps.buffer_from_host_ptr = false;
-    props->caps.events = true;
+    props->caps.events = false;
 }
 
 static ggml_backend_t ggml_amd_device_init_backend(ggml_backend_dev_t dev, const char * params) {
-    (void)dev;
     (void)params;
-    return nullptr;
+
+    auto ctx = new ggml_amd_backend_context();
+    ctx->device = dev;
+
+    return new ggml_backend {
+        .guid = ggml_amd_backend_guid(),
+        .iface = ggml_amd_backend_i,
+        .device = dev,
+        .context = ctx,
+    };
 }
 
 static ggml_backend_buffer_type_t ggml_amd_device_get_buffer_type(ggml_backend_dev_t dev) {
-    (void)dev;
-    return nullptr;
+    return ggml_amd_buffer_type(dev);
 }
 
 static ggml_backend_buffer_type_t ggml_amd_device_get_host_buffer_type(ggml_backend_dev_t dev) {
-    (void)dev;
-    return nullptr;
+    return ggml_amd_host_buffer_type(dev);
 }
 
 static ggml_backend_buffer_t ggml_amd_device_buffer_from_host_ptr(ggml_backend_dev_t dev, void * ptr, size_t size, size_t max_tensor_size) {
@@ -104,17 +164,15 @@ static ggml_backend_buffer_t ggml_amd_device_buffer_from_host_ptr(ggml_backend_d
 }
 
 static bool ggml_amd_device_supports_op(ggml_backend_dev_t dev, const struct ggml_tensor * op) {
+    (void)dev;
+    (void)op;
+
     struct ggml_amd_device_context * ctx = (struct ggml_amd_device_context *)dev->context;
-    if (ctx->provider && ctx->provider->iface && ctx->provider->iface->supports_op) {
-        return ctx->provider->iface->supports_op(ctx->provider, op);
-    }
-    return false;
+    return ctx->provider && ctx->provider->iface && ctx->provider->iface->supports_op && ctx->provider->iface->supports_op(ctx->provider, op);
 }
 
 static bool ggml_amd_device_supports_buft(ggml_backend_dev_t dev, ggml_backend_buffer_type_t buft) {
-    (void)dev;
-    (void)buft;
-    return false;
+    return buft == ggml_amd_buffer_type(dev) || buft == ggml_amd_host_buffer_type(dev);
 }
 
 static bool ggml_amd_device_offload_op(ggml_backend_dev_t dev, const struct ggml_tensor * op) {

@@ -63,6 +63,8 @@ enum ggml_amd_tier ggml_amd_tiered_memory_select_tier(
     bool is_hot_weight,
     bool is_kv_cache) {
 
+    (void)size_bytes;
+
     if (!mgr || !tensor_name) {
         return GGML_AMD_TIER_SYSTEM;
     }

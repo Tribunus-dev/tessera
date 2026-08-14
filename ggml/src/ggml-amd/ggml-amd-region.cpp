@@ -13,6 +13,27 @@ struct ggml_amd_region_formation_context {
     std::vector<struct ggml_amd_region *> regions;
 };
 
+static struct ggml_amd_region * ggml_amd_region_create(
+    struct ggml_cgraph * graph,
+    int node_start,
+    int node_end,
+    struct ggml_amd_provider * provider) {
+
+    auto region = new ggml_amd_region();
+    region->graph = graph;
+    region->node_start = node_start;
+    region->node_end = node_end;
+    region->provider = provider;
+    region->inputs = nullptr;
+    region->n_inputs = 0;
+    region->outputs = nullptr;
+    region->n_outputs = 0;
+    region->state_tensors = nullptr;
+    region->n_state_tensors = 0;
+    region->phase = GGML_AMD_PHASE_DECODE;
+    return region;
+}
+
 static bool ggml_amd_provider_supports_tensor(struct ggml_amd_provider * provider, const struct ggml_tensor * tensor) {
     if (!provider || !provider->iface || !provider->iface->supports_op) {
         return false;
@@ -51,18 +72,7 @@ std::vector<struct ggml_amd_region *> ggml_amd_form_regions(
         struct ggml_amd_provider * node_provider = ggml_amd_select_provider_for_node(providers, n_providers, graph->nodes[i]);
 
         if (node_provider != current_provider) {
-            auto region = new ggml_amd_region();
-            region->node_start = region_start;
-            region->node_end = i - 1;
-            region->provider = current_provider;
-            region->inputs = nullptr;
-            region->n_inputs = 0;
-            region->outputs = nullptr;
-            region->n_outputs = 0;
-            region->state_tensors = nullptr;
-            region->n_state_tensors = 0;
-            region->phase = GGML_AMD_PHASE_DECODE;
-            regions.push_back(region);
+            regions.push_back(ggml_amd_region_create(graph, region_start, i - 1, current_provider));
 
             region_start = i;
             current_provider = node_provider;
@@ -70,18 +80,7 @@ std::vector<struct ggml_amd_region *> ggml_amd_form_regions(
     }
 
     if (region_start < graph->n_nodes) {
-        auto region = new ggml_amd_region();
-        region->node_start = region_start;
-        region->node_end = graph->n_nodes - 1;
-        region->provider = current_provider;
-        region->inputs = nullptr;
-        region->n_inputs = 0;
-        region->outputs = nullptr;
-        region->n_outputs = 0;
-        region->state_tensors = nullptr;
-        region->n_state_tensors = 0;
-        region->phase = GGML_AMD_PHASE_DECODE;
-        regions.push_back(region);
+        regions.push_back(ggml_amd_region_create(graph, region_start, graph->n_nodes - 1, current_provider));
     }
 
     return regions;

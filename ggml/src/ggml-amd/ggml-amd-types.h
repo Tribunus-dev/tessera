@@ -15,6 +15,12 @@ enum ggml_amd_memory_domain {
     GGML_AMD_DOMAIN_IMPORTED_EXTERNAL,
 };
 
+enum ggml_amd_external_handle_kind {
+    GGML_AMD_EXTERNAL_HANDLE_KIND_NONE,
+    GGML_AMD_EXTERNAL_HANDLE_KIND_UNKNOWN,
+    GGML_AMD_EXTERNAL_HANDLE_KIND_VULKAN_OPAQUE_FD,
+};
+
 enum ggml_amd_coherency {
     GGML_AMD_COHERENCY_CPU_ONLY,
     GGML_AMD_COHERENCY_GPU_ONLY,

@@ -22,33 +22,31 @@ enum ggml_amd_tier {
     GGML_AMD_TIER_NPU,
 };
 
-extern "C" {
-    struct ggml_amd_tiered_memory_manager;
+struct ggml_amd_tiered_memory_manager;
 
-    struct ggml_amd_tiered_memory_manager * ggml_amd_tiered_memory_create(void);
-    void ggml_amd_tiered_memory_destroy(struct ggml_amd_tiered_memory_manager * mgr);
+struct ggml_amd_tiered_memory_manager * ggml_amd_tiered_memory_create(void);
+void ggml_amd_tiered_memory_destroy(struct ggml_amd_tiered_memory_manager * mgr);
 
-    enum ggml_amd_tier ggml_amd_tiered_memory_select_tier(
-        struct ggml_amd_tiered_memory_manager * mgr,
-        const char * tensor_name,
-        size_t size_bytes,
-        bool is_hot_weight,
-        bool is_kv_cache);
+enum ggml_amd_tier ggml_amd_tiered_memory_select_tier(
+    struct ggml_amd_tiered_memory_manager * mgr,
+    const char * tensor_name,
+    size_t size_bytes,
+    bool is_hot_weight,
+    bool is_kv_cache);
 
-    void ggml_amd_tiered_memory_set_budget(
-        struct ggml_amd_tiered_memory_manager * mgr,
-        enum ggml_amd_tier tier,
-        size_t budget_bytes);
+void ggml_amd_tiered_memory_set_budget(
+    struct ggml_amd_tiered_memory_manager * mgr,
+    enum ggml_amd_tier tier,
+    size_t budget_bytes);
 
-    bool ggml_amd_tiered_memory_should_prefetch(
-        struct ggml_amd_tiered_memory_manager * mgr,
-        const char * tensor_name);
+bool ggml_amd_tiered_memory_should_prefetch(
+    struct ggml_amd_tiered_memory_manager * mgr,
+    const char * tensor_name);
 
-    bool ggml_amd_tiered_memory_should_evict(
-        struct ggml_amd_tiered_memory_manager * mgr,
-        const char * tensor_name,
-        size_t current_vram_usage);
-}
+bool ggml_amd_tiered_memory_should_evict(
+    struct ggml_amd_tiered_memory_manager * mgr,
+    const char * tensor_name,
+    size_t current_vram_usage);
 
 static int g_failures = 0;
 

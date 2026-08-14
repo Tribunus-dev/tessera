@@ -10,7 +10,7 @@
 //  5. pinned entries are not evicted
 
 #include "ggml.h"
-#include "ggml-amd-types.h"
+#include "ggml-amd-internal.h"
 
 #include <cassert>
 #include <cstdio>
@@ -29,43 +29,47 @@ struct ggml_amd_residency_suggestion {
     size_t size_bytes;
 };
 
-extern "C" {
-    struct ggml_amd_residency_manager;
+struct ggml_amd_residency_manager;
 
-    struct ggml_amd_residency_manager * ggml_amd_residency_manager_create(size_t max_resident_bytes);
-    void ggml_amd_residency_manager_destroy(struct ggml_amd_residency_manager * mgr);
+struct ggml_amd_residency_manager * ggml_amd_residency_manager_create(size_t max_resident_bytes);
+void ggml_amd_residency_manager_destroy(struct ggml_amd_residency_manager * mgr);
 
-    void ggml_amd_residency_manager_register(
-        struct ggml_amd_residency_manager * mgr,
-        const char * tensor_name,
-        struct ggml_amd_allocation * allocation,
-        struct ggml_amd_provider * provider,
-        size_t size_bytes);
+void ggml_amd_residency_manager_register(
+    struct ggml_amd_residency_manager * mgr,
+    const char * tensor_name,
+    struct ggml_amd_allocation * allocation,
+    struct ggml_amd_provider * provider,
+    size_t size_bytes);
 
-    void ggml_amd_residency_manager_mark_used(
-        struct ggml_amd_residency_manager * mgr,
-        const char * tensor_name,
-        int64_t iter);
+void ggml_amd_residency_manager_mark_used(
+    struct ggml_amd_residency_manager * mgr,
+    const char * tensor_name,
+    int64_t iter);
 
-    std::vector<ggml_amd_residency_suggestion> ggml_amd_residency_manager_suggest_evictions(
-        struct ggml_amd_residency_manager * mgr,
-        int64_t current_iter,
-        int64_t idle_threshold);
+std::vector<ggml_amd_residency_suggestion> ggml_amd_residency_manager_suggest_evictions(
+    struct ggml_amd_residency_manager * mgr,
+    int64_t current_iter,
+    int64_t idle_threshold);
 
-    void ggml_amd_residency_manager_evict(
-        struct ggml_amd_residency_manager * mgr,
-        const char * tensor_name);
+void ggml_amd_residency_manager_evict(
+    struct ggml_amd_residency_manager * mgr,
+    const char * tensor_name);
 
-    void ggml_amd_residency_manager_pin(
-        struct ggml_amd_residency_manager * mgr,
-        const char * tensor_name);
+void ggml_amd_residency_manager_pin(
+    struct ggml_amd_residency_manager * mgr,
+    const char * tensor_name);
 
-    void ggml_amd_residency_manager_unpin(
-        struct ggml_amd_residency_manager * mgr,
-        const char * tensor_name);
+void ggml_amd_residency_manager_unpin(
+    struct ggml_amd_residency_manager * mgr,
+    const char * tensor_name);
 
-    size_t ggml_amd_residency_manager_get_resident_bytes(struct ggml_amd_residency_manager * mgr);
-}
+size_t ggml_amd_residency_manager_get_resident_bytes(struct ggml_amd_residency_manager * mgr);
+
+struct ggml_amd_allocation * ggml_amd_allocation_create(
+    enum ggml_amd_memory_domain domain,
+    size_t size,
+    size_t alignment,
+    enum ggml_amd_coherency coherency);
 
 static int g_failures = 0;
 
@@ -89,14 +93,21 @@ static void test_residency_register(void) {
     struct ggml_amd_residency_manager * mgr = ggml_amd_residency_manager_create(1024 * 1024);
     if (!mgr) return;
 
-    struct ggml_amd_allocation * alloc = nullptr;  // dummy
+    struct ggml_amd_allocation * alloc = ggml_amd_allocation_create(
+        GGML_AMD_DOMAIN_PROVIDER_PRIVATE, 1024, 64, GGML_AMD_COHERENCY_CPU_ONLY);
     struct ggml_amd_provider * provider = nullptr;  // dummy
+    CHECK(alloc != nullptr, "residency allocation creates");
+    if (!alloc) {
+        ggml_amd_residency_manager_destroy(mgr);
+        return;
+    }
 
     ggml_amd_residency_manager_register(mgr, "tensor.a", alloc, provider, 1024);
     size_t bytes = ggml_amd_residency_manager_get_resident_bytes(mgr);
     CHECK(bytes == 1024, "resident bytes is 1024 after register");
 
     ggml_amd_residency_manager_destroy(mgr);
+    ggml_amd_allocation_release(alloc);
 }
 
 static void test_residency_register_multiple(void) {

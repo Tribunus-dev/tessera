@@ -9,13 +9,13 @@
 ### System Requirements
 
 - Linux (dma-buf support required)
-- CMake 3.14+
+- CMake 3.21+ when building the HIP provider
 - C++17 compiler (GCC 9+, Clang 10+)
 
 ### Provider-Specific Requirements
 
 **HIP Provider:**
-- ROCm 6.0+ installed
+- ROCm 6.1+ installed
 - HIP runtime and compiler
 - rocBLAS, hipBLAS libraries
 - AMD GPU with gfx900+ architecture
@@ -40,22 +40,29 @@
 ### CMake Options
 
 ```cmake
-option(GGML_AMD "ggml: use AMD platform backend" OFF)
-option(GGML_AMD_HIP "ggml: AMD backend with HIP provider" OFF)
-option(GGML_AMD_VULKAN "ggml: AMD backend with Vulkan provider" OFF)
-option(GGML_AMD_ZENDNN "ggml: AMD backend with ZenDNN provider" OFF)
-option(GGML_AMD_XDNA "ggml: AMD backend with XDNA provider" OFF)
+option(GGML_AMD "ggml: use AMD platform backend (Linux, requires HIP)" OFF)
+option(GGML_AMD_HIP "ggml: AMD backend with HIP provider (ROCm 6.1+, rocBLAS, hipBLAS)" OFF)
+option(GGML_AMD_VULKAN "ggml: build experimental AMD Vulkan adapter (requires Vulkan SDK)" OFF)
+option(GGML_AMD_ZENDNN "ggml: build experimental AMD ZenDNN adapter (requires ZENDNN_ROOT)" OFF)
+option(GGML_AMD_XDNA "ggml: build experimental AMD XDNA adapter (requires XRT headers and library)" OFF)
 option(GGML_AMD_METRICS "ggml: AMD backend with detailed metrics" OFF)
 ```
 
 ### Default Behavior
 
-- `GGML_AMD=OFF` by default until the backend reaches production gate
-- When `GGML_AMD=ON`, providers are auto-detected:
-  - HIP: enabled when ROCm is found
-  - Vulkan: enabled when requested or HIP unavailable
-  - ZenDNN: enabled when requested and found
-  - XDNA: enabled when XRT headers/libraries found
+`GGML_AMD=OFF` by default until the backend reaches production gate.
+
+When `GGML_AMD=ON`, `GGML_AMD_HIP=ON` is also required. HIP is currently the
+only AMD provider with a compute path; CMake fails at configure time if HIP,
+rocBLAS, or hipBLAS is unavailable. It never emits a registry-only AMD backend.
+
+The Vulkan, ZenDNN, and XDNA adapters are opt-in experimental build surfaces:
+
+- Vulkan requires a Vulkan SDK, but does not yet execute AMD graph regions.
+- ZenDNN requires `ZENDNN_ROOT` with the ZenDNN headers and library.
+- XDNA requires XRT headers and `xrt_coreutil` or `xrt_core`. The adapter does
+  not call XRT yet, so it is deliberately not linked to XRT until it owns real
+  XRT resources.
 
 ## Build Instructions
 
@@ -70,7 +77,12 @@ cmake .. \
 make -j$(nproc)
 ```
 
-### Full Build (All Providers)
+### Experimental Adapter Build
+
+Only enable these options after their development packages are installed and
+their runtime adapters have been implemented. This configuration validates the
+build prerequisites; it is not a claim that Vulkan, ZenDNN, or XDNA executes
+model graphs today.
 
 ```bash
 mkdir build-amd && cd build-amd
@@ -91,7 +103,15 @@ Use the `x64-linux-amd` preset:
 
 ```bash
 cmake --preset x64-linux-amd
-cmake --build --preset x64-linux-amd
+cmake --build build-x64-linux-amd --parallel
+```
+
+If ROCm is outside the default prefix, configure with its explicit location:
+
+```bash
+cmake --preset x64-linux-amd -DROCM_PATH=/opt/rocm
+cmake --build build-x64-linux-amd --parallel
+ctest --test-dir build-x64-linux-amd --output-on-failure -R '^test-amd-'
 ```
 
 ## Verification
@@ -102,7 +122,8 @@ cmake --build --preset x64-linux-amd
 ./build-amd/bin/llama-cli --list-backends
 ```
 
-Expected output includes `AMD` in the backend list.
+Expected output includes `AMD` only when the HIP provider and its dependencies
+were successfully configured and linked.
 
 ### Check Provider Probe
 
@@ -125,6 +146,22 @@ Key tests:
 - `test-amd-dmabuf`: dma-buf allocation and mapping
 - `test-amd-scheduler`: region formation and cost model
 - `test-amd-packing-cache`: cache keying and eviction
+
+### Force Rebuild Before Regression Checks
+
+If you see mixed output like `HIP imports a system dma-buf`, it usually means
+an old test executable is still running. Rebuild from a clean tree and run the
+test directly:
+
+```bash
+rm -rf /tmp/tessera-amd-test
+cmake -S . -B /tmp/tessera-amd-test -DGGML_AMD=ON -DGGML_AMD_HIP=ON -DGGML_BUILD_TESTS=ON -DROCM_PATH=/opt/rocm-7.1.1
+cmake --build /tmp/tessera-amd-test --parallel
+/tmp/tessera-amd-test/bin/test-amd-registry
+```
+
+If you are using a distrobox profile, run the same sequence inside the box so
+the ROCm toolchain and `/dev` handles match your runtime.
 
 ## Troubleshooting
 

@@ -19,6 +19,18 @@ extern "C" {
 // one device is found.
 bool ggml_amd_hip_probe(struct ggml_amd_provider * provider, struct ggml_amd_probe_result * result);
 
+// Provider-owned device memory is intentionally exposed through a small host
+// interface so the generic AMD buffer layer never depends on HIP headers.
+bool ggml_amd_hip_is_provider(const struct ggml_amd_provider * provider);
+void * ggml_amd_hip_alloc(struct ggml_amd_provider * provider, size_t size);
+void ggml_amd_hip_free(struct ggml_amd_provider * provider, void * ptr);
+bool ggml_amd_hip_set(struct ggml_amd_provider * provider, void * dst, const void * src, size_t size);
+bool ggml_amd_hip_get(struct ggml_amd_provider * provider, void * dst, const void * src, size_t size);
+bool ggml_amd_hip_copy(struct ggml_amd_provider * provider, void * dst, const void * src, size_t size);
+bool ggml_amd_hip_memset(struct ggml_amd_provider * provider, void * dst, uint8_t value, size_t size);
+bool ggml_amd_hip_synchronize(struct ggml_amd_provider * provider);
+ggml_status ggml_amd_hip_graph_compute(struct ggml_amd_provider * provider, struct ggml_cgraph * graph);
+
 #ifdef GGML_AMD_HIP
 #ifdef __HIP_PLATFORM_AMD__
 

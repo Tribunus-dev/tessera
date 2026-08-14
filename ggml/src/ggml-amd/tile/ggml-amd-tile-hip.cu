@@ -9,6 +9,7 @@
 #include "ggml-amd-tile-hip.h"
 
 #include <hip/hip_runtime.h>
+#include <hip/hip_fp16.h>
 #include <cstdint>
 #include <cstdio>
 

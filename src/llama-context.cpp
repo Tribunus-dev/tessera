@@ -2639,7 +2639,7 @@ ggml_status llama_context::graph_compute(
         }
         if (amd_backend) {
             // Determine phase: prefill if n_tokens > 1, decode otherwise
-            int phase = (gf->n_nodes > 1) ? GGML_AMD_PHASE_PREFILL : GGML_AMD_PHASE_DECODE;
+            int phase = ggml_graph_n_nodes(gf) > 1 ? 0 : 1; // ggml-amd public ABI: prefill, decode
             int n_regions = ggml_backend_amd_schedule_graph(sched.get(), amd_backend, gf, phase);
             if (n_regions > 0) {
                 LLAMA_LOG_DEBUG("%s: AMD scheduler formed %d regions\n", __func__, n_regions);

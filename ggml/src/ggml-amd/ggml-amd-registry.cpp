@@ -61,6 +61,10 @@ ggml_backend_reg_t ggml_backend_amd_reg(void) {
             dev_ctx->provider = ctx->providers[i].get();
 
             ggml_backend_dev_t dev = ggml_amd_create_device(dev_ctx.get(), &reg);
+            if (!dev) {
+                continue;
+            }
+
             ctx->devices.push_back(dev);
             ctx->device_contexts.push_back(std::move(dev_ctx));
         }

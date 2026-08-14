@@ -22,6 +22,9 @@ struct ggml_amd_allocation {
     void * cpu_mapping;
     enum ggml_amd_memory_domain domain;
     enum ggml_amd_coherency coherency;
+    enum ggml_amd_external_handle_kind external_handle_kind;
+    void * producer_context;
+    void (*producer_cleanup)(void * context);
     enum ggml_amd_fd_ownership fd_ownership;
     struct ggml_amd_fence last_writer;
     uint64_t generation;
@@ -38,6 +41,7 @@ struct ggml_amd_import {
 };
 
 struct ggml_amd_region {
+    struct ggml_cgraph * graph;
     int node_start;
     int node_end;
     struct ggml_amd_provider * provider;
@@ -70,10 +74,33 @@ struct ggml_amd_reg_context {
     std::vector<std::unique_ptr<ggml_amd_device_context>> device_contexts;
     std::vector<std::unique_ptr<ggml_amd_provider>> providers;
     enum ggml_amd_scheduler_mode scheduler_mode;
+    std::string provider;
+    std::string kv_home;
     std::string cache_dir;
     std::string metrics_path;
+    bool xdna_enabled;
+    bool vulkan_fallback;
     bool initialized;
 };
+
+int ggml_amd_allocation_dup_fd(struct ggml_amd_allocation * alloc);
+void ggml_amd_allocation_retain(struct ggml_amd_allocation * alloc);
+void ggml_amd_allocation_release(struct ggml_amd_allocation * alloc);
+void ggml_amd_allocation_set_cleanup(
+    struct ggml_amd_allocation * alloc,
+    void * producer_context,
+    void (*producer_cleanup)(void * context));
+struct ggml_amd_allocation * ggml_amd_allocation_wrap_external_fd(
+    int fd,
+    size_t size,
+    size_t alignment,
+    enum ggml_amd_external_handle_kind external_handle_kind,
+    enum ggml_amd_fd_ownership fd_ownership,
+    enum ggml_amd_coherency coherency);
+struct ggml_amd_allocation * ggml_amd_vulkan_create_exportable_allocation(
+    struct ggml_amd_provider * provider,
+    size_t size,
+    size_t alignment);
 
 #ifdef __cplusplus
 }

@@ -14,6 +14,7 @@
 #include "ggml-backend.h"
 #include "ggml-amd-types.h"
 #include "ggml-amd-provider.h"
+#include "ggml-amd-internal.h"
 
 #include <cassert>
 #include <cstdio>
@@ -22,81 +23,40 @@
 #include <memory>
 
 // Internal API declarations
-extern "C" {
-    struct ggml_amd_cost_model;
-    struct ggml_amd_cost_key {
-        std::string device_fingerprint;
-        std::string provider_abi;
-        std::string region_signature;
-        std::string shape_bucket;
-        std::string datatype_signature;
-        std::string packing_version;
-        enum ggml_amd_phase phase;
-    };
-
-    struct ggml_amd_cost_model * ggml_amd_cost_model_create(void);
-    void ggml_amd_cost_model_destroy(struct ggml_amd_cost_model * model);
-    double ggml_amd_cost_model_estimate(struct ggml_amd_cost_model * model, const struct ggml_amd_cost_key * key);
-    void ggml_amd_cost_model_update(struct ggml_amd_cost_model * model, const struct ggml_amd_cost_key * key,
-                                    double execution_us, double queue_us, double fence_us,
-                                    double import_us, double copy_us, double compile_us,
-                                    double packing_us, double eviction_us);
-
-    std::vector<struct ggml_amd_region *> ggml_amd_form_regions(
-        struct ggml_amd_provider ** providers,
-        int n_providers,
-        struct ggml_cgraph * graph);
-
-    void ggml_amd_regions_free(std::vector<struct ggml_amd_region *> & regions);
-}
-
-// Internal struct definitions (from ggml-amd-internal.h)
-struct ggml_amd_region {
-    int node_start;
-    int node_end;
-    struct ggml_amd_provider * provider;
-    struct ggml_tensor ** inputs;
-    int n_inputs;
-    struct ggml_tensor ** outputs;
-    int n_outputs;
-    struct ggml_tensor ** state_tensors;
-    int n_state_tensors;
+struct ggml_amd_cost_model;
+struct ggml_amd_cost_key {
+    std::string device_fingerprint;
+    std::string provider_abi;
+    std::string region_signature;
+    std::string shape_bucket;
+    std::string datatype_signature;
+    std::string packing_version;
     enum ggml_amd_phase phase;
 };
 
-struct ggml_amd_reg_context {
-    std::vector<ggml_backend_dev_t> devices;
-    std::vector<std::unique_ptr<struct ggml_amd_device_context>> device_contexts;
-    std::vector<std::unique_ptr<struct ggml_amd_provider>> providers;
-    enum ggml_amd_scheduler_mode scheduler_mode;
-    std::string cache_dir;
-    std::string metrics_path;
-    bool initialized;
-};
+struct ggml_amd_cost_model * ggml_amd_cost_model_create(void);
+void ggml_amd_cost_model_destroy(struct ggml_amd_cost_model * model);
+double ggml_amd_cost_model_estimate(struct ggml_amd_cost_model * model, const struct ggml_amd_cost_key * key);
+void ggml_amd_cost_model_update(struct ggml_amd_cost_model * model, const struct ggml_amd_cost_key * key,
+                                double execution_us, double queue_us, double fence_us,
+                                double import_us, double copy_us, double compile_us,
+                                double packing_us, double eviction_us);
 
-struct ggml_amd_device_context {
-    int device_index;
-    std::string name;
-    std::string description;
-    enum ggml_amd_device_type type;
-    int pci_domain;
-    int pci_bus;
-    int pci_device;
-    int pci_function;
-    std::string vendor_id;
-    std::string device_id;
-    std::string hsauuid;
-    struct ggml_amd_provider * provider;
-};
+std::vector<struct ggml_amd_region *> ggml_amd_form_regions(
+    struct ggml_amd_provider ** providers,
+    int n_providers,
+    struct ggml_cgraph * graph);
+
+void ggml_amd_regions_free(std::vector<struct ggml_amd_region *> & regions);
 
 // Scheduler API (from ggml-amd-scheduler.cpp)
 struct ggml_amd_scheduler;
-extern "C" {
-    struct ggml_amd_scheduler * ggml_amd_scheduler_create(struct ggml_amd_reg_context * reg_ctx);
-    void ggml_amd_scheduler_destroy(struct ggml_amd_scheduler * sched);
-    int ggml_amd_scheduler_plan(struct ggml_amd_scheduler * sched, struct ggml_cgraph * graph, enum ggml_amd_phase phase);
-    int ggml_amd_scheduler_execute(struct ggml_amd_scheduler * sched);
-}
+struct ggml_amd_scheduler * ggml_amd_scheduler_create(struct ggml_amd_reg_context * reg_ctx);
+void ggml_amd_scheduler_destroy(struct ggml_amd_scheduler * sched);
+int ggml_amd_scheduler_plan(struct ggml_amd_scheduler * sched, struct ggml_cgraph * graph, enum ggml_amd_phase phase);
+int ggml_amd_scheduler_execute(struct ggml_amd_scheduler * sched);
+int ggml_amd_scheduler_get_region_count(struct ggml_amd_scheduler * sched);
+struct ggml_amd_region * ggml_amd_scheduler_get_region(struct ggml_amd_scheduler * sched, int index);
 
 static int g_failures = 0;
 
@@ -116,6 +76,12 @@ static bool mock_supports_op(struct ggml_amd_provider * provider, const struct g
     return true;  // Support all ops
 }
 
+static bool mock_supports_no_ops(struct ggml_amd_provider * provider, const struct ggml_tensor * op) {
+    (void)provider;
+    (void)op;
+    return false;
+}
+
 static ggml_status mock_submit_region(struct ggml_amd_provider * provider, struct ggml_amd_region * region, struct ggml_amd_fence * fence) {
     (void)provider;
     (void)region;
@@ -127,6 +93,18 @@ static struct ggml_amd_provider_i mock_provider_i = {
     .name = "mock-provider",
     .probe = nullptr,
     .supports_op = mock_supports_op,
+    .supports_import = nullptr,
+    .import_allocation = nullptr,
+    .release_import = nullptr,
+    .submit_region = mock_submit_region,
+    .wait_fence = nullptr,
+    .query_memory = nullptr,
+};
+
+static struct ggml_amd_provider_i mock_unsupported_provider_i = {
+    .name = "mock-unsupported-provider",
+    .probe = nullptr,
+    .supports_op = mock_supports_no_ops,
     .supports_import = nullptr,
     .import_allocation = nullptr,
     .release_import = nullptr,
@@ -243,15 +221,17 @@ static void test_form_regions_single_provider(void) {
     std::vector<struct ggml_amd_provider *> providers;
     providers.push_back(provider.get());
 
-    // Create a small graph with 3 nodes
+    // Create a small graph with 3 executable nodes.
     struct ggml_context * ctx = ggml_init({1024 * 1024, nullptr, false});
-    struct ggml_tensor * t1 = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10);
-    struct ggml_tensor * t2 = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10);
-    struct ggml_tensor * t3 = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10);
+    struct ggml_tensor * a = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10);
+    struct ggml_tensor * b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10);
+    struct ggml_tensor * c = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10);
+    struct ggml_tensor * d = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10);
+    struct ggml_tensor * t1 = ggml_add(ctx, a, b);
+    struct ggml_tensor * t2 = ggml_add(ctx, t1, c);
+    struct ggml_tensor * t3 = ggml_add(ctx, t2, d);
 
     struct ggml_cgraph * graph = ggml_new_graph(ctx);
-    ggml_build_forward_expand(graph, t1);
-    ggml_build_forward_expand(graph, t2);
     ggml_build_forward_expand(graph, t3);
 
     auto regions = ggml_amd_form_regions(providers.data(), (int)providers.size(), graph);
@@ -260,6 +240,34 @@ static void test_form_regions_single_provider(void) {
         CHECK(regions[0]->node_start == 0, "region starts at node 0");
         CHECK(regions[0]->node_end == 2, "region ends at node 2");
         CHECK(regions[0]->provider == provider.get(), "region provider matches");
+        CHECK(regions[0]->graph == graph, "region retains its graph");
+    }
+
+    ggml_amd_regions_free(regions);
+    ggml_free(ctx);
+}
+
+static void test_form_regions_unsupported_falls_back(void) {
+    auto provider = std::make_unique<struct ggml_amd_provider>();
+    provider->iface = &mock_unsupported_provider_i;
+    provider->context = nullptr;
+    provider->device_index = 0;
+    provider->device_type = GGML_AMD_DEVICE_CPU;
+
+    std::vector<struct ggml_amd_provider *> providers;
+    providers.push_back(provider.get());
+
+    struct ggml_context * ctx = ggml_init({1024 * 1024, nullptr, false});
+    struct ggml_tensor * a = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10);
+    struct ggml_tensor * b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10);
+    struct ggml_tensor * tensor = ggml_add(ctx, a, b);
+    struct ggml_cgraph * graph = ggml_new_graph(ctx);
+    ggml_build_forward_expand(graph, tensor);
+
+    auto regions = ggml_amd_form_regions(providers.data(), (int)providers.size(), graph);
+    CHECK(regions.size() == 1, "unsupported graph produces one fallback region");
+    if (regions.size() == 1) {
+        CHECK(regions[0]->provider == nullptr, "unsupported region has no AMD provider");
     }
 
     ggml_amd_regions_free(regions);
@@ -297,6 +305,58 @@ static void test_scheduler_plan_empty_graph(void) {
     }
 }
 
+static void test_scheduler_plan_carries_phase(void) {
+    auto reg_ctx = std::make_unique<struct ggml_amd_reg_context>();
+    reg_ctx->scheduler_mode = GGML_AMD_SCHEDULER_DETERMINISTIC;
+    reg_ctx->initialized = true;
+
+    auto provider = std::make_unique<struct ggml_amd_provider>();
+    provider->iface = &mock_provider_i;
+    provider->context = nullptr;
+    provider->device_index = 0;
+    provider->device_type = GGML_AMD_DEVICE_CPU;
+    reg_ctx->providers.push_back(std::move(provider));
+
+    struct ggml_context * ctx = ggml_init({1024 * 1024, nullptr, false});
+    struct ggml_tensor * a = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10);
+    struct ggml_tensor * b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10);
+    struct ggml_tensor * tensor = ggml_add(ctx, a, b);
+    struct ggml_cgraph * graph = ggml_new_graph(ctx);
+    ggml_build_forward_expand(graph, tensor);
+
+    auto sched = ggml_amd_scheduler_create(reg_ctx.get());
+    int n_regions = ggml_amd_scheduler_plan(sched, graph, GGML_AMD_PHASE_PREFILL);
+    CHECK(n_regions == 1, "scheduler plans the supported graph");
+    struct ggml_amd_region * region = ggml_amd_scheduler_get_region(sched, 0);
+    CHECK(region != nullptr && region->phase == GGML_AMD_PHASE_PREFILL, "scheduler carries prefill phase to its region");
+
+    ggml_amd_scheduler_destroy(sched);
+    ggml_free(ctx);
+}
+
+static void test_scheduler_execute_fallback_region(void) {
+    auto reg_ctx = std::make_unique<struct ggml_amd_reg_context>();
+    reg_ctx->scheduler_mode = GGML_AMD_SCHEDULER_DETERMINISTIC;
+    reg_ctx->initialized = true;
+
+    struct ggml_context * ctx = ggml_init({1024 * 1024, nullptr, false});
+    struct ggml_tensor * a = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10);
+    struct ggml_tensor * b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10);
+    struct ggml_tensor * tensor = ggml_add(ctx, a, b);
+    struct ggml_cgraph * graph = ggml_new_graph(ctx);
+    ggml_build_forward_expand(graph, tensor);
+
+    auto sched = ggml_amd_scheduler_create(reg_ctx.get());
+    int n_regions = ggml_amd_scheduler_plan(sched, graph, GGML_AMD_PHASE_DECODE);
+    CHECK(n_regions == 1, "scheduler retains an unsupported fallback region");
+    struct ggml_amd_region * region = ggml_amd_scheduler_get_region(sched, 0);
+    CHECK(region != nullptr && region->provider == nullptr, "fallback region is not assigned to a provider");
+    CHECK(ggml_amd_scheduler_execute(sched) == 0, "scheduler does not submit a fallback region to AMD");
+
+    ggml_amd_scheduler_destroy(sched);
+    ggml_free(ctx);
+}
+
 static void test_scheduler_execute_empty(void) {
     auto reg_ctx = std::make_unique<struct ggml_amd_reg_context>();
     reg_ctx->scheduler_mode = GGML_AMD_SCHEDULER_DETERMINISTIC;
@@ -327,9 +387,12 @@ int main(void) {
     test_cost_model_null_handling();
     test_form_regions_empty_graph();
     test_form_regions_single_provider();
+    test_form_regions_unsupported_falls_back();
     test_scheduler_create_destroy();
     test_scheduler_create_null();
     test_scheduler_plan_empty_graph();
+    test_scheduler_plan_carries_phase();
+    test_scheduler_execute_fallback_region();
     test_scheduler_execute_empty();
     test_scheduler_execute_null();
 

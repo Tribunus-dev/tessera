@@ -114,7 +114,6 @@
       "cacheVariables": {
         "GGML_AMD": "ON",
         "GGML_AMD_HIP": "ON",
-        "GGML_AMD_VULKAN": "ON",
         "GGML_AMD_METRICS": "ON"
       }
     },

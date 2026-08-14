@@ -44,7 +44,8 @@ void ggml_amd_scheduler_destroy(struct ggml_amd_scheduler * sched) {
 
 static int ggml_amd_scheduler_plan_deterministic(
     struct ggml_amd_scheduler * sched,
-    struct ggml_cgraph * graph) {
+    struct ggml_cgraph * graph,
+    enum ggml_amd_phase phase) {
 
     std::vector<ggml_amd_provider *> providers;
     for (auto & prov : sched->reg_ctx->providers) {
@@ -52,14 +53,18 @@ static int ggml_amd_scheduler_plan_deterministic(
     }
 
     sched->current_regions = ggml_amd_form_regions(providers.data(), (int)providers.size(), graph);
+    for (auto region : sched->current_regions) {
+        region->phase = phase;
+    }
     return (int)sched->current_regions.size();
 }
 
 static int ggml_amd_scheduler_plan_adaptive(
     struct ggml_amd_scheduler * sched,
-    struct ggml_cgraph * graph) {
+    struct ggml_cgraph * graph,
+    enum ggml_amd_phase phase) {
 
-    return ggml_amd_scheduler_plan_deterministic(sched, graph);
+    return ggml_amd_scheduler_plan_deterministic(sched, graph, phase);
 }
 
 int ggml_amd_scheduler_plan(
@@ -75,13 +80,13 @@ int ggml_amd_scheduler_plan(
 
     switch (sched->mode) {
         case GGML_AMD_SCHEDULER_DETERMINISTIC:
-            return ggml_amd_scheduler_plan_deterministic(sched, graph);
+            return ggml_amd_scheduler_plan_deterministic(sched, graph, phase);
         case GGML_AMD_SCHEDULER_ADAPTIVE:
-            return ggml_amd_scheduler_plan_adaptive(sched, graph);
+            return ggml_amd_scheduler_plan_adaptive(sched, graph, phase);
         case GGML_AMD_SCHEDULER_DIAGNOSTIC:
-            return ggml_amd_scheduler_plan_deterministic(sched, graph);
+            return ggml_amd_scheduler_plan_deterministic(sched, graph, phase);
         case GGML_AMD_SCHEDULER_SINGLE_PROVIDER:
-            return ggml_amd_scheduler_plan_deterministic(sched, graph);
+            return ggml_amd_scheduler_plan_deterministic(sched, graph, phase);
         default:
             return -1;
     }
