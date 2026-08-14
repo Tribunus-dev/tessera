@@ -462,6 +462,55 @@ model** (canvas + basic shapes + z-order) ready for the P1 UI wave. **No
 slides MVP at P0** because Impress is inherently a richer surface; the
 slides MVP is at P1.
 
+**Known blocker - 0.8/0.9/0.11 (the LO UNO bridge), confirmed 2026-08-14:**
+`EmbeddedPythonBridge`'s in-process embedding is not currently viable, on top
+of the "architecturally suspect... zero callers, zero tests" flag this plan
+already carried. Two independent, empirically-verified problems, not a
+static-reasoning guess:
+
+1. **Python version mismatch, confirmed by reading the two hard-coded
+   sources of truth.** `Package.swift`'s `CPythonBridge` target links
+   Homebrew's `Python.framework` at a version pinned by `let pythonVersion =
+   "3.14"` (confirmed present: `/opt/homebrew/opt/python@3.14` -> Python
+   3.14.6). `LibreOfficeBootstrap.pythonHome(for:)` points
+   `PYTHONHOME`/`PYTHONPATH` at LibreOffice's own bundled interpreter, which
+   is a *different, separately-built* Python: `LibreOfficePython.framework/
+   Versions/3.12` (confirmed present on this machine, version 3.12). The
+   interpreter actually mapped into the process is fixed at link time by
+   `.linkedFramework("Python")` (3.14) - setting `PYTHONHOME` at runtime to a
+   3.12 tree does not change which `libpython` is running. `pyuno.so` (the
+   UNO bridge extension LO ships, found at `Contents/Frameworks/pyuno.so`)
+   was built against CPython 3.12's C API, which is not ABI-stable across
+   minor versions. Loading a 3.12-targeted extension into a 3.14 interpreter
+   is undefined behavior (crash or memory corruption), not a clean import
+   error - too risky to attempt in-process without first re-pinning
+   `CPythonBridge` to 3.12.
+2. **Even bypassing the version question and invoking LibreOffice's own
+   matching `python3.12` binary directly and in isolation (a safe subprocess
+   probe, no shared process state) hangs indefinitely** - `timeout 20 ...
+   python3.12 -c "print(...)"` never produces output, killed only by the
+   timeout, reproduced 3x (bare env, `-S`, with the bridge's real env vars).
+   `xattr -l` on that binary shows `com.apple.quarantine` set, and `spctl -a
+   -v` rejects it ("the code is valid but does not seem to be an app").
+   Gatekeeper's assessment of a quarantined, non-app Mach-O binary invoked
+   directly (not via LaunchServices) appears to hang rather than fail fast
+   in this non-interactive environment. Clearing quarantine on an installed
+   application's internals is a system/security-setting change outside this
+   project's scope to make unilaterally, so this was not attempted.
+
+Recommendation: this is exactly the risk the original readiness check
+flagged - do not build `CalcBridgeFilter`/`WriterBridgeFilter`/the
+`tessera_lo_service.py` schema update (0.8/0.9/0.11) on top of
+`EmbeddedPythonBridge` as-is. The two fixes are independent: re-pinning
+`CPythonBridge` to Python 3.12 addresses point 1 but not point 2,
+which needs a human to clear the quarantine flag (or a signed/notarized
+LibreOffice install) before any in-process embedding can even start up.
+Until then, `LOEnvironment.Mode.processPool` (soffice subprocess + UNO
+socket, LO's own documented approach, already stubbed as an enum case) is
+the lower-risk path and matches what the earlier readiness assessment
+suspected should have been used from the start. 0.8/0.9/0.11 stay **blocked,
+not implemented**, pending that architecture decision.
+
 ### 6b. Phase 1 - the second wave (19 deliverables)
 
 | # | Deliverable | Surface |
