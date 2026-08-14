@@ -37,6 +37,9 @@ final class BlockTests: XCTestCase {
             // Draw data model (P0 0.12): a single vector shape and a
             // group container over shape/shapeGroup members.
             .shape, .shapeGroup,
+            // Writer section/frame (P0 0.5): multi-column/break regions
+            // and anchored text-box containers.
+            .section, .frame,
         ]
         XCTAssertEqual(Set(BlockType.allCases), expected)
     }
@@ -83,6 +86,88 @@ final class BlockTests: XCTestCase {
         let decoded = try DocumentAST.from(jsonData: try doc.jsonData())
         XCTAssertEqual(decoded.blocks[group.id]?.children, [child.id])
         XCTAssertEqual(decoded.blocks[child.id]?.shape?.kind, .star)
+    }
+
+    // MARK: - Block + Frame
+
+    func testFrameBlockRoundTripsThroughAttributes() {
+        let props = FrameProperties(x: 5, y: 6, width: 100, height: 200, anchor: .page)
+        var block = Block(type: .frame)
+        block.frame = props
+        XCTAssertEqual(block.frame, props)
+        XCTAssertNotNil(block.attributes["frame"])
+
+        block.frame = nil
+        XCTAssertNil(block.attributes["frame"])
+        XCTAssertNil(block.frame)
+    }
+
+    func testFrameAccessorIsNilForNonFrameBlocks() {
+        var block = Block(type: .paragraph)
+        block.frame = FrameProperties(x: 0, y: 0, width: 1, height: 1)
+        XCTAssertNil(block.frame)
+        XCTAssertNil(block.attributes["frame"])
+    }
+
+    func testFrameHoldsFlowedChildContent() throws {
+        let paragraph = Block(type: .paragraph, content: [InlineRun(text: "boxed text")])
+        var frame = Block(type: .frame)
+        frame.frame = FrameProperties(x: 0, y: 0, width: 150, height: 50, anchor: .paragraph)
+        frame.children = [paragraph.id]
+        let doc = DocumentAST(blocks: [frame.id: frame, paragraph.id: paragraph], rootChildren: [frame.id])
+        let decoded = try DocumentAST.from(jsonData: try doc.jsonData())
+        XCTAssertEqual(decoded.blocks[frame.id]?.children, [paragraph.id])
+        XCTAssertEqual(decoded.blocks[frame.id]?.frame?.anchor, .paragraph)
+        XCTAssertEqual(decoded.blocks[paragraph.id]?.content.first?.text, "boxed text")
+    }
+
+    // MARK: - Section + SectionStore
+
+    func testMakeSectionRegistersAndLinksASection() {
+        let p1 = Block(type: .paragraph, content: [InlineRun(text: "one")])
+        let p2 = Block(type: .paragraph, content: [InlineRun(text: "two")])
+        var ast = DocumentAST(blocks: [p1.id: p1, p2.id: p2], rootChildren: [])
+        let sectionBlock = SectionStore.makeSection(kind: .continuous, columns: 2, children: [p1.id, p2.id], in: &ast)
+        ast.blocks[sectionBlock.id] = sectionBlock
+        ast.rootChildren = [sectionBlock.id]
+
+        XCTAssertEqual(sectionBlock.type, .section)
+        XCTAssertEqual(sectionBlock.children, [p1.id, p2.id])
+        let resolved = SectionStore.section(for: sectionBlock, in: ast)
+        XCTAssertEqual(resolved?.columns, 2)
+        XCTAssertEqual(resolved?.kind, .continuous)
+    }
+
+    func testSectionRoundTripsThroughDocumentMeta() throws {
+        let p1 = Block(type: .paragraph, content: [InlineRun(text: "one")])
+        let p2 = Block(type: .paragraph, content: [InlineRun(text: "two")])
+        var ast = DocumentAST(blocks: [p1.id: p1, p2.id: p2], rootChildren: [])
+        let sectionBlock = SectionStore.makeSection(kind: .nextPage, columns: 3, columnGap: 24, children: [p1.id, p2.id], in: &ast)
+        ast.blocks[sectionBlock.id] = sectionBlock
+        ast.rootChildren = [sectionBlock.id]
+
+        let decoded = try DocumentAST.from(jsonData: try ast.jsonData())
+        let decodedSection = decoded.blocks[sectionBlock.id].flatMap { SectionStore.section(for: $0, in: decoded) }
+        XCTAssertEqual(decodedSection?.columns, 3)
+        XCTAssertEqual(decodedSection?.columnGap, 24)
+        XCTAssertEqual(decodedSection?.kind, .nextPage)
+        XCTAssertEqual(decoded.blocks[sectionBlock.id]?.children, [p1.id, p2.id])
+    }
+
+    func testDocumentMetaWithoutSectionsKeyDecodesAsEmpty() throws {
+        // Documents written before BlockType.section existed have a
+        // "meta" object with no "sections" key at all - the decoder
+        // must default to empty, not throw.
+        let json = """
+        {"blocks": {}, "rootChildren": [], "meta": {"pageLayout": {
+            "pageWidth": 595, "pageHeight": 842,
+            "marginTop": 72, "marginBottom": 72, "marginLeft": 72, "marginRight": 72,
+            "columnCount": 1, "columnGap": 18, "pageColor": "#FFFFFF"
+        }}}
+        """
+        let decoded = try DocumentAST.from(jsonData: Data(json.utf8))
+        XCTAssertTrue(decoded.meta.sections.isEmpty)
+        XCTAssertEqual(decoded.meta.pageLayout.pageWidth, 595)
     }
 
     // MARK: - InlineRun

@@ -228,7 +228,7 @@ public struct Note: Codable, Sendable, Identifiable, Hashable {
             for child in block.children {
                 appendPlainText(blockID: child, ast: ast, into: &out)
             }
-        case .shapeGroup:
+        case .shapeGroup, .section, .frame:
             for child in block.children {
                 appendPlainText(blockID: child, ast: ast, into: &out)
             }
@@ -237,7 +237,8 @@ public struct Note: Codable, Sendable, Identifiable, Hashable {
         case .toggle, .image, .divider, .equation, .comment, .trackInsertion, .trackDeletion:
             break
         }
-        for child in block.children where block.type != .list && block.type != .table && block.type != .shapeGroup {
+        for child in block.children where block.type != .list && block.type != .table
+            && block.type != .shapeGroup && block.type != .section && block.type != .frame {
             appendPlainText(blockID: child, ast: ast, into: &out)
         }
     }

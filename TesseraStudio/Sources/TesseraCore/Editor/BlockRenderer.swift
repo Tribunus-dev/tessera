@@ -102,6 +102,10 @@ public struct BlockRenderer: Sendable {
             return renderShapePlaceholder(block, mode: mode)
         case .shapeGroup:
             return renderShapeGroupPlaceholder(block, mode: mode)
+        case .section:
+            return renderSectionMarker(block, mode: mode)
+        case .frame:
+            return renderFrameMarker(block, mode: mode)
         }
     }
 
@@ -207,6 +211,32 @@ public struct BlockRenderer: Sendable {
         let label = "[Shape group - \(block.children.count) shapes]"
         return NSAttributedString(
             string: label,
+            attributes: [
+                .font: fontResolver.font(from: theme.bodyFont),
+                .foregroundColor: PlatformColor.secondaryLabelColor,
+            ]
+        )
+    }
+
+    private func renderSectionMarker(_ block: Block, mode: EditorMode) -> NSAttributedString {
+        // A section's column/kind data lives in DocumentMeta.sections
+        // (SectionStore), not reachable from a lone Block - render()
+        // only sees one block at a time. The marker is a structural cue
+        // only; TesseraTextContentManager is responsible for flattening
+        // the section's children around it, same as .list/.toggle.
+        return NSAttributedString(
+            string: "[Section]",
+            attributes: [
+                .font: fontResolver.font(from: theme.bodyFont),
+                .foregroundColor: PlatformColor.secondaryLabelColor,
+            ]
+        )
+    }
+
+    private func renderFrameMarker(_ block: Block, mode: EditorMode) -> NSAttributedString {
+        let anchor = block.frame?.anchor.rawValue ?? "paragraph"
+        return NSAttributedString(
+            string: "[Frame: \(anchor)]",
             attributes: [
                 .font: fontResolver.font(from: theme.bodyFont),
                 .foregroundColor: PlatformColor.secondaryLabelColor,

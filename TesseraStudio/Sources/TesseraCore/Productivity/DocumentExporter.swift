@@ -298,6 +298,26 @@ public final class DocumentExporter: Sendable {
                 items.append(try renderBlock(child, in: ast))
             }
             return "<div class=\"shape-group\">\n\(items.joined(separator: "\n"))\n</div>"
+
+        case .section:
+            var items: [String] = []
+            for childID in block.children {
+                guard let child = ast.blocks[childID] else { continue }
+                items.append(try renderBlock(child, in: ast))
+            }
+            let columns = SectionStore.section(for: block, in: ast)?.columns ?? 1
+            let style = columns > 1 ? " style=\"column-count:\(columns)\"" : ""
+            return "<div class=\"section\"\(style)>\n\(items.joined(separator: "\n"))\n</div>"
+
+        case .frame:
+            var items: [String] = []
+            for childID in block.children {
+                guard let child = ast.blocks[childID] else { continue }
+                items.append(try renderBlock(child, in: ast))
+            }
+            let f = block.frame
+            let style = "position:absolute;left:\(f?.x ?? 0)px;top:\(f?.y ?? 0)px;width:\(f?.width ?? 0)px;height:\(f?.height ?? 0)px;"
+            return "<div class=\"frame\" style=\"\(style)\">\n\(items.joined(separator: "\n"))\n</div>"
         }
     }
 

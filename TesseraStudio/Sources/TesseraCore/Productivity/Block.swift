@@ -76,6 +76,18 @@ public enum BlockType: String, Codable, Sendable, Hashable, CaseIterable {
     /// container convention. Carries no geometry of its own at P0 - group
     /// bounds are derived from members, not stored.
     case shapeGroup
+    /// A multi-column region or page/section break, carrying the
+    /// contained blocks as `children`. `attributes["sectionRef"]` points
+    /// into ``DocumentMeta/sections`` - see ``SectionStore``. Two section
+    /// blocks can share one `DocumentSection` identity (a section that continues
+    /// across a page break).
+    case section
+    /// An anchored, flowed-content container (a text box) - distinct
+    /// from `.image` (a single picture) and `.shape` (a single vector
+    /// primitive with no flowed content): a frame holds arbitrary child
+    /// blocks. `attributes["frame"]` holds the JSON-encoded
+    /// ``FrameProperties`` (position, size, anchor) - see ``Block/frame``.
+    case frame
 }
 
 // MARK: - InlineRun
@@ -187,6 +199,32 @@ extension Block {
     }
 }
 
+// MARK: - Block + Frame
+
+extension Block {
+    /// Reads/writes the block's ``FrameProperties`` via
+    /// `attributes["frame"]`. Same bridge shape as ``Block/shape`` and
+    /// for the same reason: `FrameProperties`'s own `Codable`
+    /// conformance stays the single source of truth for the wire shape.
+    public var frame: FrameProperties? {
+        get {
+            guard type == .frame, let raw = attributes["frame"] else { return nil }
+            guard let data = try? JSONEncoder().encode(raw) else { return nil }
+            return try? JSONDecoder().decode(FrameProperties.self, from: data)
+        }
+        set {
+            guard type == .frame else { return }
+            guard let newValue else {
+                attributes.removeValue(forKey: "frame")
+                return
+            }
+            guard let data = try? JSONEncoder().encode(newValue),
+                  let raw = try? JSONDecoder().decode(AnyCodable.self, from: data) else { return }
+            attributes["frame"] = raw
+        }
+    }
+}
+
 // MARK: - DocumentPageLayout
 
 /// Page layout for a document. Stored in ``DocumentAST/meta``.
@@ -246,11 +284,57 @@ public struct DocumentPageLayout: Codable, Sendable, Hashable {
 // MARK: - DocumentMeta
 
 /// Top-level document metadata. Stored as a field in ``DocumentAST``.
-public struct DocumentMeta: Codable, Sendable, Hashable {
+public struct DocumentMeta: Sendable, Hashable {
     public var pageLayout: DocumentPageLayout
+    /// Section identities referenced by `.section` blocks via
+    /// `attributes["sectionRef"]` - see ``SectionStore``. Keyed by
+    /// section ID.
+    public var sections: [UUID: DocumentSection]
 
-    public init(pageLayout: DocumentPageLayout = DocumentPageLayout()) {
+    public init(
+        pageLayout: DocumentPageLayout = DocumentPageLayout(),
+        sections: [UUID: DocumentSection] = [:]
+    ) {
         self.pageLayout = pageLayout
+        self.sections = sections
+    }
+}
+
+extension DocumentMeta: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case pageLayout
+        case sections
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.pageLayout = try container.decode(DocumentPageLayout.self, forKey: .pageLayout)
+        // `sections` is new; absent entirely in documents written before
+        // BlockType.section existed. Same [String: V] -> [UUID: V]
+        // bridge DocumentAST.blocks uses, for the same reason: JSONDecoder
+        // doesn't decode a UUID-keyed Dictionary from a JSON object.
+        let rawSections = try container.decodeIfPresent([String: DocumentSection].self, forKey: .sections) ?? [:]
+        var sections: [UUID: DocumentSection] = [:]
+        for (key, value) in rawSections {
+            guard let uuid = UUID(uuidString: key) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .sections,
+                    in: container,
+                    debugDescription: "invalid UUID '\(key)' as section key"
+                )
+            }
+            sections[uuid] = value
+        }
+        self.sections = sections
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(pageLayout, forKey: .pageLayout)
+        let rawSections = sections.reduce(into: [String: DocumentSection]()) { acc, entry in
+            acc[entry.key.uuidString] = entry.value
+        }
+        try container.encode(rawSections, forKey: .sections)
     }
 }
 

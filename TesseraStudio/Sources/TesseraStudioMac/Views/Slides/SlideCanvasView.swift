@@ -147,6 +147,10 @@ private struct SlideBlockRow: View {
             // P0 table); this placeholder just keeps the switch exhaustive
             // and legible in the meantime, matching the .table fallback.
             Text(block.shape?.text?.plainText ?? "[Shape]").font(.caption).foregroundStyle(.secondary)
+        case .section, .frame:
+            // Writer-only concepts, not expected on a slide canvas; keeps
+            // the switch exhaustive rather than crashing if one appears.
+            Text(SlideDeck.plainText(of: ast)).font(.caption).foregroundStyle(.secondary)
         }
     }
 
