@@ -511,6 +511,50 @@ the lower-risk path and matches what the earlier readiness assessment
 suspected should have been used from the start. 0.8/0.9/0.11 stay **blocked,
 not implemented**, pending that architecture decision.
 
+**Resolved 2026-08-14, same day, different shape than recommended above.**
+The user reinstalled LibreOffice cleanly (`brew reinstall --cask
+libreoffice`), which fixed the OUTER `.app` bundle's code signature
+(`spctl -a -v` now reports `accepted, source=Notarized Developer ID`,
+previously "a sealed resource is missing or invalid"). Point 2 above was
+re-verified AFTER that reinstall, not assumed fixed by association: LO's
+bundled `python3.12` binary specifically still hangs (`timeout 10 ...
+python3.12 --version` still had to be SIGKILLed) - the app-level reinstall
+did not touch whatever is wrong with that inner binary's quarantine state.
+Point 1 (the 3.14-vs-3.12 ABI mismatch) is architecturally independent of
+either fix and still stands on its own.
+
+Rather than build the recommended `processPool` (soffice `--accept` + UNO
+socket + hand-rolled URP client) architecture, the actual implementation
+uses `soffice --headless --convert-to <format> --outdir <dir> <file>` -
+LibreOffice's own well-supported, synchronous, one-shot CLI conversion mode
+(`LibreOfficeConverter.swift`, `Sources/TesseraCore/Productivity/
+ImportExport/`). This sidesteps BOTH blocking problems at once: it never
+touches `python3.12` (only the main `soffice` executable, which now passes
+Gatekeeper), and it never links `pyuno.so` into any Tessera process at all,
+so the 3.14/3.12 ABI question doesn't arise. `-env:UserInstallation=` gives
+every call an isolated profile dir, avoiding the well-known "second headless
+soffice hangs waiting for the first one's profile lock" failure mode
+(verified empirically: two concurrent conversions with distinct profile
+dirs both completed cleanly).
+
+`WriterBridgeFilter.swift` covers the two Writer formats `TesseraFormatBridge`
+has no reader for (ODT, RTF) by converting them to DOCX first, then handing
+the result to `TesseraFormatBridge`'s existing python-docx path.
+`CalcBridgeFilter.swift` covers ODS and legacy XLS (import AND export, per
+0.9) by round-tripping through CSV, reusing `SpreadsheetDigester`'s existing
+live-formula-aware CSV pipeline instead of writing a second spreadsheet
+parser - see that file's doc comment for the resulting fidelity boundary
+(formulas survive Tessera -> ODS/XLS; ODS/XLS -> Tessera flattens any
+formula already in the source file to its last-computed value, since LO's
+CSV export only ever writes computed values).
+
+**0.11 was deliberately NOT done as originally scoped.** Updating
+`tessera_lo_service.py`'s schema only makes sense if something calls into
+it, and nothing does anymore - that file's entire premise (in-process UNO
+via the embedded Python interpreter) is the path this resolution avoids for
+the two confirmed reasons above. It is left untouched rather than partially
+updated to describe a schema its own bootstrap path can't safely serve.
+
 ### 6b. Phase 1 - the second wave (19 deliverables)
 
 | # | Deliverable | Surface |
