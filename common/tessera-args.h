@@ -216,6 +216,18 @@ struct common_tessera_params {
     std::string ane_profile_out;
     // Verbose dispatch output (L5 joint progress, tensor-level MSE, etc.).
     bool verbose = false;
+    // AMD backend configuration. Mirrors the GGML_AMD_* env vars consumed
+    // by ggml-amd at backend init time. The tessera_amd_apply_config()
+    // bridge (common/tessera-amd.{h,cpp}) reads these fields and sets the
+    // corresponding env vars before ggml_backend_load_all() runs, so the
+    // CLI flags take precedence over any ambient env state.
+    std::string amd_provider = "auto";      // auto|hip|vulkan|cpu|xdna
+    std::string amd_mode = "deterministic"; // deterministic|adaptive|diagnostic|single-provider
+    std::string amd_kv_home = "auto";       // auto|hip|cpu
+    std::string amd_cache_dir = "";         // empty = use default
+    std::string amd_metrics_path = "";      // empty = no metrics
+    bool        amd_xdna = false;           // enable XDNA NPU
+    bool        amd_vulkan_fallback = true; // allow Vulkan fallback
 };
 
 const common_tessera_params & common_get_tessera_params();

@@ -1,6 +1,6 @@
 # ggml-amd — unified AMD backend + TILE_AMD layout — Final
 
-> **Status: Final** — Q1-6 decisions locked plus TILE_AMD AMD-layout GGUF spec for Strix Halo 128GB + R9700 32GB hetero inference. See `.agents/plans/2026-08-08-tile-amd-hetro.md`.
+> **Status: SUPERSEDED** — This document describes the original monolithic source-copy direction. It has been superseded by `docs/backend/ggml-amd-implementation-plan.md` (2026-08-13), which implements ggml-amd as a facade over reusable provider adapters (HIP, Vulkan, ZenDNN, XDNA) rather than copied sources, and keeps the tile-neutral safetensors artifact as canonical rather than introducing a public `GGML_TYPE_TILE_AMD`. This document remains as a historical record of the original investigation.
 
 ## Overview
 

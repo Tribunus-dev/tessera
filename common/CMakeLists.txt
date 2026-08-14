@@ -157,6 +157,17 @@ if (APPLE AND GGML_METAL)
         "-framework CoreML" "-framework Foundation" "-framework IOSurface" "-framework Metal")
 endif()
 
+# The AMD backend configuration bridge reads the tessera CLI's AMD fields
+# (common_tessera_params.amd_*) and sets the corresponding GGML_AMD_* env
+# vars before ggml_backend_load_all() runs. Gated on GGML_AMD so the file
+# is only compiled when the backend is present.
+if (GGML_AMD)
+    target_sources(${TARGET} PRIVATE
+        tessera-amd.cpp
+        tessera-amd.h)
+    target_compile_definitions(${TARGET} PRIVATE GGML_USE_AMD)
+endif()
+
 set_target_properties(${TARGET} PROPERTIES
     VERSION ${LLAMA_INSTALL_VERSION}
     SOVERSION 0

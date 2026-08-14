@@ -13,6 +13,10 @@
 #include "llama-ext.h"
 #include "llama.h"
 
+#ifdef GGML_USE_AMD
+#include "ggml-amd.h"
+#endif
+
 #include <cinttypes>
 #include <cmath>
 #include <cstring>
@@ -2620,6 +2624,29 @@ ggml_status llama_context::graph_compute(
     for (const auto & set_n_threads_fn : set_n_threads_fns) {
         set_n_threads_fn.second(set_n_threads_fn.first, n_threads);
     }
+
+    // AMD region scheduler: pre-assign nodes to AMD backends based on
+    // region formation. Runs before auto_select so the heuristic can
+    // override if needed.
+#ifdef GGML_USE_AMD
+    {
+        ggml_backend_t amd_backend = nullptr;
+        for (auto backend : backend_ptrs) {
+            if (ggml_backend_is_amd(backend)) {
+                amd_backend = backend;
+                break;
+            }
+        }
+        if (amd_backend) {
+            // Determine phase: prefill if n_tokens > 1, decode otherwise
+            int phase = (gf->n_nodes > 1) ? GGML_AMD_PHASE_PREFILL : GGML_AMD_PHASE_DECODE;
+            int n_regions = ggml_backend_amd_schedule_graph(sched.get(), amd_backend, gf, phase);
+            if (n_regions > 0) {
+                LLAMA_LOG_DEBUG("%s: AMD scheduler formed %d regions\n", __func__, n_regions);
+            }
+        }
+    }
+#endif
 
     // Project B: per-graph backend auto-select. Opt-in via
     // TESSERA_AUTO_SELECT=1 because the heuristic re-assigns nodes to

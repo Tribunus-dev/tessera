@@ -4277,6 +4277,65 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             tessera_params.ane_profile_out = value;
         }
     ).set_examples({LLAMA_EXAMPLE_TESSERA}));
+    // AMD backend configuration. The tessera_amd_apply_config() bridge
+    // (common/tessera-amd.{h,cpp}) reads these fields and sets the
+    // corresponding GGML_AMD_* env vars before ggml_backend_load_all()
+    // runs. CLI flags take precedence over any ambient env state.
+    add_opt(common_arg(
+        {"--tessera-amd-provider"}, "VALUE",
+        "Tessera: AMD backend provider selection: auto|hip|vulkan|cpu|xdna. "
+        "Default: auto (probe in priority order). Mirrors GGML_AMD_PROVIDER.",
+        [](common_params &, const std::string & value) {
+            tessera_params.amd_provider = value;
+        }
+    ).set_env("GGML_AMD_PROVIDER").set_examples({LLAMA_EXAMPLE_TESSERA}));
+    add_opt(common_arg(
+        {"--tessera-amd-mode"}, "VALUE",
+        "Tessera: AMD backend scheduling mode: deterministic|adaptive|diagnostic|single-provider. "
+        "Default: deterministic. Mirrors GGML_AMD_MODE.",
+        [](common_params &, const std::string & value) {
+            tessera_params.amd_mode = value;
+        }
+    ).set_env("GGML_AMD_MODE").set_examples({LLAMA_EXAMPLE_TESSERA}));
+    add_opt(common_arg(
+        {"--tessera-amd-kv-home"}, "VALUE",
+        "Tessera: AMD backend KV-cache home: auto|hip|cpu. "
+        "Default: auto (backend decides). Mirrors GGML_AMD_KV_HOME.",
+        [](common_params &, const std::string & value) {
+            tessera_params.amd_kv_home = value;
+        }
+    ).set_env("GGML_AMD_KV_HOME").set_examples({LLAMA_EXAMPLE_TESSERA}));
+    add_opt(common_arg(
+        {"--tessera-amd-cache-dir"}, "PATH",
+        "Tessera: AMD backend kernel/shader cache directory. "
+        "Default: empty (backend uses its default location). Mirrors GGML_AMD_CACHE_DIR.",
+        [](common_params &, const std::string & value) {
+            tessera_params.amd_cache_dir = value;
+        }
+    ).set_env("GGML_AMD_CACHE_DIR").set_examples({LLAMA_EXAMPLE_TESSERA}));
+    add_opt(common_arg(
+        {"--tessera-amd-metrics"}, "PATH",
+        "Tessera: AMD backend detailed metrics output path. "
+        "Default: empty (no metrics written). Mirrors GGML_AMD_METRICS.",
+        [](common_params &, const std::string & value) {
+            tessera_params.amd_metrics_path = value;
+        }
+    ).set_env("GGML_AMD_METRICS").set_examples({LLAMA_EXAMPLE_TESSERA}));
+    add_opt(common_arg(
+        {"--tessera-amd-xdna"},
+        "Tessera: enable AMD XDNA NPU backend. Mirrors GGML_AMD_XDNA=on.",
+        [](common_params &) {
+            tessera_params.amd_xdna = true;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}));
+    add_opt(common_arg(
+        {"--tessera-amd-no-vulkan-fallback"},
+        "Tessera: disable Vulkan fallback for the AMD backend. "
+        "By default Vulkan fallback is enabled; this flag sets GGML_AMD_VULKAN_FALLBACK=0.",
+        [](common_params &) {
+            tessera_params.amd_vulkan_fallback = false;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}));
     add_opt(common_arg(
         {"--progress-file"}, "PATH",
         "Tessera: write NDJSON progress events to this path (one per tick, ~5/s)",

@@ -231,7 +231,7 @@ namespace tessera_debug {
     // fp_accumulator_dtype: 0=F32, 1=F16, 2=BF16, 3=TF32
     // rounding_mode:        0=RTN, 1=RTZ, 2=stochastic, 3=platform-default
     // denormal_mode:        0=IEEE, 1=FTZ
-    // backend_id:           0=CPU, 1=CUDA, 2=METAL, 3=other
+    // backend_id:           0=CPU, 1=CUDA, 2=METAL, 3=other, 4=AMD
     void set_fp_env(uint32_t fp_accumulator_dtype,
                    uint32_t rounding_mode,
                    uint32_t denormal_mode,

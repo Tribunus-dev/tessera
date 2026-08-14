@@ -99,6 +99,15 @@ target_include_directories(${TARGET} PUBLIC
 
 target_compile_features(${TARGET} PUBLIC cxx_std_17)
 
+# AMD dequant dump hook. Gated on GGML_AMD so the file is only compiled
+# when the backend is present. The source file is also guarded by
+# #ifdef GGML_USE_AMD for safety.
+if (GGML_AMD)
+    target_sources(${TARGET} PRIVATE
+        tessera-amd-dequant.cpp)
+    target_compile_definitions(${TARGET} PRIVATE GGML_USE_AMD)
+endif()
+
 # LOG_WRN/LOG_ERR in tessera-debug.cpp need the low-level log macros
 # from llama-log. Guarded so the first caller wins; either common/
 # (which already links llama-log) or the backends may bring it in

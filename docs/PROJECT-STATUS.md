@@ -1308,6 +1308,96 @@ payloads:
   time/goal/session-boxed override that auto-approves within scope, is
   always logged, and always expires.
 
+### Priority 10 — ggml-amd first-class backend (AMD CPU + GPU + NPU)
+
+Architect-approved plan at `docs/backend/ggml-amd-implementation-plan.md`
+(2026-08-13). Build `ggml-amd` as the single AMD platform backend for Linux
+systems combining AMD CPU, AMD GPU(s), and AMD XDNA NPU. The public backend
+owns device discovery, graph-visible memory (dma-buf first-class from Wave
+1), synchronization, scheduling, residency, provider selection, packing
+caches, metrics, and configuration. HIP, Vulkan, ZenDNN, and XDNA remain
+internal compute providers whose implementations are reused via adapters
+rather than copied.
+
+**Status: Implementation started (2026-08-13).** All 10 waves in flight.
+Wave 0 (cleanup of superseded monolithic direction) complete. Target is
+Apple-platform architectural parity: on Apple, the platform is
+CPU+Metal+ANE+IOSurface; on AMD, the platform is CPU+HIP+XDNA+dma-buf.
+
+**Ten implementation waves:**
+
+- **Wave 0 — Contract and evidence baseline (COMPLETE).** Mark
+  `docs/backend/AMD.md` as superseded, remove copied Vulkan/ZenDNN sources
+  from `ggml/src/ggml-amd/`, freeze public invariants and acceptance gates.
+- **Wave 1 — dma-buf allocation + fence foundation.** First-class dma-buf
+  allocation (SHARED_SYSTEM via `/dev/dma_heap/system`, GPU_LOCAL_EXPORTABLE
+  via DRM PRIME, PROVIDER_PRIVATE, IMPORTED_EXTERNAL). Fence abstraction
+  with multi-kind support (HOST, SYNC_FILE, HIP_EVENT, VULKAN_TIMELINE,
+  XRT). Gate: CPU/HIP zero-copy round trip, zero leaked fds.
+- **Wave 2 — Registry + provider facade.** Public header `ggml-amd.h`,
+  provider interface vtable, device enumeration (AMD0-CPU, AMD0-IGPU,
+  AMD1-GPU, AMD0-NPU, AMD-HETERO), CMake integration (`GGML_AMD` option +
+  sub-options), `ggml_backend_amd_reg()` registration.
+- **Wave 3 — HIP compute parity.** HIP provider adapter wrapping
+  ggml-cuda compiled under HIP. T640 semantic operations (MATMUL,
+  MATMUL_ID, GET_ROWS, DEQUANT) with CPU dequantizer ground truth and Metal
+  as optimized reference. Preserve TDQT v3 debug-dequant dump format.
+- **Wave 4 — Region scheduler + residency.** Region formation from maximal
+  supported subgraphs. Cost model (execution + queue + fence + import + copy
+  + compile + packing + eviction). Scheduler modes: deterministic,
+  adaptive, diagnostic, single-provider. Separate prefill (throughput) vs
+  decode (latency) policies. Extend existing `ggml_backend_residency_t` to
+  consume suggestions with UMA/discrete/NPU policies.
+- **Wave 5 — Neutral artifact + packing cache.** Tile-neutral safetensors
+  is canonical. Provider-specific packing is an internal cache keyed by
+  (model hash, tensor name, neutral schema version, quant params, provider
+  ABI, device arch, packing version, compiler version). Atomic
+  write-validate-rename, LRU eviction.
+- **Wave 6 — Vulkan provider.** Vulkan provider adapter wrapping
+  ggml-vulkan. Filter AMD physical devices, import dma-buf via
+  VK_EXT_memory_fd, timeline semaphore interop. Never outranks healthy HIP
+  by default.
+- **Wave 7 — XDNA host + provider.** XDNA provider adapter with XRT device,
+  operation table, dma-buf registration UAPI, compiled-region execution.
+  Initial region candidates: fused MLP body, projection+activation groups,
+  static-shape attention. Document UEFI IPU Control enablement and XRT
+  build/install.
+- **Wave 8 — Discrete GPU + tiered memory.** Multi-GPU stable identities
+  (PCI bus ID + HSA UUID, not enumeration order). UMA policy: shared system
+  allocations, VRAM aperture as hint. Discrete GPU policy: hot weights in
+  VRAM, system-memory dma-buf backing, async prefetch with fences. NPU
+  policy: register only slabs for compiled regions.
+- **Wave 9 — Production parity + cleanup.** Run full CI and hardware matrix.
+  Remove any remaining scaffolding. Make AMD facade the recommended AMD
+  build path. Retain direct provider builds as upstream-compatible
+  diagnostics. Documentation: `ggml-amd-build.md`, `ggml-amd-runtime.md`,
+  `ggml-amd-troubleshooting.md`. CMake preset `x64-linux-amd`.
+
+**Key binding decisions:**
+
+1. dma-buf is first-class from Wave 1. Every graph-visible allocation has a
+   dma-buf fd from creation. No weakening this contract if a provider balks.
+2. HIP is the primary AMD GPU compute provider. Vulkan is fallback.
+3. No public `GGML_TYPE_TILE_AMD`. Tile-neutral safetensors is canonical.
+4. Direct providers (CPU, HIP, Vulkan, ZenDNN, OpenVINO) remain available
+   as test oracles until the AMD facade meets its parity gates.
+5. FastFlow and distributed execution are out of scope.
+6. KV state has one home provider during steady-state decode.
+7. XDNA executes compiled coarse regions, not generic low-latency ops.
+8. Provider packing is an internal cache, not a public tensor type.
+
+**What needs adjustment on AMD hardware:**
+
+When logging onto an AMD Linux system, you'll need to: (1) enable NPU in
+UEFI (`IPU Control` -> Enabled, verify `/dev/accel/accel0`), (2) install
+XRT base + XDNA plugin from one upstream revision, (3) adjust dma-buf
+producer if system-heap fails in one provider (switch to GEM PRIME), (4)
+tune HIP external memory import, (5) profile XDNA regions for Phoenix NPU,
+(6) calibrate cost model via adaptive mode, (7) validate T640 HIP kernels
+vs CPU/Metal reference, (8) test discrete GPU VRAM residency if applicable,
+(9) run full test suite with `GGML_AMD=ON`, (10) update this doc to mark
+ggml-amd as WIP or Production.
+
 ---
 
 ## Open questions

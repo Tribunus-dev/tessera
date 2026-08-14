@@ -108,6 +108,25 @@
         "CMAKE_C_COMPILER": "icx",
         "CMAKE_CXX_COMPILER": "icpx"
       }
+    },
+
+    { "name": "x64-linux-amd", "inherits": [ "base", "x64-linux-gcc", "release" ],
+      "cacheVariables": {
+        "GGML_AMD": "ON",
+        "GGML_AMD_HIP": "ON",
+        "GGML_AMD_VULKAN": "ON",
+        "GGML_AMD_METRICS": "ON"
+      }
+    },
+    { "name": "x64-linux-amd-full", "inherits": [ "base", "x64-linux-gcc", "release" ],
+      "cacheVariables": {
+        "GGML_AMD": "ON",
+        "GGML_AMD_HIP": "ON",
+        "GGML_AMD_VULKAN": "ON",
+        "GGML_AMD_ZENDNN": "ON",
+        "GGML_AMD_XDNA": "ON",
+        "GGML_AMD_METRICS": "ON"
+      }
     }
   ]
 }

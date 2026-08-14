@@ -42,6 +42,10 @@ extern "C" GGML_BACKEND_API ggml_backend_reg_t ggml_backend_ane_reg(void);
 #include "ggml-cuda.h"
 #endif
 
+#ifdef GGML_USE_AMD
+#include "ggml-amd.h"
+#endif
+
 #ifdef GGML_USE_METAL
 #include "ggml-metal.h"
 #endif
@@ -125,6 +129,9 @@ struct ggml_backend_registry {
     std::vector<ggml_backend_dev_t> devices;
 
     ggml_backend_registry() {
+#ifdef GGML_USE_AMD
+        register_backend(ggml_backend_amd_reg());
+#endif
 #ifdef GGML_USE_CUDA
         register_backend(ggml_backend_cuda_reg());
 #endif

@@ -15,6 +15,9 @@
 #include "ggml-backend.h"
 #include "gguf.h"
 
+#include "tessera-args.h"
+#include "tessera-amd.h"
+
 #include <algorithm>
 #include <cassert>
 #include <cinttypes>
@@ -117,6 +120,11 @@ void llama_backend_init(void) {
         struct ggml_context * ctx = ggml_init(params);
         ggml_free(ctx);
     }
+
+    // Apply tessera's AMD CLI flags to the GGML_AMD_* env vars before
+    // the backend loads. ggml_backend_load_all() probes the ggml-amd
+    // backend, which reads these env vars at init time.
+    tessera_amd_apply_config(common_get_tessera_params());
 
     if (!ggml_backend_reg_count()) {
         ggml_backend_load_all();
