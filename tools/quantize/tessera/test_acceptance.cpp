@@ -114,13 +114,26 @@ int main() {
 
     // ------------------------------------------------------------------
     // Case 2: identical rankings -> novelty fails
+    //
+    // Each proxy must rank the four tensors the SAME way (that is what
+    // "identical rankings" means for Test 2's pairwise kendall search).
+    // A per-proxy CONSTANT value across tensors (the original fixture
+    // here) is a different, degenerate thing: ts_ab_pair_counts scores
+    // p=(a[i]-a[j])*(b[i]-b[j]), and a[i]-a[j]==0 for every pair when a is
+    // constant, so every pair is a TIE (tau=0, "no information") rather
+    // than "perfect agreement" (tau=1) -- the opposite of this case's
+    // intent. Each proxy below increases monotonically across t0..t3 by
+    // the same relative amount instead, so every pair of proxies orders
+    // the four tensors identically and tau=1.0 for every one of the 10
+    // method pairs (awq/rot/lr/hess/champq -- champq defaults to
+    // mirroring hess, itself monotonic, so it participates the same way).
     // ------------------------------------------------------------------
     {
         ts_acceptance_tensor tensors[4] = {
-            make_tensor("t0", 0.01f, 0.02f, 0.03f, 0.04f, 0.05f, 0.1f, 0.1f, true),
-            make_tensor("t1", 0.01f, 0.02f, 0.03f, 0.04f, 0.05f, 0.2f, 0.2f, true),
-            make_tensor("t2", 0.01f, 0.02f, 0.03f, 0.04f, 0.05f, 0.3f, 0.3f, true),
-            make_tensor("t3", 0.01f, 0.02f, 0.03f, 0.04f, 0.05f, 0.4f, 0.4f, true),
+            make_tensor("t0", 0.01f, 0.10f, 0.11f, 0.12f, 0.13f, 0.1f, 0.1f, true),
+            make_tensor("t1", 0.01f, 0.20f, 0.21f, 0.22f, 0.23f, 0.2f, 0.2f, true),
+            make_tensor("t2", 0.01f, 0.30f, 0.31f, 0.32f, 0.33f, 0.3f, 0.3f, true),
+            make_tensor("t3", 0.01f, 0.40f, 0.41f, 0.42f, 0.43f, 0.4f, 0.4f, true),
         };
 
         ts_acceptance_config cfg;
