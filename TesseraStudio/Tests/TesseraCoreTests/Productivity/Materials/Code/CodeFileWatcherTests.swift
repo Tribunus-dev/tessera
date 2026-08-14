@@ -49,14 +49,38 @@ final class CodeFileWatcherTests: XCTestCase {
         let stream = await watcher.events()
         let fileURL = tempDir.appendingPathComponent("new.swift")
         let filePath = fileURL.resolvingSymlinksInPath().path
-        // Drain in a Task and collect events with a
-        // short timeout (the kernel events can be
-        // delayed by a few ms on a busy system).
+        let expectedURL = fileURL.resolvingSymlinksInPath()
+        // Drain in a Task and collect events until the .created for
+        // OUR file arrives (not just the first event of any kind).
+        //
+        // Some sandboxed test-execution environments introduce a
+        // transient extra directory entry alongside a plain
+        // FileManager.createFile write - observed here as
+        // "new.swift.sb-<hex>-<random>" appearing in the directory
+        // listing for a moment before settling to "new.swift" alone.
+        // (Confirmed empirically: a bare, unsandboxed FileManager.
+        // createFile call never produces this; it only appears under
+        // `swift test` in a sandboxed harness, so it's the sandbox's
+        // own write-redirection artifact, not something CodeFileWatcher
+        // or FileManager themselves generate.) The watcher's directory
+        // rewalk (CodeFileWatcher.rewalkDirectory) faithfully reports
+        // whatever the directory listing shows at that instant, so it
+        // can legitimately emit a `.created` for that transient entry
+        // before the real one. Filtering to the exact target path,
+        // like testModifiedFileEmitsEvent/testDeletedFileEmitsEvent
+        // already filter to their event's case, makes the test assert
+        // what it actually means to test ("creating new.swift produces
+        // a .created event for new.swift") instead of "whatever event
+        // happens to arrive first."
         let collector = Task<[CodeFileEvent], Never> {
             var events: [CodeFileEvent] = []
             for await event in stream {
                 events.append(event)
-                if events.count >= 1 { break }
+                if case .created(let file) = event,
+                   URL(fileURLWithPath: file.path).resolvingSymlinksInPath().path == expectedURL.path {
+                    break
+                }
+                if events.count > 20 { break }
             }
             return events
         }
@@ -68,14 +92,15 @@ final class CodeFileWatcherTests: XCTestCase {
         )
         let events = await collector.value
         await watcher.stopWatching()
-        // The first event should be a `.created`.
-        guard case .created(let file) = events.first else {
-            XCTFail("expected .created, got \(String(describing: events.first))")
+        guard let file = events.compactMap({ event -> CodeFile? in
+            guard case .created(let f) = event else { return nil }
+            return URL(fileURLWithPath: f.path).resolvingSymlinksInPath().path == expectedURL.path ? f : nil
+        }).first else {
+            XCTFail("expected a .created event for \(expectedURL.path), got \(events)")
             return
         }
         // Compare paths + language (both should be
         // canonical after symlink resolution).
-        let expectedURL = fileURL.resolvingSymlinksInPath()
         let actualURL = URL(fileURLWithPath: file.path).resolvingSymlinksInPath()
         XCTAssertEqual(actualURL.path, expectedURL.path)
         XCTAssertEqual(actualURL.pathExtension.lowercased(), "swift")
