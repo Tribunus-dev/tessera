@@ -415,6 +415,16 @@ int ts_dispatch_run_gaprep(
             layer.heldout_activations = nullptr;
             layer.ref_train_output    = nullptr;
             layer.ref_heldout_output  = nullptr;
+            // Streaming activation loader: unset here (no capture sidecar
+            // wired yet), so must be explicitly nulled rather than left to
+            // whatever `ts_awq_layer layer;`'s uninitialized stack memory
+            // happens to contain -- a garbage-nonzero activations_load_fn
+            // gets called as a real function pointer by ts_awq_evolve_all's
+            // `if (layers[i].activations_load_fn)` guard, which crashed the
+            // GA worker threads (SIGSEGV) the first time this field existed.
+            layer.activations_load_fn    = nullptr;
+            layer.activations_release_fn = nullptr;
+            layer.activations_user_data  = nullptr;
             layer.out_dim     = out_dim;
             layer.in_dim      = in_dim;
             layer.n_tokens    = 0;
