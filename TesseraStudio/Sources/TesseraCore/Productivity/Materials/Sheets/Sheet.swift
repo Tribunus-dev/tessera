@@ -78,6 +78,15 @@ public struct Sheet: Codable, Sendable, Identifiable, Hashable {
     /// (SheetProtection.swift), not this field directly.
     public var protection: SheetProtection?
 
+    /// Nil (the implicit default, like `provenance`/`protection`
+    /// above) means no named ranges - read through
+    /// `effectiveNamedRanges` (SheetNamedRange.swift), not this field
+    /// directly. Keyed by `name.uppercased()`, matching
+    /// `SheetEngine.defineName`'s case-insensitive lookup convention,
+    /// so `SheetWorkbook.hydrate(from:)` can register these into the
+    /// engine without re-keying.
+    public var namedRanges: [String: SheetNamedRange]?
+
     public init(
         id: UUID = UUID(),
         title: String = "",

@@ -72,6 +72,17 @@ public final class SheetWorkbook: ObservableObject {
     /// plumbing layer.
     private var engineSheetName: [UUID: String] = [:]
 
+    /// `Sheet.id` -> the uppercased named-range names that sheet's own
+    /// `effectiveNamedRanges` last registered into the engine. Tracked
+    /// so a refresh (re-`hydrate` of an already-loaded sheet) can
+    /// precisely undefine just THIS sheet's previous names before
+    /// redefining its current ones - `engine.defineName` fails outright
+    /// on a name that's already registered, and named ranges are
+    /// workbook-wide in the engine (not sheet-scoped storage), so a
+    /// blind "redefine everything" would collide with itself on every
+    /// refresh.
+    private var namedRangeNamesBySheetID: [UUID: Set<String>] = [:]
+
     public init(engine: SheetEngine = SheetEngine()) {
         self.engine = engine
     }
@@ -122,6 +133,26 @@ public final class SheetWorkbook: ObservableObject {
             }
         }
 
+        // Undefine this sheet's own previously-registered names (a
+        // refresh's stale set - a no-op on first load, when the set is
+        // empty), then register its current ones fresh.
+        for oldName in namedRangeNamesBySheetID[sheet.id] ?? [] {
+            engine.undefineName(oldName)
+        }
+        var registeredNames: Set<String> = []
+        for (key, namedRange) in sheet.effectiveNamedRanges {
+            guard let range = namedRange.rangeRef else { continue }
+            if engine.defineName(namedRange.name, range: range, sheet: namedRange.sheet) {
+                registeredNames.insert(key)
+            }
+            // A definition that fails here (name collides with one
+            // from a DIFFERENT loaded sheet) is silently skipped - see
+            // SheetStore.defineNamedRange's doc comment on scoping;
+            // resolving cross-sheet name collisions is deferred tabs-UI
+            // work (0.1b-e), not this hydrate path's problem to solve.
+        }
+        namedRangeNamesBySheetID[sheet.id] = registeredNames
+
         sheets[sheet.id] = sheet
         sheetID = sheet.id
         engine.setActiveSheet(name)
@@ -135,6 +166,7 @@ public final class SheetWorkbook: ObservableObject {
         engine = SheetEngine()
         sheets = [:]
         engineSheetName = [:]
+        namedRangeNamesBySheetID = [:]
         sheetID = nil
         revision &+= 1
     }
@@ -152,6 +184,9 @@ public final class SheetWorkbook: ObservableObject {
         engine.deleteSheet(name)
         engineSheetName.removeValue(forKey: sheetID)
         sheets.removeValue(forKey: sheetID)
+        for oldName in namedRangeNamesBySheetID.removeValue(forKey: sheetID) ?? [] {
+            engine.undefineName(oldName)
+        }
         if self.sheetID == sheetID {
             self.sheetID = sheets.keys.first
             if let newActive = self.sheetID, let newName = engineSheetName[newActive] {

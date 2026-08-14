@@ -285,6 +285,65 @@ public struct SheetStore: Sendable {
         return sheet
     }
 
+    /// Define (or replace) a named range. `range` is stored relative to
+    /// the sheet's own grid - `sheet` scoping (a name that only
+    /// resolves against a specific sheet, as opposed to the whole
+    /// workbook) is not exposed at the product layer yet, matching
+    /// 0.1's "workbook-wide named ranges" framing; every persisted
+    /// range is unscoped.
+    public func defineNamedRange(
+        _ name: String,
+        topLeftRow: Int, topLeftCol: Int,
+        bottomRightRow: Int, bottomRightCol: Int,
+        for sheetID: UUID
+    ) async throws -> Sheet {
+        var sheet = try await loadOrFail(id: sheetID)
+        try guardUnlocked(sheet)
+        guard let tableDims = tableDimensions(of: sheet.body) else {
+            throw SheetStoreError.noTable(sheetID: sheetID)
+        }
+        guard topLeftRow >= 0, topLeftRow < tableDims.rows, topLeftCol >= 0, topLeftCol < tableDims.cols,
+              bottomRightRow >= 0, bottomRightRow < tableDims.rows, bottomRightCol >= 0, bottomRightCol < tableDims.cols
+        else {
+            throw SheetStoreError.cellOutOfBounds(row: bottomRightRow, col: bottomRightCol, rows: tableDims.rows, cols: tableDims.cols)
+        }
+        let range = RangeRef(
+            topLeft: CellAddr(col: min(topLeftCol, bottomRightCol), row: min(topLeftRow, bottomRightRow)),
+            bottomRight: CellAddr(col: max(topLeftCol, bottomRightCol), row: max(topLeftRow, bottomRightRow))
+        )
+        let previous = sheet.effectiveNamedRanges[name.uppercased()]
+        sheet = sheet.settingNamedRange(name, range: range)
+        sheet.updatedAt = Date()
+        _ = try await upsert(sheet)
+        try await appendReceipt(
+            entityID: sheetID,
+            receiptType: SheetReceiptType.defineNamedRange.rawValue,
+            payload: [
+                "name": .string(name),
+                "range": .string(range.description),
+                "replacedPrevious": .bool(previous != nil),
+            ]
+        )
+        return sheet
+    }
+
+    /// Remove a named range. A no-op (still persisted, no receipt) if
+    /// `name` isn't defined.
+    public func undefineNamedRange(_ name: String, for sheetID: UUID) async throws -> Sheet {
+        var sheet = try await loadOrFail(id: sheetID)
+        try guardUnlocked(sheet)
+        guard sheet.effectiveNamedRanges[name.uppercased()] != nil else { return sheet }
+        sheet = sheet.removingNamedRange(name)
+        sheet.updatedAt = Date()
+        _ = try await upsert(sheet)
+        try await appendReceipt(
+            entityID: sheetID,
+            receiptType: SheetReceiptType.undefineNamedRange.rawValue,
+            payload: ["name": .string(name)]
+        )
+        return sheet
+    }
+
     /// Rewrite every formula for a structural edit. Runs AFTER the grid
     /// is restructured and BEFORE the save, so references follow the
     /// cells they point at. See ``Sheet/adjustingFormulas(for:)``.

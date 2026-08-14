@@ -57,4 +57,8 @@ public enum SheetReceiptType: String, Codable, Sendable, CaseIterable {
     /// The sheet was locked or unlocked against further cell/format
     /// mutations.
     case setProtection = "sheet_protection_changed"
+    /// A named range was defined.
+    case defineNamedRange = "sheet_named_range_defined"
+    /// A named range was removed.
+    case undefineNamedRange = "sheet_named_range_undefined"
 }

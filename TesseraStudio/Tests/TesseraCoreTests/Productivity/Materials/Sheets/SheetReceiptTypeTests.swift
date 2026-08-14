@@ -17,7 +17,7 @@ final class SheetReceiptTypeTests: XCTestCase {
         // A deliberate tripwire: raw values are persisted, so adding or
         // removing a case is a vocabulary change. If this breaks, add
         // the new case to the stability pins below and bump the count.
-        XCTAssertEqual(SheetReceiptType.allCases.count, 22)
+        XCTAssertEqual(SheetReceiptType.allCases.count, 24)
     }
 
     func testSetCellFormatIsStable() {
@@ -26,6 +26,11 @@ final class SheetReceiptTypeTests: XCTestCase {
 
     func testSetProtectionIsStable() {
         XCTAssertEqual(SheetReceiptType.setProtection.rawValue, "sheet_protection_changed")
+    }
+
+    func testNamedRangeReceiptsAreStable() {
+        XCTAssertEqual(SheetReceiptType.defineNamedRange.rawValue, "sheet_named_range_defined")
+        XCTAssertEqual(SheetReceiptType.undefineNamedRange.rawValue, "sheet_named_range_undefined")
     }
 
     /// A restyle must stay distinguishable from a data edit: an auditor

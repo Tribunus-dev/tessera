@@ -32,6 +32,8 @@ final class SheetStoreTests: XCTestCase {
         XCTAssertEqual(SheetReceiptType.import.rawValue, "sheet_imported")
         XCTAssertEqual(SheetReceiptType.setCellFormat.rawValue, "sheet_cell_format_changed")
         XCTAssertEqual(SheetReceiptType.setProtection.rawValue, "sheet_protection_changed")
+        XCTAssertEqual(SheetReceiptType.defineNamedRange.rawValue, "sheet_named_range_defined")
+        XCTAssertEqual(SheetReceiptType.undefineNamedRange.rawValue, "sheet_named_range_undefined")
     }
 
     // MARK: - JSON helpers
