@@ -81,22 +81,25 @@ int ts_acceptance_run(const ts_acceptance_config * config,
 
     // --- Test 1: composite beats single-proxy ---
     // Mean t_l^2 over held-out tensors for each approach.
-    const int off_comp = (int)((const char *)&work[0].composite_t2 - (const char *)&work[0]);
-    const int off_awq  = (int)((const char *)&work[0].awq_t2       - (const char *)&work[0]);
-    const int off_rot  = (int)((const char *)&work[0].rotation_t2  - (const char *)&work[0]);
-    const int off_lr   = (int)((const char *)&work[0].lowrank_t2   - (const char *)&work[0]);
-    const int off_hess = (int)((const char *)&work[0].hessian_t2   - (const char *)&work[0]);
+    const int off_comp   = (int)((const char *)&work[0].composite_t2 - (const char *)&work[0]);
+    const int off_awq    = (int)((const char *)&work[0].awq_t2       - (const char *)&work[0]);
+    const int off_rot    = (int)((const char *)&work[0].rotation_t2  - (const char *)&work[0]);
+    const int off_lr     = (int)((const char *)&work[0].lowrank_t2   - (const char *)&work[0]);
+    const int off_hess   = (int)((const char *)&work[0].hessian_t2   - (const char *)&work[0]);
+    const int off_champq = (int)((const char *)&work[0].champq_t2    - (const char *)&work[0]);
 
     result->composite_t2 = ts_acceptance_mean_field(work.data(), n_tensors, off_comp);
     result->awq_t2       = ts_acceptance_mean_field(work.data(), n_tensors, off_awq);
     result->rotation_t2  = ts_acceptance_mean_field(work.data(), n_tensors, off_rot);
     result->lowrank_t2   = ts_acceptance_mean_field(work.data(), n_tensors, off_lr);
     result->hessian_t2   = ts_acceptance_mean_field(work.data(), n_tensors, off_hess);
+    result->champq_t2    = ts_acceptance_mean_field(work.data(), n_tensors, off_champq);
 
     result->best_single_t2 = result->awq_t2;
     if (result->rotation_t2 < result->best_single_t2) result->best_single_t2 = result->rotation_t2;
     if (result->lowrank_t2  < result->best_single_t2) result->best_single_t2 = result->lowrank_t2;
     if (result->hessian_t2  < result->best_single_t2) result->best_single_t2 = result->hessian_t2;
+    if (result->champq_t2   < result->best_single_t2) result->best_single_t2 = result->champq_t2;
 
     // Margin floor: a tie ("0.0% worse") must not bless shipping.
     // margin <= 0 preserves the legacy strict-< behavior.
@@ -109,27 +112,59 @@ int ts_acceptance_run(const ts_acceptance_config * config,
 
     // --- Test 2 (v2): cross-METHOD novelty on the held-out Tier-2 panel ---
     // The methods must rank the held-out tensors differently somewhere:
-    // novelty = 1 - min |kendall tau| over the 6 method pairs. The v1
+    // novelty = 1 - min |kendall tau| over the 10 method pairs. The v1
     // prong compared the offline proxy against the kernel-direct ranking;
     // that comparison remains below as a kernel-fidelity DIAGNOSTIC. The
     // most-disagreeing pair is used so one degenerate slot (a score still
     // carried by a proxy) cannot suppress signal from real pairs.
+    result->excluded_methods[0] = '\0';
     {
-        std::vector<float> va, vr, vl, vh;
+        std::vector<float> va, vr, vl, vh, vc;
         for (int64_t i = 0; i < n_tensors; i++) {
             if (!work[i].held_out) continue;
             va.push_back(work[i].awq_t2);
             vr.push_back(work[i].rotation_t2);
             vl.push_back(work[i].lowrank_t2);
             vh.push_back(work[i].hessian_t2);
+            vc.push_back(work[i].champq_t2);
         }
         const int64_t m = (int64_t)va.size();
+
+        struct method_slot { const char * label; const std::vector<float> * v; };
+        const method_slot slots[5] = {
+            { "awq", &va }, { "rot", &vr }, { "lr", &vl }, { "hess", &vh }, { "champq", &vc },
+        };
+
+        // Novelty sanity clamp: a method whose mean t2 exceeds the sanity
+        // bound cannot be sanely scored (a broken/degenerate fit) and must
+        // not be able to fake disagreement by contributing a pairwise tau.
+        bool excluded[5] = { false, false, false, false, false };
+        if (m > 0) {
+            for (int s = 0; s < 5; s++) {
+                double sum = 0.0;
+                for (int64_t i = 0; i < m; i++) {
+                    sum += (double)(*slots[s].v)[(size_t)i];
+                }
+                const float mean_t2 = (float)(sum / (double)m);
+                if (mean_t2 > TS_ACCEPTANCE_NOVELTY_SANITY_BOUND) {
+                    excluded[s] = true;
+                    if (result->excluded_methods[0] != '\0') {
+                        strncat(result->excluded_methods, ",",
+                               sizeof(result->excluded_methods) - strlen(result->excluded_methods) - 1);
+                    }
+                    strncat(result->excluded_methods, slots[s].label,
+                           sizeof(result->excluded_methods) - strlen(result->excluded_methods) - 1);
+                }
+            }
+        }
+
         float tau_min = 1.0f;
         if (m >= 2) {
-            const float * vs[4] = { va.data(), vr.data(), vl.data(), vh.data() };
-            for (int a = 0; a < 4; a++) {
-                for (int b = a + 1; b < 4; b++) {
-                    const float t = ts_ab_kendall_tau(vs[a], vs[b], m);
+            for (int a = 0; a < 5; a++) {
+                if (excluded[a]) continue;
+                for (int b = a + 1; b < 5; b++) {
+                    if (excluded[b]) continue;
+                    const float t = ts_ab_kendall_tau(slots[a].v->data(), slots[b].v->data(), m);
                     if (fabsf(t) < fabsf(tau_min)) {
                         tau_min = t;
                     }
@@ -161,10 +196,14 @@ int ts_acceptance_run(const ts_acceptance_config * config,
     // --- verdict ---
     result->acceptance_passed = result->composite_wins && result->novelty_survives;
 
+    // hessian_t2 dropped its "(proxy)" suffix once SEPTQ scoring went REAL
+    // (pipeline refactor phase 1, ts_expert_eval's SEPTQ dequant-scoring
+    // adapter) -- the caller now feeds a real Tier-2 measurement into this
+    // slot, not a profile-scaled AWQ-core proxy clone.
     snprintf(result->verdict, sizeof(result->verdict),
              "G6 %s | composite_t2=%.6g best_single=%.6g (%.1f%% %s, margin %.1f%%) | "
-             "method_dis=%.4f (tau_min=%.4f) novelty=%s | kernel_fid_dis=%.4f | "
-             "tier2: awq=%.6g rot=%.6g lr=%.6g hess=%.6g(proxy) | "
+             "method_dis=%.4f (tau_min=%.4f) novelty=%s excluded=%s | kernel_fid_dis=%.4f | "
+             "tier2: awq=%.6g rot=%.6g lr=%.6g hess=%.6g champq=%.6g | "
              "held_out=%lld/%lld",
              result->acceptance_passed ? "PASS" : "FAIL",
              (double)result->composite_t2,
@@ -175,11 +214,13 @@ int ts_acceptance_run(const ts_acceptance_config * config,
              (double)result->method_disagreement,
              (double)result->method_tau_min,
              result->novelty_survives ? "survives" : "null",
+             result->excluded_methods[0] != '\0' ? result->excluded_methods : "none",
              (double)result->ranking_disagreement,
              (double)result->awq_t2,
              (double)result->rotation_t2,
              (double)result->lowrank_t2,
              (double)result->hessian_t2,
+             (double)result->champq_t2,
              (long long)result->n_tensors_heldout,
              (long long)result->n_tensors_total);
 
@@ -264,6 +305,10 @@ int ts_acceptance_write_json(const char * path,
     j += ",\"novelty_survives\":";
     j += result->novelty_survives ? "true" : "false";
 
+    j += ",\"excluded_methods\":\"";
+    ts_acc_json_escape(&j, result->excluded_methods);
+    j += "\"";
+
     j += ",\"per_proxy\":{\"awq\":";
     ts_acc_json_float(&j, result->awq_t2);
     j += ",\"rotation\":";
@@ -272,6 +317,8 @@ int ts_acceptance_write_json(const char * path,
     ts_acc_json_float(&j, result->lowrank_t2);
     j += ",\"hessian\":";
     ts_acc_json_float(&j, result->hessian_t2);
+    j += ",\"champq\":";
+    ts_acc_json_float(&j, result->champq_t2);
     j += "}";
 
     j += ",\"n_tensors_total\":";
@@ -300,6 +347,8 @@ int ts_acceptance_write_json(const char * path,
         ts_acc_json_float(&j, tensors[i].lowrank_t2);
         j += ",\"hessian_t2\":";
         ts_acc_json_float(&j, tensors[i].hessian_t2);
+        j += ",\"champq_t2\":";
+        ts_acc_json_float(&j, tensors[i].champq_t2);
         j += ",\"offline_proxy_mse\":";
         ts_acc_json_float(&j, tensors[i].offline_proxy_mse);
         j += ",\"kernel_direct_t2\":";

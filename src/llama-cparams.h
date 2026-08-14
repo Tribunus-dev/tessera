@@ -68,6 +68,7 @@ struct llama_cparams {
     ggml_backend_sched_eval_callback cb_eval;
     void * cb_eval_user_data;
     bool imatrix_observers;
+    bool imatrix_activation_capture;
 
     // Per-scope observer state. Each scope keeps its own filter, user_data,
     // and epoch so that multiple llama_context instances in the same process

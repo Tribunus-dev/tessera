@@ -15,6 +15,7 @@
 #include "tessera/tessera-dpace.h"
 #include "tessera/tessera-unified-writer.h"
 #include "tessera/tessera-quantize-db.h"
+#include "tessera/tessera-kv-migrate.h"
 #include "tessera/tessera-ternary.h"
 #include "tessera/tessera-quant.h"
 #include "tessera/tessera-imatrix.h"
@@ -1116,6 +1117,28 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
         }
     }
 
+    // KV-joint reconstruction item 5 (scale migration): when --tessera-db
+    // is set, open it here so attn_q/attn_output can be folded with K's/V's
+    // migrated scale before ternarizing (see tessera-kv-migrate.h). A
+    // best-effort, non-fatal open: a DB failure here should not block the
+    // export, it just means the fold stays a no-op (mirrors this file's
+    // other --tessera-db paths). model_role is "trunk" -- export-ternary
+    // has no multi-component concept, unlike the unified-writer path.
+    ts_tessera_db * kv_db = nullptr;
+    std::string     kv_model_hash;
+    const std::string kv_model_role = "trunk";
+    if (!tp.tessera_db.empty()) {
+        std::string kv_db_err;
+        kv_db = ts_tessera_db_open(tp.tessera_db, &kv_db_err);
+        if (kv_db != nullptr) {
+            kv_model_hash = ts_tessera_db_hash_gguf(tp.export_in);
+        } else {
+            fprintf(stderr, "export-ternary: warning: --tessera-db: %s "
+                            "(KV scale migration disabled for this run)\n",
+                    kv_db_err.c_str());
+        }
+    }
+
     // quantize each 2D weight via ts_quantize_2d_ternary. 3D MoE experts
     // are exported as one ternary tensor per expert (flattened name suffix
     // .E<j>), matching the dispatch's per-expert quantize convention.
@@ -1220,6 +1243,18 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
             expert_idx = 0;
             full = std::move(dequant);
 
+            // KV-joint reconstruction item 5: fold attn_q/attn_output's
+            // migrated D/E scale before anything else touches `full`.
+            // MoE experts (n_dims == 3) are never attn_q/attn_output, so
+            // this only ever applies to n_dims == 2. No-op when kv_db is
+            // null or no kv_stats row exists yet.
+            if (n_dims == 2 && kv_db != nullptr) {
+                ts_kv_migrate_apply_to_tensor(
+                    kv_db, kv_model_hash, kv_model_role,
+                    cur_name, full.data(), out_dim, in_dim,
+                    ts_kv_migrate_params{}, nullptr);
+            }
+
             if (have_imatrix) {
                 int64_t act_n = 0;
                 act_scales = ts_imatrix_lookup(&imatrix, name, &act_n);
@@ -1300,6 +1335,7 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
     if (!chat_template_path.empty()) {
         std::remove(chat_template_path.c_str());
     }
+    delete kv_db;
     if (mm.mapped) munmap(mm.mapped, mm.size);
     gguf_free(in_ctx);
     ggml_free(ggml_ctx);
@@ -1720,7 +1756,6 @@ int llama_quantize(int argc, char ** argv) {
 
     llama_model_quantize_params params = llama_model_quantize_default_params();
 
-    int arg_idx = 1;
     std::string imatrix_file;
     std::vector<std::string> included_weights, excluded_weights;
     std::vector<llama_model_kv_override> kv_overrides;
@@ -1736,62 +1771,82 @@ int llama_quantize(int argc, char ** argv) {
     bool use_tessera = false;
     std::string model_input;  // --model/-m value (kept for the flag-based CLI)
 
-    for (; arg_idx < argc && strncmp(argv[arg_idx], "--", 2) == 0; arg_idx++) {
-        if (strcmp(argv[arg_idx], "--model") == 0 || strcmp(argv[arg_idx], "-m") == 0) {
-            if (arg_idx < argc-1) {
-                model_input = argv[++arg_idx];
+    // pipeline refactor phase 4: this loop used to stop scanning at the
+    // first non-flag token (`for (; arg_idx < argc &&
+    // strncmp(argv[arg_idx], "--", 2) == 0; arg_idx++)`), so any --flag
+    // placed AFTER the positional <input> <output>? <ftype> [nthreads]
+    // args was invisible to it. --dry-run was the flag that surfaced
+    // this: a 2026-08-13 smoke test ran a full 16-CPU-minute GA
+    // calibration under a trailing --dry-run this loop never saw (see
+    // .zcode/alphaevolve/findings.jsonl). Fixed by scanning the full
+    // argv in one pass and collecting non-flag tokens into `positionals`,
+    // in order, instead of relying on argv's own index once flags stop
+    // appearing. Uses the same "--" prefix test as before to decide
+    // flag vs. positional, so a leading `-m` (single dash) is still
+    // treated as a positional, unchanged from prior behavior.
+    std::vector<std::string> positionals;
+    positionals.reserve((size_t)argc);
+
+    for (int i = 1; i < argc; i++) {
+        if (strncmp(argv[i], "--", 2) != 0) {
+            positionals.push_back(argv[i]);
+            continue;
+        }
+        if (strcmp(argv[i], "--model") == 0 || strcmp(argv[i], "-m") == 0) {
+            if (i < argc-1) {
+                model_input = argv[++i];
             }
-        } else if (strcmp(argv[arg_idx], "--leave-output-tensor") == 0) {
+        } else if (strcmp(argv[i], "--leave-output-tensor") == 0) {
             params.quantize_output_tensor = false;
-        } else if (strcmp(argv[arg_idx], "--output-tensor-type") == 0) {
-            if (arg_idx < argc-1) {
-                params.output_tensor_type = parse_ggml_type(argv[++arg_idx]);
+        } else if (strcmp(argv[i], "--output-tensor-type") == 0) {
+            if (i < argc-1) {
+                params.output_tensor_type = parse_ggml_type(argv[++i]);
                 if (params.output_tensor_type == GGML_TYPE_COUNT) {
                     usage(argv[0]);
                 }
             } else {
                 usage(argv[0]);
             }
-        } else if (strcmp(argv[arg_idx], "--token-embedding-type") == 0) {
-            if (arg_idx < argc-1) {
-                params.token_embedding_type = parse_ggml_type(argv[++arg_idx]);
+        } else if (strcmp(argv[i], "--token-embedding-type") == 0) {
+            if (i < argc-1) {
+                params.token_embedding_type = parse_ggml_type(argv[++i]);
                 if (params.token_embedding_type == GGML_TYPE_COUNT) {
                     usage(argv[0]);
                 }
             } else {
                 usage(argv[0]);
             }
-        } else if (strcmp(argv[arg_idx], "--tensor-type") == 0) {
-            if (arg_idx == argc-1 || !parse_tensor_type(argv[++arg_idx], tensor_type_opts)) {
+        } else if (strcmp(argv[i], "--tensor-type") == 0) {
+            if (i == argc-1 || !parse_tensor_type(argv[++i], tensor_type_opts)) {
                 usage(argv[0]);
             }
-        } else if (strcmp(argv[arg_idx], "--tensor-type-file") == 0) {
-            if (arg_idx == argc-1 || !parse_tensor_type_file(argv[++arg_idx], tensor_type_opts)) {
+        } else if (strcmp(argv[i], "--tensor-type-file") == 0) {
+            if (i == argc-1 || !parse_tensor_type_file(argv[++i], tensor_type_opts)) {
                 usage(argv[0]);
             }
-        } else if (strcmp(argv[arg_idx], "--prune-layers") == 0) {
-            if (arg_idx == argc-1 || !parse_layer_prune(argv[++arg_idx], prune_layers)) {
+        } else if (strcmp(argv[i], "--prune-layers") == 0) {
+            if (i == argc-1 || !parse_layer_prune(argv[++i], prune_layers)) {
                 usage(argv[0]);
             }
-        } else if (strcmp(argv[arg_idx], "--override-kv") == 0) {
-            if (arg_idx == argc-1 || !string_parse_kv_override(argv[++arg_idx], kv_overrides)) {
+        } else if (strcmp(argv[i], "--override-kv") == 0) {
+            if (i == argc-1 || !string_parse_kv_override(argv[++i], kv_overrides)) {
                 usage(argv[0]);
             }
-        } else if (strcmp(argv[arg_idx], "--dry-run") == 0) {
+        } else if (strcmp(argv[i], "--dry-run") == 0) {
             params.dry_run = true;
-        } else if (strcmp(argv[arg_idx], "--allow-requantize") == 0) {
+        } else if (strcmp(argv[i], "--allow-requantize") == 0) {
             params.allow_requantize = true;
-        } else if (strcmp(argv[arg_idx], "--pure") == 0) {
+        } else if (strcmp(argv[i], "--pure") == 0) {
             params.pure = true;
-        } else if (strcmp(argv[arg_idx], "--imatrix") == 0) {
-            if (arg_idx < argc-1) {
-                imatrix_file = argv[++arg_idx];
+        } else if (strcmp(argv[i], "--imatrix") == 0) {
+            if (i < argc-1) {
+                imatrix_file = argv[++i];
             } else {
                 usage(argv[0]);
             }
-        } else if (strcmp(argv[arg_idx], "--imatrix-scope") == 0) {
-            if (arg_idx < argc-1) {
-                const std::string s = argv[++arg_idx];
+        } else if (strcmp(argv[i], "--imatrix-scope") == 0) {
+            if (i < argc-1) {
+                const std::string s = argv[++i];
                 if (s == "verifier") {
                     params.imatrix_scope = LLAMA_OBSERVER_SCOPE_VERIFIER;
                 } else if (s == "mtp") {
@@ -1809,24 +1864,24 @@ int llama_quantize(int argc, char ** argv) {
             } else {
                 usage(argv[0]);
             }
-        } else if (strcmp(argv[arg_idx], "--include-weights") == 0) {
-            if (arg_idx < argc-1) {
-                included_weights.emplace_back(argv[++arg_idx]);
+        } else if (strcmp(argv[i], "--include-weights") == 0) {
+            if (i < argc-1) {
+                included_weights.emplace_back(argv[++i]);
             } else {
                 usage(argv[0]);
             }
-        } else if (strcmp(argv[arg_idx], "--exclude-weights") == 0) {
-            if (arg_idx < argc-1) {
-                excluded_weights.emplace_back(argv[++arg_idx]);
+        } else if (strcmp(argv[i], "--exclude-weights") == 0) {
+            if (i < argc-1) {
+                excluded_weights.emplace_back(argv[++i]);
             } else {
                 usage(argv[0]);
             }
-        } else if (strcmp(argv[arg_idx], "--keep-split") == 0) {
+        } else if (strcmp(argv[i], "--keep-split") == 0) {
             params.keep_split = true;
-        } else if (strcmp(argv[arg_idx], "--prior-weight") == 0) {
-            if (arg_idx < argc-1) {
+        } else if (strcmp(argv[i], "--prior-weight") == 0) {
+            if (i < argc-1) {
                 try {
-                    prior_weight = std::stof(argv[++arg_idx]);
+                    prior_weight = std::stof(argv[++i]);
                     prior_weight_set = true;
                 } catch (...) {
                     usage(argv[0]);
@@ -1834,20 +1889,20 @@ int llama_quantize(int argc, char ** argv) {
             } else {
                 usage(argv[0]);
             }
-        } else if (const int tessera_kind = common_tessera_flag_kind(argv[arg_idx]); tessera_kind > 0) {
+        } else if (const int tessera_kind = common_tessera_flag_kind(argv[i]); tessera_kind > 0) {
             // Tessera-owned top-level flag (--progress-file, --tessera-db,
             // ...): already consumed into tessera_params by
             // common_tessera_params_parse. Skip it here, including its
             // value when the flag takes one.
-            if (tessera_kind == 2 && arg_idx + 1 < argc) {
-                arg_idx++;
+            if (tessera_kind == 2 && i + 1 < argc) {
+                i++;
             }
         } else {
             // Tessera fork (Tier 2 HARD BREAK): unknown --flag here means
             // the user passed a legacy --tessera-* or --calib-* flag. Those
             // are removed; the new subcommand syntax must be used. Print
             // a clear error pointing to the migration map and exit.
-            fprintf(stderr, "%s: unrecognized argument: %s\n", argv[0], argv[arg_idx]);
+            fprintf(stderr, "%s: unrecognized argument: %s\n", argv[0], argv[i]);
             fprintf(stderr, "    The flat --tessera-* / --calib-* flag surface has been replaced by 19 named subcommands.\n");
             fprintf(stderr, "    Run `%s --help` for the subcommand list, or see docs/tier2-subcommand-design.md.\n", argv[0]);
             usage(argv[0]);
@@ -1879,7 +1934,8 @@ int llama_quantize(int argc, char ** argv) {
         }
     }
 
-    if (argc - arg_idx < 2) {
+    size_t pos_i = 0;
+    if (positionals.size() - pos_i < 2) {
         printf("%s: bad arguments\n", argv[0]);
         usage(argv[0]);
     }
@@ -1962,22 +2018,22 @@ int llama_quantize(int argc, char ** argv) {
     llama_backend_init();
 
     // parse command line arguments
-    const std::string fname_inp = !model_input.empty() ? model_input : argv[arg_idx];
-    arg_idx++;
+    const std::string fname_inp = !model_input.empty() ? model_input : positionals[pos_i];
+    pos_i++;
     std::string fname_out;
 
     std::string ftype_str;
     std::string suffix = ".gguf";
-    if (try_parse_ftype(argv[arg_idx], params.ftype, ftype_str) ||
-            striequals(argv[arg_idx], "TESSERA_T640") || striequals(argv[arg_idx], "TESSERA_T640_3D")) {
-        if (striequals(argv[arg_idx], "TESSERA_T640") || striequals(argv[arg_idx], "TESSERA_T640_3D")) {
+    if (try_parse_ftype(positionals[pos_i], params.ftype, ftype_str) ||
+            striequals(positionals[pos_i].c_str(), "TESSERA_T640") || striequals(positionals[pos_i].c_str(), "TESSERA_T640_3D")) {
+        if (striequals(positionals[pos_i].c_str(), "TESSERA_T640") || striequals(positionals[pos_i].c_str(), "TESSERA_T640_3D")) {
             use_tessera = true;
-            ftype_str = argv[arg_idx];
+            ftype_str = positionals[pos_i];
             for (auto & ch : ftype_str) {
                 ch = std::toupper(ch);
             }
         }
-        // argv[arg_idx] is the ftype directly: <input> <ftype>
+        // positionals[pos_i] is the ftype directly: <input> <ftype>
         if (!params.dry_run) {
             std::string fpath;
             const size_t pos = fname_inp.find_last_of("/\\");
@@ -1991,30 +2047,30 @@ int llama_quantize(int argc, char ** argv) {
                 fname_out += suffix;
             }
         }
-        arg_idx++;
+        pos_i++;
         if (ftype_str == "COPY") {
             params.only_copy = true;
         }
     } else {
-        // argv[arg_idx] is not a valid ftype, so treat it as output path: <input> <output> <ftype>
-        fname_out = argv[arg_idx];
+        // positionals[pos_i] is not a valid ftype, so treat it as output path: <input> <output> <ftype>
+        fname_out = positionals[pos_i];
         if (params.keep_split && fname_out.find(suffix) != std::string::npos) {
             fname_out = fname_out.substr(0, fname_out.length() - suffix.length());
         }
-        arg_idx++;
+        pos_i++;
 
-        if (argc <= arg_idx) {
+        if (positionals.size() <= pos_i) {
             fprintf(stderr, "%s: missing ftype\n", __func__);
             return 1;
         }
-        if (!try_parse_ftype(argv[arg_idx], params.ftype, ftype_str) &&
-                !striequals(argv[arg_idx], "TESSERA_T640") && !striequals(argv[arg_idx], "TESSERA_T640_3D")) {
-            fprintf(stderr, "%s: invalid ftype '%s'\n", __func__, argv[arg_idx]);
+        if (!try_parse_ftype(positionals[pos_i], params.ftype, ftype_str) &&
+                !striequals(positionals[pos_i].c_str(), "TESSERA_T640") && !striequals(positionals[pos_i].c_str(), "TESSERA_T640_3D")) {
+            fprintf(stderr, "%s: invalid ftype '%s'\n", __func__, positionals[pos_i].c_str());
             return 1;
         }
-        if (striequals(argv[arg_idx], "TESSERA_T640") || striequals(argv[arg_idx], "TESSERA_T640_3D")) {
+        if (striequals(positionals[pos_i].c_str(), "TESSERA_T640") || striequals(positionals[pos_i].c_str(), "TESSERA_T640_3D")) {
             use_tessera = true;
-            ftype_str = argv[arg_idx];
+            ftype_str = positionals[pos_i];
             for (auto & ch : ftype_str) {
                 ch = std::toupper(ch);
             }
@@ -2022,17 +2078,18 @@ int llama_quantize(int argc, char ** argv) {
         if (ftype_str == "COPY") {
            params.only_copy = true;
         }
-        arg_idx++;
+        pos_i++;
     }
 
-    // parse nthreads; a trailing --flag is tessera-owned and was already
-    // consumed by common_tessera_params_parse, so leave it alone
-    if (argc > arg_idx && strncmp(argv[arg_idx], "--", 2) != 0) {
+    // parse nthreads: any --flag was already fully separated out during
+    // the scan above (positionals never contains one), so any entry
+    // remaining here is a genuine trailing positional.
+    if (pos_i < positionals.size()) {
         try {
-            params.nthread = std::stoi(argv[arg_idx]);
+            params.nthread = std::stoi(positionals[pos_i]);
         }
         catch (const std::exception & e) {
-            fprintf(stderr, "%s: invalid nthread '%s' (%s)\n", __func__, argv[arg_idx], e.what());
+            fprintf(stderr, "%s: invalid nthread '%s' (%s)\n", __func__, positionals[pos_i].c_str(), e.what());
             return 1;
         }
     }
@@ -2121,6 +2178,10 @@ int llama_quantize(int argc, char ** argv) {
         tparams.dspark_gguf_path             = tp.l5_joint_drafter_dspark;
         tparams.mtp_gguf_path                = tp.l5_joint_drafter_mtp;
         tparams.talker_gguf_path             = tp.l5_joint_drafter_talker;
+        tparams.l5_joint_type_k              = tp.l5_joint_type_k;
+        tparams.l5_joint_type_v              = tp.l5_joint_type_v;
+        tparams.l5_joint_type_k_draft        = tp.l5_joint_type_k_draft;
+        tparams.l5_joint_type_v_draft        = tp.l5_joint_type_v_draft;
         tparams.l5_joint_calibration_path    = tp.l5_joint_calibration;
         tparams.l5_joint_out_path            = tp.l5_joint_out;
         tparams.l5_scorer                    = tp.l5_scorer;

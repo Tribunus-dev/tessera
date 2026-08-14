@@ -742,10 +742,33 @@ int ts_awq_evolve_all(ts_awq_layer * layers, int64_t n_layers,
                 loaded_weights = layers[i].weights_load_fn(layers[i].weights_user_data);
                 layers[i].weights = loaded_weights;
             }
+            // Streaming activation load: same shape as the weight loader
+            // above, for real captured train/heldout activations. A false
+            // return (no capture data for this layer) leaves
+            // train_activations/heldout_activations null, which
+            // ts_awq_evaluate_layer already treats as "fall back to the
+            // diagonal weight-space error" -- no other change needed here.
+            bool loaded_activations = false;
+            if (layers[i].activations_load_fn) {
+                loaded_activations = layers[i].activations_load_fn(
+                    layers[i].activations_user_data,
+                    &layers[i].train_activations, &layers[i].n_tokens,
+                    &layers[i].heldout_activations, &layers[i].n_tokens_h,
+                    &layers[i].ref_train_output, &layers[i].ref_heldout_output);
+            }
             int rc = ts_awq_evolve(&layers[i], eval, eval_ctx, &layer_params, &(*results)[i]);
             if (layers[i].weights_release_fn && loaded_weights) {
                 layers[i].weights_release_fn(layers[i].weights_user_data, loaded_weights);
                 layers[i].weights = nullptr;
+            }
+            if (layers[i].activations_release_fn && loaded_activations) {
+                layers[i].activations_release_fn(layers[i].activations_user_data);
+                layers[i].train_activations   = nullptr;
+                layers[i].n_tokens            = 0;
+                layers[i].heldout_activations = nullptr;
+                layers[i].n_tokens_h          = 0;
+                layers[i].ref_train_output    = nullptr;
+                layers[i].ref_heldout_output  = nullptr;
             }
             if (rc != 0) {
                 return rc;
@@ -814,10 +837,28 @@ int ts_awq_evolve_all(ts_awq_layer * layers, int64_t n_layers,
                 loaded_weights = layers[i].weights_load_fn(layers[i].weights_user_data);
                 layers[i].weights = loaded_weights;
             }
+            // Streaming activation load (see serial path above for details).
+            bool loaded_activations = false;
+            if (layers[i].activations_load_fn) {
+                loaded_activations = layers[i].activations_load_fn(
+                    layers[i].activations_user_data,
+                    &layers[i].train_activations, &layers[i].n_tokens,
+                    &layers[i].heldout_activations, &layers[i].n_tokens_h,
+                    &layers[i].ref_train_output, &layers[i].ref_heldout_output);
+            }
             int rc = ts_awq_evolve(&layers[i], eval, eval_ctx, &layer_params, &(*results)[i]);
             if (layers[i].weights_release_fn && loaded_weights) {
                 layers[i].weights_release_fn(layers[i].weights_user_data, loaded_weights);
                 layers[i].weights = nullptr;
+            }
+            if (layers[i].activations_release_fn && loaded_activations) {
+                layers[i].activations_release_fn(layers[i].activations_user_data);
+                layers[i].train_activations   = nullptr;
+                layers[i].n_tokens            = 0;
+                layers[i].heldout_activations = nullptr;
+                layers[i].n_tokens_h          = 0;
+                layers[i].ref_train_output    = nullptr;
+                layers[i].ref_heldout_output  = nullptr;
             }
             if (rc != 0) {
                 int expected = 0;

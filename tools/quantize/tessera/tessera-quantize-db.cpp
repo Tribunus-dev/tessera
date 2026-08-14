@@ -22,6 +22,7 @@
 #endif
 #include "duckdb.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -252,6 +253,9 @@ static const char * TS_QDB_SCHEMA_SQL =
     "    tail_ratio         DOUBLE,\n"
     "    source             TEXT,\n"
     "    recommended_action TEXT,\n"
+    "    frob2              DOUBLE,\n"
+    "    absq_sketch        BLOB,\n"
+    "    stats_version      INTEGER,\n"
     "    updated_at         TIMESTAMP,\n"
     "    PRIMARY KEY (model_hash, model_role, name)\n"
     ");\n"
@@ -579,7 +583,62 @@ static const char * TS_QDB_SCHEMA_SQL =
     "    PRIMARY KEY (model_hash, model_role, name, in_dim, scorer_version)\n"
     ");\n"
     "CREATE INDEX IF NOT EXISTS idx_hessian_cache_model\n"
-    "    ON v2_hessian_cache(model_hash, model_role);\n";
+    "    ON v2_hessian_cache(model_hash, model_role);\n"
+    // ---- eval_cache: forward-only memoization for the ts_expert_eval seam
+    // (pipeline refactor phase 2) ----
+    // Every variable input (genes/alpha/clip/tier, the KV-joint codec
+    // context) is folded into params_digest, which IS part of the key --
+    // unlike v2_hessian_cache's n_samples/ridge_fraction, there is no
+    // separate value-gate re-check on read: a hit for the exact key is
+    // unconditionally valid. FORWARD-ONLY (INSERT ... ON CONFLICT DO
+    // NOTHING); nothing ever overwrites, ALTERs, or DROPs a row.
+    // eval_version invalidates rows when the scoring math changes, the
+    // same role scorer_version plays for the hessian cache.
+    "CREATE TABLE IF NOT EXISTS eval_cache (\n"
+    "    model_hash    TEXT NOT NULL,\n"
+    "    model_role    TEXT NOT NULL DEFAULT 'trunk',\n"
+    "    tensor_name   TEXT NOT NULL,\n"
+    "    evaluator     TEXT NOT NULL,\n"
+    "    params_digest TEXT NOT NULL,\n"
+    "    input_digest  TEXT NOT NULL,\n"
+    "    eval_version  INTEGER NOT NULL,\n"
+    "    t2            DOUBLE,\n"
+    "    aux           TEXT,\n"
+    "    computed_at   TEXT,\n"
+    "    PRIMARY KEY (model_hash, model_role, tensor_name,\n"
+    "                 evaluator, params_digest, input_digest, eval_version)\n"
+    ");\n"
+    "CREATE INDEX IF NOT EXISTS idx_eval_cache_model\n"
+    "    ON eval_cache(model_hash, model_role);\n"
+    // ---- kv_stats: per-(layer, K-or-V-side) KV-cache calibration stats
+    // (Phase 3 "KV-joint plumbing", additive) ----
+    // Mirrors tensor_stats' shape. One row per (model_hash, model_role,
+    // name) where name is "blk.<il>.attn_k" / "blk.<il>.attn_v" -- one
+    // row per (layer, K-or-V side), NOT one row per layer with both
+    // sides combined. sum2/maxabs/quantile_sketch are per-channel F32
+    // arrays (n_channels long) stored as BLOB, same hex-escape encoding
+    // tensor_stats.absq_sketch and v2_hessian_cache.h_inv_diag already
+    // use. kv_codec_digest is informational (which -ctk/-ctv codec was
+    // configured during the capture run); source records which capture
+    // path wrote the row. model_role ships from day one -- this table
+    // is NOT part of the 7-table Phase-16 migration map.
+    "CREATE TABLE IF NOT EXISTS kv_stats (\n"
+    "    model_hash        TEXT NOT NULL,\n"
+    "    model_role        TEXT NOT NULL DEFAULT 'trunk',\n"
+    "    name              TEXT NOT NULL,\n"
+    "    layer_depth       INTEGER,\n"
+    "    n_channels        INTEGER,\n"
+    "    n_samples         BIGINT,\n"
+    "    sum2              BLOB,\n"
+    "    maxabs            BLOB,\n"
+    "    quantile_sketch   BLOB,\n"
+    "    kv_codec_digest   TEXT,\n"
+    "    source            TEXT,\n"
+    "    updated_at        TIMESTAMP,\n"
+    "    PRIMARY KEY (model_hash, model_role, name)\n"
+    ");\n"
+    "CREATE INDEX IF NOT EXISTS idx_kv_stats_role_name\n"
+    "    ON kv_stats(model_role, name);\n";
 
 // Phase 16.7: per-component (model_role, name) covering index
 // statements. Kept as a separate constant from TS_QDB_SCHEMA_SQL
@@ -630,6 +689,18 @@ std::string sql_escape(const std::string & s) {
         else           out += c;
     }
     return out;
+}
+
+// std::ostringstream defaults to 6 significant digits for floating point --
+// enough to silently truncate a value a memoization/scoring column cannot
+// afford to lose (see ts_float_sql_literal's float counterpart, added
+// after an eval_cache round-trip test caught the same class of bug on
+// t2). 17 significant digits is the standard round-trip guarantee for
+// IEEE 754 double precision.
+std::string ts_double_sql_literal(double v) {
+    char buf[40];
+    std::snprintf(buf, sizeof(buf), "%.17g", v);
+    return buf;
 }
 
 // Format the current UTC time as a DuckDB TIMESTAMP literal
@@ -687,6 +758,13 @@ ts_tessera_db::~ts_tessera_db() {
 int ts_tessera_db_migrate_regime_thresholds(ts_tessera_db * db,
                                              std::string * err);
 
+// Forward declaration: same rationale (Phase 2 "Layer A" -- adds
+// frob2/absq_sketch/stats_version to an existing tensor_stats table via
+// ADD COLUMN IF NOT EXISTS, since CREATE TABLE IF NOT EXISTS is a no-op
+// on a DB that already has the table from before this phase).
+int ts_tessera_db_migrate_tensor_stats_layer_a(ts_tessera_db * db,
+                                                std::string * err);
+
 ts_tessera_db * ts_tessera_db_open(const std::string & path,
                                      std::string * err) {
     auto * wrap = new (std::nothrow) ts_tessera_db();
@@ -743,6 +821,13 @@ ts_tessera_db * ts_tessera_db_open(const std::string & path,
         // columns (kurtosis, eff_rank, layer_position) and ensure
         // regime_thresholds table exists. Idempotent: no-op on re-open.
         if (ts_tessera_db_migrate_regime_thresholds(wrap, err) != 0) {
+            delete wrap;
+            return nullptr;
+        }
+        // Phase 2 "Layer A": extend tensor_stats with frob2/absq_sketch/
+        // stats_version on a DB that already has the table (from before
+        // this phase). Idempotent: no-op on re-open.
+        if (ts_tessera_db_migrate_tensor_stats_layer_a(wrap, err) != 0) {
             delete wrap;
             return nullptr;
         }
@@ -993,6 +1078,14 @@ int ts_tessera_db_upsert_tensor_stat(
     const ts_tessera_db_tensor_stat & row,
     std::string * err) {
     if (db == nullptr || db->conn == nullptr) return 0;
+    // Currently only called from the dispatch's single-threaded GA-prep
+    // walk, but ts_tessera_db_read_tensor_stat (same table, same
+    // Connection) is reachable from the acceptance panel's threaded
+    // worker pool and takes this lock -- taking it here too means a
+    // future concurrent caller of this function can't reintroduce the
+    // unsynchronized-Connection hazard eval_cache_mutex exists to
+    // prevent, without anyone having to remember why.
+    std::lock_guard<std::mutex> lock(db->eval_cache_mutex);
     // PRIMARY KEY (model_hash, model_role, name). The ON CONFLICT
     // DO UPDATE clause overwrites every column on a re-write.
     // source is updated to the current writer's tag. Phase 16
@@ -1002,11 +1095,33 @@ int ts_tessera_db_upsert_tensor_stat(
     const std::string role = row.model_role.empty()
         ? std::string("trunk")
         : row.model_role;
+    // absq_sketch: raw F32 bytes hex-escaped into a BLOB literal, same
+    // encoding v2_hessian_cache's h_inv_diag uses (see
+    // ts_tessera_db_write_hessian_cache) -- an empty sketch becomes
+    // SQL NULL rather than an empty BLOB so "no sketch" and "empty
+    // sketch" aren't ambiguous to a reader.
+    std::string sketch_lit = "NULL";
+    if (!row.absq_sketch.empty()) {
+        const size_t blob_bytes = row.absq_sketch.size() * sizeof(float);
+        std::string lit;
+        lit.reserve(blob_bytes * 4 + 8);
+        lit += "'";
+        static const char HEX[] = "0123456789abcdef";
+        const uint8_t * bytes = (const uint8_t *) row.absq_sketch.data();
+        for (size_t i = 0; i < blob_bytes; i++) {
+            lit += "\\x";
+            lit += HEX[bytes[i] >> 4];
+            lit += HEX[bytes[i] & 0x0f];
+        }
+        lit += "'::BLOB";
+        sketch_lit = lit;
+    }
     std::ostringstream q;
     q << "INSERT INTO tensor_stats (model_hash, model_role, name, family, "
          "layer_depth, out_dim, in_dim, n_elements, dtype, "
          "kurtosis, eff_rank, rms, mean_abs, tail_ratio, source, "
-         "recommended_action, updated_at) VALUES ("
+         "recommended_action, frob2, absq_sketch, stats_version, "
+         "updated_at) VALUES ("
       << "'" << sql_escape(row.model_hash) << "', "
       << "'" << sql_escape(role) << "', "
       << "'" << sql_escape(row.name) << "', "
@@ -1023,6 +1138,9 @@ int ts_tessera_db_upsert_tensor_stat(
       << row.tail_ratio << ", "
       << "'" << sql_escape(row.source) << "', "
       << "'" << sql_escape(row.recommended_action) << "', "
+      << ts_double_sql_literal(row.frob2) << ", "
+      << sketch_lit << ", "
+      << row.stats_version << ", "
       << ts_now_ts()
       << ") ON CONFLICT (model_hash, model_role, name) DO UPDATE SET "
          "family=excluded.family, layer_depth=excluded.layer_depth, "
@@ -1032,6 +1150,8 @@ int ts_tessera_db_upsert_tensor_stat(
          "rms=excluded.rms, mean_abs=excluded.mean_abs, "
          "tail_ratio=excluded.tail_ratio, source=excluded.source, "
          "recommended_action=excluded.recommended_action, "
+         "frob2=excluded.frob2, absq_sketch=excluded.absq_sketch, "
+         "stats_version=excluded.stats_version, "
          "updated_at=excluded.updated_at";
     try {
         auto res = db->conn->Query(q.str());
@@ -1044,6 +1164,375 @@ int ts_tessera_db_upsert_tensor_stat(
         return 1;
     } catch (...) {
         if (err) *err = "upsert_tensor_stat failed: unknown exception";
+        return 1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 "Layer A": absq_sketch build / quantile lookup
+// ---------------------------------------------------------------------------
+
+void ts_tensor_stats_build_absq_sketch(
+        const float * w, int64_t n, std::vector<float> * out,
+        int64_t max_points, int64_t sample_cap) {
+    if (out == nullptr) return;
+    out->clear();
+    if (w == nullptr || n <= 0 || max_points <= 0) return;
+
+    const int64_t stride = std::max<int64_t>(1, n / std::max<int64_t>(1, sample_cap));
+    std::vector<float> sample;
+    sample.reserve((size_t)((n + stride - 1) / stride));
+    for (int64_t i = 0; i < n; i += stride) {
+        sample.push_back(std::fabs(w[i]));
+    }
+    std::sort(sample.begin(), sample.end());
+
+    const int64_t np = std::min<int64_t>(max_points, (int64_t) sample.size());
+    out->resize((size_t) np);
+    for (int64_t j = 0; j < np; j++) {
+        const int64_t idx = (np == 1) ? 0
+            : (j * ((int64_t) sample.size() - 1)) / (np - 1);
+        (*out)[(size_t) j] = sample[(size_t) idx];
+    }
+}
+
+float ts_tensor_stats_sketch_quantile(const std::vector<float> & sketch, float q) {
+    if (sketch.empty()) return 0.0f;
+    if (sketch.size() == 1) return sketch[0];
+    q = std::max(0.0f, std::min(1.0f, q));
+    const double pos = q * (double)(sketch.size() - 1);
+    const size_t lo = (size_t) pos;
+    const size_t hi = std::min(lo + 1, sketch.size() - 1);
+    const double frac = pos - (double) lo;
+    return (float)((1.0 - frac) * sketch[lo] + frac * sketch[hi]);
+}
+
+// ---------------------------------------------------------------------------
+// tensor_stats read: single-row keyed lookup (Phase 2 "Layer A" and every
+// pre-existing column)
+// ---------------------------------------------------------------------------
+//
+// Mirrors ts_tessera_db_read_eval_cache's hit/miss contract: db == nullptr
+// is a safe no-op, an absent row is a miss (not an error), and only a real
+// SQL/decode failure returns non-zero.
+int ts_tessera_db_read_tensor_stat(
+        ts_tessera_db * db,
+        const std::string & model_hash,
+        const std::string & model_role,
+        const std::string & name,
+        ts_tessera_db_tensor_stat * out,
+        bool * hit,
+        std::string * err) {
+    if (hit) *hit = false;
+    if (db == nullptr || db->conn == nullptr || out == nullptr) return 0;
+    const std::string role = model_role.empty() ? std::string("trunk") : model_role;
+
+    // This is reached from the acceptance panel's threaded worker pool via
+    // ts_eval_frob2 (tessera-expert-eval.cpp) -- same DuckDB Connection
+    // thread-safety hazard eval_cache's read/write already guard against
+    // (see the ts_tessera_db struct comment on eval_cache_mutex). Reused
+    // here rather than a second mutex: tensor_stats reads/writes never
+    // overlap with eval_cache reads/writes in a way that needs separate
+    // shards, and both are individually fast SQL statements.
+    std::lock_guard<std::mutex> lock(db->eval_cache_mutex);
+
+    std::ostringstream q;
+    q << "SELECT family, layer_depth, out_dim, in_dim, n_elements, dtype, "
+         "kurtosis, eff_rank, rms, mean_abs, tail_ratio, source, "
+         "recommended_action, frob2, absq_sketch, stats_version "
+         "FROM tensor_stats WHERE model_hash = '" << sql_escape(model_hash)
+      << "' AND model_role = '" << sql_escape(role)
+      << "' AND name = '" << sql_escape(name) << "'";
+    try {
+        auto res = db->conn->Query(q.str());
+        if (res->HasError()) {
+            if (err) *err = "read_tensor_stat: " + res->GetError();
+            return 1;
+        }
+        if (res->RowCount() == 0) return 0;   // miss, not an error
+
+        out->model_hash = model_hash;
+        out->model_role = role;
+        out->name       = name;
+        auto getstr = [&](idx_t col) -> std::string {
+            auto v = res->GetValue(col, 0);
+            return v.IsNull() ? std::string() : v.GetValue<std::string>();
+        };
+        auto getdbl = [&](idx_t col) -> double {
+            auto v = res->GetValue(col, 0);
+            return v.IsNull() ? 0.0 : v.GetValue<double>();
+        };
+        auto getint = [&](idx_t col) -> int64_t {
+            auto v = res->GetValue(col, 0);
+            return v.IsNull() ? 0 : v.GetValue<int64_t>();
+        };
+        out->family             = getstr(0);
+        out->layer_depth        = (int32_t) getint(1);
+        out->out_dim            = getint(2);
+        out->in_dim             = getint(3);
+        out->n_elements         = getint(4);
+        out->dtype              = getstr(5);
+        out->kurtosis           = getdbl(6);
+        out->eff_rank           = getdbl(7);
+        out->rms                = getdbl(8);
+        out->mean_abs           = getdbl(9);
+        out->tail_ratio         = getdbl(10);
+        out->source             = getstr(11);
+        out->recommended_action = getstr(12);
+        out->frob2              = getdbl(13);
+        out->absq_sketch.clear();
+        auto sketch_v = res->GetValue(14, 0);
+        if (!sketch_v.IsNull()) {
+            auto s = sketch_v.GetValueUnsafe<duckdb::string_t>();
+            if (s.GetSize() % sizeof(float) != 0) {
+                if (err) *err = "read_tensor_stat: absq_sketch blob size not a multiple of sizeof(float) for " + name;
+                return 1;
+            }
+            const size_t np = s.GetSize() / sizeof(float);
+            out->absq_sketch.resize(np);
+            if (np > 0) {
+                std::memcpy(out->absq_sketch.data(), s.GetData(), np * sizeof(float));
+            }
+        }
+        out->stats_version = (int32_t) getint(15);
+        if (hit) *hit = true;
+    } catch (const std::exception & e) {
+        if (err) *err = std::string("read_tensor_stat exception: ") + e.what();
+        return 1;
+    } catch (...) {
+        if (err) *err = "read_tensor_stat unknown exception";
+        return 1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// kv_stats upsert: per-(layer, K-or-V-side) KV-cache calibration stats
+// (Phase 3 "KV-joint plumbing")
+// ---------------------------------------------------------------------------
+
+int ts_tessera_db_upsert_kv_stat(
+    ts_tessera_db * db,
+    const ts_tessera_db_kv_stat & row,
+    std::string * err) {
+    if (db == nullptr || db->conn == nullptr) return 0;
+    // Same unsynchronized-Connection hazard tensor_stats guards against --
+    // see the eval_cache_mutex comment on ts_tessera_db_upsert_tensor_stat.
+    // Taking the lock here even though the current caller is single-
+    // threaded means a future concurrent caller can't reintroduce the
+    // hazard without anyone having to remember why.
+    std::lock_guard<std::mutex> lock(db->eval_cache_mutex);
+    // PRIMARY KEY (model_hash, model_role, name). The ON CONFLICT DO
+    // UPDATE clause overwrites every column on a re-write. Default
+    // "trunk" preserves the tensor_stats model_role contract when the
+    // caller leaves the field empty.
+    const std::string role = row.model_role.empty()
+        ? std::string("trunk")
+        : row.model_role;
+
+    // sum2: raw F32 bytes hex-escaped into a BLOB literal, same encoding
+    // tensor_stats.absq_sketch uses (see ts_tessera_db_upsert_tensor_stat)
+    // -- an empty vector becomes SQL NULL rather than an empty BLOB so
+    // "no data" and "empty array" aren't ambiguous to a reader.
+    std::string sum2_lit = "NULL";
+    if (!row.sum2.empty()) {
+        const size_t blob_bytes = row.sum2.size() * sizeof(float);
+        std::string lit;
+        lit.reserve(blob_bytes * 4 + 8);
+        lit += "'";
+        static const char HEX[] = "0123456789abcdef";
+        const uint8_t * bytes = (const uint8_t *) row.sum2.data();
+        for (size_t i = 0; i < blob_bytes; i++) {
+            lit += "\\x";
+            lit += HEX[bytes[i] >> 4];
+            lit += HEX[bytes[i] & 0x0f];
+        }
+        lit += "'::BLOB";
+        sum2_lit = lit;
+    }
+    // maxabs: same encoding as sum2 above.
+    std::string maxabs_lit = "NULL";
+    if (!row.maxabs.empty()) {
+        const size_t blob_bytes = row.maxabs.size() * sizeof(float);
+        std::string lit;
+        lit.reserve(blob_bytes * 4 + 8);
+        lit += "'";
+        static const char HEX[] = "0123456789abcdef";
+        const uint8_t * bytes = (const uint8_t *) row.maxabs.data();
+        for (size_t i = 0; i < blob_bytes; i++) {
+            lit += "\\x";
+            lit += HEX[bytes[i] >> 4];
+            lit += HEX[bytes[i] & 0x0f];
+        }
+        lit += "'::BLOB";
+        maxabs_lit = lit;
+    }
+    // quantile_sketch: same encoding as sum2 above.
+    std::string sketch_lit = "NULL";
+    if (!row.quantile_sketch.empty()) {
+        const size_t blob_bytes = row.quantile_sketch.size() * sizeof(float);
+        std::string lit;
+        lit.reserve(blob_bytes * 4 + 8);
+        lit += "'";
+        static const char HEX[] = "0123456789abcdef";
+        const uint8_t * bytes = (const uint8_t *) row.quantile_sketch.data();
+        for (size_t i = 0; i < blob_bytes; i++) {
+            lit += "\\x";
+            lit += HEX[bytes[i] >> 4];
+            lit += HEX[bytes[i] & 0x0f];
+        }
+        lit += "'::BLOB";
+        sketch_lit = lit;
+    }
+
+    std::ostringstream q;
+    q << "INSERT INTO kv_stats (model_hash, model_role, name, "
+         "layer_depth, n_channels, n_samples, sum2, maxabs, "
+         "quantile_sketch, kv_codec_digest, source, updated_at) VALUES ("
+      << "'" << sql_escape(row.model_hash) << "', "
+      << "'" << sql_escape(role) << "', "
+      << "'" << sql_escape(row.name) << "', "
+      << row.layer_depth << ", "
+      << row.n_channels << ", "
+      << row.n_samples << ", "
+      << sum2_lit << ", "
+      << maxabs_lit << ", "
+      << sketch_lit << ", "
+      << "'" << sql_escape(row.kv_codec_digest) << "', "
+      << "'" << sql_escape(row.source) << "', "
+      << ts_now_ts()
+      << ") ON CONFLICT (model_hash, model_role, name) DO UPDATE SET "
+         "layer_depth=excluded.layer_depth, "
+         "n_channels=excluded.n_channels, "
+         "n_samples=excluded.n_samples, "
+         "sum2=excluded.sum2, maxabs=excluded.maxabs, "
+         "quantile_sketch=excluded.quantile_sketch, "
+         "kv_codec_digest=excluded.kv_codec_digest, "
+         "source=excluded.source, "
+         "updated_at=excluded.updated_at";
+    try {
+        auto res = db->conn->Query(q.str());
+        if (res->HasError()) {
+            if (err) *err = "upsert_kv_stat failed: " + res->GetError();
+            return 1;
+        }
+    } catch (const std::exception & e) {
+        if (err) *err = std::string("upsert_kv_stat failed: ") + e.what();
+        return 1;
+    } catch (...) {
+        if (err) *err = "upsert_kv_stat failed: unknown exception";
+        return 1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// kv_stats read: single-row keyed lookup (Phase 3 "KV-joint plumbing")
+// ---------------------------------------------------------------------------
+//
+// Mirrors ts_tessera_db_read_tensor_stat's hit/miss contract: db == nullptr
+// is a safe no-op, an absent row is a miss (not an error), and only a real
+// SQL/decode failure returns non-zero.
+int ts_tessera_db_read_kv_stat(
+        ts_tessera_db * db,
+        const std::string & model_hash,
+        const std::string & model_role,
+        const std::string & name,
+        ts_tessera_db_kv_stat * out,
+        bool * hit,
+        std::string * err) {
+    if (hit) *hit = false;
+    if (db == nullptr || db->conn == nullptr || out == nullptr) return 0;
+    const std::string role = model_role.empty() ? std::string("trunk") : model_role;
+
+    // Same unsynchronized-Connection hazard tensor_stats guards against --
+    // see the eval_cache_mutex comment on ts_tessera_db_read_tensor_stat.
+    std::lock_guard<std::mutex> lock(db->eval_cache_mutex);
+
+    std::ostringstream q;
+    q << "SELECT layer_depth, n_channels, n_samples, sum2, maxabs, "
+         "quantile_sketch, kv_codec_digest, source "
+         "FROM kv_stats WHERE model_hash = '" << sql_escape(model_hash)
+      << "' AND model_role = '" << sql_escape(role)
+      << "' AND name = '" << sql_escape(name) << "'";
+    try {
+        auto res = db->conn->Query(q.str());
+        if (res->HasError()) {
+            if (err) *err = "read_kv_stat: " + res->GetError();
+            return 1;
+        }
+        if (res->RowCount() == 0) return 0;   // miss, not an error
+
+        out->model_hash = model_hash;
+        out->model_role = role;
+        out->name       = name;
+        auto getstr = [&](idx_t col) -> std::string {
+            auto v = res->GetValue(col, 0);
+            return v.IsNull() ? std::string() : v.GetValue<std::string>();
+        };
+        auto getint = [&](idx_t col) -> int64_t {
+            auto v = res->GetValue(col, 0);
+            return v.IsNull() ? 0 : v.GetValue<int64_t>();
+        };
+        out->layer_depth = (int32_t) getint(0);
+        out->n_channels  = (int32_t) getint(1);
+        out->n_samples   = getint(2);
+
+        // sum2: raw F32 bytes decoded from the BLOB, same pattern
+        // tensor_stats.absq_sketch's reader uses.
+        out->sum2.clear();
+        auto sum2_v = res->GetValue(3, 0);
+        if (!sum2_v.IsNull()) {
+            auto s = sum2_v.GetValueUnsafe<duckdb::string_t>();
+            if (s.GetSize() % sizeof(float) != 0) {
+                if (err) *err = "read_kv_stat: sum2 blob size not a multiple of sizeof(float) for " + name;
+                return 1;
+            }
+            const size_t np = s.GetSize() / sizeof(float);
+            out->sum2.resize(np);
+            if (np > 0) {
+                std::memcpy(out->sum2.data(), s.GetData(), np * sizeof(float));
+            }
+        }
+        // maxabs: same decode pattern as sum2 above.
+        out->maxabs.clear();
+        auto maxabs_v = res->GetValue(4, 0);
+        if (!maxabs_v.IsNull()) {
+            auto s = maxabs_v.GetValueUnsafe<duckdb::string_t>();
+            if (s.GetSize() % sizeof(float) != 0) {
+                if (err) *err = "read_kv_stat: maxabs blob size not a multiple of sizeof(float) for " + name;
+                return 1;
+            }
+            const size_t np = s.GetSize() / sizeof(float);
+            out->maxabs.resize(np);
+            if (np > 0) {
+                std::memcpy(out->maxabs.data(), s.GetData(), np * sizeof(float));
+            }
+        }
+        // quantile_sketch: same decode pattern as sum2 above.
+        out->quantile_sketch.clear();
+        auto sketch_v = res->GetValue(5, 0);
+        if (!sketch_v.IsNull()) {
+            auto s = sketch_v.GetValueUnsafe<duckdb::string_t>();
+            if (s.GetSize() % sizeof(float) != 0) {
+                if (err) *err = "read_kv_stat: quantile_sketch blob size not a multiple of sizeof(float) for " + name;
+                return 1;
+            }
+            const size_t np = s.GetSize() / sizeof(float);
+            out->quantile_sketch.resize(np);
+            if (np > 0) {
+                std::memcpy(out->quantile_sketch.data(), s.GetData(), np * sizeof(float));
+            }
+        }
+        out->kv_codec_digest = getstr(6);
+        out->source           = getstr(7);
+        if (hit) *hit = true;
+    } catch (const std::exception & e) {
+        if (err) *err = std::string("read_kv_stat exception: ") + e.what();
+        return 1;
+    } catch (...) {
+        if (err) *err = "read_kv_stat unknown exception";
         return 1;
     }
     return 0;
@@ -2195,6 +2684,82 @@ int write_migration_sidecar(const std::string & db_path,
 
 }  // namespace
 
+// Schema-owner helper (phase 2): the ordered column-name list for a table,
+// read from the LIVE schema via information_schema.columns rather than
+// parsed from the CREATE TABLE string -- l5_outcome's kurtosis/eff_rank/
+// layer_position columns exist only via an ALTER TABLE migration
+// (ts_tessera_db_migrate_model_role) and would be invisible to a DDL
+// parser. ordinal_position is DuckDB's column declaration order, which for
+// an ALTER-added column is its append position -- exactly what an
+// INSERT/Appender needs to line values up correctly.
+int ts_tessera_db_table_columns(
+        ts_tessera_db * db,
+        const std::string & table_name,
+        std::vector<std::string> * out,
+        std::string * err) {
+    if (out) out->clear();
+    if (db == nullptr || db->conn == nullptr || out == nullptr) return 0;
+
+    const std::string q =
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_name = '" + sql_escape(table_name) + "' "
+        "ORDER BY ordinal_position";
+    try {
+        auto res = db->conn->Query(q);
+        if (res->HasError()) {
+            if (err) *err = "table_columns(" + table_name + "): " + res->GetError();
+            return 1;
+        }
+        for (idx_t i = 0; i < res->RowCount(); i++) {
+            out->push_back(res->GetValue(0, i).GetValue<std::string>());
+        }
+    } catch (const std::exception & e) {
+        if (err) *err = "table_columns(" + table_name + ") exception: " + std::string(e.what());
+        return 1;
+    } catch (...) {
+        if (err) *err = "table_columns(" + table_name + ") unknown exception";
+        return 1;
+    }
+    return 0;
+}
+
+bool ts_tessera_db_check_buffer_columns(
+        ts_tessera_db * db,
+        const std::string & table_name,
+        const std::vector<std::string> & expected,
+        std::string * mismatch) {
+    if (mismatch) mismatch->clear();
+    if (db == nullptr) return true;  // nothing to check against
+
+    std::vector<std::string> live;
+    std::string err;
+    if (ts_tessera_db_table_columns(db, table_name, &live, &err) != 0) {
+        // An unrelated SQL error should not block the run over a check
+        // that could not complete -- the caller's own warn-and-continue
+        // path around ts_db_buffer_open still applies.
+        return true;
+    }
+    if (live == expected) return true;
+
+    if (mismatch) {
+        std::ostringstream m;
+        m << "'" << table_name << "' column list drift: expected "
+          << expected.size() << " columns {";
+        for (size_t i = 0; i < expected.size(); i++) {
+            if (i) m << ", ";
+            m << expected[i];
+        }
+        m << "}, live schema has " << live.size() << " columns {";
+        for (size_t i = 0; i < live.size(); i++) {
+            if (i) m << ", ";
+            m << live[i];
+        }
+        m << "}";
+        *mismatch = m.str();
+    }
+    return false;
+}
+
 int ts_tessera_db_migrate_model_role(ts_tessera_db * db,
                                       std::string * err) {
     if (db == nullptr || db->conn == nullptr) {
@@ -2233,12 +2798,20 @@ int ts_tessera_db_migrate_model_role(ts_tessera_db * db,
             "    tail_ratio         DOUBLE,"
             "    source             TEXT,"
             "    recommended_action TEXT,"
+            "    frob2              DOUBLE,"
+            "    absq_sketch        BLOB,"
+            "    stats_version      INTEGER,"
             "    updated_at         TIMESTAMP,"
             "    PRIMARY KEY (model_hash, model_role, name)"
             ")",
             // INSERT: the SELECT explicitly lists the old
             // columns so the trailing AS model_role has a
             // matching slot in the CREATE TABLE column list.
+            // frob2/absq_sketch/stats_version are Phase 2 "Layer A"
+            // additions that did not exist on any pre-Phase-16 DB --
+            // omitted here so they default NULL (stats_version reads
+            // back as 0 via COALESCE at the read site, the documented
+            // "predates Layer A" sentinel).
             "INSERT INTO tensor_stats__p16_new "
             "(model_hash, name, family, layer_depth, out_dim, in_dim, "
             "n_elements, dtype, kurtosis, eff_rank, rms, mean_abs, "
@@ -2585,6 +3158,53 @@ int ts_tessera_db_migrate_regime_thresholds(ts_tessera_db * db,
         return 1;
     } catch (...) {
         if (err) *err = "migrate_regime_thresholds: unknown exception";
+        return 1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline refactor phase 2 "Layer A": tensor_stats frob2/absq_sketch/
+// stats_version columns
+// ---------------------------------------------------------------------------
+//
+// ADD COLUMN IF NOT EXISTS (not a PK change, so no PK-rebuild dance is
+// needed -- same shape as ts_tessera_db_migrate_regime_thresholds above).
+// Idempotent: a fresh DB already has the columns from TS_QDB_SCHEMA_SQL,
+// so every ADD COLUMN here is a no-op on it; a DB migrated by this
+// function on a prior open is likewise a no-op on re-open.
+int ts_tessera_db_migrate_tensor_stats_layer_a(ts_tessera_db * db,
+                                                std::string * err) {
+    if (db == nullptr || db->conn == nullptr) {
+        if (err) *err = "migrate_tensor_stats_layer_a: null db or conn";
+        return 1;
+    }
+    try {
+        const char * alter_sqls[] = {
+            "ALTER TABLE tensor_stats ADD COLUMN IF NOT EXISTS frob2 DOUBLE",
+            "ALTER TABLE tensor_stats ADD COLUMN IF NOT EXISTS absq_sketch BLOB",
+            "ALTER TABLE tensor_stats ADD COLUMN IF NOT EXISTS stats_version INTEGER",
+        };
+        for (const char * sql : alter_sqls) {
+            auto r = db->conn->Query(sql);
+            if (r->HasError()) {
+                // Same "duplicate column" tolerance as
+                // ts_tessera_db_migrate_regime_thresholds: DuckDB's
+                // ADD COLUMN IF NOT EXISTS still surfaces an error for
+                // the already-present case rather than a true no-op.
+                std::string msg = r->GetError();
+                if (msg.find("duplicate") == std::string::npos &&
+                    msg.find("already exists") == std::string::npos) {
+                    if (err) *err = std::string(sql) + ": " + msg;
+                    return 1;
+                }
+            }
+        }
+    } catch (const std::exception & e) {
+        if (err) *err = std::string("migrate_tensor_stats_layer_a: ") + e.what();
+        return 1;
+    } catch (...) {
+        if (err) *err = "migrate_tensor_stats_layer_a: unknown exception";
         return 1;
     }
     return 0;
@@ -2991,6 +3611,237 @@ int ts_tessera_db_write_hessian_cache(
         return 1;
     } catch (...) {
         if (err) *err = "write_hessian_cache unknown exception";
+        return 1;
+    }
+    return 0;
+}
+
+// --- Eval cache: forward-only memoization for the ts_expert_eval seam (Phase 2) ---
+
+// std::ostringstream defaults to 6 significant digits for floating point --
+// enough to silently truncate a t2 score (e.g. 0.151114255 -> "0.151114"
+// in the SQL literal), which a memoization cache cannot afford to lose
+// (unlike v2_hessian_cache's ridge_fraction, which only ever feeds a
+// 1e-6-tolerant comparison and so never surfaced this). 9 significant
+// digits is the standard round-trip guarantee for IEEE 754 single
+// precision (matches ts_acc_json_float's "%.9g" convention in
+// tessera-acceptance.cpp).
+static std::string ts_float_sql_literal(float v) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.9g", (double)v);
+    return buf;
+}
+
+static std::string eval_cache_ledger_path(const std::string & db_path) {
+    std::string stem = db_path;
+    auto slash = stem.find_last_of("/\\");
+    auto dot   = stem.find_last_of('.');
+    if (dot != std::string::npos &&
+        (slash == std::string::npos || dot > slash)) {
+        stem = stem.substr(0, dot);
+    }
+    return stem + ".eval-cache.jsonl";
+}
+
+// Core ledger write with NO locking -- every caller in this file already
+// holds db->eval_cache_mutex (read/write take it once and cover both the
+// SQL and the ledger write; a second lock here would deadlock on a plain,
+// non-recursive std::mutex).
+static int eval_cache_ledger_append_locked(
+        ts_tessera_db * db,
+        const char * event,
+        const std::string & model_hash,
+        const std::string & model_role,
+        const std::string & tensor_name,
+        const std::string & evaluator,
+        const std::string & params_digest,
+        const std::string & input_digest,
+        int32_t eval_version,
+        std::string * err) {
+    if (db == nullptr || db->db_path.empty() || db->db_path == ":memory:") {
+        return 0;   // no ledger for in-memory / missing path
+    }
+    if (event == nullptr) event = "";
+    const std::string path = eval_cache_ledger_path(db->db_path);
+    auto json_esc = [](const std::string & s) -> std::string {
+        std::string out;
+        out.reserve(s.size() + 8);
+        for (char c : s) {
+            if (c == '"' || c == '\\') out += '\\';
+            out += c;
+        }
+        return out;
+    };
+    std::ostringstream line;
+    line << "{\"ts\": " << ts_now_ts() << ", "
+         << "\"event\": \"" << json_esc(event) << "\", "
+         << "\"model_hash\": \"" << json_esc(model_hash) << "\", "
+         << "\"model_role\": \"" << json_esc(model_role) << "\", "
+         << "\"tensor_name\": \"" << json_esc(tensor_name) << "\", "
+         << "\"evaluator\": \"" << json_esc(evaluator) << "\", "
+         << "\"params_digest\": \"" << json_esc(params_digest) << "\", "
+         << "\"input_digest\": \"" << json_esc(input_digest) << "\", "
+         << "\"eval_version\": " << eval_version << "}\n";
+    std::ofstream f(path, std::ios::binary | std::ios::app);
+    if (!f) {
+        if (err) *err = "eval cache ledger open failed: " + path;
+        return 1;
+    }
+    f << line.str();
+    f.flush();
+    if (!f) {
+        if (err) *err = "eval cache ledger write failed: " + path;
+        return 1;
+    }
+    return 0;
+}
+
+int ts_tessera_db_append_eval_cache_ledger(
+        ts_tessera_db * db,
+        const char * event,
+        const std::string & model_hash,
+        const std::string & model_role,
+        const std::string & tensor_name,
+        const std::string & evaluator,
+        const std::string & params_digest,
+        const std::string & input_digest,
+        int32_t eval_version,
+        std::string * err) {
+    if (db == nullptr) return 0;
+    std::lock_guard<std::mutex> lock(db->eval_cache_mutex);
+    return eval_cache_ledger_append_locked(db, event, model_hash, model_role,
+        tensor_name, evaluator, params_digest, input_digest, eval_version, err);
+}
+
+int ts_tessera_db_read_eval_cache(
+        ts_tessera_db * db,
+        const std::string & model_hash,
+        const std::string & model_role,
+        const std::string & tensor_name,
+        const std::string & evaluator,
+        const std::string & params_digest,
+        const std::string & input_digest,
+        int32_t eval_version,
+        float * t2_out,
+        std::string * aux_out,
+        bool * hit,
+        std::string * err) {
+    if (hit) *hit = false;
+    if (t2_out) *t2_out = 0.0f;
+    if (aux_out) aux_out->clear();
+    if (db == nullptr || db->conn == nullptr) return 0;
+    if (t2_out == nullptr || hit == nullptr) return 0;
+
+    std::lock_guard<std::mutex> lock(db->eval_cache_mutex);
+
+    std::ostringstream q;
+    q << "SELECT t2, aux FROM eval_cache WHERE model_hash = '"
+      << sql_escape(model_hash)
+      << "' AND model_role = '" << sql_escape(model_role)
+      << "' AND tensor_name = '" << sql_escape(tensor_name)
+      << "' AND evaluator = '" << sql_escape(evaluator)
+      << "' AND params_digest = '" << sql_escape(params_digest)
+      << "' AND input_digest = '" << sql_escape(input_digest)
+      << "' AND eval_version = " << eval_version;
+
+    try {
+        auto res = db->conn->Query(q.str());
+        if (res->HasError()) {
+            if (err) *err = "read_eval_cache: " + res->GetError();
+            return 1;
+        }
+        if (res->RowCount() == 0) {
+            eval_cache_ledger_append_locked(db, "cache_miss", model_hash,
+                model_role, tensor_name, evaluator, params_digest,
+                input_digest, eval_version, nullptr);
+            return 0;
+        }
+        auto t2v = res->GetValue(0, 0);
+        if (!t2v.IsNull()) {
+            *t2_out = t2v.GetValue<float>();
+        }
+        if (aux_out) {
+            auto auxv = res->GetValue(1, 0);
+            if (!auxv.IsNull()) {
+                *aux_out = auxv.GetValue<std::string>();
+            }
+        }
+        *hit = true;
+        eval_cache_ledger_append_locked(db, "cache_hit", model_hash,
+            model_role, tensor_name, evaluator, params_digest,
+            input_digest, eval_version, nullptr);
+    } catch (const std::exception & e) {
+        if (err) *err = "read_eval_cache exception: " + std::string(e.what());
+        return 1;
+    } catch (...) {
+        if (err) *err = "read_eval_cache unknown exception";
+        return 1;
+    }
+    return 0;
+}
+
+int ts_tessera_db_write_eval_cache(
+        ts_tessera_db * db,
+        const ts_tessera_db_eval_cache_entry & e,
+        bool * stored,
+        std::string * err) {
+    if (stored) *stored = false;
+    if (db == nullptr || db->conn == nullptr) return 0;
+
+    std::lock_guard<std::mutex> lock(db->eval_cache_mutex);
+
+    std::ostringstream q;
+    q << "INSERT INTO eval_cache "
+         "(model_hash, model_role, tensor_name, evaluator, params_digest, input_digest, eval_version, t2, aux, computed_at) "
+         "VALUES ("
+         "'" << sql_escape(e.model_hash) << "', "
+         "'" << sql_escape(e.model_role) << "', "
+         "'" << sql_escape(e.tensor_name) << "', "
+         "'" << sql_escape(e.evaluator) << "', "
+         "'" << sql_escape(e.params_digest) << "', "
+         "'" << sql_escape(e.input_digest) << "', "
+         << e.eval_version << ", "
+         << ts_float_sql_literal(e.t2) << ", "
+         "'" << sql_escape(e.aux) << "', "
+         << ts_now_ts() << ") "
+         "ON CONFLICT DO NOTHING";
+
+    try {
+        // DuckDB reports RowCount()=1 for an INSERT skipped by ON CONFLICT
+        // DO NOTHING, so a pre-count (under the same lock, no race) is how
+        // *stored is determined -- same pattern as write_hessian_cache.
+        std::ostringstream cnt;
+        cnt << "SELECT COUNT(*) FROM eval_cache WHERE model_hash = '"
+            << sql_escape(e.model_hash) << "' AND model_role = '"
+            << sql_escape(e.model_role) << "' AND tensor_name = '"
+            << sql_escape(e.tensor_name) << "' AND evaluator = '"
+            << sql_escape(e.evaluator) << "' AND params_digest = '"
+            << sql_escape(e.params_digest) << "' AND input_digest = '"
+            << sql_escape(e.input_digest) << "' AND eval_version = " << e.eval_version;
+        auto cnt_res = db->conn->Query(cnt.str());
+        if (cnt_res->HasError()) {
+            if (err) *err = "write_eval_cache count: " + cnt_res->GetError();
+            return 1;
+        }
+        const bool pre_existing =
+            cnt_res->RowCount() > 0 &&
+            cnt_res->GetValue(0, 0).GetValue<int64_t>() > 0;
+
+        auto res = db->conn->Query(q.str());
+        if (res->HasError()) {
+            if (err) *err = "write_eval_cache: " + res->GetError();
+            return 1;
+        }
+        if (stored) *stored = !pre_existing;
+        eval_cache_ledger_append_locked(db,
+            !pre_existing ? "cache_store" : "cache_store_conflict",
+            e.model_hash, e.model_role, e.tensor_name, e.evaluator,
+            e.params_digest, e.input_digest, e.eval_version, nullptr);
+    } catch (const std::exception & e2) {
+        if (err) *err = "write_eval_cache exception: " + std::string(e2.what());
+        return 1;
+    } catch (...) {
+        if (err) *err = "write_eval_cache unknown exception";
         return 1;
     }
     return 0;

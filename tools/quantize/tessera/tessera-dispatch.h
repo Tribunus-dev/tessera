@@ -29,6 +29,11 @@ struct ts_dispatch_params {
     std::string policy_path;      // empty = run GA
     std::string policy_out_path;
     std::string calib_corpus;     // empty = use built-in mini-corpus
+    // Real per-tensor activation capture sidecar directory (written by
+    // llama-imatrix --activation-capture; see tessera-activation-sidecar.h).
+    // Empty = no real per-layer activations available; GA fitness falls
+    // back to the diagonal weight-space error (unchanged default behavior).
+    std::string activation_capture_dir;
     std::string higgs_alpha_mode; // "auto", "uniform", "cache-only" (default: "uniform")
     std::string higgs_cache_dir;  // empty = default (~/.cache/tessera/higgs_alpha/)
     uint64_t    evolve_seed;
@@ -111,6 +116,16 @@ struct ts_dispatch_params {
     std::string dspark_gguf_path;
     std::string mtp_gguf_path;
     std::string talker_gguf_path;
+    // Pipeline refactor phase 3 ("KV-joint plumbing"): KV cache type for
+    // the L5 joint harness's target / drafter contexts. Empty = default
+    // F16/F16 (today's behavior). Strings, not ggml_type, so this header
+    // does not need to pull in ggml.h -- parsed via
+    // common_kv_cache_type_from_str (common.h) at the ts_l5_joint_models_load
+    // call site.
+    std::string l5_joint_type_k;
+    std::string l5_joint_type_v;
+    std::string l5_joint_type_k_draft;
+    std::string l5_joint_type_v_draft;
     // Joint calibration set (JSONL: text + talker_targets per record).
     // Empty = generate from a synthetic fixture (v1 schema; v3 wires
     // the real text-to-audio target mapping).

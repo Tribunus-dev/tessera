@@ -976,6 +976,28 @@ struct llm_graph_context {
              const char   * weight_name) const;
     bool imatrix_observer_enabled(const char * weight_name) const;
 
+    // Pipeline refactor phase 3, "KV-joint plumbing": graph-side kv_stats
+    // capture. Observes `cur` (the post-RoPE/post-Hadamard K or V
+    // projection output for layer `il`) with the same dense
+    // ggml_imatrix_observer node build_imatrix_observer_dense uses, named
+    // "blk.<il>.kv_k" / "blk.<il>.kv_v" -- a synthetic name distinct from
+    // any real GGUF tensor, so tools/imatrix/imatrix.cpp can recognize and
+    // route it into the kv_stats table instead of (or alongside) the
+    // regular per-weight imatrix.gguf output. No dedup map is needed here
+    // (unlike build_imatrix_observer_dense): unlike a shared/tied weight's
+    // activation, a layer's k_cur/v_cur is a freshly computed tensor object
+    // built exactly once per graph, so aliasing across call sites cannot
+    // happen. weight_anchor only pins backend scheduling (see
+    // ggml_imatrix_observer's doc comment in ggml.h) -- callers pass `wo`
+    // (the attention output projection weight), which is always resident
+    // on the correct backend for this layer and is not itself read by the
+    // observer kernel. is_k selects the "kv_k"/"kv_v" name suffix.
+    void build_kv_stats_observer(
+              ggml_tensor * cur,
+              ggml_tensor * weight_anchor,
+              int           il,
+              bool          is_k) const;
+
     // Each scope has an independent observer filter on the owning
     // llama_context. The scope is set per-context by the imatrix tool (which
     // knows the drafter/talker identity) via llama_set_imatrix_observer_scope;

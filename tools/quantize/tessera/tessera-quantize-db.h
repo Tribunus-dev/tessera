@@ -25,6 +25,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -43,10 +44,55 @@ struct ts_tessera_db {
     // file. The C++ struct used to discard the path; the
     // sidecar needs it.
     std::string                        db_path;
+    // Phase 2 (eval cache): ts_expert_eval is called from the acceptance
+    // panel's concurrent worker pool (and, once the GA converts, from
+    // parallel candidate evaluation too). DuckDB's Connection is not
+    // documented safe for concurrent Query() calls from multiple threads;
+    // every eval_cache read/write serializes through this mutex. The
+    // expensive work (the actual REAL-tier computation on a cache miss)
+    // happens OUTSIDE the lock -- only the cache lookup/store itself is
+    // serialized, mirroring the "lock-sharded or append-buffered" guidance
+    // in the contracts appendix (a single shard, since eval_cache ops are
+    // individually fast SQL statements).
+    std::mutex                         eval_cache_mutex;
 
     ts_tessera_db() = default;
     ~ts_tessera_db();
 };
+
+// Schema-owner helper (pipeline refactor phase 2): returns the ordered
+// column-name list for `table_name` by querying the LIVE database (post-
+// migration), not by parsing the CREATE TABLE string -- l5_outcome's
+// kurtosis/eff_rank/layer_position columns exist ONLY via an ALTER TABLE
+// migration and never appear in the schema string, so a parser over the
+// DDL would silently miss them. This is what kills the l4_cols drift
+// class: buffer/appender column lists generated (or asserted against)
+// from this instead of hand-copied stay in sync with the table by
+// construction. Returns 0 on success (*out may be empty if the table does
+// not exist -- not itself an error); non-zero only on a real SQL error.
+int ts_tessera_db_table_columns(
+        ts_tessera_db * db,
+        const std::string & table_name,
+        std::vector<std::string> * out,
+        std::string * err);
+
+// Compares `expected` (a caller's hardcoded ts_db_buffer_open column list)
+// against the live schema for `table_name`. Returns true when they match
+// exactly (size and order) OR when the check itself could not run (db ==
+// nullptr, or a SQL error -- an unrelated DB problem should not block the
+// run over a check that could not complete; *mismatch is left empty in
+// both the "matched" and the "could not check" cases). Returns false only
+// on a confirmed drift, with *mismatch set to a human-readable summary
+// naming exactly what differs -- this is the check that turns the l4_cols
+// bug class (a migration added a column to the struct/shim/table but not
+// the buffer's column list, so every flush silently misaligned values
+// against the wrong columns and dropped the whole batch) into a loud,
+// immediate, specific failure instead of a silent one.
+bool ts_tessera_db_check_buffer_columns(
+        ts_tessera_db * db,
+        const std::string & table_name,
+        const std::vector<std::string> & expected,
+        std::string * mismatch);
 
 // Open (or create) the database at `path` and ensure the schema exists.
 // Returns nullptr on failure (message in *err). An in-memory DB (":memory:")
@@ -157,6 +203,12 @@ int ts_tessera_db_insert_l5_fixup(ts_tessera_db * db,
 // l5_weights via the rules in l5_action.py. The COALESCE
 // preservation in the upsert makes this a one-way Python write
 // without disturbing the C++ side's other columns.
+// Pipeline refactor phase 2, "Layer A": bumped whenever the meaning or
+// computation of frob2/absq_sketch changes, so a reader can tell a
+// pre-Layer-A row (stats_version 0, both fields absent) from a stale
+// producer apart from a current one without inspecting the values.
+#define TS_TENSOR_STATS_VERSION 1
+
 struct ts_tessera_db_tensor_stat {
     std::string  model_hash;
     std::string  model_role;   // Phase 16: "trunk" / "dflash" / "dspark" /
@@ -182,10 +234,104 @@ struct ts_tessera_db_tensor_stat {
     std::string  recommended_action;  // "protect" / "requant_up" /
                                       // "requant_down" / "monitor" / "noop"
                                       // (Python-side only; default empty)
+    // Phase 2 "Layer A": producer is the dispatch's GA-prep walk (the same
+    // loop that already materializes the full f32 weight buffer to compute
+    // kurtosis/eff_rank above -- frob2/absq_sketch ride the same pass at
+    // no extra I/O cost). frob2 = ||W||_F^2 (sum of squared weights).
+    double       frob2         = 0.0;
+    // ~1024-point ascending sketch of |W|, for interpolated quantile
+    // lookups (see ts_tensor_stats_sketch_quantile below). Built from a
+    // bounded deterministic sample, not a full sort -- an approximation,
+    // not exact order statistics (see ts_tensor_stats_build_absq_sketch).
+    std::vector<float> absq_sketch;
+    // TS_TENSOR_STATS_VERSION at write time. 0 (the struct default) means
+    // "row predates Layer A" -- frob2/absq_sketch are not populated and
+    // readers must fall back to recomputing from raw weights.
+    int32_t      stats_version = 0;
 };
 int ts_tessera_db_upsert_tensor_stat(ts_tessera_db * db,
                                      const ts_tessera_db_tensor_stat & row,
                                      std::string * err);
+
+// Single-row keyed read for a tensor_stats row (model_hash, model_role,
+// name) -- every column, including the Layer A additions. hit=false with
+// return 0 means "no row for this key" (not an error, matches
+// ts_tessera_db_read_eval_cache's contract); callers fall back to
+// recomputing frob2/thresholds from raw weights. db == nullptr is a safe
+// no-op (hit=false, return 0).
+int ts_tessera_db_read_tensor_stat(
+    ts_tessera_db * db,
+    const std::string & model_hash,
+    const std::string & model_role,
+    const std::string & name,
+    ts_tessera_db_tensor_stat * out,
+    bool * hit,
+    std::string * err);
+
+// --- kv_stats: per-(layer, K-or-V-side) KV-cache calibration stats ---
+//
+// Phase 3 "KV-joint plumbing": mirrors tensor_stats' shape for the KV
+// cache's own per-channel statistics. One row per (model_hash,
+// model_role, name) where name is "blk.<il>.attn_k" / "blk.<il>.attn_v"
+// -- one row per (layer, K-or-V side), NOT one row per layer with both
+// sides combined. sum2/maxabs/quantile_sketch are per-channel F32
+// arrays of length n_channels (the K or V projection's out_dim), same
+// BLOB encoding as tensor_stats.absq_sketch. kv_codec_digest is
+// informational: which -ctk/-ctv codec was configured during the run
+// that captured this row (e.g. "ctk=q8_0,ctv=q8_0", empty for the
+// default f16/f16). source records which capture path wrote the row
+// ("graph_observer" / "collector_legacy"). The capture-side code that
+// populates real sum2/maxabs/quantile_sketch values lives elsewhere;
+// this struct and the upsert/read helpers below are the storage
+// plumbing only.
+struct ts_tessera_db_kv_stat {
+    std::string  model_hash;
+    std::string  model_role;   // Phase 16 enum, default "trunk" (see
+                               // ts_tessera_db_tensor_stat::model_role).
+    std::string  name;
+    int32_t      layer_depth = 0;
+    int32_t      n_channels  = 0;
+    int64_t      n_samples   = 0;
+    std::vector<float> sum2;
+    std::vector<float> maxabs;
+    std::vector<float> quantile_sketch;
+    std::string  kv_codec_digest;
+    std::string  source;      // "graph_observer" / "collector_legacy"
+};
+int ts_tessera_db_upsert_kv_stat(ts_tessera_db * db,
+                                 const ts_tessera_db_kv_stat & row,
+                                 std::string * err);
+
+// Single-row keyed read for a kv_stats row (model_hash, model_role,
+// name) -- mirrors ts_tessera_db_read_tensor_stat's hit/miss contract:
+// hit=false with return 0 means "no row for this key" (not an error);
+// db == nullptr is a safe no-op (hit=false, return 0).
+int ts_tessera_db_read_kv_stat(
+    ts_tessera_db * db,
+    const std::string & model_hash,
+    const std::string & model_role,
+    const std::string & name,
+    ts_tessera_db_kv_stat * out,
+    bool * hit,
+    std::string * err);
+
+// Builds an ascending sketch of |w| (up to max_points entries) by taking a
+// bounded deterministic-stride sample (at most sample_cap elements, not
+// the full n) and sorting the sample. This is O(n) (the stride pass) +
+// O(sample log sample), NOT O(n log n) -- a full sort of a multi-million-
+// element tensor inside the dispatch's per-tensor walk is a real
+// wall-clock risk this pipeline has already stalled on once (the
+// unaccelerated Jacobi eigensolver, see tessera-linalg.cpp); the sketch is
+// an intentional approximation of the quantile function, not an exact
+// order statistic. n <= 0 clears *out.
+void ts_tensor_stats_build_absq_sketch(
+    const float * w, int64_t n, std::vector<float> * out,
+    int64_t max_points = 1024, int64_t sample_cap = 65536);
+
+// Interpolated quantile lookup into a sketch built by the function above.
+// q is clamped to [0, 1]; q=0 returns the sketch minimum, q=1 the sketch
+// maximum. Returns 0.0f for an empty sketch.
+float ts_tensor_stats_sketch_quantile(const std::vector<float> & sketch, float q);
 
 // --- Per-component qtype reader (Phase 16 unified writer) ---
 //
@@ -805,4 +951,85 @@ int ts_tessera_db_append_hessian_ledger(
         int32_t scorer_version,
         int64_t n_samples,
         double ridge_fraction,
+        std::string * err);
+
+// --- Eval cache: forward-only memoization for the ts_expert_eval seam ---
+//
+// Pipeline refactor phase 2 (docs/tessera-pipeline-refactor-plan.md,
+// docs/tessera-eval-cache-design.md Layer B). Copies the v2_hessian_cache
+// pattern above verbatim: FORWARD-ONLY (first row for a key is permanent,
+// INSERT ... ON CONFLICT DO NOTHING), an append-only JSONL ledger, db ==
+// nullptr is a safe no-op everywhere.
+//
+// Unlike the hessian cache, every variable input (genes/alpha/clip/tier,
+// the KV-joint codec context) is folded into params_digest, which IS part
+// of the primary key -- so a cache HIT is unconditionally valid for the
+// exact key (no separate post-hoc value-gate re-check the way hessian's
+// n_samples/ridge_fraction needed, since those were NOT part of that
+// table's key). evaluator distinguishes both the expert AND the tier
+// (e.g. "expert:SEPTQ:real", "expert:AWQ:proxy") so PROXY/REAL/
+// KERNEL_DIRECT measurements of the same expert never collide.
+struct ts_tessera_db_eval_cache_entry {
+    std::string model_hash;
+    std::string model_role;
+    std::string tensor_name;
+    std::string evaluator;        // "expert:<Name>:<tier>"
+    std::string params_digest;    // resolved genes/alpha/clip/seed (grid-
+                                   // quantized) + kv_codec_digest (phase 3)
+    std::string input_digest;     // act_scales / imatrix slice digest, or
+                                   // a stable sentinel when none is used
+    int32_t     eval_version = 0;
+    float       t2  = 0.0f;
+    std::string aux;              // compact JSON, mirrors ts_eval_result::aux
+};
+
+// Read one cached (t2, aux). Returns 0 on success with *hit set:
+//   - *hit == true  -> t2_out/aux_out are the stored value.
+//   - *hit == false -> no row for the exact key (miss). Caller computes
+//                      fresh and should write the result back.
+// Never mutates. db == nullptr is a safe no-op (hit=false, return 0).
+int ts_tessera_db_read_eval_cache(
+        ts_tessera_db * db,
+        const std::string & model_hash,
+        const std::string & model_role,
+        const std::string & tensor_name,
+        const std::string & evaluator,
+        const std::string & params_digest,
+        const std::string & input_digest,
+        int32_t eval_version,
+        float * t2_out,
+        std::string * aux_out,
+        bool * hit,
+        std::string * err);
+
+// Write one cache entry. FORWARD-ONLY: INSERT ... ON CONFLICT DO NOTHING.
+// *stored reports whether this call inserted (false = a conflicting row
+// already existed and was kept). Returns 0 on success (including the
+// conflict case); non-zero only on a real SQL error. db == nullptr is a
+// no-op. Thread-safe: serializes internally via db->eval_cache_mutex.
+int ts_tessera_db_write_eval_cache(
+        ts_tessera_db * db,
+        const ts_tessera_db_eval_cache_entry & e,
+        bool * stored,
+        std::string * err);
+
+// Append one line to "<db-stem>.eval-cache.jsonl" (same stem rule as the
+// hessian ledger). event is one of "cache_hit" / "cache_miss" /
+// "cache_compute" / "cache_store" / "cache_store_conflict". The read/
+// write helpers emit hit/miss/store/conflict internally; the SEAM (or its
+// caller) emits "cache_compute" when a miss triggered a fresh REAL-tier
+// computation, so the ledger shows the full lifecycle. Thread-safe (the
+// caller already holds db->eval_cache_mutex via read/write above; direct
+// callers emitting "cache_compute" take the lock themselves). Returns 0 on
+// success; 1 on a file error (non-fatal -- the caller logs and continues).
+int ts_tessera_db_append_eval_cache_ledger(
+        ts_tessera_db * db,
+        const char * event,
+        const std::string & model_hash,
+        const std::string & model_role,
+        const std::string & tensor_name,
+        const std::string & evaluator,
+        const std::string & params_digest,
+        const std::string & input_digest,
+        int32_t eval_version,
         std::string * err);

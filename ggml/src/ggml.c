@@ -7021,6 +7021,40 @@ bool ggml_imatrix_observer_is_stats(const struct ggml_tensor * tensor) {
            stats_bytes <= ggml_nbytes(storage) - stats_offset;
 }
 
+bool ggml_imatrix_observer_is_activation_view(const struct ggml_tensor * tensor) {
+    if (tensor == NULL ||
+        tensor->op != GGML_OP_VIEW ||
+        tensor->type != GGML_TYPE_F16 ||
+        tensor->view_src == NULL) {
+        return false;
+    }
+
+    const struct ggml_tensor * storage = tensor->view_src;
+    if (storage->op != GGML_OP_IMATRIX_OBSERVER ||
+        storage->type != GGML_TYPE_F16 ||
+        ggml_get_op_params_i32(storage, 1) == 0) {
+        return false;
+    }
+
+    const int64_t channels = ggml_get_op_params_i32(storage, 2);
+    const int32_t stats_offset_i32 = ggml_get_op_params_i32(storage, 3);
+    if (channels <= 0 || stats_offset_i32 < 0) {
+        return false;
+    }
+
+    // The activation view is always the prefix of storage (offset 0);
+    // the stats view is the one placed after it, at stats_offset. A
+    // storage tensor with stats_offset == 0 would make this ambiguous,
+    // but ggml_imatrix_observer_cast always reserves at least one F16
+    // element for the activation data before the stats tail (channels
+    // > 0 is asserted there), so stats_offset > 0 always holds for a
+    // validly-constructed fused observer.
+    return tensor->view_offs == 0 &&
+           stats_offset_i32 > 0 &&
+           ggml_nelements(tensor) > 0 &&
+           ggml_nbytes(tensor) <= (size_t) stats_offset_i32;
+}
+
 // ggml_lightning_indexer
 
 struct ggml_tensor * ggml_lightning_indexer(

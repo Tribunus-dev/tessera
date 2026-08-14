@@ -50,7 +50,7 @@ echo ""
 # --- Standalone (test + own module) ---
 compile_and_run linalg      $T/test_linalg.cpp      $T/tessera-linalg.cpp -framework Accelerate
 compile_and_run lbfgs       $T/test_lbfgs.cpp       $T/tessera-lbfgs.cpp
-compile_and_run awq         $T/test_awq.cpp         $T/tessera-awq.cpp $T/tessera-policy.cpp -I common -I vendor
+compile_and_run awq         $T/test_awq.cpp         $T/tessera-awq.cpp $T/tessera-awq-fitness.cpp $T/tessera-policy.cpp -I common -I vendor -framework Accelerate
 # AWQ GA fitness port (parity vs Python awq-evolve.py + GA convergence).
 # Links the standalone port against tessera-policy (for ts_policy_genes) +
 # the awq sources + nlohmann/json (fixture loader).
@@ -105,6 +105,37 @@ if [ -f build-ane/bin/libggml.dylib ] || [ -f build/bin/libggml.dylib ]; then
 else
     echo "SKIP (needs CMake build for libggml)"
 fi
+
+# --- Real per-tensor activation capture sidecar (pipeline refactor stage 2) ---
+# Write/read round-trip for the v3-format-compatible train/heldout
+# activation sidecar consumed by ts_dispatch_run_gaprep (stage 3) and
+# produced by llama-imatrix --activation-capture (stage 5). Needs libggml
+# for ggml_fp32_to_fp16/ggml_fp16_to_fp32 (test fixture data only; the
+# sidecar itself has no ggml dependency).
+printf "  %-30s" "activation_sidecar"
+if [ -f build-ane/bin/libggml.dylib ] || [ -f build/bin/libggml.dylib ]; then
+    if [ -f build-ane/bin/libggml.dylib ]; then
+        GGML_LIB="-L build-ane/bin -Wl,-rpath,build-ane/bin -lggml -lggml-base"
+    else
+        GGML_LIB="-L build/bin -Wl,-rpath,build/bin -lggml -lggml-base"
+    fi
+    compile_and_run activation_sidecar \
+        $T/test_activation_sidecar.cpp \
+        $T/tessera-activation-sidecar.cpp \
+        $C/tessera-sidecar-v3.cpp \
+        -I common -I $C -I ggml/include \
+        $GGML_LIB
+else
+    echo "SKIP (needs CMake build for libggml)"
+fi
+
+# --- Real per-tensor activation capture reservoir sampling (pipeline refactor stage 5) ---
+# Unit tests for the bounded reservoir sampling algorithm (Vitter's
+# Algorithm R) tools/imatrix/imatrix.cpp's collector uses to harvest a
+# real, bounded sample of captured activations. Header-only, no ggml/
+# llama dependency -- tested in isolation from the graph-harvesting
+# machinery around it, which needs a real model to exercise end to end.
+compile_and_run activation_reservoir $T/test_activation_reservoir.cpp -I $T
 
 # --- L5 joint calibration set generator (v1 of plan-sess_57d0ae24-05b7-4442-b516-8175bc46df1d) ---
 # Writes JSONL with synthetic text + synthetic audio targets. v3 wires

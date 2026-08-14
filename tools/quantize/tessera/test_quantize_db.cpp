@@ -26,6 +26,7 @@
 #include "duckdb.hpp"
 
 #include <cassert>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -579,6 +580,229 @@ int main(int argc, char ** argv) {
               "recommended_action='' round-trip is a no-op semantic");
     }
 
+    // ---- Phase 2 "Layer A": tensor_stats frob2/absq_sketch/stats_version ----
+    {
+        // Pure-math sketch build + quantile lookup, no DB involved: a
+        // known ramp (0, 1, 2, ..., 999) sampled at a cap well above its
+        // own size degrades to an exact sort, so the quantiles are exact
+        // and independently checkable.
+        {
+            std::vector<float> ramp(1000);
+            for (size_t i = 0; i < ramp.size(); i++) ramp[i] = (float) i;
+            // Mix in negatives to confirm the sketch is built from |w|,
+            // not w -- a ramp from -999..0 has the same |.| distribution
+            // as 0..999.
+            for (size_t i = 0; i < ramp.size(); i += 2) ramp[i] = -ramp[i];
+
+            std::vector<float> sketch;
+            ts_tensor_stats_build_absq_sketch(ramp.data(), (int64_t) ramp.size(),
+                                               &sketch, /*max_points=*/1024, /*sample_cap=*/65536);
+            CHECK(sketch.size() == ramp.size(),
+                  "absq_sketch: sample_cap >> n degrades to one point per element");
+            CHECK(std::fabs(sketch.front() - 0.0f) < 1e-6f,
+                  "absq_sketch: min of |ramp| is 0");
+            CHECK(std::fabs(sketch.back() - 999.0f) < 1e-6f,
+                  "absq_sketch: max of |ramp| is 999");
+            const float q50 = ts_tensor_stats_sketch_quantile(sketch, 0.5f);
+            char msg[128];
+            std::snprintf(msg, sizeof(msg), "absq_sketch: median of |ramp| ~= 499.5 (got %.3f)", (double) q50);
+            CHECK(std::fabs(q50 - 499.5f) < 1.0f, msg);
+            CHECK(std::fabs(ts_tensor_stats_sketch_quantile(sketch, 0.0f) - sketch.front()) < 1e-6f,
+                  "absq_sketch: q=0 returns the sketch minimum");
+            CHECK(std::fabs(ts_tensor_stats_sketch_quantile(sketch, 1.0f) - sketch.back()) < 1e-6f,
+                  "absq_sketch: q=1 returns the sketch maximum");
+
+            // A tensor far larger than sample_cap: the sketch is bounded
+            // by max_points, not by n, and stays ordered/in-range.
+            std::vector<float> big(200000);
+            for (size_t i = 0; i < big.size(); i++) big[i] = (float)(i % 1000) - 500.0f;
+            std::vector<float> big_sketch;
+            ts_tensor_stats_build_absq_sketch(big.data(), (int64_t) big.size(),
+                                               &big_sketch, /*max_points=*/1024, /*sample_cap=*/4096);
+            CHECK(big_sketch.size() == 1024,
+                  "absq_sketch: n >> sample_cap still yields exactly max_points entries");
+            bool ordered = true;
+            for (size_t i = 1; i < big_sketch.size(); i++) {
+                if (big_sketch[i] < big_sketch[i - 1]) { ordered = false; break; }
+            }
+            CHECK(ordered, "absq_sketch: entries are ascending");
+
+            // n <= 0 and empty-sketch edge cases.
+            std::vector<float> empty_sketch;
+            ts_tensor_stats_build_absq_sketch(ramp.data(), 0, &empty_sketch);
+            CHECK(empty_sketch.empty(), "absq_sketch: n<=0 clears the output");
+            CHECK(ts_tensor_stats_sketch_quantile(empty_sketch, 0.5f) == 0.0f,
+                  "sketch_quantile: empty sketch returns 0.0");
+        }
+
+        // DB round-trip: upsert with frob2/absq_sketch/stats_version,
+        // read back via ts_tessera_db_read_tensor_stat, verify every
+        // Layer A field (and the pre-existing ones) survives exactly.
+        {
+            ts_tessera_db_tensor_stat row;
+            row.model_hash    = "layer_a_model";
+            row.model_role    = "trunk";
+            row.name          = "blk.0.attn_q.weight";
+            row.family        = "attn_q";
+            row.layer_depth   = 3;
+            row.out_dim       = 128;
+            row.in_dim        = 256;
+            row.n_elements    = 128 * 256;
+            row.dtype         = "f16";
+            row.kurtosis      = 5.5;
+            row.eff_rank      = 0.72;
+            row.source        = "cpp_quant";
+            row.frob2         = 123456.789012345;
+            row.stats_version = TS_TENSOR_STATS_VERSION;
+            for (int i = 0; i < 1024; i++) {
+                row.absq_sketch.push_back((float) i * 0.01f);
+            }
+            std::string err;
+            CHECK(ts_tessera_db_upsert_tensor_stat(db, row, &err) == 0,
+                  ("layer_a: upsert failed: " + err).c_str());
+
+            ts_tessera_db_tensor_stat out;
+            bool hit = false;
+            CHECK(ts_tessera_db_read_tensor_stat(db, "layer_a_model", "trunk",
+                    "blk.0.attn_q.weight", &out, &hit, &err) == 0,
+                  ("layer_a: read failed: " + err).c_str());
+            CHECK(hit, "layer_a: read hits the just-written row");
+            CHECK(out.stats_version == TS_TENSOR_STATS_VERSION,
+                  "layer_a: stats_version round-trips");
+            char fmsg[160];
+            std::snprintf(fmsg, sizeof(fmsg),
+                         "layer_a: frob2 round-trips at double precision (wrote=%.15g read=%.15g)",
+                         row.frob2, out.frob2);
+            CHECK(std::fabs(out.frob2 - row.frob2) < 1e-6 * std::fabs(row.frob2), fmsg);
+            CHECK(out.absq_sketch.size() == row.absq_sketch.size(),
+                  "layer_a: absq_sketch length round-trips");
+            bool sketch_matches = out.absq_sketch.size() == row.absq_sketch.size();
+            if (sketch_matches) {
+                for (size_t i = 0; i < out.absq_sketch.size(); i++) {
+                    if (std::fabs(out.absq_sketch[i] - row.absq_sketch[i]) > 1e-6f) {
+                        sketch_matches = false;
+                        break;
+                    }
+                }
+            }
+            CHECK(sketch_matches, "layer_a: absq_sketch contents round-trip exactly");
+            CHECK(out.kurtosis == row.kurtosis && out.eff_rank == row.eff_rank,
+                  "layer_a: pre-existing columns still round-trip alongside the new ones");
+
+            // Miss: a name with no row is hit=false, return 0 (not an error).
+            ts_tessera_db_tensor_stat miss_out;
+            bool miss_hit = true;  // pre-seed true to prove the function clears it
+            CHECK(ts_tessera_db_read_tensor_stat(db, "layer_a_model", "trunk",
+                    "no_such_tensor", &miss_out, &miss_hit, &err) == 0,
+                  ("layer_a: miss read returned an error: " + err).c_str());
+            CHECK(!miss_hit, "layer_a: read on an absent key clears hit to false");
+
+            // db == nullptr: safe no-op, hit=false, return 0.
+            bool null_hit = true;
+            CHECK(ts_tessera_db_read_tensor_stat(nullptr, "layer_a_model", "trunk",
+                    "blk.0.attn_q.weight", &miss_out, &null_hit, &err) == 0,
+                  "layer_a: db==nullptr read returns 0");
+            CHECK(!null_hit, "layer_a: db==nullptr read never hits");
+
+            // Empty absq_sketch upserts as SQL NULL, reads back as an
+            // empty vector (not a 0-length-but-non-null distinction the
+            // struct can represent anyway).
+            ts_tessera_db_tensor_stat no_sketch_row = row;
+            no_sketch_row.name = "blk.0.attn_k.weight";
+            no_sketch_row.absq_sketch.clear();
+            CHECK(ts_tessera_db_upsert_tensor_stat(db, no_sketch_row, &err) == 0,
+                  ("layer_a: upsert (no sketch) failed: " + err).c_str());
+            ts_tessera_db_tensor_stat no_sketch_out;
+            bool no_sketch_hit = false;
+            CHECK(ts_tessera_db_read_tensor_stat(db, "layer_a_model", "trunk",
+                    "blk.0.attn_k.weight", &no_sketch_out, &no_sketch_hit, &err) == 0,
+                  ("layer_a: read (no sketch) failed: " + err).c_str());
+            CHECK(no_sketch_hit, "layer_a: read (no sketch) hits");
+            CHECK(no_sketch_out.absq_sketch.empty(),
+                  "layer_a: empty absq_sketch round-trips as an empty vector");
+        }
+    }
+
+    // ---- Phase 3 "KV-joint plumbing": kv_stats upsert/read round-trip ----
+    {
+        ts_tessera_db_kv_stat row;
+        row.model_hash      = "kv_model";
+        row.model_role      = "trunk";
+        row.name            = "blk.0.attn_k";
+        row.layer_depth     = 0;
+        row.n_channels      = 8;
+        row.n_samples       = 4096;
+        for (int i = 0; i < 8; i++) {
+            row.sum2.push_back((float) i * 1.5f + 0.25f);
+            row.maxabs.push_back((float) i * 0.3f + 1.0f);
+            row.quantile_sketch.push_back((float) i * 0.1f);
+        }
+        row.kv_codec_digest = "ctk=q8_0,ctv=q8_0";
+        row.source          = "graph_observer";
+        std::string err;
+        CHECK(ts_tessera_db_upsert_kv_stat(db, row, &err) == 0,
+              ("kv_stats: upsert failed: " + err).c_str());
+
+        ts_tessera_db_kv_stat out;
+        bool hit = false;
+        CHECK(ts_tessera_db_read_kv_stat(db, "kv_model", "trunk",
+                "blk.0.attn_k", &out, &hit, &err) == 0,
+              ("kv_stats: read failed: " + err).c_str());
+        CHECK(hit, "kv_stats: read hits the just-written row");
+        CHECK(out.layer_depth == row.layer_depth, "kv_stats: layer_depth round-trips");
+        CHECK(out.n_channels == row.n_channels, "kv_stats: n_channels round-trips");
+        CHECK(out.n_samples == row.n_samples, "kv_stats: n_samples round-trips");
+        CHECK(out.kv_codec_digest == row.kv_codec_digest, "kv_stats: kv_codec_digest round-trips");
+        CHECK(out.source == row.source, "kv_stats: source round-trips");
+
+        CHECK(out.sum2.size() == row.sum2.size(), "kv_stats: sum2 length round-trips");
+        bool sum2_matches = out.sum2.size() == row.sum2.size();
+        if (sum2_matches) {
+            for (size_t i = 0; i < out.sum2.size(); i++) {
+                if (std::fabs(out.sum2[i] - row.sum2[i]) > 1e-6f) { sum2_matches = false; break; }
+            }
+        }
+        CHECK(sum2_matches, "kv_stats: sum2 contents round-trip exactly");
+
+        CHECK(out.maxabs.size() == row.maxabs.size(), "kv_stats: maxabs length round-trips");
+        bool maxabs_matches = out.maxabs.size() == row.maxabs.size();
+        if (maxabs_matches) {
+            for (size_t i = 0; i < out.maxabs.size(); i++) {
+                if (std::fabs(out.maxabs[i] - row.maxabs[i]) > 1e-6f) { maxabs_matches = false; break; }
+            }
+        }
+        CHECK(maxabs_matches, "kv_stats: maxabs contents round-trip exactly");
+
+        CHECK(out.quantile_sketch.size() == row.quantile_sketch.size(),
+              "kv_stats: quantile_sketch length round-trips");
+        bool sketch_matches = out.quantile_sketch.size() == row.quantile_sketch.size();
+        if (sketch_matches) {
+            for (size_t i = 0; i < out.quantile_sketch.size(); i++) {
+                if (std::fabs(out.quantile_sketch[i] - row.quantile_sketch[i]) > 1e-6f) { sketch_matches = false; break; }
+            }
+        }
+        CHECK(sketch_matches, "kv_stats: quantile_sketch contents round-trip exactly");
+
+        // Miss: a name with no row is hit=false, return 0 (not an error).
+        ts_tessera_db_kv_stat miss_out;
+        bool miss_hit = true;  // pre-seed true to prove the function clears it
+        CHECK(ts_tessera_db_read_kv_stat(db, "kv_model", "trunk",
+                "no_such_kv_tensor", &miss_out, &miss_hit, &err) == 0,
+              ("kv_stats: miss read returned an error: " + err).c_str());
+        CHECK(!miss_hit, "kv_stats: read on an absent key clears hit to false");
+
+        // db == nullptr: safe no-op, hit=false, return 0.
+        bool null_hit = true;
+        CHECK(ts_tessera_db_read_kv_stat(nullptr, "kv_model", "trunk",
+                "blk.0.attn_k", &miss_out, &null_hit, &err) == 0,
+              "kv_stats: db==nullptr read returns 0");
+        CHECK(!null_hit, "kv_stats: db==nullptr read never hits");
+
+        // db == nullptr upsert: safe no-op, return 0.
+        CHECK(ts_tessera_db_upsert_kv_stat(nullptr, row, &err) == 0,
+              "kv_stats: db==nullptr upsert returns 0");
+    }
+
     // ---- Phase 16: model_role round-trip on the 4 C++ structs ----
     // The unified Gemma4 12B + dspark + dflash + MTP arch has
     // tensors with the same name in both the trunk and the
@@ -1104,6 +1328,233 @@ int main(int argc, char ** argv) {
             for (char c : content) if (c == '\n') newlines++;
             CHECK(newlines >= 6, "hessian ledger: one JSON object per line");
         }
+    }
+
+    // ---- eval_cache: forward-only memoization for ts_expert_eval (Phase 2) ----
+    //
+    // Unlike v2_hessian_cache, every variable input (genes/alpha/clip/tier,
+    // KV-joint codec) is folded into params_digest, which IS part of the
+    // key -- so there is no separate value-gate re-check on read; a hit for
+    // the exact key is unconditionally valid.
+    {
+        const std::string ec_model = "eval_cache_model";
+        const std::string ec_tensor = "blk.0.attn_q.weight";
+        const std::string ec_evaluator = "expert:SEPTQ:real";
+        const std::string ec_params = "a=0.5000,c=0.9500,s=7";
+        const std::string ec_input = "act_scales:deadbeef";
+        const int32_t ec_version = 1;
+
+        // Miss on absent key.
+        float t2 = -1.0f;
+        std::string aux;
+        bool hit = true;
+        CHECK(ts_tessera_db_read_eval_cache(db, ec_model, "trunk", ec_tensor,
+              ec_evaluator, ec_params, ec_input, ec_version,
+              &t2, &aux, &hit, &err) == 0,
+              "eval cache: read absent key returns 0");
+        CHECK(!hit, "eval cache: absent key is a miss");
+
+        // Write then read back: round-trip.
+        ts_tessera_db_eval_cache_entry e1;
+        e1.model_hash     = ec_model;
+        e1.model_role     = "trunk";
+        e1.tensor_name    = ec_tensor;
+        e1.evaluator      = ec_evaluator;
+        e1.params_digest  = ec_params;
+        e1.input_digest   = ec_input;
+        e1.eval_version   = ec_version;
+        e1.t2             = 0.151114f;
+        e1.aux            = "{\"expert\":\"septq\",\"tier\":\"real\"}";
+        bool stored = false;
+        CHECK(ts_tessera_db_write_eval_cache(db, e1, &stored, &err) == 0,
+              "eval cache: first write returns 0");
+        CHECK(stored, "eval cache: first write stores");
+
+        hit = false;
+        t2 = -1.0f;
+        aux.clear();
+        CHECK(ts_tessera_db_read_eval_cache(db, ec_model, "trunk", ec_tensor,
+              ec_evaluator, ec_params, ec_input, ec_version,
+              &t2, &aux, &hit, &err) == 0,
+              "eval cache: read after write returns 0");
+        CHECK(hit, "eval cache: round-trip hits");
+        CHECK(fabsf(t2 - e1.t2) < 1e-6f, "eval cache: round-trip t2 matches");
+        CHECK(aux == e1.aux, "eval cache: round-trip aux matches");
+
+        // Forward-only: a second write with a different t2 for the same key
+        // is dropped; the first row wins.
+        ts_tessera_db_eval_cache_entry e2 = e1;
+        e2.t2 = 999.0f;
+        stored = true;
+        CHECK(ts_tessera_db_write_eval_cache(db, e2, &stored, &err) == 0,
+              "eval cache: conflicting write returns 0");
+        CHECK(!stored, "eval cache: conflicting write is a conflict (not stored)");
+        hit = false;
+        t2 = -1.0f;
+        CHECK(ts_tessera_db_read_eval_cache(db, ec_model, "trunk", ec_tensor,
+              ec_evaluator, ec_params, ec_input, ec_version,
+              &t2, &aux, &hit, &err) == 0,
+              "eval cache: read after conflict returns 0");
+        CHECK(hit, "eval cache: conflict keeps the row usable");
+        CHECK(fabsf(t2 - e1.t2) < 1e-6f, "eval cache: first write survives the conflict");
+
+        // A different evaluator (tier) is a SEPARATE key: PROXY and REAL
+        // measurements of the same expert must never collide.
+        hit = true;
+        CHECK(ts_tessera_db_read_eval_cache(db, ec_model, "trunk", ec_tensor,
+              "expert:SEPTQ:proxy", ec_params, ec_input, ec_version,
+              &t2, &aux, &hit, &err) == 0,
+              "eval cache: different-tier read returns 0");
+        CHECK(!hit, "eval cache: different evaluator/tier is a miss");
+
+        // A different params_digest (e.g. a different alpha/clip/seed) is a
+        // separate key.
+        hit = true;
+        CHECK(ts_tessera_db_read_eval_cache(db, ec_model, "trunk", ec_tensor,
+              ec_evaluator, "a=0.6000,c=0.9500,s=7", ec_input, ec_version,
+              &t2, &aux, &hit, &err) == 0,
+              "eval cache: different params_digest read returns 0");
+        CHECK(!hit, "eval cache: different params_digest is a miss");
+
+        // eval_version gate: bumping it is a distinct key, not an
+        // overwrite -- the old version stays readable unchanged.
+        hit = true;
+        CHECK(ts_tessera_db_read_eval_cache(db, ec_model, "trunk", ec_tensor,
+              ec_evaluator, ec_params, ec_input, ec_version + 1,
+              &t2, &aux, &hit, &err) == 0,
+              "eval cache: version-gated read returns 0");
+        CHECK(!hit, "eval cache: different eval_version is a miss");
+        ts_tessera_db_eval_cache_entry e3 = e1;
+        e3.eval_version = ec_version + 1;
+        e3.t2 = 0.777f;
+        stored = false;
+        CHECK(ts_tessera_db_write_eval_cache(db, e3, &stored, &err) == 0,
+              "eval cache: version-bumped write returns 0");
+        CHECK(stored, "eval cache: version-bumped write stores (separate key)");
+        hit = false;
+        t2 = -1.0f;
+        CHECK(ts_tessera_db_read_eval_cache(db, ec_model, "trunk", ec_tensor,
+              ec_evaluator, ec_params, ec_input, ec_version + 1,
+              &t2, &aux, &hit, &err) == 0,
+              "eval cache: version-bumped read returns 0");
+        CHECK(hit, "eval cache: version-bumped key hits");
+        CHECK(fabsf(t2 - e3.t2) < 1e-6f, "eval cache: version-bumped key returns its own value");
+        hit = false;
+        t2 = -1.0f;
+        CHECK(ts_tessera_db_read_eval_cache(db, ec_model, "trunk", ec_tensor,
+              ec_evaluator, ec_params, ec_input, ec_version,
+              &t2, &aux, &hit, &err) == 0,
+              "eval cache: original version still readable");
+        CHECK(hit, "eval cache: original version unaffected by the bump");
+        CHECK(fabsf(t2 - e1.t2) < 1e-6f, "eval cache: original version returns first value");
+
+        // model_role disambiguates: shared tensor names across components.
+        hit = true;
+        CHECK(ts_tessera_db_read_eval_cache(db, ec_model, "dflash", ec_tensor,
+              ec_evaluator, ec_params, ec_input, ec_version,
+              &t2, &aux, &hit, &err) == 0,
+              "eval cache: dflash role read returns 0");
+        CHECK(!hit, "eval cache: dflash role is a separate key (miss)");
+
+        // Ledger: append-only JSONL next to the duckdb file, stem rule
+        // matches the hessian ledger.
+        {
+            std::string ledger_path = std::string(path);
+            auto dot = ledger_path.find_last_of('.');
+            if (dot != std::string::npos) ledger_path = ledger_path.substr(0, dot);
+            ledger_path += ".eval-cache.jsonl";
+            std::ifstream f(ledger_path, std::ios::binary);
+            CHECK(f.good(), "eval cache ledger: file exists next to the duckdb");
+            std::string content((std::istreambuf_iterator<char>(f)),
+                                std::istreambuf_iterator<char>());
+            CHECK(content.find("\"event\": \"cache_store\"") != std::string::npos,
+                  "eval cache ledger: records cache_store");
+            CHECK(content.find("\"event\": \"cache_hit\"") != std::string::npos,
+                  "eval cache ledger: records cache_hit");
+            CHECK(content.find("\"event\": \"cache_miss\"") != std::string::npos,
+                  "eval cache ledger: records cache_miss");
+            CHECK(content.find("\"event\": \"cache_store_conflict\"") != std::string::npos,
+                  "eval cache ledger: records cache_store_conflict");
+        }
+    }
+
+    // ---- Schema-owner helper (Phase 2): ts_tessera_db_table_columns /
+    //      ts_tessera_db_check_buffer_columns must agree with the live
+    //      schema for every table a ts_db_buffer_open call site depends
+    //      on -- this is the direct regression test for the l4_cols
+    //      drift class (a migration adds/reorders a column but the
+    //      hardcoded appender list is never updated, so every flush
+    //      silently misaligns values against the wrong columns).
+    //      Each expected list here is copied verbatim from its call
+    //      site's hardcoded column vector so a real drift between the
+    //      call site and the live schema fails HERE, not just at
+    //      runtime inside llama-quantize/llama-imatrix.
+    {
+        // tessera-dispatch.cpp: ga_cols (ga_evaluations buffer)
+        const std::vector<std::string> ga_cols = {
+            "run_id", "tensor_name", "generation", "island", "candidate_idx",
+            "alpha", "clip", "composite", "mse", "relative_frob", "evaluated_at",
+        };
+        std::vector<std::string> live;
+        std::string terr;
+        CHECK(ts_tessera_db_table_columns(db, "ga_evaluations", &live, &terr) == 0,
+              ("schema-owner: table_columns(ga_evaluations) failed: " + terr).c_str());
+        CHECK(live == ga_cols, "schema-owner: ga_evaluations live columns match ga_cols");
+        std::string mismatch;
+        CHECK(ts_tessera_db_check_buffer_columns(db, "ga_evaluations", ga_cols, &mismatch),
+              ("schema-owner: check_buffer_columns(ga_evaluations) mismatch: " + mismatch).c_str());
+
+        // tessera-dispatch.cpp: l4_cols (l4_plan_outcome buffer)
+        const std::vector<std::string> l4_cols = {
+            "model_hash", "model_role", "name", "layer", "iteration",
+            "plan_id", "strategy",
+            "alpha_before", "alpha_after", "clip_before", "clip_after",
+            "outlier_thresh_before", "outlier_thresh_after",
+            "mse_before", "mse_after", "frob_before", "frob_after",
+            "family", "updated_at",
+        };
+        live.clear();
+        CHECK(ts_tessera_db_table_columns(db, "l4_plan_outcome", &live, &terr) == 0,
+              ("schema-owner: table_columns(l4_plan_outcome) failed: " + terr).c_str());
+        CHECK(live == l4_cols, "schema-owner: l4_plan_outcome live columns match l4_cols");
+        CHECK(ts_tessera_db_check_buffer_columns(db, "l4_plan_outcome", l4_cols, &mismatch),
+              ("schema-owner: check_buffer_columns(l4_plan_outcome) mismatch: " + mismatch).c_str());
+
+        // imatrix.cpp: kAccumCols (imatrix_accum_state buffer)
+        const std::vector<std::string> accum_cols = {
+            "model_hash", "model_role", "tensor_name",
+            "chunks_seen", "accum_sum", "accum_count", "accum_sum_abs",
+            "rms", "mean_abs", "updated_at",
+        };
+        live.clear();
+        CHECK(ts_tessera_db_table_columns(db, "imatrix_accum_state", &live, &terr) == 0,
+              ("schema-owner: table_columns(imatrix_accum_state) failed: " + terr).c_str());
+        CHECK(live == accum_cols, "schema-owner: imatrix_accum_state live columns match kAccumCols");
+        CHECK(ts_tessera_db_check_buffer_columns(db, "imatrix_accum_state", accum_cols, &mismatch),
+              ("schema-owner: check_buffer_columns(imatrix_accum_state) mismatch: " + mismatch).c_str());
+
+        // Deliberate drift must be caught: a stale/extra column name
+        // should flip the result to false with a non-empty mismatch.
+        std::vector<std::string> drifted = accum_cols;
+        drifted.push_back("bogus_extra_column");
+        std::string drift_mismatch;
+        CHECK(!ts_tessera_db_check_buffer_columns(db, "imatrix_accum_state", drifted, &drift_mismatch),
+              "schema-owner: injected drift is detected (returns false)");
+        CHECK(!drift_mismatch.empty(), "schema-owner: drift mismatch string is non-empty");
+
+        // A nonexistent table is not itself an error -- *out is empty,
+        // 0 is returned (matches the documented "table does not exist
+        // is not an error" contract).
+        live.clear();
+        CHECK(ts_tessera_db_table_columns(db, "no_such_table_xyz", &live, &terr) == 0,
+              "schema-owner: table_columns on a nonexistent table returns 0");
+        CHECK(live.empty(), "schema-owner: table_columns on a nonexistent table returns empty list");
+
+        // db == nullptr: check_buffer_columns treats "could not check" as
+        // pass-through true (the caller's own warn-and-continue path is
+        // what handles a missing DB, not this helper).
+        CHECK(ts_tessera_db_check_buffer_columns(nullptr, "ga_evaluations", ga_cols, nullptr),
+              "schema-owner: check_buffer_columns(db=nullptr) passes through as true");
     }
 
     // ---- Crash-safe shutdown: ~ts_tessera_db() must CHECKPOINT

@@ -2817,6 +2817,15 @@ extern "C" {
     GGML_API bool ggml_imatrix_observer_is_stats(
             const struct ggml_tensor * tensor);
 
+    // Returns true only for the F16 activation view created by
+    // ggml_imatrix_observer_cast() (the real per-token activation data,
+    // as opposed to the compact stats tail ggml_imatrix_observer_is_stats
+    // identifies). The shared F16 storage tensor itself deliberately
+    // returns false, matching ggml_imatrix_observer_is_stats's contract
+    // for the storage tensor.
+    GGML_API bool ggml_imatrix_observer_is_activation_view(
+            const struct ggml_tensor * tensor);
+
     // DSA lightning indexer
     //
     // q:       [n_embd_idx, n_head_idx, n_batch, ne3 ]

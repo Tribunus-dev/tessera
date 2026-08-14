@@ -283,6 +283,49 @@ int main() {
         CHECK(rel <= 1e-2, "end-to-end relative MSE reasonable (< 1e-2)");
     }
 
+    // --- Test 4: rank-candidate feasibility clamp (regression) ---
+    // Reproduces the bug found during the pipeline-refactor phase-1
+    // adversarial review: when min(K,N) falls strictly between two default
+    // rank candidates, ts_train_flrq used to DROP every candidate above
+    // min(K,N) instead of clamping it down (the comment said "clamp", the
+    // code filtered). K=20, N=100 puts min(K,N)=20 strictly between the
+    // defaults 16 and 32 -- a random (full-rank) 20x100 matrix is exactly
+    // representable at rank 20, so the fix must pick rank 20 (clamped from
+    // a larger candidate) and clear a tight threshold that rank 16 cannot.
+    {
+        auto rng = [](uint32_t s) {
+            return [s]() mutable {
+                s ^= s << 13; s ^= s >> 17; s ^= s << 5;
+                return (float)((s >> 8) * (1.0 / 16777216.0)) * 2.0f - 1.0f;
+            };
+        };
+        const int64_t K = 20, N = 100;
+        std::vector<float> W((size_t)(K * N));
+        auto r = rng(7);
+        for (auto & v : W) v = r();
+
+        ts_flrq_params params = {};  // zero-init -> default candidates {4,8,16,32,64}
+        params.seed = 7;
+        params.mse_threshold = 1e-4f;  // rank 16 cannot clear this; rank 20 (clamped) can
+
+        ts_flrq_bcl_result out;
+        int64_t rank = -1;
+        CHECK(ts_train_flrq(W.data(), K, N, &params, &out, &rank) == 0,
+              "rank-clamp: ts_train_flrq ok");
+        CHECK(rank == std::min(K, N),
+              "rank-clamp: chose the clamped max-feasible rank, not a smaller "
+              "non-clearing fallback");
+
+        double w_fro2 = 0.0;
+        for (int64_t i = 0; i < K * N; i++) w_fro2 += (double)W[i] * W[i];
+        w_fro2 += 1e-12;
+        const double rel = (double)out.reconstruction_mse * (double)(K * N) / w_fro2;
+        std::printf("[rank-clamp] chosen_rank=%lld relative_mse=%.3e (threshold=%.3e)\n",
+                    (long long)rank, rel, (double)params.mse_threshold);
+        CHECK(rel <= (double)params.mse_threshold,
+              "rank-clamp: the clamped rank actually clears the threshold");
+    }
+
     if (g_failures == 0) {
         printf("PASS\n");
         return 0;

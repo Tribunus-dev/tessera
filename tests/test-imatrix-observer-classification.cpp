@@ -47,6 +47,32 @@ int main() {
     stats->ne[0] = original_elements;
     assert(ggml_imatrix_observer_is_stats(stats));
 
+    // -- ggml_imatrix_observer_is_activation_view: the mirror-image check
+    // (pipeline refactor stage 5, real per-tensor activation capture). It
+    // must identify exactly the F16 activation view and reject the other
+    // two views into the same shared storage tensor.
+    assert(!ggml_imatrix_observer_is_activation_view(storage));
+    assert(!ggml_imatrix_observer_is_activation_view(stats));
+    assert(ggml_imatrix_observer_is_activation_view(activation_view));
+
+    // A tensor with view_offs != 0 is never the activation view (that
+    // offset belongs to the stats tail).
+    const size_t original_act_offset = activation_view->view_offs;
+    activation_view->view_offs       = 1;
+    assert(!ggml_imatrix_observer_is_activation_view(activation_view));
+    activation_view->view_offs = original_act_offset;
+    assert(ggml_imatrix_observer_is_activation_view(activation_view));
+
+    // A plain F16 view into an unrelated (non-GGML_OP_IMATRIX_OBSERVER)
+    // storage tensor must not be misclassified as an activation view.
+    ggml_tensor * unrelated_storage = ggml_new_tensor_1d(ctx, GGML_TYPE_F16, 4096);
+    ggml_tensor * unrelated_view    = ggml_view_4d(ctx, unrelated_storage,
+                                                   2048, 2, 1, 1,
+                                                   2048 * sizeof(ggml_fp16_t),
+                                                   2048 * sizeof(ggml_fp16_t) * 2,
+                                                   2048 * sizeof(ggml_fp16_t) * 2, 0);
+    assert(!ggml_imatrix_observer_is_activation_view(unrelated_view));
+
     ggml_free(ctx);
 
     // Per-scope filter storage is covered by test-imatrix-observer-scope.cpp.

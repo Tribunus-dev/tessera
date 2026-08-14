@@ -65,6 +65,10 @@ add_library(${TARGET}
     tessera/tessera-champq.cpp
     # SEPTQ banded-Cholesky Hessian weight quantizer (B3)
     tessera/tessera-septq.cpp
+    # The ONE evaluation seam (pipeline refactor phase 1): unifies
+    # forced_t2 / tier2_t2 / kernel_direct_t2 / the GA eval callback / the
+    # L5 scorer's per-expert scoring behind one contract.
+    tessera/tessera-expert-eval.cpp
     tessera/tessera-archive.cpp
     tessera/tessera-regime.cpp
     tessera/tessera-higgs.cpp
@@ -80,7 +84,14 @@ add_library(${TARGET}
     # policy I/O + dispatch + GGUF writer
     tessera/tessera-policy.cpp
     tessera/tessera-dispatch.cpp
+    tessera/tessera-dispatch-common.cpp
+    tessera/tessera-dispatch-db.cpp
+    tessera/tessera-dispatch-l5.cpp
+    tessera/tessera-dispatch-acceptance.cpp
+    tessera/tessera-dispatch-walk.cpp
+    tessera/tessera-dispatch-gaprep.cpp
     tessera/tessera-dispatch-l15.cpp
+    tessera/tessera-activation-sidecar.cpp
     tessera/tessera-gguf-writer.cpp
     # structured progress reporting (terminal live line + NDJSON for UI)
     tessera/tessera-progress.cpp
@@ -137,6 +148,10 @@ add_library(${TARGET}
     ../../common/tessera-debug/tessera-sidecar-v3.cpp
     # DuckDB-backed persistent store (no-op when --quantize-db is not passed)
     tessera/tessera-quantize-db.cpp
+    # KV-joint reconstruction item 5: fold K/V's static per-channel scales
+    # (D, E) into W_q/W_o so the runtime never touches the KV-cache dequant
+    # path. See docs/tessera-kv-joint-reconstruction-design.md section 3.
+    tessera/tessera-kv-migrate.cpp
     # Phase 16 unified GGUF writer for the Gemma4 12B + dspark + dflash +
     # MTP arch (LLM_ARCH_GEMMA4_ASSISTANT). Reads 4+ per-component
     # GGUFs + a calibration policy JSON, writes a single gemma4-assistant
@@ -583,6 +598,32 @@ if(LLAMA_BUILD_TESTS)
     target_compile_features(${TARGET} PRIVATE cxx_std_17)
     add_test(NAME ${TARGET} COMMAND ${TARGET})
 
+    # Real per-tensor activation capture, stage 3: builds a tiny synthetic
+    # GGUF with two 2D weights, writes a real activation-capture sidecar
+    # (tessera-activation-sidecar.h) for one of them, and runs the full
+    # dispatch pipeline twice (params.activation_capture_dir set vs. empty)
+    # with an otherwise-identical seed. Asserts total_mse differs between
+    # the two runs -- proof the sidecar -> activations_load_fn -> GA
+    # fitness wiring has a real, end-to-end effect through the production
+    # entry point, not just structural plumbing.
+    set(TARGET test-tessera-gaprep-activation-capture)
+    add_executable(${TARGET} tessera/test_gaprep_activation_capture.cpp)
+    target_link_libraries(${TARGET} PRIVATE llama-quantize-impl)
+    target_compile_features(${TARGET} PRIVATE cxx_std_17)
+    add_test(NAME ${TARGET} COMMAND ${TARGET})
+
+    # ts_expert_eval seam (pipeline refactor phase 1): PROXY tier parity
+    # with forced_t2's algorithm, REAL tier per expert on a deterministic
+    # fixture, SEPTQ's dequant-scoring adapter against a hand-computed
+    # reconstruction, DARTQUANT/CHAMPQ identity-transform invariance.
+    set(TARGET test-tessera-expert-eval)
+    add_executable(${TARGET} tessera/test_expert_eval.cpp)
+    target_link_libraries(${TARGET} PRIVATE llama-quantize-impl)
+    target_compile_features(${TARGET} PRIVATE cxx_std_17)
+    target_include_directories(${TARGET} PRIVATE
+        ${PROJECT_SOURCE_DIR}/ggml/src)
+    add_test(NAME ${TARGET} COMMAND ${TARGET})
+
     # L1.5 dispatch-time capture (v3.1, §3 of the spec). Verifies the
     # calibration-time F16 reference capture writes F16 of the ORIGINAL
     # (unquantized) weight — the spec's "true FP16 reference", which
@@ -621,6 +662,17 @@ if(LLAMA_BUILD_TESTS)
     # 30+ tests, runs in <1s on a tiny synthetic GGUF.
     set(TARGET test-tessera-higgs-proxy)
     add_executable(${TARGET} tessera/test_higgs_proxy.cpp)
+    target_link_libraries(${TARGET} PRIVATE llama-quantize-impl)
+    target_compile_features(${TARGET} PRIVATE cxx_std_17)
+    add_test(NAME ${TARGET} COMMAND ${TARGET})
+
+    # KV-joint reconstruction item 5 (scale migration): fit_scale
+    # arithmetic + pair-tying, read_stat dual-name-convention fallback,
+    # forward-math GQA identity checks for the W_q row fold / W_o column
+    # fold, and apply_to_tensor's no-op guards (wrong family, missing
+    # kv_stats row, shape mismatch).
+    set(TARGET test-tessera-kv-migrate)
+    add_executable(${TARGET} tessera/test_kv_migrate.cpp)
     target_link_libraries(${TARGET} PRIVATE llama-quantize-impl)
     target_compile_features(${TARGET} PRIVATE cxx_std_17)
     add_test(NAME ${TARGET} COMMAND ${TARGET})

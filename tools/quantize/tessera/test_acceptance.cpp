@@ -34,12 +34,20 @@ static void check_close(const char * name, float got, float want, float tol) {
     }
 }
 
-// Build a tensor entry with explicit per-proxy scores.
+// Build a tensor entry with explicit per-proxy scores. champq defaults to
+// mirroring hess: kendall tau is a function of RANKING, so a column that is
+// an exact copy of an existing column contributes only duplicate/self-tau
+// pairs (tau(champq,X) == tau(hess,X), tau(champq,hess) == 1) -- it can
+// never introduce a NEW minimum-|tau| pair or move best_single_t2 below
+// hess's own contribution, so every pre-existing expected value below
+// (best_single_t2, method_tau_min, novelty_survives, ...) stays exactly
+// correct after adding the champq column. Case 9 below gives champq a
+// genuinely distinct ranking to cover the new field's own wiring.
 static ts_acceptance_tensor make_tensor(const char * name,
                                         float comp, float awq, float rot,
                                         float lr, float hess,
                                         float offline, float kernel,
-                                        bool held_out) {
+                                        bool held_out, float champq = -1.0f) {
     ts_acceptance_tensor t;
     memset(&t, 0, sizeof(t));
     snprintf(t.name, sizeof(t.name), "%s", name);
@@ -48,6 +56,7 @@ static ts_acceptance_tensor make_tensor(const char * name,
     t.rotation_t2       = rot;
     t.lowrank_t2        = lr;
     t.hessian_t2        = hess;
+    t.champq_t2         = (champq >= 0.0f) ? champq : hess;
     t.offline_proxy_mse = offline;
     t.kernel_direct_t2  = kernel;
     t.held_out          = held_out;
@@ -105,13 +114,26 @@ int main() {
 
     // ------------------------------------------------------------------
     // Case 2: identical rankings -> novelty fails
+    //
+    // Each proxy must rank the four tensors the SAME way (that is what
+    // "identical rankings" means for Test 2's pairwise kendall search).
+    // A per-proxy CONSTANT value across tensors (the original fixture
+    // here) is a different, degenerate thing: ts_ab_pair_counts scores
+    // p=(a[i]-a[j])*(b[i]-b[j]), and a[i]-a[j]==0 for every pair when a is
+    // constant, so every pair is a TIE (tau=0, "no information") rather
+    // than "perfect agreement" (tau=1) -- the opposite of this case's
+    // intent. Each proxy below increases monotonically across t0..t3 by
+    // the same relative amount instead, so every pair of proxies orders
+    // the four tensors identically and tau=1.0 for every one of the 10
+    // method pairs (awq/rot/lr/hess/champq -- champq defaults to
+    // mirroring hess, itself monotonic, so it participates the same way).
     // ------------------------------------------------------------------
     {
         ts_acceptance_tensor tensors[4] = {
-            make_tensor("t0", 0.01f, 0.02f, 0.03f, 0.04f, 0.05f, 0.1f, 0.1f, true),
-            make_tensor("t1", 0.01f, 0.02f, 0.03f, 0.04f, 0.05f, 0.2f, 0.2f, true),
-            make_tensor("t2", 0.01f, 0.02f, 0.03f, 0.04f, 0.05f, 0.3f, 0.3f, true),
-            make_tensor("t3", 0.01f, 0.02f, 0.03f, 0.04f, 0.05f, 0.4f, 0.4f, true),
+            make_tensor("t0", 0.01f, 0.10f, 0.11f, 0.12f, 0.13f, 0.1f, 0.1f, true),
+            make_tensor("t1", 0.01f, 0.20f, 0.21f, 0.22f, 0.23f, 0.2f, 0.2f, true),
+            make_tensor("t2", 0.01f, 0.30f, 0.31f, 0.32f, 0.33f, 0.3f, 0.3f, true),
+            make_tensor("t3", 0.01f, 0.40f, 0.41f, 0.42f, 0.43f, 0.4f, 0.4f, true),
         };
 
         ts_acceptance_config cfg;
@@ -215,6 +237,85 @@ int main() {
             check("case5: has tensor name j0", json.find("\"j0\"") != std::string::npos);
             check("case5: has verdict", json.find("verdict") != std::string::npos);
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Case 9: CHAMP-Q's own column is wired end-to-end (not just mirroring
+    // hess). Five tensors, each with a different best single proxy --
+    // champq wins tensor 4, so best_single_t2 must pick it up and the
+    // JSON report must carry it.
+    // ------------------------------------------------------------------
+    {
+        ts_acceptance_tensor tensors[5] = {
+            // name, comp,  awq,   rot,   lr,    hess,  offline, kernel, held, champq
+            make_tensor("t0", 0.01f, 0.01f, 0.05f, 0.05f, 0.05f, 0.10f, 0.10f, true, 0.05f),
+            make_tensor("t1", 0.01f, 0.05f, 0.01f, 0.05f, 0.05f, 0.20f, 0.20f, true, 0.05f),
+            make_tensor("t2", 0.01f, 0.05f, 0.05f, 0.01f, 0.05f, 0.30f, 0.30f, true, 0.05f),
+            make_tensor("t3", 0.01f, 0.05f, 0.05f, 0.05f, 0.01f, 0.40f, 0.40f, true, 0.05f),
+            make_tensor("t4", 0.01f, 0.05f, 0.05f, 0.05f, 0.05f, 0.50f, 0.50f, true, 0.01f),
+        };
+
+        ts_acceptance_config cfg;
+        ts_acceptance_default_config(&cfg);
+        snprintf(cfg.output_path, sizeof(cfg.output_path),
+                 "/tmp/tessera_acceptance_test_champq.json");
+
+        ts_acceptance_result res;
+        int rc = ts_acceptance_run(&cfg, tensors, 5, &res);
+        check("case9: rc == 0", rc == 0);
+
+        // composite mean = 0.01; each single-proxy mean = (0.01 + 0.05*4)/5 = 0.042
+        check_close("case9: composite_t2", res.composite_t2, 0.01f, 1e-6f);
+        check_close("case9: champq_t2", res.champq_t2, 0.042f, 1e-6f);
+        check_close("case9: best_single_t2", res.best_single_t2, 0.042f, 1e-6f);
+        check("case9: composite_wins", res.composite_wins);
+
+        FILE * f = fopen(cfg.output_path, "r");
+        check("case9: json file exists", f != nullptr);
+        if (f) {
+            char buf[8192];
+            size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+            buf[n] = '\0';
+            fclose(f);
+            std::string json(buf);
+            check("case9: per_proxy has champq", json.find("\"champq\":") != std::string::npos);
+            check("case9: tensor breakdown has champq_t2", json.find("\"champq_t2\":") != std::string::npos);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Case 10: novelty sanity clamp -- a garbage method vector (mean t2
+    // way past TS_ACCEPTANCE_NOVELTY_SANITY_BOUND, mirroring the
+    // historical FLRQ lr=406.377 blowup) must be excluded from Test 2's
+    // pairwise-tau search entirely, not merely down-weighted. awq/rot/
+    // hess/champq form the case1-style "each tensor has exactly one
+    // winning proxy" pattern (every pair among them has exactly one
+    // discordant comparison out of 6 -> tau = -1/6 for every pair), while
+    // lowrank_t2 carries varying garbage values with a mean of 340 --
+    // without the clamp this could fake spurious agreement/disagreement;
+    // with it, lr must not move method_tau_min/method_disagreement at all.
+    // ------------------------------------------------------------------
+    {
+        ts_acceptance_tensor tensors[4] = {
+            // name, comp,  awq,   rot,   lr,     hess,  offline, kernel, held, champq
+            make_tensor("t0", 0.01f, 0.01f, 0.05f, 500.0f, 0.05f, 0.1f, 0.1f, true, 0.05f),
+            make_tensor("t1", 0.01f, 0.05f, 0.01f,  10.0f, 0.05f, 0.2f, 0.2f, true, 0.05f),
+            make_tensor("t2", 0.01f, 0.05f, 0.05f, 800.0f, 0.01f, 0.3f, 0.3f, true, 0.05f),
+            make_tensor("t3", 0.01f, 0.05f, 0.05f,  50.0f, 0.05f, 0.4f, 0.4f, true, 0.01f),
+        };
+
+        ts_acceptance_config cfg;
+        ts_acceptance_default_config(&cfg);
+
+        ts_acceptance_result res;
+        int rc = ts_acceptance_run(&cfg, tensors, 4, &res);
+        check("case10: rc == 0", rc == 0);
+        check("case10: lr excluded", strcmp(res.excluded_methods, "lr") == 0);
+        check_close("case10: method_tau_min unaffected by the excluded garbage vector",
+                   res.method_tau_min, -1.0f / 6.0f, 1e-5f);
+        check("case10: novelty survives from the real methods alone", res.novelty_survives);
+        check("case10: verdict reports the exclusion",
+              strstr(res.verdict, "excluded=lr") != nullptr);
     }
 
     // ------------------------------------------------------------------

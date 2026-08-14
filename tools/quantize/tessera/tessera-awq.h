@@ -101,6 +101,12 @@ struct ts_awq_layer {
     int64_t n_tokens_h;  // rows in heldout_activations
     float   kurtosis;    // from imatrix regime stats
     float   eff_rank;    // effective rank
+    // ||W||_F^2, precomputed by the dispatch's GA-prep walk from the same
+    // full weight buffer it already materializes for kurtosis/eff_rank
+    // above (see tensor_stats.frob2, tools/quantize/tessera/
+    // tessera-quantize-db.h). 0.0f means "not precomputed" -- a consumer
+    // falls back to ts_vec_dotpr(layer->weights, layer->weights, n).
+    float   frob2 = 0.0f;
     // Block index parsed from the tensor name (e.g. blk.12.ffn_gate -> 12).
     // 0 for non-block tensors (embeddings, norm, output). Set by the dispatch
     // from ts_tessera_db_layer_depth(); enables depth-aware family queries
@@ -117,6 +123,27 @@ struct ts_awq_layer {
     const float * (* weights_load_fn)(void * user_data);
     void          (* weights_release_fn)(void * user_data, const float * buf);
     void         * weights_user_data;
+    // Streaming activation loading (pipeline: real per-tensor activation
+    // capture): mirrors weights_load_fn/weights_release_fn above. When
+    // non-null, the GA worker calls this before evaluating the layer's
+    // population to fetch real captured train/heldout activations (and,
+    // optionally, precomputed reference outputs -- activations @
+    // original_weight^T) on demand. Returns true and fills the out-pointers
+    // (train/n_tokens always; heldout/n_tokens_h and the two ref_* pointers
+    // may be left null even on success) when capture data is available for
+    // this layer; false when none exists (e.g. no sidecar for this tensor).
+    // On false, the caller leaves train_activations/heldout_activations
+    // null -- ts_awq_evaluate_layer already falls back to the diagonal
+    // weight-space error in that case, so no other code needs to change.
+    // When null, activations must be pre-loaded into the *_activations
+    // pointers above (or left null for the same fallback).
+    bool (* activations_load_fn)(void * user_data,
+                                 const float ** out_train, int64_t * out_n_tokens,
+                                 const float ** out_heldout, int64_t * out_n_tokens_h,
+                                 const float ** out_ref_train,
+                                 const float ** out_ref_heldout);
+    void (* activations_release_fn)(void * user_data);
+    void  * activations_user_data;
 };
 
 // Evaluator callback: quantize with candidate, return score.

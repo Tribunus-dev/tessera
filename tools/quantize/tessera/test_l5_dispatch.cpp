@@ -689,6 +689,19 @@ int main() {
                       strstr(ares.acceptance.verdict, "tier2:") != nullptr);
                 check("g6: verdict carries the margin floor",
                       strstr(ares.acceptance.verdict, "margin") != nullptr);
+                // Pipeline refactor phase 1: the seam's SEPTQ REAL adapter
+                // (packed dequant scoring) replaces the profile-scaled AWQ
+                // proxy that used to sit in the hessian slot -- the verdict
+                // must drop its "(proxy)" suffix, and all five real methods
+                // (awq/rot/lr/hess/champq) must appear.
+                check("g6: hessian slot no longer labeled (proxy)",
+                      strstr(ares.acceptance.verdict, "(proxy)") == nullptr);
+                check("g6: verdict carries all five real methods",
+                      strstr(ares.acceptance.verdict, "awq=") != nullptr &&
+                      strstr(ares.acceptance.verdict, "rot=") != nullptr &&
+                      strstr(ares.acceptance.verdict, "lr=") != nullptr &&
+                      strstr(ares.acceptance.verdict, "hess=") != nullptr &&
+                      strstr(ares.acceptance.verdict, "champq=") != nullptr);
 
                 // Parse the per-tensor breakdown and require at least one
                 // tensor whose kernel-direct score is a real measurement
@@ -712,6 +725,10 @@ int main() {
                 check("g6: report has per-tensor scores", n_seen >= 2);
                 check("g6: kernel_direct_t2 is measured, not the offline proxy",
                       n_differ > 0);
+                check("g6: report per_proxy carries champq",
+                      rep.find("\"champq\":") != std::string::npos);
+                check("g6: report per-tensor breakdown carries champq_t2",
+                      rep.find("\"champq_t2\":") != std::string::npos);
             }
 
             std::filesystem::remove_all(sidecar_dir);

@@ -78,17 +78,34 @@ enum tessera_subcommand common_tessera_active_subcommand() {
 }
 
 // Tessera fork: classify a flag registered for LLAMA_EXAMPLE_TESSERA.
-// Returns 0 if `flag` is not a tessera flag, 1 if it is a switch (no value),
-// 2 if it takes a value. Lets the legacy quantize argv loop skip
-// tessera-owned flags that common_tessera_params_parse already consumed.
+// Returns 0 if `flag` is not registered for the TESSERA example, 1 if it is
+// a switch (no value), 2 if it takes a value. Lets the legacy quantize argv
+// loop (and common_tessera_params_parse's own flag/positional splitter, see
+// below) skip flags that common_params_parse (called from
+// common_tessera_params_parse) already consumed.
 //
 // Reconstructs the registered option list for the TESSERA example (with the
 // active subcommand applied so the per-subcommand filter matches what
 // common_tessera_params_parse exposed) and classifies by which handler the
 // option carries: void/bool handlers are switches, the int/string/str_str
 // handlers take 1 (or 2) values.
+//
+// pipeline refactor phase 4: this used to bail to 0 (i) whenever no
+// subcommand was active, and (ii) for any flag with an empty tessera_sc
+// (reasoning: "empty means generally visible, so the legacy loop's own
+// explicit-flag chain should handle it"). Both were wrong for a flag like
+// --tessera-db: it is registered only for {TESSERA, IMATRIX} (not COMMON,
+// so it is not "generally visible" in any meaningful sense) with an empty
+// tessera_sc (it is not scoped to a specific subcommand), and it has no
+// case in quantize.cpp's explicit chain. Net effect: --tessera-db (and any
+// other top-level, non-subcommand-scoped Tessera flag) hard-errored with
+// "unrecognized argument" whenever it appeared before the positional
+// <input> <output> <ftype> args on the main quantize path -- verified via
+// `llama-tessera --tessera-db x.duckdb model.gguf Q4_K` exiting 1. Any flag
+// this function finds in the TESSERA option set was already parsed and
+// stored by common_params_parse, so it is always safe for a caller to skip.
 int common_tessera_flag_kind(const char * flag) {
-    if (!flag || flag[0] != '-' || tessera_active_sc == TESSERA_SC_NONE) {
+    if (!flag || flag[0] != '-') {
         return 0;
     }
     common_params dummy_params{};
@@ -104,13 +121,6 @@ int common_tessera_flag_kind(const char * flag) {
             }
         }
         if (!match) continue;
-        // tessera-scoped flags are the tessera-owned ones; an empty tessera_sc
-        // means the flag is generally visible (not tessera-exclusive), so it
-        // is not "owned" by the tessera parser and the legacy loop should
-        // still handle it.
-        if (opt.tessera_sc.empty()) {
-            return 0;
-        }
         if (opt.handler_void || opt.handler_bool) {
             return 1;
         }
@@ -427,37 +437,10 @@ struct handle_model_result {
     std::string preset_path;
 };
 
-const std::vector<ggml_type> kv_cache_types = {
-    GGML_TYPE_F32,
-    GGML_TYPE_F16,
-    GGML_TYPE_BF16,
-    GGML_TYPE_Q8_0,
-    GGML_TYPE_Q4_0,
-    GGML_TYPE_Q4_1,
-    GGML_TYPE_IQ4_NL,
-    GGML_TYPE_Q5_0,
-    GGML_TYPE_Q5_1,
-    GGML_TYPE_Q2_K,
-    GGML_TYPE_Q3_K,
-    GGML_TYPE_Q4_K,
-};
-
-static ggml_type kv_cache_type_from_str(const std::string & s) {
-    for (const auto & type : kv_cache_types) {
-        if (ggml_type_name(type) == s) {
-            return type;
-        }
-    }
-    throw std::runtime_error("Unsupported cache type: " + s);
-}
-
-static std::string get_all_kv_cache_types() {
-    std::ostringstream msg;
-    for (const auto & type : kv_cache_types) {
-        msg << ggml_type_name(type) << (&type == &kv_cache_types.back() ? "" : ", ");
-    }
-    return msg.str();
-}
+// kv_cache_type_from_str / get_all_kv_cache_types were promoted to
+// common_kv_cache_type_from_str / common_get_all_kv_cache_types in
+// common.h/common.cpp (Tessera Phase 3) so the L5 joint harness can parse
+// the same KV cache type strings without duplicating this list.
 
 static bool parse_bool_value(const std::string & value) {
     if (is_truthy(value)) {
@@ -884,9 +867,31 @@ static bool common_params_parse_ex(int argc, char ** argv, common_params_context
     }
 
     // handle command line arguments
+    //
+    // Guards a value-taking flag's argv[i+1] against two failure modes:
+    // no token left at all, and -- the fix here -- the value being
+    // omitted with the NEXT token being another REGISTERED flag, which
+    // would otherwise be silently consumed as this flag's bogus value
+    // instead of erroring. E.g. `--model --dry-run model.gguf Q4_K`
+    // (omitted --model value) used to set the model path to the literal
+    // string "--dry-run" and silently drop the real model path, rather
+    // than erroring clearly. Checking membership in arg_to_options
+    // (rather than just "does it start with '-'") is deliberate: a
+    // legitimate value that merely LOOKS like a flag (a negative number
+    // for a numeric arg, e.g. `--rope-freq-scale -1`) is never itself a
+    // REGISTERED flag name, so this only rejects tokens that actually
+    // are recognized options, not any '-'-prefixed value.
     auto check_arg = [&](int i) {
         if (i+1 >= argc) {
             throw std::invalid_argument("expected value for argument");
+        }
+        std::string next = argv[i+1];
+        if (next.compare(0, 2, "--") == 0) {
+            std::replace(next.begin(), next.end(), '_', '-');
+        }
+        if (arg_to_options.find(next) != arg_to_options.end()) {
+            throw std::invalid_argument(string_format(
+                "expected a value, but got another argument: %s", next.c_str()));
         }
     };
 
@@ -1005,9 +1010,18 @@ static bool common_params_parse_ex(int argc, char ** argv, common_params_context
             || tessera_active_sc == TESSERA_SC_UNIFIED_WRITER
             || tessera_active_sc == TESSERA_SC_EXPORT_TERNARY
             || tessera_active_sc == TESSERA_SC_PACK
-            // l5 is a tuning subcommand: it falls through to llama_quantize
-            // which reads the input path from positional args (<input>).
+            // l5/champq/w4a4 are tuning subcommands: llama_tessera_main sets
+            // a toggle on tessera_params for these and falls through to
+            // llama_quantize(argc - 1, argv + 1), which reads the input path
+            // from positional args (<input>), not --model. Before this fix,
+            // champq/w4a4 were missing here even though they are handled
+            // identically to l5/NONE in quantize.cpp -- verified via
+            // `llama-tessera champq model.gguf Q4_K` unconditionally failing
+            // with "error: --model is required" despite the classic
+            // positional syntax being exactly what that subcommand expects.
             || tessera_active_sc == TESSERA_SC_L5
+            || tessera_active_sc == TESSERA_SC_CHAMPQ
+            || tessera_active_sc == TESSERA_SC_W4A4
             // TESSERA_SC_NONE: no subcommand, positional syntax (<input> <output> <ftype>)
             // is in use. llama_quantize reads the input from positional args directly.
             || tessera_active_sc == TESSERA_SC_NONE;
@@ -1269,9 +1283,21 @@ bool common_params_to_map(int argc, char ** argv, llama_example ex, std::map<com
     // TODO @ngxson : find a way to deduplicate this code
 
     // handle command line arguments
+    // Same omitted-value guard as common_params_parse_ex's check_arg (see
+    // that function for the full rationale): reject argv[i+1] when it is
+    // itself a registered flag name, not just any '-'-prefixed token, so
+    // legitimate negative-number values keep working.
     auto check_arg = [&](int i) {
         if (i+1 >= argc) {
             throw std::invalid_argument("expected value for argument");
+        }
+        std::string next = argv[i+1];
+        if (next.compare(0, 2, "--") == 0) {
+            std::replace(next.begin(), next.end(), '_', '-');
+        }
+        if (arg_to_options.find(next) != arg_to_options.end()) {
+            throw std::invalid_argument(string_format(
+                "expected a value, but got another argument: %s", next.c_str()));
         }
     };
 
@@ -1424,11 +1450,41 @@ bool common_tessera_params_parse(int argc, char ** argv, common_params & params,
         }
     }
 
-    // Filter out positional args (and rebuild argv so positional args are
-    // at the end). This lets common_params_parse see only the flag set
-    // (which it knows about) and not error on `model.gguf` etc. The
-    // rebuilt argv is heap-allocated; the caller uses the original argv
-    // via the indices printed in --help.
+    // Filter out positional args and classic quantize-only flags (rebuild
+    // argv so common_params_parse sees only flags it actually has options
+    // for). common_params_parse throws "invalid argument" on any `--flag`
+    // token it does not recognize, so both bare positionals (`model.gguf`)
+    // and flags owned by llama_quantize's own hand-rolled chain
+    // (--prune-layers, --override-kv, --tensor-type, ...) must be kept out
+    // of flag_argv; they reach llama_quantize through the caller's
+    // original, unmodified argv.
+    //
+    // pipeline refactor phase 4: this used to (i) route every `-`-prefixed
+    // token into flag_argv unconditionally, and (ii) decide whether to
+    // peek the next token as a value via a "next token doesn't start with
+    // -" heuristic blind to the flag's actual arity. Two bugs followed:
+    // - Classic-only flags (never registered as a common_arg option, e.g.
+    //   --prune-layers) landed in flag_argv anyway, so common_params_parse
+    //   threw "invalid argument: --prune-layers" and aborted the ENTIRE
+    //   parse -- verified via `llama-tessera --prune-layers 2,3 model.gguf
+    //   Q4_K` (and the trailing form) both exiting 1, in any position.
+    // - A registered switch flag (handler_void/handler_bool, no value)
+    //   immediately followed by a positional had its positional swallowed
+    //   as a bogus value: `--dry-run model.gguf` fed common_params_parse
+    //   flag_argv = [..., "--dry-run", "model.gguf"], which produced
+    //   "error: invalid argument: model.gguf" (a dangling value after a
+    //   void handler) and also dropped model.gguf from pos_argv.
+    //
+    // Fix: classify every `-`-prefixed token with common_tessera_flag_kind
+    // (matched against the flag name only -- a `--flag=value` token is
+    // split at the first `=` before lookup, since the option table stores
+    // bare flag names) before deciding where it goes:
+    //   kind 0 (unregistered, i.e. classic-only)   -> pos_argv, no peek
+    //   kind 1 (registered switch)                 -> flag_argv, no peek
+    //   kind 2 (registered, takes a value)          -> flag_argv, peek
+    //                                                  unless the value is
+    //                                                  already embedded via
+    //                                                  `--flag=value`
     std::vector<char *> flag_argv;
     std::vector<char *> pos_argv;
     flag_argv.reserve(argc);
@@ -1436,44 +1492,36 @@ bool common_tessera_params_parse(int argc, char ** argv, common_params & params,
     flag_argv.push_back(argv[0]);
     for (int i = 1; i < argc; ) {
         const char * a = argv[i];
-        if (a != nullptr && a[0] == '-') {
-            flag_argv.push_back(argv[i]);
-            i++;
-            // Heuristic: if the previous flag's value-hint would be a
-            // string, take the next token too. We can't know without
-            // the flag table, so a simpler rule: a flag with `=` in it
-            // is self-contained (e.g. --tensor-type attn_q=q8_0), no
-            // peek needed; otherwise we peek and include the next token
-            // if it doesn't start with `-`. This is the same heuristic
-            // getopt uses and matches the existing parse_cli_args
-            // behavior (where check_arg(i) reads argv[++i]).
-            if (a[0] == '-' && a[1] == '-' && std::strchr(a, '=') == nullptr) {
-                if (i < argc) {
-                    const char * next = argv[i];
-                    if (next == nullptr || next[0] != '-') {
-                        flag_argv.push_back(argv[i]);
-                        i++;
-                    }
-                }
-            } else if (a[0] == '-' && a[1] == '-' && std::strchr(a, '=') != nullptr) {
-                // has =, no peek
-            } else if (a[0] == '-' && a[1] != '-') {
-                // short flag like -h, -t 4 — but the existing llama-cli
-                // doesn't use short flags with values, so just take the
-                // flag alone.
-            }
-        } else {
+        if (a == nullptr || a[0] != '-') {
             pos_argv.push_back(argv[i]);
             i++;
+            continue;
+        }
+        std::string flag_name = a;
+        const size_t eq_pos = flag_name.find('=');
+        const bool   has_eq = eq_pos != std::string::npos;
+        if (has_eq) {
+            flag_name.resize(eq_pos);
+        }
+        const int kind = common_tessera_flag_kind(flag_name.c_str());
+        if (kind == 0) {
+            pos_argv.push_back(argv[i]);
+            i++;
+            continue;
+        }
+        flag_argv.push_back(argv[i]);
+        i++;
+        if (kind == 2 && !has_eq && i < argc) {
+            const char * next = argv[i];
+            if (next == nullptr || next[0] != '-') {
+                flag_argv.push_back(argv[i]);
+                i++;
+            }
         }
     }
-    // Positionals stay out of common_params_parse (it rejects unknown
-    // non-flag args) and reach the quantize subroutine through the
-    // caller's original argv, which is unmodified here. Additive merge:
-    // - local fix kept positionals out because the quantize path re-reads
-    //   the original argv (llama_quantize parses <input> <ftype> directly)
-    // - remote fix did the same via flag_argv-only dispatch. Both guards
-    //   are preserved; positionals are never passed to common_params_parse.
+    // Positionals (and classic-only flags, now routed alongside them)
+    // stay out of common_params_parse and reach the quantize subroutine
+    // through the caller's original argv, which is unmodified here.
     (void) pos_argv;
 
     // The user-supplied print_usage (if any) runs first; the
@@ -2723,11 +2771,11 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             "KV cache data type for K\n"
             "allowed values: %s\n"
             "(default: %s)",
-            get_all_kv_cache_types().c_str(),
+            common_get_all_kv_cache_types().c_str(),
             ggml_type_name(params.cache_type_k)
         ),
         [](common_params & params, const std::string & value) {
-            params.cache_type_k = kv_cache_type_from_str(value);
+            params.cache_type_k = common_kv_cache_type_from_str(value);
         }
     ).set_env("LLAMA_ARG_CACHE_TYPE_K"));
     add_opt(common_arg(
@@ -2736,11 +2784,11 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             "KV cache data type for V\n"
             "allowed values: %s\n"
             "(default: %s)",
-            get_all_kv_cache_types().c_str(),
+            common_get_all_kv_cache_types().c_str(),
             ggml_type_name(params.cache_type_v)
         ),
         [](common_params & params, const std::string & value) {
-            params.cache_type_v = kv_cache_type_from_str(value);
+            params.cache_type_v = common_kv_cache_type_from_str(value);
         }
     ).set_env("LLAMA_ARG_CACHE_TYPE_V"));
     add_opt(common_arg(
@@ -4318,6 +4366,44 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_examples({LLAMA_EXAMPLE_TESSERA}));
     add_opt(common_arg(
+        {"--activation-capture"}, "DIR",
+        "Tessera (llama-imatrix): capture a real, bounded sample of each dense "
+        "weight's actual input activations during the calibration forward pass "
+        "(not just their compact moments) and write a train + heldout sidecar "
+        "per tensor to DIR. Consumed by llama-tessera's GA fitness scoring "
+        "(--activation-capture-dir) to make it reconstruction-aware instead of "
+        "a weight-space proxy. Default: unset (disabled, no behavior change). "
+        "Requires real calibration text (-f); a data-free corpus produces "
+        "activation distributions unrepresentative of real deployment traffic.",
+        [](common_params &, const std::string & value) {
+            tessera_params.activation_capture_dir = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_IMATRIX}));
+    add_opt(common_arg(
+        {"--activation-capture-train-tokens"}, "N",
+        "Tessera: bounded reservoir sample size (train split) per tensor for "
+        "--activation-capture. Default: 512.",
+        [](common_params &, int value) {
+            if (value <= 0) {
+                throw std::invalid_argument(
+                    string_format("error: --activation-capture-train-tokens must be > 0, got %d\n", value));
+            }
+            tessera_params.activation_capture_train_tokens = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_IMATRIX}));
+    add_opt(common_arg(
+        {"--activation-capture-heldout-tokens"}, "N",
+        "Tessera: bounded reservoir sample size (heldout split) per tensor for "
+        "--activation-capture. Default: 128.",
+        [](common_params &, int value) {
+            if (value <= 0) {
+                throw std::invalid_argument(
+                    string_format("error: --activation-capture-heldout-tokens must be > 0, got %d\n", value));
+            }
+            tessera_params.activation_capture_heldout_tokens = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_IMATRIX}));
+    add_opt(common_arg(
         {"--phase"}, "NAME",
         "Tessera pipeline phase: imatrix (calibration only) | quantize (normal) | l5-joint (L5 search only). "
         "Default: quantize.",
@@ -5171,6 +5257,69 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_L5}));
     add_opt(common_arg(
+        {"--l5-joint-ctk", "--l5-joint-cache-type-k"}, "TYPE",
+        string_format(
+            "Tessera: KV cache data type for K in the L5 joint harness's "
+            "target context (pipeline refactor phase 3, \"KV-joint "
+            "plumbing\"). The L5 joint harness builds its own "
+            "llama_context_params by hand and does not inherit the "
+            "top-level -ctk/-ctv (those apply to llama-imatrix / "
+            "llama-perplexity, not this subcommand's harness).\n"
+            "allowed values: %s\n"
+            "(default: f16)",
+            common_get_all_kv_cache_types().c_str()
+        ),
+        [](common_params &, const std::string & value) {
+            common_kv_cache_type_from_str(value);  // validate; throws on a bad name
+            tessera_params.l5_joint_type_k = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_L5}));
+    add_opt(common_arg(
+        {"--l5-joint-ctv", "--l5-joint-cache-type-v"}, "TYPE",
+        string_format(
+            "Tessera: KV cache data type for V in the L5 joint harness's "
+            "target context. See --l5-joint-ctk.\n"
+            "allowed values: %s\n"
+            "(default: f16)",
+            common_get_all_kv_cache_types().c_str()
+        ),
+        [](common_params &, const std::string & value) {
+            common_kv_cache_type_from_str(value);
+            tessera_params.l5_joint_type_v = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_L5}));
+    add_opt(common_arg(
+        {"--l5-joint-ctkd", "--l5-joint-cache-type-k-draft"}, "TYPE",
+        string_format(
+            "Tessera: KV cache data type for K in the L5 joint harness's "
+            "4 drafter contexts (dflash/dspark/mtp/talker) -- the target "
+            "context uses --l5-joint-ctk instead. Mirrors upstream's "
+            "-ctkd/--spec-draft-type-k split between the main and "
+            "speculative-draft KV caches.\n"
+            "allowed values: %s\n"
+            "(default: f16)",
+            common_get_all_kv_cache_types().c_str()
+        ),
+        [](common_params &, const std::string & value) {
+            common_kv_cache_type_from_str(value);
+            tessera_params.l5_joint_type_k_draft = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_L5}));
+    add_opt(common_arg(
+        {"--l5-joint-ctvd", "--l5-joint-cache-type-v-draft"}, "TYPE",
+        string_format(
+            "Tessera: KV cache data type for V in the L5 joint harness's "
+            "4 drafter contexts. See --l5-joint-ctkd.\n"
+            "allowed values: %s\n"
+            "(default: f16)",
+            common_get_all_kv_cache_types().c_str()
+        ),
+        [](common_params &, const std::string & value) {
+            common_kv_cache_type_from_str(value);
+            tessera_params.l5_joint_type_v_draft = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_L5}));
+    add_opt(common_arg(
         {"--calibration", "--l5-calibration"}, "PATH",
         "Tessera: joint calibration set JSONL (text + talker_targets per "
         "record). Empty = synthetic fixture (v1 schema; v3 wires the "
@@ -5570,11 +5719,11 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             "KV cache data type for K for the draft model\n"
             "allowed values: %s\n"
             "(default: %s)",
-            get_all_kv_cache_types().c_str(),
+            common_get_all_kv_cache_types().c_str(),
             ggml_type_name(params.speculative.draft.cache_type_k)
         ),
         [](common_params & params, const std::string & value) {
-            params.speculative.draft.cache_type_k = kv_cache_type_from_str(value);
+            params.speculative.draft.cache_type_k = common_kv_cache_type_from_str(value);
         }
     ).set_env("LLAMA_ARG_SPEC_DRAFT_CACHE_TYPE_K"));
     add_opt(common_arg(
@@ -5583,11 +5732,11 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             "KV cache data type for V for the draft model\n"
             "allowed values: %s\n"
             "(default: %s)",
-            get_all_kv_cache_types().c_str(),
+            common_get_all_kv_cache_types().c_str(),
             ggml_type_name(params.speculative.draft.cache_type_v)
         ),
         [](common_params & params, const std::string & value) {
-            params.speculative.draft.cache_type_v = kv_cache_type_from_str(value);
+            params.speculative.draft.cache_type_v = common_kv_cache_type_from_str(value);
         }
     ).set_env("LLAMA_ARG_SPEC_DRAFT_CACHE_TYPE_V"));
     add_opt(common_arg(
