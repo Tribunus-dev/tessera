@@ -16,14 +16,16 @@
 
 **`GGML_AMD_VULKAN_FALLBACK`**
 - Values: `0` (default), `1`
-- Effect: Allow fallback to Vulkan when HIP fails
-- Recommendation: `1` for robustness; `0` for deterministic behavior
+- Effect: Allow fallback to Vulkan when HIP is unavailable or not selected
+- Default: `1` (enabled). `0` disables fallback.
+- Recommendation: `1` for robustness; `0` for strict HIP-only behavior
 
 **`GGML_AMD_XDNA`**
-- Values: `auto` (default), `off`, `on`
-- Effect: Enable/disable XDNA NPU provider
-- `auto`: enable if `/dev/accel/accel0` present and XRT available
-- Recommendation: `auto` unless debugging NPU issues
+- Values: `0` (default), `1`, `on`, `off`, `true`, `false`
+- Effect: Enable/disable XDNA NPU probe
+- `on`/`1`/`true`: probe and expose XDNA if runtime dependencies are present
+- `off`/`0`/`false`: never probe XDNA
+- Recommendation: `off` unless debugging NPU issues
 
 ### Scheduler Mode
 

@@ -307,7 +307,9 @@ static bool ggml_amd_hip_supports_import_impl(struct ggml_amd_provider * provide
     if (!alloc || alloc->dma_buf_fd < 0) {
         return false;
     }
-    if (alloc->domain != GGML_AMD_DOMAIN_IMPORTED_EXTERNAL && alloc->domain != GGML_AMD_DOMAIN_SHARED_SYSTEM) {
+    if (alloc->domain != GGML_AMD_DOMAIN_IMPORTED_EXTERNAL &&
+        alloc->domain != GGML_AMD_DOMAIN_SHARED_SYSTEM &&
+        alloc->domain != GGML_AMD_DOMAIN_GPU_LOCAL_EXPORTABLE) {
         return false;
     }
     return alloc->external_handle_kind != GGML_AMD_EXTERNAL_HANDLE_KIND_NONE;
@@ -331,7 +333,8 @@ static ggml_status ggml_amd_hip_import_allocation_impl(
         return GGML_STATUS_FAILED;
     }
     if (alloc->domain != GGML_AMD_DOMAIN_IMPORTED_EXTERNAL &&
-        alloc->domain != GGML_AMD_DOMAIN_SHARED_SYSTEM) {
+        alloc->domain != GGML_AMD_DOMAIN_SHARED_SYSTEM &&
+        alloc->domain != GGML_AMD_DOMAIN_GPU_LOCAL_EXPORTABLE) {
         g_ggml_amd_hip_last_import_error = hipErrorInvalidValue;
         return GGML_STATUS_FAILED;
     }

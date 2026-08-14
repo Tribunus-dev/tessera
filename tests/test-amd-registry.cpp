@@ -264,6 +264,8 @@ static struct ggml_amd_device_context * find_amd_device_context_for_provider(
 
 static void test_hip_dma_buf_import(void) {
     const char * dma_heap_paths = std::getenv("GGML_AMD_DMA_HEAP_PATH");
+    auto dma_heap_candidates = ggml_amd_dma_heap_paths();
+
     ggml_backend_reg_t reg = ggml_backend_amd_reg();
     if (!reg) {
         std::fprintf(stdout, "     HIP dma-buf import skipped (no AMD device)\n");
@@ -282,30 +284,75 @@ static void test_hip_dma_buf_import(void) {
         return;
     }
 
-    struct ggml_amd_allocation * allocation = ggml_amd_allocation_create(
-        GGML_AMD_DOMAIN_SHARED_SYSTEM, 4096, 4096, GGML_AMD_COHERENCY_SHARED);
-    if (!allocation) {
-        std::fprintf(stdout, "     HIP dma-buf import skipped (system dma-heap unavailable)\n");
-        return;
-    }
-
     struct ggml_amd_import * import = nullptr;
-    const bool supports_import = device_ctx->provider->iface->supports_import(
-        device_ctx->provider, allocation);
-    if (!supports_import) {
-        std::fprintf(stdout, "     HIP dma-buf import skipped (backend reports unsupported on this build/runtime)\n");
-        ggml_amd_allocation_release(allocation);
-        return;
+    struct ggml_amd_allocation * allocation = nullptr;
+
+    ggml_status status = GGML_STATUS_FAILED;
+    const char * successful_heap = nullptr;
+    std::string failed_heap;
+    size_t allocation_attempts = 0;
+    for (const auto & heap_path : dma_heap_candidates) {
+        ggml_amd_dma_heap_set_preferred_path(heap_path.c_str());
+
+        if (allocation) {
+            ggml_amd_allocation_release(allocation);
+            allocation = nullptr;
+        }
+        allocation = ggml_amd_allocation_create(
+            GGML_AMD_DOMAIN_SHARED_SYSTEM, 4096, 4096, GGML_AMD_COHERENCY_SHARED);
+        if (!allocation) {
+            failed_heap = heap_path;
+            continue;
+        }
+        ++allocation_attempts;
+
+        const bool supports_import = device_ctx->provider->iface->supports_import(
+            device_ctx->provider, allocation);
+        if (!supports_import) {
+            ggml_amd_allocation_release(allocation);
+            allocation = nullptr;
+            continue;
+        }
+
+        import = nullptr;
+        status = device_ctx->provider->iface->import_allocation(device_ctx->provider, allocation, &import);
+        if (status == GGML_STATUS_SUCCESS && import != nullptr) {
+            successful_heap = heap_path.c_str();
+            break;
+        }
+
+        if (import) {
+            device_ctx->provider->iface->release_import(device_ctx->provider, import);
+            import = nullptr;
+        }
     }
 
-    const ggml_status status = device_ctx->provider->iface->import_allocation(
-        device_ctx->provider, allocation, &import);
+    ggml_amd_dma_heap_set_preferred_path(nullptr);
+
+    if (allocation) {
+        ggml_amd_allocation_release(allocation);
+        allocation = nullptr;
+    }
+
     CHECK(status == GGML_STATUS_SUCCESS && import != nullptr, "HIP imports a system dma-buf");
     if (status != GGML_STATUS_SUCCESS || import == nullptr) {
 #ifdef __HIP_PLATFORM_AMD__
         const auto last_error = static_cast<hipError_t>(ggml_amd_hip_get_last_import_error());
         std::fprintf(stderr, "     HIP import failed: last_error=%d %s\n", static_cast<int>(last_error), hipGetErrorString(last_error));
         std::fprintf(stderr, "     GGML_AMD_DMA_HEAP_PATH=%s\n", dma_heap_paths ? dma_heap_paths : "<unset>");
+        std::fprintf(stderr, "     Shared-system allocation attempts: %zu\n", allocation_attempts);
+        if (allocation_attempts == 0) {
+            std::fprintf(stderr, "     No shared-system allocations created for any candidate\n");
+        }
+        if (!failed_heap.empty()) {
+            std::fprintf(stderr, "     Last failed heap: %s\n", failed_heap.c_str());
+        }
+        if (!dma_heap_candidates.empty()) {
+            std::fprintf(stderr, "     Tested %zu dma-heap candidate(s)\n", dma_heap_candidates.size());
+            for (size_t i = 0; i < dma_heap_candidates.size(); ++i) {
+                std::fprintf(stderr, "      %zu) %s\n", i + 1, dma_heap_candidates[i].c_str());
+            }
+        }
 #else
         std::fprintf(stderr, "     HIP import failed on non-HIP runtime build\n");
 #endif
@@ -314,6 +361,10 @@ static void test_hip_dma_buf_import(void) {
     }
     if (import) {
         device_ctx->provider->iface->release_import(device_ctx->provider, import);
+        import = nullptr;
+    }
+    if (successful_heap) {
+        std::fprintf(stdout, "     HIP dma-buf import succeeded via %s\n", successful_heap);
     }
     ggml_amd_allocation_release(allocation);
 }

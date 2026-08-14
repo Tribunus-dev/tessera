@@ -27,6 +27,12 @@
 #include <unistd.h>
 #endif
 
+struct amd_env_var {
+    const char * name;
+    bool was_set;
+    std::string value;
+};
+
 // Internal API declarations (not in public header)
 struct ggml_amd_allocation * ggml_amd_allocation_create(
     enum ggml_amd_memory_domain domain,
@@ -47,6 +53,21 @@ struct ggml_amd_fence ggml_amd_fence_create_xrt(void * xrt_fence);
 void ggml_amd_fence_release(struct ggml_amd_fence * fence);
 int ggml_amd_fence_wait(struct ggml_amd_fence * fence, int timeout_ms);
 int ggml_amd_fence_check_ordering(struct ggml_amd_fence * waiter, struct ggml_amd_fence * writer);
+void ggml_amd_dma_heap_set_preferred_path(const char * path);
+std::vector<std::string> ggml_amd_dma_heap_paths(void);
+
+static amd_env_var dmabuf_env_save(const char * name) {
+    const char * value = std::getenv(name);
+    return { name, value != nullptr, value ? value : "" };
+}
+
+static void dmabuf_env_restore(const amd_env_var & env) {
+    if (env.was_set) {
+        setenv(env.name, env.value.c_str(), 1);
+    } else {
+        unsetenv(env.name);
+    }
+}
 
 static int g_failures = 0;
 
@@ -95,6 +116,26 @@ static void test_allocation_create_shared_system(void) {
 #else
     CHECK(alloc == nullptr, "SHARED_SYSTEM returns nullptr on non-Linux");
 #endif
+}
+
+static void test_dma_heap_path_selection(void) {
+    const auto heap_env = dmabuf_env_save("GGML_AMD_DMA_HEAP_PATH");
+    ggml_amd_dma_heap_set_preferred_path(nullptr);
+
+    setenv("GGML_AMD_DMA_HEAP_PATH", "/dev/fake-a:: /dev/fake-b, /dev/fake-a;/dev/fake-c ", 1);
+    const auto parsed = ggml_amd_dma_heap_paths();
+    CHECK(parsed.size() == 3, "DMA heap env parser returns three unique paths");
+    CHECK(parsed[0] == "/dev/fake-a", "DMA heap parser keeps first path");
+    CHECK(parsed[1] == "/dev/fake-b", "DMA heap parser keeps second path");
+    CHECK(parsed[2] == "/dev/fake-c", "DMA heap parser keeps third path");
+
+    ggml_amd_dma_heap_set_preferred_path("/dev/override");
+    const auto overridden = ggml_amd_dma_heap_paths();
+    CHECK(overridden.size() == 1, "DMA heap override reduces path list to one");
+    CHECK(overridden[0] == "/dev/override", "DMA heap override is honored");
+
+    ggml_amd_dma_heap_set_preferred_path(nullptr);
+    dmabuf_env_restore(heap_env);
 }
 
 static void test_allocation_create_gpu_local(void) {
@@ -312,6 +353,7 @@ int main(void) {
     std::fprintf(stdout, "=== test-amd-dmabuf ===\n");
 
     test_allocation_create_shared_system();
+    test_dma_heap_path_selection();
     test_allocation_create_gpu_local();
     test_allocation_create_provider_private();
     test_allocation_create_imported_external();
