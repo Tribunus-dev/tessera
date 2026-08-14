@@ -381,6 +381,55 @@ int main() {
         CHECK(r.evaluations > 0,     "GA actually ran evaluations");
     }
 
+    // --- Test 5: train_activations is the switch between diagonal
+    // weight-space error and relative_output_error (pipeline refactor:
+    // activation-capture regression pin). ts_awq_evaluate_layer's train_error
+    // takes the relative_output_error branch only when
+    // layer.train_activations && layer.n_tokens > 0 (tessera-awq-fitness.cpp,
+    // ts_awq_evaluate_layer); every layer built by make_layer() above already
+    // has activations populated from the fixture, which is why Tests 1-4
+    // exercise that branch, but nothing in this file has ever pinned that the
+    // OTHER branch (no activations -- what every production ts_awq_layer got
+    // until the activation-capture sidecar exists) computes something
+    // different. This is the regression this test protects: the production
+    // dispatch pipeline currently always passes train_activations=nullptr,
+    // and this test is the safety net for Stage 1+ wiring it up for real.
+    {
+        ts_awq_layer L = make_layer(fx);
+        ts_awq_candidate c = make_cand(fx.genes);
+
+        ts_awq_score with_act;
+        CHECK(ts_awq_evaluate_layer(c, L, &with_act) == 0,
+              "evaluate_layer with train_activations ok");
+
+        ts_awq_layer L_no_act = L;
+        L_no_act.train_activations   = nullptr;
+        L_no_act.heldout_activations = nullptr;
+        L_no_act.ref_train_output    = nullptr;
+        L_no_act.ref_heldout_output  = nullptr;
+        L_no_act.n_tokens    = 0;
+        L_no_act.n_tokens_h  = 0;
+
+        ts_awq_score without_act;
+        CHECK(ts_awq_evaluate_layer(c, L_no_act, &without_act) == 0,
+              "evaluate_layer without train_activations ok");
+
+        std::printf("[act-switch] mse with_act=%.8e without_act=%.8e "
+                    "heldout with_act=%.8e without_act=%.8e\n",
+                    with_act.mse, without_act.mse,
+                    with_act.heldout_mse, without_act.heldout_mse);
+        // The two paths compute genuinely different quantities (downstream
+        // relative output error vs. diagonal moment-weighted weight-space
+        // error), so on a real (non-degenerate) fixture they must not
+        // coincide. relative_frob (tail_error) does NOT depend on
+        // train_activations at all (both branches use the same diagonal tail
+        // computation) -- it is intentionally excluded from this check.
+        CHECK(with_act.mse != without_act.mse,
+              "populating train_activations changes train_error (mse)");
+        CHECK(with_act.heldout_mse != without_act.heldout_mse,
+              "populating heldout_activations changes heldout_error");
+    }
+
     if (g_failures == 0) {
         printf("PASS\n");
         return 0;
