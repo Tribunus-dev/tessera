@@ -317,16 +317,13 @@ final class SheetEngineTests: XCTestCase {
     /// (`='Sheet1'!A1*2`) must read and track that sheet - not silently
     /// resolve against whichever sheet is active when it recalculates.
     ///
-    /// Quoted, not bare (`=Sheet1!A1*2`): this engine's Lexer only
-    /// recognizes a sheet qualifier when it's single-quoted
-    /// (`scanQuotedSheetRef`) - `scanIdentifier` never looks ahead for
-    /// `!` after a bare name, so an unquoted sheet-qualified reference
-    /// does not parse as one at all. It silently becomes a named-range
-    /// lookup that drops everything after the `!` (`=Sheet1!A1*2`
-    /// parses to a bare reference to a named range called "SHEET1", not
-    /// "Sheet1's A1 times 2"), or throws inside a function call. Quoting
-    /// is not a style choice here; it's the only syntax this parser
-    /// accepts for a cross-sheet reference.
+    /// Quoted here, though bare (`=Sheet1!A1*2`) now parses identically
+    /// too (see `LexerSheetQualifierTests`) - at the time this test was
+    /// written, `scanIdentifier` never looked ahead for `!` after a bare
+    /// name, so an unquoted sheet-qualified reference silently became a
+    /// named-range lookup that dropped everything after the `!`, or
+    /// threw inside a function call. Kept quoted here since that is
+    /// what every other test in this file already uses.
     func testFormulaDependency_explicitCrossSheetReferenceTracksTheNamedSheet() throws {
         engine.createSheet(name: "Sheet2")
         let a1 = CellAddr(col: 0, row: 0)

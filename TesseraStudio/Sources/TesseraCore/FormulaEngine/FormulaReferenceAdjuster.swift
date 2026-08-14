@@ -274,16 +274,17 @@ public enum FormulaReferenceAdjuster {
         let name = unescapeSheetPrefix(prefix)
         guard name == from else { return prefix }
         // ALWAYS quoted, not AddressParser.escapeSheetName's
-        // only-when-it-contains-a-special-character rule: this engine's
-        // own Lexer (scanIdentifier) never looks ahead for "!" after a
-        // bare identifier, so an unquoted sheet-qualified reference does
-        // not parse at all - "=Sheet1!A1*2" silently becomes a named-
-        // range lookup that drops "!A1*2" outright, and the same
-        // reference inside a function call throws. escapeSheetName's
-        // narrower rule is correct for whatever it was written for, but
-        // wrong here: every renamed reference this produces gets fed
-        // back into setFormulaUnlocked, which needs it to actually
-        // reparse.
+        // only-when-it-contains-a-special-character rule. Originally
+        // this was load-bearing: the Lexer's scanIdentifier had no
+        // lookahead for "!" after a bare identifier at all, so an
+        // unquoted sheet-qualified reference didn't parse as one - it
+        // now does (see LexerSheetQualifierTests), so unquoted output
+        // would reparse correctly too. Kept always-quoted anyway: it's
+        // unconditionally safe regardless of what the sheet name
+        // happens to be, where escapeSheetName's narrower rule (quote
+        // only if it contains a space/quote/bang/bracket) was written
+        // for a different purpose and has not been checked against
+        // every name a bare sheet-qualifier can safely carry.
         let escaped = to.replacingOccurrences(of: "'", with: "''")
         return "'\(escaped)'!"
     }

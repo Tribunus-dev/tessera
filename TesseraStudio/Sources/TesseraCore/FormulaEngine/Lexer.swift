@@ -387,7 +387,8 @@ public final class Lexer {
         if upper == "TRUE"  { return .boolLiteral(true) }
         if upper == "FALSE" { return .boolLiteral(false) }
 
-        // Check what's next: ( → function, : or alphanumeric → could be range/named
+        // Check what's next: ( → function, ! → unquoted sheet qualifier,
+        // : or alphanumeric → could be range/named
         skipWhitespace()
         let next = currentChar
 
@@ -396,6 +397,31 @@ public final class Lexer {
             _ = advance() // consume (
             // Put back the lparen as a separate token
             return .funcName(upper)
+        }
+
+        if next == "!" {
+            // Unquoted sheet qualifier: Sheet1!A1. "!" is not a valid
+            // identifier character and nothing else in this grammar
+            // puts a bare "!" right after a name, so this is
+            // unambiguous - it can only be a sheet separator, never a
+            // named range's own trailing character.
+            //
+            // Previously unhandled entirely: this branch did not exist,
+            // so `Sheet1!A1` fell through to `.namedRange("SHEET1")`
+            // and everything from the "!" onward - including the cell
+            // reference - was silently dropped from the token stream.
+            // Only the quoted form ('Sheet1'!A1, scanQuotedSheetRef)
+            // worked. `name` (not `upper`): sheet names are
+            // case-preserving, matching how scanQuotedSheetRef keeps
+            // the exact text between the quotes.
+            //
+            // A sheet-qualified RANGE (Sheet1!A1:B5) needs no extra
+            // handling here - Parser.parseExpression's range-operator
+            // case combines a leading cellRef with the sheet already
+            // attached against whatever follows a ":", the same generic
+            // path the quoted form already relies on.
+            _ = advance() // consume !
+            return try scanCellRef(sheet: name)
         }
 
         if next == ":" {
