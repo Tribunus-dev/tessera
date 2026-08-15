@@ -342,4 +342,98 @@ final class DocStoreTests: XCTestCase {
         XCTAssertEqual(receiptsAfter.count, receiptsBefore.count)
     }
 
+    // MARK: - Fields (persistence round trip, gap closure)
+
+    private let fieldsFixedClock: () -> Date = { Date(timeIntervalSince1970: 1_700_000_000) }
+
+    /// A doc with a single `.date` field block - layout-insensitive,
+    /// always resolves per `FieldController`'s own contract - so
+    /// `refreshFields` has something to actually change on the first call.
+    private func makeDateFieldDoc() -> (doc: Doc, blockID: UUID) {
+        var block = Block(type: .field)
+        block.field = FieldSpec(kind: .date)
+        let ast = DocumentAST(blocks: [block.id: block], rootChildren: [block.id])
+        let doc = Doc(title: "Field Refresh Round Trip", body: ast)
+        return (doc, block.id)
+    }
+
+    /// A doc with a single `.page` field block - layout-sensitive,
+    /// `FieldController.refresh` never changes these at P1 (no paginator
+    /// context yet - see `FieldController.swift`'s file header), so
+    /// `refreshFields` must find nothing to change.
+    private func makePageFieldDoc() -> (doc: Doc, blockID: UUID) {
+        var block = Block(type: .field, content: [InlineRun(text: "3")])
+        block.field = FieldSpec(kind: .page, dirty: true)
+        let ast = DocumentAST(blocks: [block.id: block], rootChildren: [block.id])
+        let doc = Doc(title: "Layout-Sensitive Field Doc", body: ast)
+        return (doc, block.id)
+    }
+
+    func testRefreshFieldsResolvesDateFieldAndPersists() async throws {
+        let dataLayer = try await makeRevisionsDataLayer()
+        let store = DocStore(dataLayer: dataLayer)
+        let (fixture, blockID) = makeDateFieldDoc()
+        let saved = try await store.upsert(fixture)
+
+        let (updated, refreshedCount) = try await store.refreshFields(for: saved.id, clock: fieldsFixedClock)
+        XCTAssertEqual(refreshedCount, 1)
+        let block = try XCTUnwrap(updated.body.blocks[blockID])
+        XCTAssertEqual(block.content.map { $0.text }.joined(), "2023-11-14")
+        XCTAssertEqual(block.field?.dirty, false)
+
+        let reloaded = try await store.get(id: saved.id)
+        let reloadedBlock = try XCTUnwrap(reloaded?.body.blocks[blockID])
+        XCTAssertEqual(reloadedBlock.content.map { $0.text }.joined(), "2023-11-14")
+
+        let receipts = try await dataLayer.receipts(forEntity: saved.id)
+        let receipt = try XCTUnwrap(receipts.first { $0.receiptType == DocReceiptType.fieldsRefreshed.rawValue })
+        XCTAssertEqual(receipt.payload["refreshedCount"], .number(1))
+    }
+
+    /// Calling `refreshFields` again under the SAME clock finds the
+    /// `.date` field already resolved (`refresh`'s idempotence - see
+    /// `FieldController.swift`'s file header) - refreshedCount is 0 and
+    /// no second receipt is appended. This is the pure-logic idempotence
+    /// `FieldControllerTests` already established, now verified end to
+    /// end through the store.
+    func testRefreshFieldsSecondCallUnderSameClockIsNoOpAndEmitsNoSecondReceipt() async throws {
+        let dataLayer = try await makeRevisionsDataLayer()
+        let store = DocStore(dataLayer: dataLayer)
+        let (fixture, _) = makeDateFieldDoc()
+        let saved = try await store.upsert(fixture)
+
+        _ = try await store.refreshFields(for: saved.id, clock: fieldsFixedClock)
+        let receiptsAfterFirst = try await dataLayer.receipts(forEntity: saved.id)
+
+        let (result, refreshedCount) = try await store.refreshFields(for: saved.id, clock: fieldsFixedClock)
+        XCTAssertEqual(refreshedCount, 0)
+
+        let receiptsAfterSecond = try await dataLayer.receipts(forEntity: saved.id)
+        XCTAssertEqual(receiptsAfterSecond.count, receiptsAfterFirst.count)
+
+        let reloaded = try await store.get(id: saved.id)
+        XCTAssertEqual(reloaded?.updatedAt, result.updatedAt)
+    }
+
+    /// A doc whose only field is `.page` (layout-sensitive) refreshes to
+    /// refreshedCount == 0 with no receipt - this is CORRECT behavior at
+    /// P1 (no paginator context exists to resolve it - see
+    /// `FieldController.swift`'s file header), not missing coverage: the
+    /// field is deliberately left dirty with its last-known text.
+    func testRefreshFieldsWithOnlyLayoutSensitiveFieldIsNoOp() async throws {
+        let dataLayer = try await makeRevisionsDataLayer()
+        let store = DocStore(dataLayer: dataLayer)
+        let (fixture, blockID) = makePageFieldDoc()
+        let saved = try await store.upsert(fixture)
+        let receiptsBefore = try await dataLayer.receipts(forEntity: saved.id)
+
+        let (result, refreshedCount) = try await store.refreshFields(for: saved.id, clock: fieldsFixedClock)
+        XCTAssertEqual(refreshedCount, 0)
+        let block = try XCTUnwrap(result.body.blocks[blockID])
+        XCTAssertEqual(block.content.map { $0.text }.joined(), "3")
+        XCTAssertEqual(block.field?.dirty, true)
+
+        let receiptsAfter = try await dataLayer.receipts(forEntity: saved.id)
+        XCTAssertEqual(receiptsAfter.count, receiptsBefore.count)
+    }
 }

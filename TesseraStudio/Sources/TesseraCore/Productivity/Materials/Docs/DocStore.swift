@@ -300,6 +300,46 @@ public struct DocStore: Sendable {
         return doc
     }
 
+    // MARK: - Fields
+
+    /// Re-resolve every `.field` block in the doc's body via
+    /// `FieldController.refresh`, writing back only the blocks whose
+    /// resolved `Block` actually differs from the one passed in - a
+    /// plain `!=` check, which `refresh`'s own idempotence under a
+    /// fixed `clock` is what makes that check sufficient (see
+    /// `FieldController.swift`'s file header). A doc where nothing
+    /// changed - no `.field` blocks, every field already resolved
+    /// under this `clock`, or every field is layout-sensitive and so
+    /// stays untouched per `FieldController`'s documented P1
+    /// limitation - is a no-op through: no upsert, no receipt,
+    /// matching `acceptRevision`/`findAndReplace`/`deleteStyle`'s
+    /// "only emit when something actually changed" precedent in this
+    /// same store.
+    public func refreshFields(
+        for docID: UUID,
+        clock: @escaping () -> Date = Date.init
+    ) async throws -> (doc: Doc, refreshedCount: Int) {
+        var doc = try await loadOrFail(id: docID)
+        let fieldBlockIDs = doc.body.blocks.compactMap { id, block in block.type == .field ? id : nil }
+        var changedCount = 0
+        for id in fieldBlockIDs {
+            guard let block = doc.body.blocks[id] else { continue }
+            let refreshed = FieldController.refresh(block, in: doc.body, clock: clock)
+            guard refreshed != block else { continue }
+            doc.body.blocks[id] = refreshed
+            changedCount += 1
+        }
+        guard changedCount > 0 else { return (doc, 0) }
+        doc.updatedAt = Date()
+        _ = try await upsert(doc)
+        try await appendReceipt(
+            entityID: docID,
+            receiptType: DocReceiptType.fieldsRefreshed.rawValue,
+            payload: ["refreshedCount": .number(Double(changedCount))]
+        )
+        return (doc, changedCount)
+    }
+
     // MARK: - Archive / Trash / Favorite
 
     public func archive(_ docID: UUID) async throws -> Doc {
