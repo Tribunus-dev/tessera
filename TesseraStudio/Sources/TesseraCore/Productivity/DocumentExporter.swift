@@ -504,6 +504,17 @@ public final class DocumentExporter: Sendable {
             .replacingOccurrences(of: "'", with: "&#39;")
     }
 
+    /// No `Theme` is reachable in this exporter's scope (it works from
+    /// a plain `Shape`, not a themed deck) - a `.theme` ref falls back
+    /// to `Theme.builtinDefault(for:)`, the same neutral default
+    /// `SlideDeckRenderer.drawBackground` uses with no active theme.
+    private func hex(for ref: ColorRef) -> String {
+        switch ref {
+        case .literal(let hex): return hex
+        case .theme(let slot, _): return Theme.builtinDefault(for: slot)
+        }
+    }
+
     private func renderShapeDiv(_ shape: Shape?) -> String {
         guard let shape else { return "<div class=\"shape\"></div>" }
         let g = shape.geometry
@@ -512,7 +523,7 @@ public final class DocumentExporter: Sendable {
             style += "transform:rotate(\(g.rotation)deg);"
         }
         if let fill = shape.fill {
-            style += "background-color:\(escapeHTML(fill.colorHex));opacity:\(fill.opacity);"
+            style += "background-color:\(escapeHTML(hex(for: fill.colorHex)));opacity:\(fill.opacity);"
         }
         if let stroke = shape.stroke {
             style += "border:\(stroke.width)px solid \(escapeHTML(stroke.colorHex));"

@@ -152,14 +152,16 @@ public struct ShapeGeometry: Codable, Sendable, Hashable {
 /// either - they're absent from studio-expansion-plan.md's P0 field
 /// list for this type).
 public struct ShapeFill: Codable, Sendable, Hashable {
-    /// `#RRGGBB` or `#RRGGBBAA`.
-    public var colorHex: String
+    /// `.literal("#RRGGBB"/"#RRGGBBAA")` or a `.theme` slot reference
+    /// (P1 1.5), matching `SlideMasterPage.backgroundColorHex`'s
+    /// `ColorRef` adoption.
+    public var colorHex: ColorRef
     /// 0 (fully transparent) ... 1 (opaque), independent of any alpha
     /// baked into `colorHex` - the two multiply, matching how every
     /// vector tool separates "the color" from "how see-through it is."
     public var opacity: Double
 
-    public init(colorHex: String, opacity: Double = 1) {
+    public init(colorHex: ColorRef, opacity: Double = 1) {
         self.colorHex = colorHex
         self.opacity = max(0, min(opacity, 1))
     }

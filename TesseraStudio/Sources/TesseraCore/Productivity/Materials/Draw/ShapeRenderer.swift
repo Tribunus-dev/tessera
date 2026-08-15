@@ -51,7 +51,7 @@ public struct ShapeRenderer: Sendable {
         let path = path(for: shape, allShapes: allShapes)
 
         if let fill = shape.fill, kindIsFillable(shape.kind) {
-            context.setFillColor(resolveColor(fill.colorHex, opacity: fill.opacity))
+            context.setFillColor(resolveColor(hex(for: fill.colorHex), opacity: fill.opacity))
             context.addPath(path)
             context.fillPath()
         }
@@ -147,6 +147,18 @@ public struct ShapeRenderer: Sendable {
     // just a gray/white-point rounding difference. See
     // SlideDeckRenderer.parseHex's identical fix and comment.
     private static let deviceRGB = CGColorSpaceCreateDeviceRGB()
+
+    /// No `Theme` reaches this pure `Shape` renderer (nothing about
+    /// `render(_:in:allShapes:)`'s signature threads one through) - a
+    /// `.theme` ref falls back to `Theme.builtinDefault(for:)`, the
+    /// same neutral default `SlideDeckRenderer.drawBackground` uses
+    /// with no active theme.
+    private func hex(for ref: ColorRef) -> String {
+        switch ref {
+        case .literal(let hex): return hex
+        case .theme(let slot, _): return Theme.builtinDefault(for: slot)
+        }
+    }
 
     private func resolveColor(_ hex: String, opacity: Double) -> CGColor {
         guard let rgba = Self.parseHex(hex) else {

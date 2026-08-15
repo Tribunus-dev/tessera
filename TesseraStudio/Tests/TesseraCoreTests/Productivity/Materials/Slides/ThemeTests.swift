@@ -148,8 +148,6 @@ final class ThemeTests: DoctrineTestCase {
         """.data(using: .utf8)!
 
         let decoded = try? JSONDecoder().decode(StyleProperties.self, from: json)
-        XCTExpectFailure("SUSPECTED CODE BUG: StyleProperties.textColorHex (StyleRegistry.swift) is still a literal String? field, not ColorRef, so it cannot decode a theme color reference - contract: studio-expansion-design-refinement-2026-08-14.md section 4 Slides cluster item 1.5 (\"ColorRef... adopted by StyleDefinition...\"); confirmed still literal at docs/p1-post-claim-audit-2026-08-15.md item 1.5 (\"ColorRef adopted 1-of-3\").") {
-            XCTAssertNotNil(decoded, "StyleProperties.textColorHex should accept a ColorRef.theme wire value per the ratified contract")
-        }
+        XCTAssertNotNil(decoded, "StyleProperties.textColorHex should accept a ColorRef.theme wire value per the ratified contract")
     }
 }

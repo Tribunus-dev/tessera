@@ -83,7 +83,7 @@ public struct StyleProperties: Codable, Sendable, Hashable {
     public var isItalic: Bool?
     public var isUnderline: Bool?
     public var isStrikethrough: Bool?
-    public var textColorHex: String?
+    public var textColorHex: ColorRef?
     public var fontFamily: String?
     public var fontSizePt: Double?
     // Paragraph-level
@@ -98,7 +98,7 @@ public struct StyleProperties: Codable, Sendable, Hashable {
         isItalic: Bool? = nil,
         isUnderline: Bool? = nil,
         isStrikethrough: Bool? = nil,
-        textColorHex: String? = nil,
+        textColorHex: ColorRef? = nil,
         fontFamily: String? = nil,
         fontSizePt: Double? = nil,
         alignment: StyleAlignment? = nil,
@@ -284,7 +284,7 @@ public enum StyleRegistry {
             case .italic: overlay.isItalic = true
             case .underline: overlay.isUnderline = true
             case .strikethrough: overlay.isStrikethrough = true
-            case .color(let hex): overlay.textColorHex = hex
+            case .color(let hex): overlay.textColorHex = .literal(hex)
             case .code, .subscript, .superscript, .link, .noteRef:
                 break
             }
