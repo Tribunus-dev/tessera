@@ -32,13 +32,16 @@
 //  Not every formula compiles. TokenArrayCompiler.compile(_:anchor:)
 //  returns nil for constructs with no flat-RPN-friendly representation
 //  in this pass - LET/LAMBDA (name binding introduces a lexical scope
-//  a flat stack machine doesn't have without real extra work) and
-//  array literals (rare in practice; supporting them cleanly needs a
-//  richer token shape than a single scalar-producing RPN stream). A
-//  formula that doesn't compile simply has no TokenArray and isn't
-//  eligible for shared-group interning - it keeps working exactly as
-//  before via the AST path, which every formula already goes through
-//  regardless.
+//  a flat stack machine doesn't have without real extra work),
+//  OFFSET/INDIRECT (need the formula's own AST/reference-literal shape
+//  and live-engine resolution at eval time - see Evaluator.evalOffset/
+//  evalIndirect - which a flat token stream of already-relativized
+//  refs doesn't carry), and array literals (rare in practice;
+//  supporting them cleanly needs a richer token shape than a single
+//  scalar-producing RPN stream). A formula that doesn't compile simply
+//  has no TokenArray and isn't eligible for shared-group interning -
+//  it keeps working exactly as before via the AST path, which every
+//  formula already goes through regardless.
 //===----------------------------------------------------------------------===//
 
 import Foundation
@@ -183,9 +186,11 @@ public enum TokenArrayCompiler {
             return true
         case .function(let name, let args):
             let upper = name.uppercased()
-            // LET/LAMBDA bind names into a lexical scope a flat stack
-            // machine doesn't model in this pass - see the file header.
-            guard upper != "LET", upper != "LAMBDA" else { return false }
+            // LET/LAMBDA bind names into a lexical scope, OFFSET/INDIRECT
+            // need live-engine reference resolution - none of these fit a
+            // flat token stack, see Evaluator.evalFunction's own special-
+            // casing of the same four names.
+            guard upper != "LET", upper != "LAMBDA", upper != "OFFSET", upper != "INDIRECT" else { return false }
             for arg in args {
                 guard emit(arg, anchor: anchor, into: &tokens) else { return false }
             }
