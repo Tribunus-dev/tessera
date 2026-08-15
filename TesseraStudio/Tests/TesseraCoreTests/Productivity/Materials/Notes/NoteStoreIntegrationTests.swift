@@ -34,7 +34,12 @@ final class NoteStoreIntegrationTests: DoctrineTestCase {
     }
 
     private func makeNote(title: String = "Q3 review") -> Note {
-        Note(title: title, tags: ["q3"])
+        // Explicit whole-second createdAt/updatedAt (doctrine rule 4: no
+        // bare Date() in fixtures) - a sub-second Date() default would
+        // round-trip through the .iso8601 encoder with its fractional
+        // seconds truncated, breaking the fetched-equals-original check.
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        return Note(title: title, tags: ["q3"], createdAt: now, updatedAt: now)
     }
 
     // MARK: - Receipt + persistence (upsert)
@@ -144,6 +149,7 @@ final class NoteStoreIntegrationTests: DoctrineTestCase {
         let note = makeNote()
         _ = try await store.upsert(note)
         let targetID = UUID()
+        _ = try await layer.upsertEntity(GraphEntityUpsert(id: targetID, entityType: "note", label: "target"))
 
         _ = try await store.link(noteID: note.id, to: targetID, linkType: "summarizes")
 

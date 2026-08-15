@@ -124,6 +124,7 @@ final class CodeStoreIntegrationTests: DoctrineTestCase {
         let file = makeFile()
         _ = try await store.upsert(file)
         let targetID = UUID()
+        _ = try await layer.upsertEntity(GraphEntityUpsert(id: targetID, entityType: "note", label: "target"))
 
         _ = try await store.link(file.id, to: targetID, linkType: "implements")
 

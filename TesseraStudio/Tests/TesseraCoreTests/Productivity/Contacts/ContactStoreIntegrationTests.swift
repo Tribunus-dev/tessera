@@ -21,7 +21,12 @@ final class ContactStoreIntegrationTests: DoctrineTestCase {
     }
 
     private func makeContact(first: String = "Ada") -> Contact {
-        Contact(subtype: .person, name: NameComponents(first: first, last: "Example"))
+        // Explicit whole-second createdAt/updatedAt (doctrine rule 4: no
+        // bare Date() in fixtures) - a sub-second Date() default would
+        // round-trip through the .iso8601 encoder with its fractional
+        // seconds truncated, breaking the fetched-equals-original check.
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        return Contact(subtype: .person, name: NameComponents(first: first, last: "Example"), createdAt: now, updatedAt: now)
     }
 
     // MARK: - Receipt + persistence (upsert)
@@ -87,6 +92,7 @@ final class ContactStoreIntegrationTests: DoctrineTestCase {
         let contact = makeContact()
         _ = try await store.upsert(contact)
         let targetID = UUID()
+        _ = try await layer.upsertEntity(GraphEntityUpsert(id: targetID, entityType: "note", label: "target"))
 
         _ = try await store.linkContact(contact.id, to: targetID, linkType: "attendee_of")
 

@@ -178,6 +178,7 @@ final class ProductivityTaskStoreIntegrationTests: DoctrineTestCase {
         let task = makeTask()
         _ = try await store.upsert(task)
         let targetID = UUID()
+        _ = try await layer.upsertEntity(GraphEntityUpsert(id: targetID, entityType: "note", label: "target"))
 
         _ = try await store.linkTask(task.id, to: targetID, linkType: "related_to")
 

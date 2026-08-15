@@ -23,10 +23,19 @@ final class EmailStoreIntegrationTests: DoctrineTestCase {
     }
 
     private func makeMessage(subject: String = "Q3 numbers") -> EmailMessage {
-        EmailMessage(
+        // Explicit whole-second receivedAt/createdAt/updatedAt (doctrine
+        // rule 4: no bare Date() in fixtures) - a sub-second Date()
+        // default would round-trip through the .iso8601 encoder with its
+        // fractional seconds truncated, breaking the fetched-equals-
+        // original check.
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        return EmailMessage(
             messageID: "abc-\(UUID().uuidString)@example.com",
             from: EmailAddress(email: "ada@example.com"),
-            subject: subject
+            subject: subject,
+            receivedAt: now,
+            createdAt: now,
+            updatedAt: now
         )
     }
 

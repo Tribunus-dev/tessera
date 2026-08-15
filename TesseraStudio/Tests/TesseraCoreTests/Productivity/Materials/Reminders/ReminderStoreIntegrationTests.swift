@@ -25,11 +25,18 @@ final class ReminderStoreIntegrationTests: DoctrineTestCase {
     }
 
     private func makeReminder(eventID: UUID = UUID()) -> Reminder {
-        Reminder(
+        // Explicit whole-second createdAt/updatedAt (doctrine rule 4: no
+        // bare Date() in fixtures) - a sub-second Date() default would
+        // round-trip through the .iso8601 encoder with its fractional
+        // seconds truncated, breaking the fetched-equals-original check.
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        return Reminder(
             title: "15 min before Q3 review",
             calendarEventID: eventID,
             offsetMinutes: -15,
-            triggerAt: Date(timeIntervalSince1970: 1_700_000_000)
+            triggerAt: now,
+            createdAt: now,
+            updatedAt: now
         )
     }
 

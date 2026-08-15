@@ -38,7 +38,14 @@ final class CalendarStoreIntegrationTests: DoctrineTestCase {
 
     private func makeEvent(title: String = "Q3 review") -> CalendarEvent {
         let start = Date(timeIntervalSince1970: 1_700_000_000)
-        return CalendarEvent(title: title, startAt: start, endAt: start.addingTimeInterval(3600))
+        // Explicit whole-second createdAt/updatedAt (doctrine rule 4: no
+        // bare Date() in fixtures) - a sub-second Date() default would
+        // round-trip through the .iso8601 encoder with its fractional
+        // seconds truncated, breaking the fetched-equals-original check.
+        return CalendarEvent(
+            title: title, startAt: start, endAt: start.addingTimeInterval(3600),
+            createdAt: start, updatedAt: start
+        )
     }
 
     // MARK: - Receipt + persistence (create)
@@ -153,6 +160,7 @@ final class CalendarStoreIntegrationTests: DoctrineTestCase {
         let event = makeEvent()
         _ = try await store.upsert(event)
         let targetID = UUID()
+        _ = try await layer.upsertEntity(GraphEntityUpsert(id: targetID, entityType: "note", label: "target"))
 
         _ = try await store.linkEvent(event.id, to: targetID, linkType: CalendarLinkType.prepDocument.rawValue)
 
