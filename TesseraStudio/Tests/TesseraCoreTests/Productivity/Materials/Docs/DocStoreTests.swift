@@ -248,4 +248,98 @@ final class DocStoreTests: XCTestCase {
         XCTAssertNil(receipt.payload["receiptType"])
     }
 
+    // MARK: - Styles (persistence round trip, gap closure)
+
+    /// A doc with no styles defined yet - `defineStyle` populates
+    /// `body.meta.styles` from empty.
+    private func makeStylableDoc() -> Doc {
+        Doc(title: "Style Round Trip", body: .empty)
+    }
+
+    func testDefineStylePersistsNewStyleAndRoundTrips() async throws {
+        let dataLayer = try await makeRevisionsDataLayer()
+        let store = DocStore(dataLayer: dataLayer)
+        let saved = try await store.upsert(makeStylableDoc())
+
+        let style = StyleDefinition(name: "Heading 1", family: .paragraph, props: StyleProperties(isBold: true))
+        let updated = try await store.defineStyle(style, for: saved.id)
+        XCTAssertEqual(updated.body.meta.styles[style.id], style)
+
+        let reloaded = try await store.get(id: saved.id)
+        XCTAssertEqual(reloaded?.body.meta.styles[style.id], style)
+
+        let receipts = try await dataLayer.receipts(forEntity: saved.id)
+        let receipt = try XCTUnwrap(receipts.first { $0.receiptType == DocReceiptType.defineStyle.rawValue })
+        XCTAssertEqual(receipt.payload["styleID"], .string(style.id.uuidString))
+        XCTAssertEqual(receipt.payload["replacedPrevious"], .bool(false))
+    }
+
+    /// Defining a style whose `id` already exists in `body.meta.styles`
+    /// replaces it in place (same id, new content) and the receipt's
+    /// `replacedPrevious` flag records that it was a replace, not a
+    /// fresh define.
+    func testDefineStyleWithExistingIDReplacesItAndReceiptMarksReplacedPrevious() async throws {
+        let dataLayer = try await makeRevisionsDataLayer()
+        let store = DocStore(dataLayer: dataLayer)
+        let saved = try await store.upsert(makeStylableDoc())
+
+        let original = StyleDefinition(name: "Heading 1", family: .paragraph)
+        _ = try await store.defineStyle(original, for: saved.id)
+
+        var replacement = original
+        replacement.name = "Heading 1 (revised)"
+        replacement.props.isItalic = true
+        let updated = try await store.defineStyle(replacement, for: saved.id)
+        XCTAssertEqual(updated.body.meta.styles[original.id]?.name, "Heading 1 (revised)")
+        XCTAssertEqual(updated.body.meta.styles[original.id]?.props.isItalic, true)
+
+        let receipts = try await dataLayer.receipts(forEntity: saved.id)
+        let receipt = try XCTUnwrap(receipts.last { $0.receiptType == DocReceiptType.defineStyle.rawValue })
+        XCTAssertEqual(receipt.payload["replacedPrevious"], .bool(true))
+    }
+
+    /// Deleting a style rebinds any child whose `basedOn` pointed at it
+    /// to the deleted style's own parent (`StyleRegistry.deletingStyle`'s
+    /// behavior) - a 2-deep chain with a root parent means the child's
+    /// `basedOn` comes out `nil`, not dangling.
+    func testDeleteStyleRemovesStyleAndRebindsChildBasedOn() async throws {
+        let dataLayer = try await makeRevisionsDataLayer()
+        let store = DocStore(dataLayer: dataLayer)
+        var doc = makeStylableDoc()
+        let parent = StyleDefinition(name: "Heading 1", family: .paragraph)
+        let child = StyleDefinition(name: "Heading 2", family: .paragraph, basedOn: parent.id)
+        doc.body.meta.styles[parent.id] = parent
+        doc.body.meta.styles[child.id] = child
+        let saved = try await store.upsert(doc)
+
+        let updated = try await store.deleteStyle(parent.id, for: saved.id)
+        XCTAssertNil(updated.body.meta.styles[parent.id])
+        XCTAssertNil(updated.body.meta.styles[child.id]?.basedOn)
+
+        let reloaded = try await store.get(id: saved.id)
+        XCTAssertNil(reloaded?.body.meta.styles[parent.id])
+        XCTAssertNil(reloaded?.body.meta.styles[child.id]?.basedOn)
+
+        let receipts = try await dataLayer.receipts(forEntity: saved.id)
+        let receipt = try XCTUnwrap(receipts.first { $0.receiptType == DocReceiptType.deleteStyle.rawValue })
+        XCTAssertEqual(receipt.payload["styleID"], .string(parent.id.uuidString))
+    }
+
+    /// An unknown `styleID` is a no-op through: no upsert, no receipt -
+    /// matching `StyleRegistry.deletingStyle`'s own no-op-on-missing-id
+    /// return, and `acceptRevision`/`findAndReplace`'s "only emit when
+    /// something actually changed" precedent in this same store.
+    func testDeleteStyleWithUnknownIDIsGracefulNoOp() async throws {
+        let dataLayer = try await makeRevisionsDataLayer()
+        let store = DocStore(dataLayer: dataLayer)
+        let saved = try await store.upsert(makeStylableDoc())
+        let receiptsBefore = try await dataLayer.receipts(forEntity: saved.id)
+
+        let result = try await store.deleteStyle(UUID(), for: saved.id)
+        XCTAssertEqual(result.body, saved.body)
+
+        let receiptsAfter = try await dataLayer.receipts(forEntity: saved.id)
+        XCTAssertEqual(receiptsAfter.count, receiptsBefore.count)
+    }
+
 }

@@ -252,6 +252,54 @@ public struct DocStore: Sendable {
         return (doc, replacedCount)
     }
 
+    // MARK: - Styles
+
+    /// Define (or replace, by matching `id`) a style in
+    /// `doc.body.meta.styles` - the "plain dictionary write"
+    /// `StyleRegistry`'s own file header describes (no
+    /// `StyleRegistry.definingStyle` exists; this is the one seam that
+    /// both writes `DocumentMeta.styles` and appends the receipt,
+    /// mirroring `MasterPageStore.defineMasterPage`).
+    public func defineStyle(_ style: StyleDefinition, for docID: UUID) async throws -> Doc {
+        var doc = try await loadOrFail(id: docID)
+        let replacedPrevious = doc.body.meta.styles[style.id] != nil
+        doc.body.meta.styles[style.id] = style
+        doc.updatedAt = Date()
+        _ = try await upsert(doc)
+        try await appendReceipt(
+            entityID: docID,
+            receiptType: DocReceiptType.defineStyle.rawValue,
+            payload: [
+                "styleID": .string(style.id.uuidString),
+                "name": .string(style.name),
+                "family": .string(style.family.rawValue),
+                "replacedPrevious": .bool(replacedPrevious),
+            ]
+        )
+        return doc
+    }
+
+    /// Remove a style. `StyleRegistry.deletingStyle` already rebinds any
+    /// child whose `basedOn` pointed at `styleID` to the deleted style's
+    /// own parent before returning; this method assigns that result
+    /// straight back to `doc.body.meta.styles` rather than re-deriving
+    /// the rebind itself. A no-op (no upsert, no receipt) if `styleID`
+    /// isn't defined, matching `deletingStyle`'s own no-op-on-missing-id
+    /// behavior.
+    public func deleteStyle(_ styleID: UUID, for docID: UUID) async throws -> Doc {
+        var doc = try await loadOrFail(id: docID)
+        guard doc.body.meta.styles[styleID] != nil else { return doc }
+        doc.body.meta.styles = StyleRegistry.deletingStyle(styleID, from: doc.body.meta.styles)
+        doc.updatedAt = Date()
+        _ = try await upsert(doc)
+        try await appendReceipt(
+            entityID: docID,
+            receiptType: DocReceiptType.deleteStyle.rawValue,
+            payload: ["styleID": .string(styleID.uuidString)]
+        )
+        return doc
+    }
+
     // MARK: - Archive / Trash / Favorite
 
     public func archive(_ docID: UUID) async throws -> Doc {
