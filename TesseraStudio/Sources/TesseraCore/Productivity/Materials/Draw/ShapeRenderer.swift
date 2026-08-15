@@ -83,11 +83,25 @@ public struct ShapeRenderer: Sendable {
         context.translateBy(x: -pivot.x, y: -pivot.y)
     }
 
+    // Explicit deviceRGB, not the CGColor(red:green:blue:alpha:)
+    // convenience initializer: that initializer builds the color in a
+    // different implicit color space (sRGB), so filling a deviceRGB
+    // bitmap context (what an offscreen render target actually is)
+    // silently color-matches/shifts the hex value instead of passing
+    // its bytes through untouched - a hex color's R/G/B channels are
+    // not fixed points of that conversion in general, so this is not
+    // just a gray/white-point rounding difference. See
+    // SlideDeckRenderer.parseHex's identical fix and comment.
+    private static let deviceRGB = CGColorSpaceCreateDeviceRGB()
+
     private func resolveColor(_ hex: String, opacity: Double) -> CGColor {
         guard let rgba = Self.parseHex(hex) else {
-            return CGColor(gray: 0, alpha: CGFloat(opacity))
+            return CGColor(colorSpace: Self.deviceRGB, components: [0, 0, 0, CGFloat(opacity)])!
         }
-        return CGColor(red: rgba.r, green: rgba.g, blue: rgba.b, alpha: rgba.a * CGFloat(opacity))
+        return CGColor(
+            colorSpace: Self.deviceRGB,
+            components: [rgba.r, rgba.g, rgba.b, rgba.a * CGFloat(opacity)]
+        )!
     }
 
     /// `#RRGGBB` or `#RRGGBBAA`, matching `SheetCellFormat`'s hex
