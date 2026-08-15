@@ -33,6 +33,15 @@ final class ShapeRendererTests: XCTestCase {
         return (data[offset], data[offset + 1], data[offset + 2])
     }
 
+    /// Whole-buffer snapshot for "these two renders are not pixel-
+    /// identical" comparisons, where naming one specific differing
+    /// pixel up front is more fragile than the fact of a difference.
+    private func snapshot(_ context: CGContext) -> [UInt8] {
+        let data = context.data!.assumingMemoryBound(to: UInt8.self)
+        let count = context.bytesPerRow * context.height
+        return Array(UnsafeBufferPointer(start: data, count: count))
+    }
+
     func testRenderingDoesNotCrashForEveryCatalogKind() {
         let renderer = ShapeRenderer()
         for entry in ShapeCatalog.entries {
@@ -160,5 +169,102 @@ final class ShapeRendererTests: XCTestCase {
             text: ShapeText(runs: [InlineRun(text: "Hello shape")])
         )
         ShapeRenderer().render(shape, in: context)
+    }
+
+    // MARK: - Flip (gap-closure: ShapeGeometry.flipH/flipV)
+
+    /// `.arrow`'s arrowhead sits at the line's right end (`x + width`)
+    /// and is symmetric top-to-bottom, so it isolates `flipH`: a
+    /// left-right mirror about the frame's own center moves the solid
+    /// triangle from the right side to the left, without disturbing
+    /// the horizontal stroke's own band at the vertical center (the
+    /// sampled y stays clear of that band on both sides).
+    func testFlipHMirrorsArrowheadAcrossFrameCenter() {
+        func makeArrow(flipH: Bool) -> CGContext {
+            let context = makeContext(width: 100, height: 20)
+            let shape = Shape(
+                kind: .arrow,
+                geometry: ShapeGeometry(x: 0, y: 0, width: 100, height: 20, flipH: flipH),
+                stroke: ShapeStroke(colorHex: "#000000", width: 2)
+            )
+            ShapeRenderer().render(shape, in: context)
+            return context
+        }
+
+        // Arrowhead occupies roughly x in [88, 100] unflipped; mirrored
+        // about the frame's center (x=50) it lands at roughly x in
+        // [0, 12]. y=7 stays clear of both the triangle's slanted edge
+        // (safely inside at x=89) and the line stroke's own band
+        // around the vertical center (y=9...11).
+        let unflipped = makeArrow(flipH: false)
+        XCTAssertLessThan(pixel(unflipped, x: 89, y: 7).r, 100, "unflipped arrowhead should darken its own (right) side")
+        XCTAssertGreaterThan(pixel(unflipped, x: 11, y: 7).r, 200, "unflipped arrowhead must not bleed to the mirrored (left) side")
+
+        let flipped = makeArrow(flipH: true)
+        XCTAssertGreaterThan(pixel(flipped, x: 89, y: 7).r, 200, "flipH must clear the original (right) side")
+        XCTAssertLessThan(pixel(flipped, x: 11, y: 7).r, 100, "flipH must move the arrowhead to the mirrored (left) side")
+    }
+
+    /// A 5-point star with its first vertex pointing straight up is
+    /// mirror-symmetric left-to-right but NOT top-to-bottom (a single
+    /// top spike vs. a two-legged base with a center notch), so it
+    /// isolates `flipV` the way `.arrow`'s asymmetric arrowhead
+    /// isolates `flipH` above.
+    func testFlipVMirrorsStarAcrossFrameCenter() {
+        func makeStar(flipV: Bool) -> CGContext {
+            let context = makeContext(width: 60, height: 60)
+            let shape = Shape(
+                kind: .star,
+                geometry: ShapeGeometry(x: 0, y: 0, width: 60, height: 60, flipV: flipV),
+                fill: ShapeFill(colorHex: "#000000")
+            )
+            ShapeRenderer().render(shape, in: context)
+            return context
+        }
+
+        // regularStarPath's vertex math is expressed in CG's own
+        // bottom-left-origin user space, where the star's y=0 tip (its
+        // "top" spike, per the -pi/2 first-vertex comment) sits at the
+        // SMALLEST user-space y. But CGBitmapContext's raw backing
+        // buffer - what pixel(_:x:y:) indexes into directly via
+        // y*bytesPerRow - stores row 0 as the top of the rendered
+        // image, i.e. the LARGEST user-space y. So in buffer-row
+        // coordinates, (30, 50) - not (30, 10) - is where the top
+        // spike actually lands, and (30, 10) is the notch between the
+        // two bottom legs, outside the star's fill.
+        let unflipped = makeStar(flipV: false)
+        XCTAssertLessThan(pixel(unflipped, x: 30, y: 50).r, 100, "unflipped star's top spike should be filled")
+        XCTAssertGreaterThan(pixel(unflipped, x: 30, y: 10).r, 200, "unflipped star's bottom notch must stay unfilled")
+
+        let flipped = makeStar(flipV: true)
+        XCTAssertGreaterThan(pixel(flipped, x: 30, y: 50).r, 200, "flipV must clear the original spike position")
+        XCTAssertLessThan(pixel(flipped, x: 30, y: 10).r, 100, "flipV must move the filled spike into the former notch position")
+    }
+
+    /// Rotation and flip together must not crash, and the combined
+    /// render must actually reflect BOTH transforms rather than one
+    /// silently overwriting the other's CTM push - the ordering itself
+    /// (flip pushed before rotation, per `applyFlip`/`applyRotation`'s
+    /// call order in `render`) is what this item is closing, not
+    /// rotation's own math, which `testRotatedShapeDoesNotLeakTransformState`
+    /// already covers.
+    func testFlipAndRotationTogetherRenderWithoutCrashingAndDifferFromEitherAlone() {
+        func render(rotation: Double, flipH: Bool) -> [UInt8] {
+            let context = makeContext(width: 100, height: 60)
+            let shape = Shape(
+                kind: .arrow,
+                geometry: ShapeGeometry(x: 10, y: 10, width: 60, height: 20, rotation: rotation, flipH: flipH),
+                stroke: ShapeStroke(colorHex: "#000000", width: 2)
+            )
+            ShapeRenderer().render(shape, in: context)
+            return snapshot(context)
+        }
+
+        let flipOnly = render(rotation: 0, flipH: true)
+        let rotationOnly = render(rotation: 40, flipH: false)
+        let both = render(rotation: 40, flipH: true)
+
+        XCTAssertNotEqual(both, flipOnly, "flip+rotation combined must differ from flip alone")
+        XCTAssertNotEqual(both, rotationOnly, "flip+rotation combined must differ from rotation alone")
     }
 }

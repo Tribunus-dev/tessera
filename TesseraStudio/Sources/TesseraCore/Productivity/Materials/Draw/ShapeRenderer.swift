@@ -45,6 +45,7 @@ public struct ShapeRenderer: Sendable {
         context.saveGState()
         defer { context.restoreGState() }
 
+        applyFlip(shape.geometry, in: context)
         applyRotation(shape.geometry, in: context)
 
         let path = path(for: shape, allShapes: allShapes)
@@ -120,6 +121,20 @@ public struct ShapeRenderer: Sendable {
         context.translateBy(x: pivot.x, y: pivot.y)
         context.rotate(by: CGFloat(geometry.rotation) * .pi / 180)
         context.translateBy(x: -pivot.x, y: -pivot.y)
+    }
+
+    /// Mirrors the shape around its own frame CENTER, not
+    /// `anchorPoint` (the rotation pivot - a different point in
+    /// general). Runs before `applyRotation` at the call site so the
+    /// two CTM pushes compose as flip-then-rotate, matching OOXML
+    /// `a:xfrm`'s order per `ShapeGeometry.flipH`/`flipV`'s doc
+    /// comment.
+    private func applyFlip(_ geometry: ShapeGeometry, in context: CGContext) {
+        guard geometry.flipH || geometry.flipV else { return }
+        let center = CGPoint(x: geometry.x + geometry.width / 2, y: geometry.y + geometry.height / 2)
+        context.translateBy(x: center.x, y: center.y)
+        context.scaleBy(x: geometry.flipH ? -1 : 1, y: geometry.flipV ? -1 : 1)
+        context.translateBy(x: -center.x, y: -center.y)
     }
 
     // Explicit deviceRGB, not the CGColor(red:green:blue:alpha:)
