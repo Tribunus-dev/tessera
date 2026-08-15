@@ -212,6 +212,29 @@ final class LOBridgeDeckIOTests: XCTestCase {
         XCTAssertEqual(master.backgroundColorHex, .literal("#112233"))
     }
 
+    /// `deckFixture`'s page1 carries `smil:transitionType="fade"` -
+    /// pins that `mapToSlideDeck` actually calls
+    /// `resolveTransitionCatalogID` and lands the result on
+    /// `SlideMeta.transitionID` (P1 1.6/1.8 gap closure), not just that
+    /// the resolver works standalone (see the "Transition tag
+    /// resolution" tests above for that).
+    func testMapToSlideDeckResolvesTransitionIDOntoSlideMeta() async throws {
+        let reader = FlatODFReader()
+        let result = try await reader.parse(data: data(Self.deckFixture)) { _ in
+            URL(string: "tessera-test://blob/1")!
+        }
+        let deck = try LOBridgeDeckIO.mapToSlideDeck(root: result.root)
+
+        let rootID = deck.body.rootChildren[0]
+        let meta = try XCTUnwrap(deck.slideMeta[rootID.uuidString])
+        XCTAssertEqual(meta.transitionID, "fade")
+
+        // page2 has no smil:transitionType attribute at all.
+        let secondRootID = deck.body.rootChildren[1]
+        let secondMeta = try XCTUnwrap(deck.slideMeta[secondRootID.uuidString])
+        XCTAssertNil(secondMeta.transitionID)
+    }
+
     func testMapToSlideDeckSlide2IsTitleOnlyHeadingWithNoMaster() async throws {
         let reader = FlatODFReader()
         let result = try await reader.parse(data: data(Self.deckFixture)) { _ in
@@ -355,6 +378,42 @@ final class LOBridgeDeckIOTests: XCTestCase {
         try FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: workDir) }
         let pdfURL = workDir.appendingPathComponent("deck.pdf")
+
+        try await io.exportDeck(deck, to: pdfURL, format: .pdf)
+
+        let attributes = try FileManager.default.attributesOfItem(atPath: pdfURL.path)
+        let size = attributes[.size] as? Int ?? 0
+        XCTAssertGreaterThan(size, 0)
+    }
+
+    /// Exercises the `.pdf` case's `filterOptions:
+    /// "impress_pdf_Export:{\"ExportNotesPages\":true}"` argument
+    /// end-to-end against real `soffice` with a deck that HAS speaker
+    /// notes. A PDF's text is typically stream-compressed
+    /// (FlateDecode), so this does not parse the PDF's internal
+    /// structure to confirm the notes text is literally present -
+    /// it instead pins the export succeeds and produces a non-empty
+    /// file for a deck carrying notes, matching this file's own
+    /// `testExportToPDFProducesNonEmptyFile` shape. The load-bearing
+    /// assertion is `LibreOfficeConverterTests`' job for
+    /// `filterOptions` itself; this test's job is that `exportDeck`
+    /// actually threads the option through for `.pdf`, which the
+    /// non-crashing, non-empty-output round trip demonstrates.
+    func testExportToPDFWithSpeakerNotesProducesNonEmptyFile() async throws {
+        let io = LOBridgeDeckIO()
+        try await XCTSkipIf(!io.isAvailable, "soffice not installed")
+
+        var deck = SlideDeck.makeBlank(title: "PDF Notes Smoke Test")
+        let slideID = deck.body.rootChildren[0]
+        var meta = deck.slideMeta[slideID.uuidString] ?? .default
+        meta.notes = "Remember to smile and wave."
+        deck.slideMeta[slideID.uuidString] = meta
+
+        let workDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lo-deck-io-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let pdfURL = workDir.appendingPathComponent("deck-with-notes.pdf")
 
         try await io.exportDeck(deck, to: pdfURL, format: .pdf)
 

@@ -45,29 +45,15 @@ public enum DeckExportFormat: String, CaseIterable, Sendable {
 /// **Handout-layout PDF is out of scope, not implied by "PDF deck
 /// export."** See ``DeckExportFormat``'s doc comment.
 ///
-/// **PDF export cannot request notes pages through this codebase's
-/// current converter API - a real, load-bearing gap, not an oversight
-/// here.** The design contract asks for `.pdf` export to route through
-/// `impress_pdf_Export`'s `ExportNotesPages` JSON filter option so
-/// speaker notes are included. `LibreOfficeConverter.convert(data:
-/// sourceExtension:targetExtension:)` (out of this deliverable's file
-/// list) takes only a bare target extension and derives the produced
-/// file's path by literally appending `.\(targetExtension)` to the
-/// temp input's basename - so passing a compound `soffice
-/// --convert-to` value like `"pdf:impress_pdf_Export:{...}"` as
-/// `targetExtension` would make `soffice` write `input.pdf` while
-/// `convert(...)` looks for a file literally named
-/// `input.pdf:impress_pdf_Export:{...}`, throwing
-/// `outputNotProduced`. There is no other parameter on that API for
-/// filter options. `exportDeck(_:to:format:)`'s `.pdf` case therefore
-/// uses the same bare `--convert-to pdf` every other export uses,
-/// which applies LibreOffice's DEFAULT `impress_pdf_Export` options -
-/// `ExportNotesPages` is off by default (matching the LO "Export as
-/// PDF" dialog's own default), so the rendered PDF will NOT include
-/// speaker notes even though the notes text is genuinely present in
-/// the underlying `.fodp`'s `presentation:notes` elements (see
-/// ``mapToFlatODFTree(_:)``). Flagged precisely, not guessed around -
-/// see the P1 1.8 task report's openQuestions.
+/// **PDF export includes speaker notes.** `exportDeck(_:to:format:)`'s
+/// `.pdf` case passes `impress_pdf_Export:{"ExportNotesPages":true}` as
+/// `LibreOfficeConverter.convert(...)`'s `filterOptions` argument - that
+/// parameter carries the filter suffix on the `--convert-to` value
+/// soffice receives while `targetExtension` itself (used for the
+/// produced file's path derivation) stays the bare `"pdf"`. Notes text
+/// reaches the `.fodp` via `presentation:notes` elements (see
+/// ``mapToFlatODFTree(_:)``); this is what makes it show up in the
+/// rendered PDF too.
 public actor LOBridgeDeckIO {
 
     public enum FilterError: Error, LocalizedError, Sendable {
@@ -142,14 +128,20 @@ public actor LOBridgeDeckIO {
 
     // MARK: - Export
 
-    /// Export `deck` to `url` as `format`. See this type's doc comment
-    /// for the `.pdf` case's notes-page limitation.
+    /// Export `deck` to `url` as `format`. The `.pdf` case passes
+    /// `impress_pdf_Export`'s `ExportNotesPages` filter option through
+    /// `LibreOfficeConverter.convert(...)`'s `filterOptions` parameter
+    /// so speaker notes are included in the rendered PDF (see this
+    /// type's doc comment).
     public func exportDeck(_ deck: SlideDeck, to url: URL, format: DeckExportFormat) async throws {
         let root = Self.mapToFlatODFTree(deck)
         let fodpData = try await writer.write(root) { blobURL in
             try Data(contentsOf: blobURL)
         }
-        let outputData = try await converter.convert(data: fodpData, sourceExtension: "fodp", targetExtension: format.rawValue)
+        let filterOptions = format == .pdf ? "impress_pdf_Export:{\"ExportNotesPages\":true}" : nil
+        let outputData = try await converter.convert(
+            data: fodpData, sourceExtension: "fodp", targetExtension: format.rawValue, filterOptions: filterOptions
+        )
         try outputData.write(to: url)
     }
 }
@@ -177,7 +169,10 @@ extension LOBridgeDeckIO {
     /// paragraph; a frame containing `draw:image` -> image regardless
     /// of class. `style:master-page` -> `SlideMasterPage` via
     /// `SlideDeck.settingMasterPage` (through the `masterPages`
-    /// field it manages). `presentation:notes` -> `SlideMeta.notes`.
+    /// field it manages). `presentation:notes` -> `SlideMeta.notes`. A
+    /// page's SMIL transition (or its referenced style's) ->
+    /// `SlideMeta.transitionID` via ``resolveTransitionCatalogID(forPage:
+    /// root:)`` - `nil` when nothing confidently maps, never a guess.
     public static func mapToSlideDeck(root: FlatODFElement, titleFallback: String = "Untitled") throws -> SlideDeck {
         let contentType = FlatODFContentType.resolve(root: root)
         guard contentType == .presentation else {
@@ -221,7 +216,10 @@ extension LOBridgeDeckIO {
             let notesText = page.firstElementChild(named: "presentation:notes")
                 .map { paragraphTexts(in: $0).joined(separator: "\n") } ?? ""
             let masterID = page.attributes["draw:master-page-name"].flatMap { masterNameToID[$0] }
-            slideMeta[rootBlock.id.uuidString] = SlideMeta(layout: layout, notes: notesText, masterPageID: masterID)
+            let transitionID = resolveTransitionCatalogID(forPage: page, root: root)
+            slideMeta[rootBlock.id.uuidString] = SlideMeta(
+                layout: layout, notes: notesText, masterPageID: masterID, transitionID: transitionID
+            )
         }
 
         deck.body = DocumentAST(blocks: blocks, rootChildren: rootChildren)
@@ -239,16 +237,12 @@ extension LOBridgeDeckIO {
     /// its `draw:style-name` references - a real ODF document can
     /// carry the transition on either.
     ///
-    /// **Not called from ``mapToSlideDeck(root:titleFallback:)``
-    /// today.** `SlideMeta` (`SlideDeck.swift`) has `layout`, `notes`,
-    /// and `masterPageID` only - no field to hold a per-slide
-    /// transition id. That is the exact gap `TransitionStore.swift`'s
-    /// own doc comment already documents ("Known gap - assignment is
-    /// not yet persisted"); `SlideDeck.swift` is outside this
-    /// deliverable's file list (shared checkout, other agents on
-    /// different files this same batch), so this resolver is exposed
-    /// standalone - tested directly in `LOBridgeDeckIOTests` - for
-    /// whichever patch adds `SlideMeta.transitionID` to call.
+    /// Called from ``mapToSlideDeck(root:titleFallback:)`` for every
+    /// `draw:page`, landing the result on that slide's
+    /// `SlideMeta.transitionID`. Exposed `public static` (not folded
+    /// directly into the walk) since it stays independently useful and
+    /// is tested standalone in `LOBridgeDeckIOTests` against
+    /// hand-built fixtures with no full deck needed.
     public static func resolveTransitionCatalogID(forPage page: FlatODFElement, root: FlatODFElement) -> String? {
         if let tag = page.attributes["smil:transitionType"], let id = TransitionCatalog.id(forOOXMLTag: tag) {
             return id

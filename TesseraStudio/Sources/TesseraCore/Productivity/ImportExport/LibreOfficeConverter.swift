@@ -95,7 +95,16 @@ public actor LibreOfficeConverter {
     /// .py`'s `"xls"` entry silently maps to the `.xlsx` filter, not
     /// the actual binary-97-2003 one). A bare `--convert-to xls`
     /// was verified to correctly select `"MS Excel 97"`.
-    public func convert(data: Data, sourceExtension: String, targetExtension: String) async throws -> Data {
+    ///
+    /// `filterOptions`, when non-nil, is appended to the `--convert-to`
+    /// argument as `"\(targetExtension):\(filterOptions)"` (soffice's
+    /// own `filter_name:filter_data` syntax, e.g. `"pdf:impress_pdf
+    /// _Export:{...}"`) - `targetExtension` ITSELF stays bare, since
+    /// the output path derivation below (`input.\(targetExtension)`)
+    /// depends on it matching the produced file's actual extension.
+    public func convert(
+        data: Data, sourceExtension: String, targetExtension: String, filterOptions: String? = nil
+    ) async throws -> Data {
         guard isAvailable else { throw ConverterError.sofficeNotFound }
 
         let workDir = FileManager.default.temporaryDirectory
@@ -107,10 +116,11 @@ public actor LibreOfficeConverter {
         let inputURL = workDir.appendingPathComponent("input.\(sourceExtension)")
         try data.write(to: inputURL)
 
+        let convertToArgument = filterOptions.map { "\(targetExtension):\($0)" } ?? targetExtension
         try await runSoffice(arguments: [
             "--headless",
             "-env:UserInstallation=file://\(profileDir.path)",
-            "--convert-to", targetExtension,
+            "--convert-to", convertToArgument,
             "--outdir", workDir.path,
             inputURL.path,
         ])
