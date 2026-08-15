@@ -81,13 +81,15 @@ public enum ShapeCatalog {
         uniqueKeysWithValues: entries.map { ($0.kind, $0) }
     )
 
-    /// The catalog entry for a kind. Every `ShapeKind` case has exactly
-    /// one entry - `entries` is exhaustive over `ShapeKind.allCases`,
-    /// enforced by `ShapeCatalogTests`, not by the compiler (a
-    /// `[ShapeKind: Entry]` literal has no exhaustiveness check the way
-    /// a `switch` does) - so this is force-unwrapped rather than
-    /// returning an `Entry?` that every caller would have to
-    /// needlessly guard against.
+    /// The catalog entry for a kind. Every PALETTE-INSERTABLE
+    /// `ShapeKind` case has exactly one entry - `entries` covers
+    /// `ShapeKind.allCases` EXCEPT `.connector` (created by dragging
+    /// between two shapes, never inserted from a palette), enforced by
+    /// `ShapeCatalogTests`, not by the compiler (a `[ShapeKind: Entry]`
+    /// literal has no exhaustiveness check the way a `switch` does) -
+    /// so this is force-unwrapped rather than returning an `Entry?`
+    /// that every caller would have to needlessly guard against. Never
+    /// call this with `.connector`.
     public static func entry(for kind: ShapeKind) -> Entry {
         byKind[kind]!
     }

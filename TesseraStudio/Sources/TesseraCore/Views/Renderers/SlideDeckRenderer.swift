@@ -73,8 +73,12 @@ public struct SlideDeckRenderer: Sendable {
         // frames. `.shapeGroup` carries no geometry of its own (`Block`'s
         // own doc comment) - only its leaf `.shape` members draw.
         let shapeRenderer = ShapeRenderer()
-        for shape in Self.orderedShapes(in: slide.body) {
-            shapeRenderer.render(shape, in: context)
+        let shapes = Self.orderedShapes(in: slide.body)
+        for shape in shapes {
+            // allShapes: lets a .connector's .attached endpoint resolve
+            // its sibling's glue point (ConnectorRouter) - without it,
+            // an attached connector silently renders an empty path.
+            shapeRenderer.render(shape, in: context, allShapes: shapes)
         }
     }
 

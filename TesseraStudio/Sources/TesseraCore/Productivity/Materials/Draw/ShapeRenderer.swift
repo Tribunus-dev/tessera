@@ -13,6 +13,7 @@
 
 import Foundation
 import CoreGraphics
+import CoreText
 
 // MARK: - ShapeRenderer
 
@@ -21,19 +22,32 @@ import CoreGraphics
 /// touch just the shapes that changed.
 public struct ShapeRenderer: Sendable {
 
-    public init() {}
+    /// Draws `shape.text` (when present) via the same
+    /// `NSAttributedString` -> `CTFramesetter` stack `SlideDeckRenderer`
+    /// uses for placeholder text - "one text stack, ever."
+    private let blockRenderer: BlockRenderer
+
+    public init() {
+        self.blockRenderer = BlockRenderer()
+    }
 
     /// Render one shape's fill, stroke, and text into `context`. The
     /// context's current transform is saved and restored, so callers
     /// can render a whole z-ordered list in a loop without resetting
     /// state between shapes themselves.
-    public func render(_ shape: Shape, in context: CGContext) {
+    ///
+    /// `allShapes` is only consulted for a `.connector` shape whose
+    /// `connector` has an `.attached` endpoint - `ConnectorRouter`
+    /// looks up that endpoint's glue point from this list. Every other
+    /// kind ignores it, and it defaults to `[]` so existing call sites
+    /// that render non-connector shapes are unaffected.
+    public func render(_ shape: Shape, in context: CGContext, allShapes: [Shape] = []) {
         context.saveGState()
         defer { context.restoreGState() }
 
         applyRotation(shape.geometry, in: context)
 
-        let path = path(for: shape)
+        let path = path(for: shape, allShapes: allShapes)
 
         if let fill = shape.fill, kindIsFillable(shape.kind) {
             context.setFillColor(resolveColor(fill.colorHex, opacity: fill.opacity))
@@ -57,22 +71,47 @@ public struct ShapeRenderer: Sendable {
             drawArrowhead(shape.geometry, colorHex: stroke.colorHex, in: context)
         }
 
-        // Text-on-shape rendering (font metrics, wrapping) belongs to
-        // the same text-layout stack `BlockRenderer` already uses, not
-        // a second one built here - out of scope for the P0 shape/fill/
-        // stroke pass. `shape.text` is intentionally not drawn yet.
+        if let text = shape.text {
+            renderShapeText(text, in: shape.geometry.frame, context: context)
+        }
     }
 
-    /// Whether a fill is meaningful for this kind. A line or arrow has
-    /// no interior - filling it would silently do nothing useful, so
-    /// callers that set `fill` on one anyway (a data error, not a
-    /// crash) simply see it ignored rather than drawing a degenerate
-    /// zero-area fill.
+    /// Whether a fill is meaningful for this kind. A line, arrow, or
+    /// connector has no interior - filling it would silently do
+    /// nothing useful, so callers that set `fill` on one anyway (a
+    /// data error, not a crash) simply see it ignored rather than
+    /// drawing a degenerate zero-area fill.
     private func kindIsFillable(_ kind: ShapeKind) -> Bool {
         switch kind {
-        case .line, .arrow: return false
+        case .line, .arrow, .connector: return false
         case .rect, .ellipse, .polygon, .star, .freeform: return true
         }
+    }
+
+    // MARK: - Shape text
+
+    /// Draws `text` inside `rect` via `CTFramesetter` - mirrors
+    /// `SlideDeckRenderer.drawAttributedString`'s exact technique
+    /// (CoreText's glyph space is y-up; `context` is y-down, so the
+    /// flip is scoped to `rect` via a save/restore pair rather than
+    /// touching the context's persistent state). `ShapeText.runs` go
+    /// through a transient `.paragraph` `Block` so the SAME
+    /// `BlockRenderer` -> attributed-string pipeline every other block
+    /// type uses produces the text, rather than a shape-text-specific
+    /// second stack.
+    private func renderShapeText(_ text: ShapeText, in rect: CGRect, context: CGContext) {
+        guard !text.plainText.isEmpty, rect.width > 1, rect.height > 1 else { return }
+        let block = Block(type: .paragraph, content: text.runs)
+        let attributed = blockRenderer.render(block, in: .document)
+        let framesetter = CTFramesetterCreateWithAttributedString(attributed)
+        let path = CGPath(rect: rect, transform: nil)
+        let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: 0, length: 0), path, nil)
+        context.saveGState()
+        context.textMatrix = .identity
+        context.translateBy(x: 0, y: rect.minY + rect.maxY)
+        context.scaleBy(x: 1, y: -1)
+        CTFrameDraw(frame, context)
+        context.restoreGState()
     }
 
     private func applyRotation(_ geometry: ShapeGeometry, in context: CGContext) {
@@ -133,7 +172,7 @@ public struct ShapeRenderer: Sendable {
 
     // MARK: - Paths
 
-    private func path(for shape: Shape) -> CGPath {
+    private func path(for shape: Shape, allShapes: [Shape] = []) -> CGPath {
         switch shape.kind {
         case .rect:      return rectPath(shape.geometry)
         case .ellipse:   return CGPath(ellipseIn: shape.geometry.frame, transform: nil)
@@ -147,7 +186,25 @@ public struct ShapeRenderer: Sendable {
             // honest P0 placeholder rather than pretending a real
             // freeform outline exists.
             return rectPath(shape.geometry)
+        case .connector:
+            return connectorPath(shape, allShapes: allShapes)
         }
+    }
+
+    /// Resolved via `ConnectorRouter`, using `allShapes` to look up any
+    /// `.attached` endpoint's glue point - NOT `shape.geometry`, which
+    /// a connector does not use as its path's source of truth (see
+    /// `Shape.connector`'s doc comment). A missing `shape.connector`,
+    /// or an endpoint whose attached shape isn't in `allShapes`,
+    /// degrades to an empty path rather than crashing - the same
+    /// "malformed data doesn't crash the renderer" contract
+    /// `kindIsFillable`'s doc comment describes for a stray fill on a
+    /// line/arrow.
+    private func connectorPath(_ shape: Shape, allShapes: [Shape]) -> CGPath {
+        guard let info = shape.connector else { return CGMutablePath() }
+        var byID: [UUID: Shape] = Dictionary(minimumCapacity: allShapes.count)
+        for s in allShapes { byID[s.id] = s }
+        return ConnectorRouter.route(info, shapes: byID) ?? CGMutablePath()
     }
 
     private func rectPath(_ g: ShapeGeometry) -> CGPath {

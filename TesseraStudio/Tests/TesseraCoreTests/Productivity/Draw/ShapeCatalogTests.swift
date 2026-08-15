@@ -10,13 +10,21 @@ final class ShapeCatalogTests: XCTestCase {
     func testEveryShapeKindHasExactlyOneCatalogEntry() {
         let kinds = ShapeCatalog.entries.map(\.kind)
         XCTAssertEqual(Set(kinds).count, kinds.count, "duplicate catalog entries")
-        for kind in ShapeKind.allCases {
+        // .connector (P1 1.19) is deliberately NOT a palette-insertable
+        // kind: it's created by dragging between two existing shapes,
+        // never "insert a connector at a point" the way every other
+        // catalog entry works, so it has no entry here by design.
+        for kind in ShapeKind.allCases where kind != .connector {
             XCTAssertTrue(kinds.contains(kind), "\(kind) has no catalog entry")
         }
     }
 
     func testEntryLookupMatchesKind() {
-        for kind in ShapeKind.allCases {
+        // .connector has no catalog entry (see
+        // testEveryShapeKindHasExactlyOneCatalogEntry) - entry(for:)
+        // force-unwraps, so calling it for .connector would crash, not
+        // just fail an assertion.
+        for kind in ShapeKind.allCases where kind != .connector {
             XCTAssertEqual(ShapeCatalog.entry(for: kind).kind, kind)
         }
     }

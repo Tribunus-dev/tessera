@@ -14,8 +14,8 @@ import CoreGraphics
 
 // MARK: - ShapeKind
 
-/// The P0 shape catalog. P1 adds `.connector`; P2 adds `.bezier` /
-/// CAD-style custom paths - both explicitly out of scope here per the
+/// The P0 shape catalog plus P1's `.connector` (item 1.19). P2 adds
+/// `.bezier` / CAD-style custom paths - out of scope here per the
 /// architect decision (3D and morph are punted entirely, not phased).
 public enum ShapeKind: String, Codable, Sendable, Hashable, CaseIterable {
     case rect
@@ -25,6 +25,12 @@ public enum ShapeKind: String, Codable, Sendable, Hashable, CaseIterable {
     case polygon
     case star
     case freeform
+    /// A `Shape.connector`-carrying shape - see `ConnectorInfo`. Its
+    /// own `geometry` is NOT the connector's source of truth (`Shape
+    /// .connector`'s doc comment): `ConnectorRouter` derives the
+    /// visible path at render time from `connector`'s resolved
+    /// endpoints, not from this shape's `x`/`y`/`width`/`height`.
+    case connector
 }
 
 // MARK: - ShapeGeometry
@@ -190,6 +196,49 @@ public struct ShapeText: Codable, Sendable, Hashable {
     }
 }
 
+// MARK: - ConnectorInfo
+
+/// One endpoint of a `.connector` shape: either glued to another
+/// shape's compass glue point, or a free point in the drawing's own
+/// coordinate space. Plain `Double` `x`/`y` for the free case, not
+/// `CGPoint` - matching `ShapeGeometry`'s persisted-model convention
+/// (see that type's header comment).
+public enum ConnectorEndpoint: Codable, Sendable, Hashable {
+    /// `gluePointIndex` is the compass index `ConnectorRouter
+    /// .gluePoints(for:)` computes (0=top, 1=right, 2=bottom, 3=left) -
+    /// chosen to map 1:1 onto OOXML `stCxn`/`endCxn` `idx` and ODF
+    /// glue-point ids per this item's design contract.
+    case attached(shapeID: UUID, gluePointIndex: Int)
+    case free(x: Double, y: Double)
+}
+
+/// How a `.connector`'s path bends between its two resolved endpoints.
+/// `ConnectorRouter` derives the actual path at render time from this
+/// plus the current shape list - never stored.
+public enum ConnectorStyle: String, Codable, Sendable, Hashable, CaseIterable {
+    case straight
+    case elbow
+    case curved
+}
+
+/// A connector's typed wiring - a `.connector`-only field, peer of
+/// `ShapeFill`/`ShapeStroke`/`ShapeText`. Carries only WHAT is
+/// connected and HOW the bend is styled, never WHERE the path actually
+/// bends - `ConnectorRouter.route(_:shapes:)` derives that at render
+/// time, so a connector re-routes correctly whenever either attached
+/// shape moves without this value ever being touched.
+public struct ConnectorInfo: Codable, Sendable, Hashable {
+    public var start: ConnectorEndpoint
+    public var end: ConnectorEndpoint
+    public var style: ConnectorStyle
+
+    public init(start: ConnectorEndpoint, end: ConnectorEndpoint, style: ConnectorStyle = .elbow) {
+        self.start = start
+        self.end = end
+        self.style = style
+    }
+}
+
 // MARK: - Shape
 
 /// One vector shape on a `Drawing`'s canvas (or, when Impress reuses
@@ -201,6 +250,13 @@ public struct Shape: Codable, Sendable, Identifiable, Hashable {
     public var fill: ShapeFill?
     public var stroke: ShapeStroke?
     public var text: ShapeText?
+    /// Non-nil only for `.connector` shapes - the typed start/end/
+    /// style wiring `ConnectorRouter` resolves into a path at render
+    /// time. Nothing keeps `geometry` in sync with this field's
+    /// resolved endpoints (see `ShapeKind.connector`'s doc comment) -
+    /// renderers read `connector`, not `geometry`, for a connector's
+    /// actual path.
+    public var connector: ConnectorInfo?
     /// Paint order within the drawing: higher draws on top. Not
     /// necessarily contiguous or unique - `ShapeRenderer`/callers sort
     /// by this, they don't rely on it being densely packed.
@@ -224,6 +280,7 @@ public struct Shape: Codable, Sendable, Identifiable, Hashable {
         fill: ShapeFill? = nil,
         stroke: ShapeStroke? = nil,
         text: ShapeText? = nil,
+        connector: ConnectorInfo? = nil,
         zIndex: Int = 0,
         parentGroupID: UUID? = nil,
         layerID: UUID? = nil
@@ -234,6 +291,7 @@ public struct Shape: Codable, Sendable, Identifiable, Hashable {
         self.fill = fill
         self.stroke = stroke
         self.text = text
+        self.connector = connector
         self.zIndex = zIndex
         self.parentGroupID = parentGroupID
         self.layerID = layerID

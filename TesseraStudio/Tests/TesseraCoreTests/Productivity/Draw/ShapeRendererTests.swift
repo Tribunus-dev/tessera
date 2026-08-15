@@ -109,4 +109,56 @@ final class ShapeRendererTests: XCTestCase {
         let p = pixel(context, x: 5, y: 45)
         XCTAssertGreaterThan(p.b, 200, "the second shape's own fill must land at its own coordinates, got \(p)")
     }
+
+    // MARK: - Connector (P1 1.19)
+
+    /// A `.connector` shape with both endpoints attached to sibling
+    /// shapes must render (stroke the `ConnectorRouter`-derived path)
+    /// without crashing, given the sibling list via `allShapes:`.
+    func testRenderingAttachedConnectorDoesNotCrash() {
+        let context = makeContext(width: 200, height: 200)
+        let a = Shape(kind: .rect, geometry: ShapeGeometry(x: 0, y: 0, width: 50, height: 50))
+        let b = Shape(kind: .rect, geometry: ShapeGeometry(x: 120, y: 120, width: 50, height: 50))
+        let connector = Shape(
+            kind: .connector,
+            geometry: ShapeGeometry(x: 0, y: 0, width: 0, height: 0),
+            stroke: ShapeStroke(colorHex: "#000000", width: 2),
+            connector: ConnectorInfo(
+                start: .attached(shapeID: a.id, gluePointIndex: 1),
+                end: .attached(shapeID: b.id, gluePointIndex: 3),
+                style: .elbow
+            )
+        )
+        ShapeRenderer().render(connector, in: context, allShapes: [a, b, connector])
+    }
+
+    /// A `.connector` shape rendered WITHOUT its sibling shapes (the
+    /// default `allShapes: []`) must degrade to "nothing drawn," not
+    /// crash - the same contract `ConnectorRouter.route` documents for
+    /// an unresolved endpoint.
+    func testRenderingConnectorWithMissingSiblingsDoesNotCrash() {
+        let context = makeContext(width: 50, height: 50)
+        let connector = Shape(
+            kind: .connector,
+            geometry: ShapeGeometry(x: 0, y: 0, width: 0, height: 0),
+            stroke: ShapeStroke(colorHex: "#000000", width: 2),
+            connector: ConnectorInfo(start: .attached(shapeID: UUID(), gluePointIndex: 0), end: .free(x: 10, y: 10), style: .straight)
+        )
+        ShapeRenderer().render(connector, in: context)
+    }
+
+    // MARK: - Shape text (P1 1.19)
+
+    /// `shape.text` must render (via `BlockRenderer`/`CTFramesetter`)
+    /// without crashing for a shape that also has a fill/stroke.
+    func testRenderingShapeWithTextDoesNotCrash() {
+        let context = makeContext(width: 100, height: 100)
+        let shape = Shape(
+            kind: .rect,
+            geometry: ShapeGeometry(x: 0, y: 0, width: 100, height: 100),
+            fill: ShapeFill(colorHex: "#D7E8FF"),
+            text: ShapeText(runs: [InlineRun(text: "Hello shape")])
+        )
+        ShapeRenderer().render(shape, in: context)
+    }
 }
