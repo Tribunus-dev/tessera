@@ -40,28 +40,24 @@ public struct DocStore: Sendable {
     /// Persist a document. If the id already exists the row is
     /// updated in place; otherwise a new row is inserted. Always
     /// appends a `doc_upsert` receipt.
+    ///
+    /// This is the PUBLIC "save + receipt" entry point - the right call
+    /// when a caller outside this store wants to persist a doc and have
+    /// that persist itself be the auditable event. Every mutation method
+    /// BELOW this one persists through ``persist(_:)`` instead: each of
+    /// them already appends its own specific receipt (`doc_body_changed`,
+    /// `doc_revision_accepted`, `doc_archived`, ...), so routing through
+    /// this method too would append a second, redundant `doc_upsert`
+    /// receipt for the same single user action - noise in the audit
+    /// trail, not a second real event.
     @discardableResult
     public func upsert(_ doc: Doc) async throws -> Doc {
-        var stored = doc
-        stored.updatedAt = Date()
-        let body = try stored.jsonDataString()
-        let label = stored.displayTitle
-        _ = try await dataLayer.upsertEntity(
-            GraphEntityUpsert(
-                id: stored.id,
-                entityType: Doc.entityType,
-                subtype: Doc.subtype,
-                label: label,
-                body: body,
-                sourceURL: stored.coverImageURL?.absoluteString,
-                embedding: nil
-            )
-        )
+        let stored = try await persist(doc)
         try await appendReceipt(
             entityID: stored.id,
             receiptType: DocReceiptType.upsert.rawValue,
             payload: [
-                "title": .string(label),
+                "title": .string(stored.displayTitle),
                 "tagCount": .number(Double(stored.tags.count)),
                 "isFavorite": .bool(stored.isFavorite),
                 "isArchived": .bool(stored.isArchived),
@@ -69,6 +65,29 @@ public struct DocStore: Sendable {
                 "linkedEntityCount": .number(Double(stored.linkedEntityIDs.count)),
                 "wordCount": .number(Double(stored.wordCount)),
             ]
+        )
+        return stored
+    }
+
+    /// Write `doc`'s current state to the data layer without appending
+    /// any receipt - the persistence primitive every mutation method in
+    /// this file uses. See ``upsert(_:)``'s doc comment for why this is
+    /// a separate, receipt-less method rather than every mutation
+    /// calling `upsert` directly.
+    private func persist(_ doc: Doc) async throws -> Doc {
+        var stored = doc
+        stored.updatedAt = Date()
+        let body = try stored.jsonDataString()
+        _ = try await dataLayer.upsertEntity(
+            GraphEntityUpsert(
+                id: stored.id,
+                entityType: Doc.entityType,
+                subtype: Doc.subtype,
+                label: stored.displayTitle,
+                body: body,
+                sourceURL: stored.coverImageURL?.absoluteString,
+                embedding: nil
+            )
         )
         return stored
     }
@@ -157,7 +176,7 @@ public struct DocStore: Sendable {
         }
         doc.body = body
         doc.updatedAt = Date()
-        _ = try await upsert(doc)
+        _ = try await persist(doc)
         try await appendReceipt(
             entityID: docID,
             receiptType: DocReceiptType.updateBody.rawValue,
@@ -190,7 +209,7 @@ public struct DocStore: Sendable {
         guard !resolution.isEmpty else { return doc }
         doc.body = ast
         doc.updatedAt = Date()
-        _ = try await upsert(doc)
+        _ = try await persist(doc)
         try await appendReceipt(
             entityID: docID,
             receiptType: resolution.receiptType,
@@ -209,7 +228,7 @@ public struct DocStore: Sendable {
         guard !resolution.isEmpty else { return doc }
         doc.body = ast
         doc.updatedAt = Date()
-        _ = try await upsert(doc)
+        _ = try await persist(doc)
         try await appendReceipt(
             entityID: docID,
             receiptType: resolution.receiptType,
@@ -237,7 +256,7 @@ public struct DocStore: Sendable {
         guard replacedCount > 0 else { return (doc, 0) }
         doc.body = ast
         doc.updatedAt = Date()
-        _ = try await upsert(doc)
+        _ = try await persist(doc)
         // receiptPayload's own "receiptType" field is DocumentSearchIndex's
         // pre-DocReceiptType placeholder literal - redundant now that the
         // real enum case is the receipt's actual receipt_type, so it is
@@ -265,7 +284,7 @@ public struct DocStore: Sendable {
         let replacedPrevious = doc.body.meta.styles[style.id] != nil
         doc.body.meta.styles[style.id] = style
         doc.updatedAt = Date()
-        _ = try await upsert(doc)
+        _ = try await persist(doc)
         try await appendReceipt(
             entityID: docID,
             receiptType: DocReceiptType.defineStyle.rawValue,
@@ -291,7 +310,7 @@ public struct DocStore: Sendable {
         guard doc.body.meta.styles[styleID] != nil else { return doc }
         doc.body.meta.styles = StyleRegistry.deletingStyle(styleID, from: doc.body.meta.styles)
         doc.updatedAt = Date()
-        _ = try await upsert(doc)
+        _ = try await persist(doc)
         try await appendReceipt(
             entityID: docID,
             receiptType: DocReceiptType.deleteStyle.rawValue,
@@ -331,7 +350,7 @@ public struct DocStore: Sendable {
         }
         guard changedCount > 0 else { return (doc, 0) }
         doc.updatedAt = Date()
-        _ = try await upsert(doc)
+        _ = try await persist(doc)
         try await appendReceipt(
             entityID: docID,
             receiptType: DocReceiptType.fieldsRefreshed.rawValue,
@@ -348,7 +367,7 @@ public struct DocStore: Sendable {
         if !wasArchived {
             doc.isArchived = true
             doc.updatedAt = Date()
-            _ = try await upsert(doc)
+            _ = try await persist(doc)
         }
         try await appendReceipt(
             entityID: docID,
@@ -364,7 +383,7 @@ public struct DocStore: Sendable {
         if wasArchived {
             doc.isArchived = false
             doc.updatedAt = Date()
-            _ = try await upsert(doc)
+            _ = try await persist(doc)
         }
         try await appendReceipt(
             entityID: docID,
@@ -381,7 +400,7 @@ public struct DocStore: Sendable {
         if !wasTrashed {
             doc.isTrashed = true
             doc.updatedAt = Date()
-            _ = try await upsert(doc)
+            _ = try await persist(doc)
         }
         try await appendReceipt(
             entityID: docID,
@@ -398,7 +417,7 @@ public struct DocStore: Sendable {
         if wasTrashed {
             doc.isTrashed = false
             doc.updatedAt = Date()
-            _ = try await upsert(doc)
+            _ = try await persist(doc)
         }
         try await appendReceipt(
             entityID: docID,
@@ -414,7 +433,7 @@ public struct DocStore: Sendable {
         if !wasFavorite {
             doc.isFavorite = true
             doc.updatedAt = Date()
-            _ = try await upsert(doc)
+            _ = try await persist(doc)
         }
         try await appendReceipt(
             entityID: docID,
@@ -430,7 +449,7 @@ public struct DocStore: Sendable {
         if wasFavorite {
             doc.isFavorite = false
             doc.updatedAt = Date()
-            _ = try await upsert(doc)
+            _ = try await persist(doc)
         }
         try await appendReceipt(
             entityID: docID,
@@ -448,7 +467,7 @@ public struct DocStore: Sendable {
         let normalized = Doc.normalizeTags(tags)
         doc.tags = normalized
         doc.updatedAt = Date()
-        _ = try await upsert(doc)
+        _ = try await persist(doc)
         let added = normalized.filter { !oldTags.contains($0) }
         let removed = oldTags.filter { !normalized.contains($0) }
         try await appendReceipt(
@@ -476,7 +495,7 @@ public struct DocStore: Sendable {
         }
         doc.tags.append(first)
         doc.updatedAt = Date()
-        _ = try await upsert(doc)
+        _ = try await persist(doc)
         try await appendReceipt(
             entityID: docID,
             receiptType: DocReceiptType.tagAdded.rawValue,
@@ -499,7 +518,7 @@ public struct DocStore: Sendable {
         }
         doc.tags.remove(at: index)
         doc.updatedAt = Date()
-        _ = try await upsert(doc)
+        _ = try await persist(doc)
         try await appendReceipt(
             entityID: docID,
             receiptType: DocReceiptType.tagRemoved.rawValue,
