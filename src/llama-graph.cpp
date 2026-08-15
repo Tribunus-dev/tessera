@@ -1589,6 +1589,15 @@ ggml_tensor * llm_graph_context::build_tile640_lora_mm(
         cur = ggml_cast(ctx0, cur, GGML_TYPE_F16);
     }
     GGML_ASSERT(cur->type == GGML_TYPE_F16 || cur->type == GGML_TYPE_F32);
+    // Feature flag: TESSERA_TILE640_INTERLEAVED gates the Metal + HIP
+    // interleaved kernel. When unset the graph node uses the base
+    // GGML_OP_TILE640_MATMUL path unchanged.
+    if (getenv("TESSERA_TILE640_INTERLEAVED") != NULL) {
+        return ggml_tile640_matmul_interleaved(ctx0,
+                w_packed, w_page_scales, w_lane_scales,
+                w_outlier_row_offsets, w_outlier_cols, w_outlier_vals,
+                cur);
+    }
     return ggml_tile640_matmul(ctx0,
             w_packed, w_page_scales, w_lane_scales,
             w_outlier_row_offsets, w_outlier_cols, w_outlier_vals,

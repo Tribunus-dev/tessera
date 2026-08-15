@@ -68,6 +68,7 @@
 #include "ggml-cuda/cumsum.cuh"
 #include "ggml-cuda/fill.cuh"
 #include "ggml-cuda/lightning-indexer.cuh"
+#include "ggml-cuda/tile640-interleaved.cuh"
 #include "ggml.h"
 
 #include <algorithm>
@@ -2340,6 +2341,12 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
             break;
         case GGML_OP_DSV4_HC_POST:
             ggml_cuda_op_dsv4_hc_post(ctx, dst);
+            break;
+        case GGML_OP_TILE640_MATMUL_INTERLEAVED:
+            // P0-only path; P1 (drafter) / P2 (KV) buffers stay null until
+            // the graph wire-up passes non-null drafter / KV pointers in
+            // src[7..]. See tile640-interleaved.cu.
+            ggml_cuda_op_tile640_matmul_interleaved(ctx, dst->src[0], dst->src[6], dst);
             break;
         case GGML_OP_RWKV_WKV7:
             ggml_cuda_op_rwkv_wkv7(ctx, dst);

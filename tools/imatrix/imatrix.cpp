@@ -17,6 +17,10 @@
 // offline DFlash feature-capture file format (shared with the training driver)
 #include "tessera-features.h"
 
+// HIP/Metal acceleration for the imatrix inner loops (kernel + shim live in
+// tools/quantize/tessera/tessera-metal-hip.cpp; declared in tessera-metal.h).
+#include "tessera-metal.h"
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -614,11 +618,44 @@ bool IMatrixCollector::collect_imatrix(struct ggml_tensor * t, bool ask, void * 
 
                     e.counts[ex]++;
 
-                    for (int64_t j = 0; j < src1->ne[0]; ++j) {
-                        e.values[e_start + j] += x[j] * x[j];
-                        if (!std::isfinite((float)e.values[e_start + j])) {
-                            LOG_ERR("%f detected in %s\n", (float)e.values[e_start + j], wname.c_str());
-                            exit(1);
+                    // MoE branch: each surviving row is a non-contiguous slice
+                    // (rows stride by src1->nb[2] for fixed idx), so call the
+                    // shim per-row. The HIP path replaces the inner for-j loop
+                    // and the isfinite check runs after the dispatch on the
+                    // post-accumulation values (same correctness invariant as
+                    // the scalar loop, just deferred to after the full sum).
+                    // Gated by TS_USE_TESSERA_METAL: ts_metal_available() and
+                    // ts_metal_imatrix_sumsq resolve only inside the quantize
+                    // link unit; standalone llama-imatrix keeps the scalar
+                    // body and stays link-clean without the stub attached.
+#ifdef TS_USE_TESSERA_METAL
+                    if (ts_metal_available() == 1) {
+                        if (ts_metal_imatrix_sumsq(x, (int64_t)src1->ne[0], (int64_t)1,
+                                                   e.values.data(), (int64_t)e_start) == 0) {
+                            for (int64_t j = 0; j < src1->ne[0]; ++j) {
+                                if (!std::isfinite((float)e.values[e_start + j])) {
+                                    LOG_ERR("%f detected in %s\n", (float)e.values[e_start + j], wname.c_str());
+                                    exit(1);
+                                }
+                            }
+                        } else {
+                            for (int64_t j = 0; j < src1->ne[0]; ++j) {
+                                e.values[e_start + j] += x[j] * x[j];
+                                if (!std::isfinite((float)e.values[e_start + j])) {
+                                    LOG_ERR("%f detected in %s\n", (float)e.values[e_start + j], wname.c_str());
+                                    exit(1);
+                                }
+                            }
+                        }
+                    } else
+#endif
+                    {
+                        for (int64_t j = 0; j < src1->ne[0]; ++j) {
+                            e.values[e_start + j] += x[j] * x[j];
+                            if (!std::isfinite((float)e.values[e_start + j])) {
+                                LOG_ERR("%f detected in %s\n", (float)e.values[e_start + j], wname.c_str());
+                                exit(1);
+                            }
                         }
                     }
                 }
@@ -669,13 +706,45 @@ bool IMatrixCollector::collect_imatrix(struct ggml_tensor * t, bool ask, void * 
                 const int64_t mat_id = (i3 % src0->ne[3]) * src0->ne[2] + (i2 % src0->ne[2]);
                 const int64_t mat_start = mat_id * src1->ne[0];
 
-                for (int64_t row = 0; row < src1->ne[1]; ++row) {
-                    const float * x = (const float *) (data + row * src1->nb[1] + i2 * src1->nb[2] + i3 * src1->nb[3]);
-                    for (int64_t j = 0; j < src1->ne[0]; ++j) {
-                        e.values[mat_start + j] += x[j] * x[j];
-                        if (!std::isfinite((float)e.values[j])) {
-                            LOG_ERR("%f detected in %s\n", (float)e.values[j], wname.c_str());
-                            exit(1);
+                // dense branch: contiguous [src1->ne[1], src1->ne[0]] block for fixed
+                // (i3, i2). The HIP path replaces the per-row loop with one
+                // shim call; the scalar path keeps the per-row loop.
+                // Gated by TS_USE_TESSERA_METAL: same rationale as the MoE
+                // branch above.
+#ifdef TS_USE_TESSERA_METAL
+                if (ts_metal_available() == 1) {
+                    const float * x = (const float *) (data + 0 * src1->nb[1] + i2 * src1->nb[2] + i3 * src1->nb[3]);
+                    if (ts_metal_imatrix_sumsq(x, (int64_t)src1->ne[0], (int64_t)src1->ne[1],
+                                               e.values.data(), (int64_t)mat_start) == 0) {
+                        for (int64_t j = 0; j < src1->ne[0]; ++j) {
+                            if (!std::isfinite((float)e.values[j])) {
+                                LOG_ERR("%f detected in %s\n", (float)e.values[j], wname.c_str());
+                                exit(1);
+                            }
+                        }
+                    } else {
+                        for (int64_t row = 0; row < src1->ne[1]; ++row) {
+                            const float * xrow = (const float *) (data + row * src1->nb[1] + i2 * src1->nb[2] + i3 * src1->nb[3]);
+                            for (int64_t j = 0; j < src1->ne[0]; ++j) {
+                                e.values[mat_start + j] += xrow[j] * xrow[j];
+                                if (!std::isfinite((float)e.values[j])) {
+                                    LOG_ERR("%f detected in %s\n", (float)e.values[j], wname.c_str());
+                                    exit(1);
+                                }
+                            }
+                        }
+                    }
+                } else
+#endif
+                {
+                    for (int64_t row = 0; row < src1->ne[1]; ++row) {
+                        const float * xrow = (const float *) (data + row * src1->nb[1] + i2 * src1->nb[2] + i3 * src1->nb[3]);
+                        for (int64_t j = 0; j < src1->ne[0]; ++j) {
+                            e.values[mat_start + j] += xrow[j] * xrow[j];
+                            if (!std::isfinite((float)e.values[j])) {
+                                LOG_ERR("%f detected in %s\n", (float)e.values[j], wname.c_str());
+                                exit(1);
+                            }
                         }
                     }
                 }

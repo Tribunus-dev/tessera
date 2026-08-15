@@ -225,16 +225,38 @@ static float ts_champq_eval(const float * x, float * grad, int64_t n, void * ctx
                 (int)out_dim, (int)K, (int)K,
                 1.0f, W, (int)K, x, (int)K, 0.0f, W_perm.data(), (int)K);
 #elif defined(TS_USE_ROCBLAS)
-    {
+    ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)out_dim * K * sizeof(float));
+    ts_rblas_buf b = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)K * K * sizeof(float));
+    ts_rblas_buf c = ts_rblas_buf_get(TS_RBLAS_OUT_F32, (size_t)out_dim * K * sizeof(float));
+    if (a.dev && b.dev && c.dev) {
+        hipStream_t st = ts_rblas_stream();
+        hipMemcpyAsync(a.dev, W,         a.bytes, hipMemcpyHostToDevice, st);
+        hipMemcpyAsync(b.dev, x,         b.bytes, hipMemcpyHostToDevice, st);
         const float alpha = 1.0f;
         const float beta  = 0.0f;
         rocblas_sgemm(ts_rocblas_handle(),
                       rocblas_operation_none,
                       rocblas_operation_none,
                       (int)K, (int)out_dim, (int)K,
-                      &alpha, x, (int)K, W, (int)K,
-                      &beta,  W_perm.data(), (int)K);
+                      &alpha, (float*)b.dev, (int)K, (float*)a.dev, (int)K,
+                      &beta,  (float*)c.dev, (int)K);
+        hipMemcpyAsync(W_perm.data(), c.dev, c.bytes, hipMemcpyDeviceToHost, st);
+        hipStreamSynchronize(st);
+    } else {
+        for (int64_t r = 0; r < out_dim; r++) {
+            const float * Wr = W + r * K;
+            for (int64_t col = 0; col < K; col++) {
+                float s = 0.0f;
+                for (int64_t i = 0; i < K; i++) {
+                    s += Wr[i] * x[i * K + col];
+                }
+                W_perm[r * K + col] = s;
+            }
+        }
     }
+    ts_rblas_buf_release(a);
+    ts_rblas_buf_release(b);
+    ts_rblas_buf_release(c);
 #else
     for (int64_t r = 0; r < out_dim; r++) {
         const float * Wr = W + r * K;
@@ -291,16 +313,37 @@ static float ts_champq_eval(const float * x, float * grad, int64_t n, void * ctx
                 1.0f, W, (int)K, g.data(), (int)K,
                 0.0f, grad, (int)K);
 #elif defined(TS_USE_ROCBLAS)
-    {
+    ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)out_dim * K * sizeof(float));
+    ts_rblas_buf b = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)out_dim * K * sizeof(float));
+    ts_rblas_buf c = ts_rblas_buf_get(TS_RBLAS_OUT_F32, (size_t)K * K * sizeof(float));
+    if (a.dev && b.dev && c.dev) {
+        hipStream_t st = ts_rblas_stream();
+        hipMemcpyAsync(a.dev, W,         a.bytes, hipMemcpyHostToDevice, st);
+        hipMemcpyAsync(b.dev, g.data(),  b.bytes, hipMemcpyHostToDevice, st);
         const float alpha = 1.0f;
         const float beta  = 0.0f;
         rocblas_sgemm(ts_rocblas_handle(),
                       rocblas_operation_transpose,
                       rocblas_operation_none,
                       (int)K, (int)K, (int)out_dim,
-                      &alpha, W, (int)K, g.data(), (int)K,
-                      &beta,  grad, (int)K);
+                      &alpha, (float*)a.dev, (int)K, (float*)b.dev, (int)K,
+                      &beta,  (float*)c.dev, (int)K);
+        hipMemcpyAsync(grad, c.dev, c.bytes, hipMemcpyDeviceToHost, st);
+        hipStreamSynchronize(st);
+    } else {
+        for (int64_t i = 0; i < K; i++) {
+            for (int64_t k = 0; k < K; k++) {
+                float s = 0.0f;
+                for (int64_t r = 0; r < out_dim; r++) {
+                    s += W[r * K + i] * g[r * K + k];
+                }
+                grad[i * K + k] = s;
+            }
+        }
     }
+    ts_rblas_buf_release(a);
+    ts_rblas_buf_release(b);
+    ts_rblas_buf_release(c);
 #else
     for (int64_t i = 0; i < K; i++) {
         for (int64_t k = 0; k < K; k++) {

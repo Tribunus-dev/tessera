@@ -137,8 +137,8 @@ void ggml_cuda_dump_dequant(ggml_backend_cuda_context & ctx, const ggml_tensor *
     cudaEvent_t evt_dequant_start = nullptr;
     cudaEvent_t evt_dequant_end   = nullptr;
     const bool have_events =
-        (cudaEventCreate(&evt_dequant_start) == cudaSuccess) &&
-        (cudaEventCreate(&evt_dequant_end)   == cudaSuccess);
+        (cudaEventCreateWithFlags(&evt_dequant_start, cudaEventDisableTiming) == cudaSuccess) &&
+        (cudaEventCreateWithFlags(&evt_dequant_end,   cudaEventDisableTiming) == cudaSuccess);
     if (have_events) {
         cudaEventRecord(evt_dequant_start, stream);
     }

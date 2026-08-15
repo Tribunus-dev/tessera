@@ -2098,6 +2098,12 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
             {
                 ggml_compute_forward_tile640_matmul(params, tensor);
             } break;
+        case GGML_OP_TILE640_MATMUL_INTERLEAVED:
+            {
+                // P0 path is bit-exact equivalent to the base kernel; the
+                // CPU forward does not implement P1 (drafter) / P2 (KV).
+                ggml_compute_forward_tile640_matmul(params, tensor);
+            } break;
         case GGML_OP_TILE640_MATMUL_ID:
             {
                 ggml_compute_forward_tile640_matmul_id(params, tensor);
@@ -2311,6 +2317,7 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
         case GGML_OP_SOLVE_TRI:
         case GGML_OP_GATED_DELTA_NET:
         case GGML_OP_TILE640_MATMUL:
+        case GGML_OP_TILE640_MATMUL_INTERLEAVED:
         case GGML_OP_TILE640_MATMUL_ID:
         case GGML_OP_TILE640_GET_ROWS:
         case GGML_OP_TILE640_DEQUANT:

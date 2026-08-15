@@ -10,6 +10,7 @@
 #include "tessera-ternary.h"
 #include "tessera-vec.h"
 #include "tessera-metal.h"
+#include "tessera-septq.h"
 
 #include <algorithm>
 #include <cassert>
@@ -720,8 +721,10 @@ float ts_awq_scale_search(const float * weights, const float * act_scales,
     std::vector<float>   Ws((size_t)R * (size_t)in_dim);
     std::vector<float>   diff((size_t)R * (size_t)in_dim);
 
-    float best_alpha = 0.0f;
-    float best_err   = std::numeric_limits<float>::infinity();
+    float best_alpha         = 0.0f;
+    float best_err           = std::numeric_limits<float>::infinity();
+    float best_nonzero_alpha = 0.0f;
+    float best_nonzero_err   = std::numeric_limits<float>::infinity();
 
     for (int64_t g = 0; g < n_grid; g++) {
         float alpha = (float)g / (float)(n_grid - 1);
@@ -743,7 +746,6 @@ float ts_awq_scale_search(const float * weights, const float * act_scales,
         ts_dequant(ternary.data(), pscale.data(), lscale.data(), deq.data(), R, in_dim);
 
         // effective weight in the original scale: deq / scale, then diff = deq/scale - W.
-        // Compute in place: deq <- deq / scale (broadcast divide), then diff <- deq - W.
         for (int64_t r = 0; r < R; r++) {
             float * drow = deq.data() + r * in_dim;
             const float * wrow = W.data() + r * in_dim;
@@ -776,7 +778,27 @@ float ts_awq_scale_search(const float * weights, const float * act_scales,
             best_err   = err_mse;
             best_alpha = alpha;
         }
+        // Tiebreak candidate: best non-zero alpha. The strict-< comparison
+        // above can leave best_alpha at 0.0 when the importance-weighted MSE
+        // is insensitive to alpha (e.g. low-dynamic-range act_scales); that
+        // path silently degenerates to plain Tile640 quantization with no
+        // act_scale populated. Track the best non-zero grid in the same pass
+        // and resolve below.
+        if (alpha > 0.0f && err_mse < best_nonzero_err) {
+            best_nonzero_err   = err_mse;
+            best_nonzero_alpha = alpha;
+        }
     }
+
+    // Prefer a non-zero alpha if it ties alpha=0 within 1e-4 relative. This
+    // is well below the noise floor of F32 importance-weighted MSEs over
+    // (R * in_dim) terms, so the caller's "use AWQ" intent is honored
+    // whenever the surface allows.
+    if (best_alpha == 0.0f && best_nonzero_alpha > 0.0f &&
+        best_nonzero_err <= best_err * (1.0f + 1e-4f)) {
+        best_alpha = best_nonzero_alpha;
+    }
+
     return best_alpha;
 }
 
@@ -1207,6 +1229,54 @@ int ts_quantize_2d(const float * weights,
     }
 
     const int64_t n = out_dim * in_dim;
+
+    // --- SEPTQ dispatch (routed via params->use_septq) ---
+    // When the routed expert (FLRQ / SEPTQ / LRQ-DARTQUANT family in
+    // tessera-regime.cpp) marks use_septq=true, run the SEPTQ Hessian-
+    // compensated quantizer and copy its packed outputs into the
+    // ts_quant_result_2d shape. SEPTQ does not produce an AWQ per-column
+    // input scale, so act_scale stays empty. best_alpha is stamped with the
+    // params->alpha value so the dispatch-level metadata reflects the
+    // routed profile.
+    if (params->use_septq) {
+        // SEPTQ defaults: full quant (ratio=1.0), single mask pass, diagonal
+        // Hessian proxy (banded requires calib_X + n_tokens > 0).
+        ts_septq_params sp;
+        sp.septq_ratio         = 1.0f;
+        sp.septq_iterations    = 1;
+        sp.ternary_threshold   = 1.0f;
+        sp.hessian_mode        = TS_SEPTQ_HESSIAN_DIAGONAL;
+        sp.hessian_bandwidth   = 0;
+        sp.importance_weight   = TS_SEPTQ_IMP_QUANT_ERROR_H;
+        sp.importance_lambda   = 0.0f;
+        sp.ridge_fraction      = 1e-4f;
+        // tie the SEPTQ threshold to params->clip (the regime router scales
+        // clip per-expert so FLRQ's clip_scale=0.9 lands here as 0.9).
+        if (params->clip > 0.0f) {
+            sp.ternary_threshold = params->clip;
+        }
+        sp.hessian_mode = (calib_X != nullptr && n_tokens > 0)
+                              ? TS_SEPTQ_HESSIAN_BANDED
+                              : TS_SEPTQ_HESSIAN_DIAGONAL;
+
+        ts_septq_result sr;
+        if (ts_septq_quantize_2d(weights, out_dim, in_dim,
+                                 calib_X, n_tokens, act_scales,
+                                 &sp, &sr) != 0) {
+            return 1;
+        }
+        result->packed               = std::move(sr.packed);
+        result->page_scales          = std::move(sr.page_scales);
+        result->lane_scales          = std::move(sr.lane_scales);
+        result->outlier_row_offsets  = std::move(sr.outlier_row_offsets);
+        result->outlier_cols         = std::move(sr.outlier_cols);
+        result->outlier_vals         = std::move(sr.outlier_vals);
+        result->act_scale.clear();
+        result->best_alpha           = params->alpha;
+        result->mse                   = 0.0f;
+        result->recon.clear();
+        return 0;
+    }
 
     // --- tile-agnostic ternary-decision step (AWQ search, ternarize, outliers) ---
     ts_ternary_tensor tn;

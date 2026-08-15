@@ -108,6 +108,7 @@
 #define FC_UPSCALE                     1500
 #define FC_GATED_DELTA_NET             1600
 #define FC_TILE640                     1700
+#define FC_TILE640_INTERLEAVE          1710
 #define FC_IMATRIX_OBSERVER            1800
 
 // op-specific constants

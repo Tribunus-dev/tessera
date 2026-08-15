@@ -104,14 +104,26 @@ int main() {
     }
 
     // ------------------------------------------------------------------
-    // Case 2: identical rankings -> novelty fails
+    // Case 2: identical rankings across methods -> novelty fails
+    // Each proxy ranks the four tensors in the same strict order (t0 best,
+    // t3 worst). The composite still beats every single proxy because
+    // composite_t2 is the per-row min (over 4 proxies) averaged, while
+    // each single-proxy mean is dominated by the three bad rows. So
+    // composite_wins holds, novelty_survives is false (all 6 cross-method
+    // kendall pairs are +1, disagreement = 0), and acceptance_passed is
+    // therefore false.
+    // (Previously this fixture set each proxy to a single constant across
+    // all tensors; that produced undefined tau (0 for a constant vector)
+    // and the test intent was lost. Use strict but identical proxy
+    // rankings across methods so the v2 novelty check sees real ranking
+    // agreement.)
     // ------------------------------------------------------------------
     {
         ts_acceptance_tensor tensors[4] = {
-            make_tensor("t0", 0.01f, 0.02f, 0.03f, 0.04f, 0.05f, 0.1f, 0.1f, true),
-            make_tensor("t1", 0.01f, 0.02f, 0.03f, 0.04f, 0.05f, 0.2f, 0.2f, true),
-            make_tensor("t2", 0.01f, 0.02f, 0.03f, 0.04f, 0.05f, 0.3f, 0.3f, true),
-            make_tensor("t3", 0.01f, 0.02f, 0.03f, 0.04f, 0.05f, 0.4f, 0.4f, true),
+            make_tensor("t0", 0.001f, 0.01f, 0.02f, 0.03f, 0.04f, 0.10f, 0.10f, true),
+            make_tensor("t1", 0.020f, 0.02f, 0.04f, 0.06f, 0.08f, 0.20f, 0.20f, true),
+            make_tensor("t2", 0.030f, 0.03f, 0.06f, 0.09f, 0.12f, 0.30f, 0.30f, true),
+            make_tensor("t3", 0.040f, 0.04f, 0.08f, 0.12f, 0.16f, 0.40f, 0.40f, true),
         };
 
         ts_acceptance_config cfg;

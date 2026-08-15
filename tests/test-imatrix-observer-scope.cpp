@@ -91,7 +91,9 @@ int main() {
             const auto filter_s = cparams.imatrix_observer_filter[s];
             const void * data_s = cparams.imatrix_observer_filter_data[s];
             assert(filter_s != nullptr);
-            assert(filter_s("blk.0.attn_q.weight", data_s));
+            // filter_s is a non-const void* user_data hook; the const
+            // adapter is the test's own contract.
+            assert(filter_s("blk.0.attn_q.weight", const_cast<void *>(data_s)));
             for (int other = LLAMA_OBSERVER_SCOPE_VERIFIER; other <= LLAMA_OBSERVER_SCOPE_TALKER; ++other) {
                 if (other == s) continue;
                 assert(!filter_s("blk.0.attn_q.weight",

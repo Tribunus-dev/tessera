@@ -16,6 +16,10 @@
 
 #include "tessera-policy.h"
 
+#if defined(TS_USE_ROCBLAS)
+#include "tessera-rocblas.h"
+#endif
+
 #include <cstdint>
 #include <cstddef>
 #include <string>
@@ -270,6 +274,39 @@ struct ts_awq_evolve_result {
     // archive: best candidate per regime cell
     std::vector<std::pair<ts_awq_archive_cell, ts_awq_candidate>> archive;
 };
+
+// Per-thread device cache for the GA hot path. Holds ts_rblas_buf handles
+// for the layer fields that are stable across candidates (weights, the two
+// activation splits, the two precomputed reference outputs) so the H2D
+// copies happen once per worker thread instead of once per candidate. The
+// per-candidate buffers (importance, reconstructed, approx) hold the device
+// allocation across calls; only their contents are re-uploaded each call.
+//
+// The cache is a value type; construct one on the stack of the worker (or
+// the serial fallback) and pass it through the eval_with_cache wrapper. The
+// first call into the wrapper acquires the stable layer fields; subsequent
+// calls reuse them. Release happens at the bottom of the worker / serial
+// loop. All ts_rblas_buf slots are shared with other threads via the
+// process-global slot pool, so a multi-threaded GA does not multiply the
+// device memory residency.
+//
+// Only available on rocBLAS builds. On cblas / scalar builds the struct is
+// empty and the eval_with_cache wrapper is a no-op pass-through (see
+// tessera-awq-fitness.cpp).
+#if defined(TS_USE_ROCBLAS)
+struct ts_awq_eval_cache {
+    ts_rblas_buf weights     = {nullptr, 0};  // layer.weights (out_dim * in_dim)
+    ts_rblas_buf train_act   = {nullptr, 0};  // layer.train_activations (n_tokens * in_dim)
+    ts_rblas_buf heldout_act = {nullptr, 0};  // layer.heldout_activations (n_tokens_h * in_dim)
+    ts_rblas_buf ref_train   = {nullptr, 0};  // layer.ref_train_output (n_tokens * out_dim)
+    ts_rblas_buf ref_heldout = {nullptr, 0};  // layer.ref_heldout_output (n_tokens_h * out_dim)
+    ts_rblas_buf reconstructed = {nullptr, 0}; // per-candidate (out_dim * in_dim)
+    ts_rblas_buf approx      = {nullptr, 0};  // per-candidate matmul output
+    bool         acquired    = false;          // first call has staged weights/act/refs
+};
+#else
+struct ts_awq_eval_cache {};  // empty on cblas / scalar builds
+#endif
 
 // Run evolutionary search for one layer.
 int ts_awq_evolve(const ts_awq_layer * layer,

@@ -64,16 +64,37 @@ static void ts_matmul(const float * A, const float * B, float * C,
                 1.0f, A, (int)k, B, (int)n, 0.0f, C, (int)n);
 #elif defined(TS_USE_ROCBLAS)
     // Col-major: C^T(n,m) = B^T(n,k) * A^T(k,m).
-    {
+    ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)m * k * sizeof(float));
+    ts_rblas_buf b = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)k * n * sizeof(float));
+    ts_rblas_buf c = ts_rblas_buf_get(TS_RBLAS_OUT_F32, (size_t)m * n * sizeof(float));
+    if (a.dev && b.dev && c.dev) {
+        hipStream_t st = ts_rblas_stream();
+        hipMemcpyAsync(a.dev, A, a.bytes, hipMemcpyHostToDevice, st);
+        hipMemcpyAsync(b.dev, B, b.bytes, hipMemcpyHostToDevice, st);
         const float alpha = 1.0f;
         const float beta  = 0.0f;
         rocblas_sgemm(ts_rocblas_handle(),
                       rocblas_operation_none,
                       rocblas_operation_none,
                       (int)n, (int)m, (int)k,
-                      &alpha, B, (int)n, A, (int)k,
-                      &beta,  C, (int)n);
+                      &alpha, (float*)b.dev, (int)n, (float*)a.dev, (int)k,
+                      &beta,  (float*)c.dev, (int)n);
+        hipMemcpyAsync(C, c.dev, c.bytes, hipMemcpyDeviceToHost, st);
+        hipStreamSynchronize(st);
+    } else {
+        for (int64_t i = 0; i < m; i++) {
+            for (int64_t j = 0; j < n; j++) {
+                float s = 0.0f;
+                for (int64_t p = 0; p < k; p++) {
+                    s += A[i*k + p] * B[p*n + j];
+                }
+                C[i*n + j] = s;
+            }
+        }
     }
+    ts_rblas_buf_release(a);
+    ts_rblas_buf_release(b);
+    ts_rblas_buf_release(c);
 #else
     for (int64_t i = 0; i < m; i++) {
         for (int64_t j = 0; j < n; j++) {
@@ -99,16 +120,37 @@ static void ts_matmul_atb(const float * A, const float * B, float * C,
                 1.0f, A, (int)n, B, (int)k, 0.0f, C, (int)k);
 #elif defined(TS_USE_ROCBLAS)
     // Col-major view: C^T(k,n) = B^T(k,m) * A(m,n).
-    {
+    ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)m * n * sizeof(float));
+    ts_rblas_buf b = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)m * k * sizeof(float));
+    ts_rblas_buf c = ts_rblas_buf_get(TS_RBLAS_OUT_F32, (size_t)n * k * sizeof(float));
+    if (a.dev && b.dev && c.dev) {
+        hipStream_t st = ts_rblas_stream();
+        hipMemcpyAsync(a.dev, A, a.bytes, hipMemcpyHostToDevice, st);
+        hipMemcpyAsync(b.dev, B, b.bytes, hipMemcpyHostToDevice, st);
         const float alpha = 1.0f;
         const float beta  = 0.0f;
         rocblas_sgemm(ts_rocblas_handle(),
                       rocblas_operation_transpose,
                       rocblas_operation_none,
                       (int)k, (int)n, (int)m,
-                      &alpha, B, (int)k, A, (int)n,
-                      &beta,  C, (int)k);
+                      &alpha, (float*)b.dev, (int)k, (float*)a.dev, (int)n,
+                      &beta,  (float*)c.dev, (int)k);
+        hipMemcpyAsync(C, c.dev, c.bytes, hipMemcpyDeviceToHost, st);
+        hipStreamSynchronize(st);
+    } else {
+        for (int64_t i = 0; i < n; i++) {
+            for (int64_t j = 0; j < k; j++) {
+                float s = 0.0f;
+                for (int64_t r = 0; r < m; r++) {
+                    s += A[r*n + i] * B[r*k + j];
+                }
+                C[i*k + j] = s;
+            }
+        }
     }
+    ts_rblas_buf_release(a);
+    ts_rblas_buf_release(b);
+    ts_rblas_buf_release(c);
 #else
     for (int64_t i = 0; i < n; i++) {
         for (int64_t j = 0; j < k; j++) {
@@ -299,19 +341,29 @@ void ts_linalg_svd_topk(const float * A, float * U, float * S, float * V,
     // rocBLAS is column-major; row-major "Upper + Trans" maps to col-major
     // "Lower + NoTrans". The fill pattern is symmetric so the upper->lower
     // copy below produces the same full matrix as the cblas path.
-    {
+    ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)m * n * sizeof(float));
+    ts_rblas_buf c = ts_rblas_buf_get(TS_RBLAS_OUT_F32, (size_t)n * n * sizeof(float));
+    if (a.dev && c.dev) {
+        hipStream_t st = ts_rblas_stream();
+        hipMemcpyAsync(a.dev, A, a.bytes, hipMemcpyHostToDevice, st);
         const float alpha = 1.0f;
         const float beta  = 0.0f;
         rocblas_ssyrk(ts_rocblas_handle(),
                       rocblas_fill_lower,
                       rocblas_operation_none,
                       (int)n, (int)m,
-                      &alpha, A, (int)n,
-                      &beta,  AtA.data(), (int)n);
+                      &alpha, (float*)a.dev, (int)n,
+                      &beta,  (float*)c.dev, (int)n);
+        hipMemcpyAsync(AtA.data(), c.dev, c.bytes, hipMemcpyDeviceToHost, st);
+        hipStreamSynchronize(st);
         for (int64_t i = 0; i < n; i++)
             for (int64_t j = i + 1; j < n; j++)
                 AtA[j*n + i] = AtA[i*n + j];
+    } else {
+        ts_matmul_atb(A, A, AtA.data(), m, n, n);
     }
+    ts_rblas_buf_release(a);
+    ts_rblas_buf_release(c);
 #else
     ts_matmul_atb(A, A, AtA.data(), m, n, n);
 #endif

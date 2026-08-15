@@ -326,6 +326,14 @@ else()
         target_link_libraries(tessera-metal-hip PRIVATE hip::device)
         target_sources(${TARGET} PRIVATE $<TARGET_OBJECTS:tessera-metal-hip>)
         target_link_libraries(${TARGET} PRIVATE hip::host)
+        # Gates the ts_metal_* HIP bridge call sites in
+        # tessera-imatrix.cpp / tessera-l1-fitness.cpp / ggml-quants.c.
+        # Mirrors TS_USE_ROCBLAS at line 364. Only the ${TARGET} link unit
+        # gets the strong ts_metal_* symbols from tessera-metal-hip.o, so
+        # consumer libs (libggml-base, llama-imatrix) keep their bridge
+        # call sites compile-time-gated off and stay link-clean without
+        # needing the HIP source attached to them.
+        target_compile_definitions(${TARGET} PUBLIC TS_USE_TESSERA_METAL)
         set(TS_GPU_LANE TRUE)
         message(STATUS "Tessera: HIP GPU lane enabled (ROCm ${hip_VERSION})")
 
@@ -353,6 +361,13 @@ else()
                 ${TS_ROCBLAS_INCLUDE_DIR})
             target_link_libraries(tessera-rocblas PRIVATE hip::device roc::rocblas)
             target_sources(${TARGET} PRIVATE $<TARGET_OBJECTS:tessera-rocblas>)
+            # Propagate the rocBLAS include path + definition to the parent
+            # CXX target so call sites that include tessera-rocblas.h
+            # directly (tessera-vec, tessera-linalg, etc.) can resolve
+            # <rocblas.h> and <hip/hip_runtime.h> without re-staging them.
+            # The OBJECT lib above sets the path only for itself (LANGUAGE
+            # HIP); CXX files need it propagated explicitly.
+            target_include_directories(${TARGET} PUBLIC ${TS_ROCBLAS_INCLUDE_DIR})
             target_link_libraries(${TARGET} PUBLIC roc::rocblas)
             target_compile_definitions(${TARGET} PUBLIC TS_USE_ROCBLAS)
             message(STATUS "Tessera: rocBLAS BLAS lane enabled (${rocblas_VERSION})")

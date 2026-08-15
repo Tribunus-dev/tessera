@@ -1146,7 +1146,7 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "GLU",
 };
 
-static_assert(GGML_OP_COUNT == 115, "GGML_OP_COUNT != 115");
+static_assert(GGML_OP_COUNT == 116, "GGML_OP_COUNT != 116");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -1265,7 +1265,7 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "glu(x)",
 };
 
-static_assert(GGML_OP_COUNT == 115, "GGML_OP_COUNT != 115");
+static_assert(GGML_OP_COUNT == 116, "GGML_OP_COUNT != 116");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -6468,6 +6468,71 @@ struct ggml_tensor * ggml_tile640_matmul(
     result->src[6] = B;
 
     // op_params: out_dim (i32) — consumed by the forward kernel
+    ggml_set_op_params_i32(result, 0, (int32_t) out_dim);
+    ggml_set_op_params_i32(
+        result, 1, A_packed->ne[0] == trit2_words ? 1 : 0);
+
+    return result;
+}
+
+// ggml_tile640_matmul_interleaved
+//
+// Same input contract as ggml_tile640_matmul; produces a tensor with
+// GGML_OP_TILE640_MATMUL_INTERLEAVED. The Metal + HIP backends dispatch
+// kernel_TILE640_MATMUL_INTERLEAVED (P0 path bit-exact equivalent to the
+// base kernel; P1 drafter / P2 KV paths are gated by per-graph iargs
+// fields). The CPU forward falls through to the base kernel_TILE640_MATMUL
+// semantics so the graph remains runnable when the env var is unset.
+struct ggml_tensor * ggml_tile640_matmul_interleaved(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * A_packed,
+        struct ggml_tensor  * A_page_scales,
+        struct ggml_tensor  * A_lane_scales,
+        struct ggml_tensor  * A_outlier_row_offsets,
+        struct ggml_tensor  * A_outlier_cols,
+        struct ggml_tensor  * A_outlier_vals,
+        struct ggml_tensor  * B) {
+    GGML_ASSERT(A_packed->type     == GGML_TYPE_I32);
+    GGML_ASSERT(A_page_scales->type == GGML_TYPE_F16);
+    GGML_ASSERT(A_lane_scales->type == GGML_TYPE_I8);
+    GGML_ASSERT(A_outlier_row_offsets->type == GGML_TYPE_I32);
+    GGML_ASSERT(A_outlier_cols->type == GGML_TYPE_I32);
+    GGML_ASSERT(A_outlier_vals->type == GGML_TYPE_F16);
+    GGML_ASSERT(B->type == GGML_TYPE_F16 || B->type == GGML_TYPE_F32);
+
+    GGML_ASSERT(ggml_is_contiguous(A_packed));
+    GGML_ASSERT(ggml_is_contiguous(A_page_scales));
+    GGML_ASSERT(ggml_is_contiguous(A_lane_scales));
+    GGML_ASSERT(ggml_is_contiguous(A_outlier_row_offsets));
+    GGML_ASSERT(ggml_is_contiguous(A_outlier_cols));
+    GGML_ASSERT(ggml_is_contiguous(A_outlier_vals));
+    GGML_ASSERT(ggml_is_contiguous(B));
+
+    const int64_t in_dim  = B->ne[0];
+    const int64_t pages_per_row = (in_dim + 639) / 640;
+    GGML_ASSERT(A_page_scales->ne[0] % pages_per_row == 0);
+    const int64_t out_dim = A_page_scales->ne[0] / pages_per_row;
+    const int64_t compact_words = out_dim * pages_per_row * 32;
+    const int64_t trit2_words   = out_dim * pages_per_row * 40;
+    GGML_ASSERT(A_packed->ne[0] == compact_words ||
+                A_packed->ne[0] == trit2_words);
+
+    const int64_t n_tokens  = B->ne[1];
+    const int64_t n_batch   = B->ne[2];
+    const int64_t n_seqs    = B->ne[3];
+
+    const int64_t ne[4] = { out_dim, n_tokens, n_batch, n_seqs };
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, 4, ne);
+
+    result->op     = GGML_OP_TILE640_MATMUL_INTERLEAVED;
+    result->src[0] = A_packed;
+    result->src[1] = A_page_scales;
+    result->src[2] = A_lane_scales;
+    result->src[3] = A_outlier_row_offsets;
+    result->src[4] = A_outlier_cols;
+    result->src[5] = A_outlier_vals;
+    result->src[6] = B;
+
     ggml_set_op_params_i32(result, 0, (int32_t) out_dim);
     ggml_set_op_params_i32(
         result, 1, A_packed->ne[0] == trit2_words ? 1 : 0);

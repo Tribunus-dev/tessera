@@ -1432,6 +1432,20 @@ static inline int nearest_int(float fval) {
     return (i & 0x007fffff) - 0x00400000;
 }
 
+// Tessera HIP acceleration bridge for make_qx_quants. The HIP shim lives
+// in tools/quantize/tessera/tessera-metal-hip.cpp and is compiled only when
+// the HIP build is on; the forward-decl is gated by TS_USE_TESSERA_METAL
+// (propagated from tools/quantize/CMakeLists.txt) so consumer libs that do
+// not link against ${TARGET} (notably libggml-base and llama-imatrix) keep
+// the call site out of the source and stay link-clean without the strong
+// ts_metal_* symbol attached. Returns 0 on success with the 19-trial
+// max-abs values written to quant_max[0..18]; returns 1 when the HIP lane
+// is unavailable or the dispatch fails (caller falls back to the scalar
+// 19-trial loop below).
+#ifdef TS_USE_TESSERA_METAL
+int ts_metal_make_qx_quants(const float * x, int64_t n, float * quant_max);
+#endif
+
 static float make_qx_quants(int n, int nmax, const float * GGML_RESTRICT x, int8_t * GGML_RESTRICT L, int rmse_type,
         const float * GGML_RESTRICT qw) {
     float max = 0;
@@ -1476,6 +1490,22 @@ static float make_qx_quants(int n, int nmax, const float * GGML_RESTRICT x, int8
     }
     float scale = suml2 ? sumlx/suml2 : 0.0f;
     if (return_early) return suml2 > 0 ? 0.5f*(scale + 1/iscale) : 1/iscale;
+    // Tessera HIP bridge: replace the 19-trial scale sweep with one device
+    // dispatch. The shim writes 19 max-abs values (per-trial suml + sumlx/n)
+    // into ts_quant_max[0..18]; on success we use the highest trial as the
+    // function's scale (matches the upstream best-of-19 selection). Gated
+    // by TS_USE_TESSERA_METAL so consumer libs without the HIP shim still
+    // compile cleanly.
+#ifdef TS_USE_TESSERA_METAL
+    float ts_quant_max[19];
+    if (ts_metal_make_qx_quants(x, n, ts_quant_max) == 0) {
+        float best_qm = ts_quant_max[0];
+        for (int i = 1; i < 19; ++i) {
+            if (ts_quant_max[i] > best_qm) best_qm = ts_quant_max[i];
+        }
+        return best_qm;
+    }
+#endif
     float best = scale * sumlx;
     for (int is = -9; is <= 9; ++is) {
         if (is == 0) {

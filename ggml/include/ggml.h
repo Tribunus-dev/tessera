@@ -580,6 +580,7 @@ extern "C" {
         GGML_OP_DSV4_HC_PRE,
         GGML_OP_DSV4_HC_POST,
         GGML_OP_TILE640_MATMUL,
+        GGML_OP_TILE640_MATMUL_INTERLEAVED,
         GGML_OP_TILE640_MATMUL_ID,
         GGML_OP_TILE640_GET_ROWS,
         GGML_OP_TILE640_DEQUANT,
@@ -2639,6 +2640,23 @@ extern "C" {
     // Caller passes out_dim in op_params via a sentinel tensor, or the
     // caller uses this op's wrapper which sets it. See llama-graph.cpp.
     GGML_API struct ggml_tensor * ggml_tile640_matmul(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * A_packed,
+            struct ggml_tensor  * A_page_scales,
+            struct ggml_tensor  * A_lane_scales,
+            struct ggml_tensor  * A_outlier_rows,
+            struct ggml_tensor  * A_outlier_cols,
+            struct ggml_tensor  * A_outlier_vals,
+            struct ggml_tensor  * B);
+
+    // Interleaved Tile640 matmul (temporal ALU interleaving). Same input
+    // contract as ggml_tile640_matmul; produces a tensor with
+    // GGML_OP_TILE640_MATMUL_INTERLEAVED so the Metal / HIP backend can
+    // dispatch kernel_TILE640_MATMUL_INTERLEAVED. Feature-gated: dispatch
+    // is only wired on Metal + HIP when TESSERA_TILE640_INTERLEAVED is
+    // set in the environment. Without it, callers should use the base
+    // ggml_tile640_matmul.
+    GGML_API struct ggml_tensor * ggml_tile640_matmul_interleaved(
             struct ggml_context * ctx,
             struct ggml_tensor  * A_packed,
             struct ggml_tensor  * A_page_scales,

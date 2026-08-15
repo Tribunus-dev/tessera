@@ -92,16 +92,37 @@ static void ts_dq_matmul(const float * A, const float * B, float * C,
     std::vector<double> Ad((size_t)m * k), Bd((size_t)k * n), Cd((size_t)m * n);
     for (int64_t i = 0; i < m * k; i++) Ad[i] = (double)A[i];
     for (int64_t i = 0; i < k * n; i++) Bd[i] = (double)B[i];
-    {
+    ts_rblas_buf ad = ts_rblas_buf_get(TS_RBLAS_IN_F64, (size_t)m * k * sizeof(double));
+    ts_rblas_buf bd = ts_rblas_buf_get(TS_RBLAS_IN_F64, (size_t)k * n * sizeof(double));
+    ts_rblas_buf cd = ts_rblas_buf_get(TS_RBLAS_OUT_F64, (size_t)m * n * sizeof(double));
+    if (ad.dev && bd.dev && cd.dev) {
+        hipStream_t st = ts_rblas_stream();
+        hipMemcpyAsync(ad.dev, Ad.data(), ad.bytes, hipMemcpyHostToDevice, st);
+        hipMemcpyAsync(bd.dev, Bd.data(), bd.bytes, hipMemcpyHostToDevice, st);
         const double alpha = 1.0;
         const double beta  = 0.0;
         rocblas_dgemm(ts_rocblas_handle(),
                       rocblas_operation_none,
                       rocblas_operation_none,
                       (int)n, (int)m, (int)k,
-                      &alpha, Bd.data(), (int)n, Ad.data(), (int)k,
-                      &beta,  Cd.data(), (int)n);
+                      &alpha, (double*)bd.dev, (int)n, (double*)ad.dev, (int)k,
+                      &beta,  (double*)cd.dev, (int)n);
+        hipMemcpyAsync(Cd.data(), cd.dev, cd.bytes, hipMemcpyDeviceToHost, st);
+        hipStreamSynchronize(st);
+    } else {
+        for (int64_t i = 0; i < m; i++) {
+            for (int64_t j = 0; j < n; j++) {
+                double s = 0.0;
+                for (int64_t p = 0; p < k; p++) {
+                    s += (double)A[i*k + p] * (double)B[p*n + j];
+                }
+                Cd[i*n + j] = s;
+            }
+        }
     }
+    ts_rblas_buf_release(ad);
+    ts_rblas_buf_release(bd);
+    ts_rblas_buf_release(cd);
     for (int64_t i = 0; i < m * n; i++) C[i] = (float)Cd[i];
 #else
     for (int64_t i = 0; i < m; i++) {
@@ -132,16 +153,37 @@ static void ts_dq_matmul_atb(const float * A, const float * B, float * C,
     std::vector<double> Ad((size_t)m * n), Bd((size_t)m * k), Cd((size_t)n * k);
     for (int64_t i = 0; i < m * n; i++) Ad[i] = (double)A[i];
     for (int64_t i = 0; i < m * k; i++) Bd[i] = (double)B[i];
-    {
+    ts_rblas_buf ad = ts_rblas_buf_get(TS_RBLAS_IN_F64, (size_t)m * n * sizeof(double));
+    ts_rblas_buf bd = ts_rblas_buf_get(TS_RBLAS_IN_F64, (size_t)m * k * sizeof(double));
+    ts_rblas_buf cd = ts_rblas_buf_get(TS_RBLAS_OUT_F64, (size_t)n * k * sizeof(double));
+    if (ad.dev && bd.dev && cd.dev) {
+        hipStream_t st = ts_rblas_stream();
+        hipMemcpyAsync(ad.dev, Ad.data(), ad.bytes, hipMemcpyHostToDevice, st);
+        hipMemcpyAsync(bd.dev, Bd.data(), bd.bytes, hipMemcpyHostToDevice, st);
         const double alpha = 1.0;
         const double beta  = 0.0;
         rocblas_dgemm(ts_rocblas_handle(),
                       rocblas_operation_transpose,
                       rocblas_operation_none,
                       (int)k, (int)n, (int)m,
-                      &alpha, Bd.data(), (int)k, Ad.data(), (int)n,
-                      &beta,  Cd.data(), (int)k);
+                      &alpha, (double*)bd.dev, (int)k, (double*)ad.dev, (int)n,
+                      &beta,  (double*)cd.dev, (int)k);
+        hipMemcpyAsync(Cd.data(), cd.dev, cd.bytes, hipMemcpyDeviceToHost, st);
+        hipStreamSynchronize(st);
+    } else {
+        for (int64_t i = 0; i < n; i++) {
+            for (int64_t j = 0; j < k; j++) {
+                double s = 0.0;
+                for (int64_t r = 0; r < m; r++) {
+                    s += (double)A[r*n + i] * (double)B[r*k + j];
+                }
+                Cd[i*k + j] = s;
+            }
+        }
     }
+    ts_rblas_buf_release(ad);
+    ts_rblas_buf_release(bd);
+    ts_rblas_buf_release(cd);
     for (int64_t i = 0; i < n * k; i++) C[i] = (float)Cd[i];
 #else
     for (int64_t i = 0; i < n; i++) {
@@ -173,16 +215,37 @@ static void ts_dq_matmul_abt(const float * A, const float * B, float * C,
     std::vector<double> Ad((size_t)m * k), Bd((size_t)n * k), Cd((size_t)m * n);
     for (int64_t i = 0; i < m * k; i++) Ad[i] = (double)A[i];
     for (int64_t i = 0; i < n * k; i++) Bd[i] = (double)B[i];
-    {
+    ts_rblas_buf ad = ts_rblas_buf_get(TS_RBLAS_IN_F64, (size_t)m * k * sizeof(double));
+    ts_rblas_buf bd = ts_rblas_buf_get(TS_RBLAS_IN_F64, (size_t)n * k * sizeof(double));
+    ts_rblas_buf cd = ts_rblas_buf_get(TS_RBLAS_OUT_F64, (size_t)m * n * sizeof(double));
+    if (ad.dev && bd.dev && cd.dev) {
+        hipStream_t st = ts_rblas_stream();
+        hipMemcpyAsync(ad.dev, Ad.data(), ad.bytes, hipMemcpyHostToDevice, st);
+        hipMemcpyAsync(bd.dev, Bd.data(), bd.bytes, hipMemcpyHostToDevice, st);
         const double alpha = 1.0;
         const double beta  = 0.0;
         rocblas_dgemm(ts_rocblas_handle(),
                       rocblas_operation_transpose,
                       rocblas_operation_none,
                       (int)n, (int)m, (int)k,
-                      &alpha, Bd.data(), (int)k, Ad.data(), (int)k,
-                      &beta,  Cd.data(), (int)n);
+                      &alpha, (double*)bd.dev, (int)k, (double*)ad.dev, (int)k,
+                      &beta,  (double*)cd.dev, (int)n);
+        hipMemcpyAsync(Cd.data(), cd.dev, cd.bytes, hipMemcpyDeviceToHost, st);
+        hipStreamSynchronize(st);
+    } else {
+        for (int64_t i = 0; i < m; i++) {
+            for (int64_t j = 0; j < n; j++) {
+                double s = 0.0;
+                for (int64_t p = 0; p < k; p++) {
+                    s += (double)A[i*k + p] * (double)B[j*k + p];
+                }
+                Cd[i*n + j] = s;
+            }
+        }
     }
+    ts_rblas_buf_release(ad);
+    ts_rblas_buf_release(bd);
+    ts_rblas_buf_release(cd);
     for (int64_t i = 0; i < m * n; i++) C[i] = (float)Cd[i];
 #else
     for (int64_t i = 0; i < m; i++) {
@@ -387,16 +450,38 @@ static float ts_output_mse_and_grad(const float * W, const float * R,
         std::vector<double> dL_dWp_d((size_t)out_dim * K);
         for (int64_t i = 0; i < out_dim * X_count; i++) err_d[i] = (double)err[i];
         for (int64_t i = 0; i < X_count * K; i++) X_d[i] = (double)X[i];
-        {
+        ts_rblas_buf ed = ts_rblas_buf_get(TS_RBLAS_IN_F64, (size_t)out_dim * X_count * sizeof(double));
+        ts_rblas_buf xd = ts_rblas_buf_get(TS_RBLAS_IN_F64, (size_t)X_count * K * sizeof(double));
+        ts_rblas_buf gd = ts_rblas_buf_get(TS_RBLAS_OUT_F64, (size_t)out_dim * K * sizeof(double));
+        if (ed.dev && xd.dev && gd.dev) {
+            hipStream_t st = ts_rblas_stream();
+            hipMemcpyAsync(ed.dev, err_d.data(), ed.bytes, hipMemcpyHostToDevice, st);
+            hipMemcpyAsync(xd.dev, X_d.data(),   xd.bytes, hipMemcpyHostToDevice, st);
             const double alpha = inv;
             const double beta  = 0.0;
             rocblas_dgemm(ts_rocblas_handle(),
                           rocblas_operation_none,
                           rocblas_operation_none,
                           (int)K, (int)out_dim, (int)X_count,
-                          &alpha, X_d.data(), (int)K, err_d.data(), (int)X_count,
-                          &beta,  dL_dWp_d.data(), (int)K);
+                          &alpha, (double*)xd.dev, (int)K,
+                                  (double*)ed.dev, (int)X_count,
+                          &beta,  (double*)gd.dev, (int)K);
+            hipMemcpyAsync(dL_dWp_d.data(), gd.dev, gd.bytes, hipMemcpyDeviceToHost, st);
+            hipStreamSynchronize(st);
+        } else {
+            for (int64_t o = 0; o < out_dim; o++) {
+                for (int64_t j = 0; j < K; j++) {
+                    double s = 0.0;
+                    for (int64_t t = 0; t < X_count; t++) {
+                        s += (double)err[o*X_count + t] * (double)X[t*K + j];
+                    }
+                    dL_dWp_d[o*K + j] = inv * s;
+                }
+            }
         }
+        ts_rblas_buf_release(ed);
+        ts_rblas_buf_release(xd);
+        ts_rblas_buf_release(gd);
         for (int64_t i = 0; i < out_dim * K; i++)
             dL_dWp[i] = (float)dL_dWp_d[i];
 #else
@@ -584,16 +669,38 @@ void ts_dartquant_apply(const float * W, const float * R,
                 Wd[i*block_size + k] = (double)W[i*in_dim + col_off + k];
         for (int64_t i = 0; i < block_size * block_size; i++)
             Rd[i] = (double)R[i];
-        {
+        ts_rblas_buf wd = ts_rblas_buf_get(TS_RBLAS_IN_F64, (size_t)out_dim * block_size * sizeof(double));
+        ts_rblas_buf rd = ts_rblas_buf_get(TS_RBLAS_IN_F64, (size_t)block_size * block_size * sizeof(double));
+        ts_rblas_buf cd = ts_rblas_buf_get(TS_RBLAS_OUT_F64, (size_t)out_dim * block_size * sizeof(double));
+        if (wd.dev && rd.dev && cd.dev) {
+            hipStream_t st = ts_rblas_stream();
+            hipMemcpyAsync(wd.dev, Wd.data(), wd.bytes, hipMemcpyHostToDevice, st);
+            hipMemcpyAsync(rd.dev, Rd.data(), rd.bytes, hipMemcpyHostToDevice, st);
             const double alpha = 1.0;
             const double beta  = 0.0;
             rocblas_dgemm(ts_rocblas_handle(),
                           rocblas_operation_none,
                           rocblas_operation_none,
                           (int)block_size, (int)out_dim, (int)block_size,
-                          &alpha, Rd.data(), (int)block_size, Wd.data(), (int)block_size,
-                          &beta,  Cd.data(), (int)block_size);
+                          &alpha, (double*)rd.dev, (int)block_size,
+                                  (double*)wd.dev, (int)block_size,
+                          &beta,  (double*)cd.dev, (int)block_size);
+            hipMemcpyAsync(Cd.data(), cd.dev, cd.bytes, hipMemcpyDeviceToHost, st);
+            hipStreamSynchronize(st);
+        } else {
+            for (int64_t i = 0; i < out_dim; i++) {
+                for (int64_t j = 0; j < block_size; j++) {
+                    double s = 0.0;
+                    for (int64_t k = 0; k < block_size; k++) {
+                        s += (double)Wd[i*block_size + k] * (double)Rd[k*block_size + j];
+                    }
+                    Cd[i*block_size + j] = s;
+                }
+            }
         }
+        ts_rblas_buf_release(wd);
+        ts_rblas_buf_release(rd);
+        ts_rblas_buf_release(cd);
         for (int64_t i = 0; i < out_dim; i++)
             for (int64_t j = 0; j < block_size; j++)
                 W_rot[i*in_dim + col_off + j] = (float)Cd[i*block_size + j];

@@ -1,6 +1,6 @@
 # Tessera — Project Status
 
-_Last updated: 2026-08-01_
+_Last updated: 2026-08-15_
 
 Tessera is a fork of [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) at
 [Tribunus-dev/tessera](https://github.com/Tribunus-dev/tessera). Default branch:
@@ -32,6 +32,14 @@ the middle layers. After five phases of work:
 - Eight worktrees cover the active branches: `main` (the original Tessera
   chain), seven hardening-agent branches, and `tessera/integration-upstream-experiments`
   (the upstream-rebased line).
+- The **GPU acceleration wave** (2026-08-15) layers three accelerations on
+  top of the existing HIP lane: HIP kernels for the L1-L5 per-element
+  scalar paths, a per-thread GA-loop device cache that hoists stable
+  layer fields across candidates, and the Tile640 interleaved matmul
+  wired on Metal and ported to HIP. Build verified clean on gfx1103
+  with ROCm 6.2.4; `test_all.sh` runs 54 declared cases (48 runnable +
+  6 libgguf/libggml CMake-gated skips, 0 failures) and the wave ship gate
+  passes (38 directly, 10 triaged and fixed this session — see Phase 9).
 
 **The next big thing is the runtime-aware calibration pipeline (Layers 1–6)**
 that closes the loop between kernel dequant fidelity and per-tensor GA fitness.
@@ -196,6 +204,113 @@ integration work is bringing Tessera's commits onto current master:
   remaining 5 plus 1 porting-fix commit produce a clean build with
   `llama-cli`, `llama-server`, and `llama-imatrix`.
 
+### Phase 9 — GPU acceleration wave (2026-08-15)
+
+Adds three layers on top of the existing HIP lane without changing the
+caller-visible fitness semantics:
+
+1. **Custom HIP kernels for the L1-L5 per-element scalar paths.**
+   `ts_hip_imatrix_sumsq` replaces the dense + MoE inner-loop sumsq in
+   `IMatrixCollector::collect_imatrix` (one block per row, 256 threads,
+   shared-memory reduction + atomic-add). `ts_hip_make_qx_quants` ports
+   the 19-trial scale sweep in upstream `make_qx_quants` to a per-element
+   shared-memory reduction; the bridge in `ggml/src/ggml-quants.c` falls
+   back to the scalar body when the shim returns -1. `ts_hip_l1_ratio`
+   replaces the F64 Frobenius inner loop in `ts_l1_kernel_direct_t2` with
+   a per-block F64 reduction kernel (single F32 -> F64 conversion at the
+   read site, shared-memory fold, single-block per-block partial write
+   to scratch). All three are gated by `TS_USE_TESSERA_METAL` so the
+   HIP-free link graph stays clean.
+2. **GA-loop hoist (per-thread device cache).** `ts_awq_eval_cache` in
+   `tessera-awq.h` holds `ts_rblas_buf` handles for the five layer
+   fields stable across candidates (`weights`, `train_act`, `heldout_act`,
+   `ref_train`, `ref_heldout`). `ts_awq_eval_with_cache` acquires them
+   once per worker thread on first call and reuses the device buffers
+   for the two sgemms in `ts_awq_relative_output_error_device`. H2D cost
+   drops from {per candidate x 5 fields} to {per worker thread x 5 fields
+   once}. The slot pool guarantees one layer's stable buffers are
+   allocated once per GA, shared across candidates and layers.
+3. **Tile640 interleaved matmul (Metal + HIP).** The previously-orphaned
+   `kernel_TILE640_MATMUL_INTERLEAVED` source is now wired on Metal
+   (CMake embeds the `.metal` file, a new pipeline fetcher compiles it
+   with `FC_TILE640_INTERLEAVE = 1710` + the four offsets, and a new
+   ops handler dispatches the 11-buffer + 2-constant shape) and ported
+   to HIP (`ggml/src/ggml-cuda/tile640-interleaved.cu`). Dispatch is
+   feature-flagged by `TESSERA_TILE640_INTERLEAVED`; unset keeps the
+   existing `kernel_TILE640_MATMUL` path so parity holds by default.
+
+Build verified clean on gfx1103 / ROCm 6.2.4 (downgraded from the
+Fedora 44 default 7.1.1 because GFX10+ rejects the
+`V_MOV_B32_dpp wavefront` codegen). `test_all.sh` runs 54 declared cases
+(2026-08-15, after the Phase 9.1 driver refactor): 48 runnable + 6
+libgguf/libggml CMake-gated skips, 0 failures on a cold-cache run.
+The 10 pre-existing failures triaged and fixed this session:
+test_all.sh link-line gaps for `l5`/`imatrix`/`quant`/`w4a4`/`moe_shapes`/
+`operative_routing`/`higgs_integration`, `std::fabs` without `<cmath>`
+in `test_dflash_train_data.cpp`, the case2 fixture in `test_acceptance`
+that exercised constant-vectors (tau undefined) under the v2 cross-method
+novelty check, and the `ts_l1_kernel_direct_t2` in-place mutate bug that
+broke the scalar fallback when `ts_metal_l1_ratio` returned -1).
+Wave-targeted parity vs python fixture: max_abs 2.384e-07, max_rel
+1.054e-07 (within rtol 1e-5). Wave-level measurement architecture (per
+the agent-ux-fatigue skill): primary is full-L6 GA wall-clock on a 7B
+reference layer drops 30-50% with HIP enabled; trust is the parity suite
+passes within existing tolerances; anti-metric is the GA cache stays
+bounded under 256 MiB per layer.
+
+#### Phase 9.1 — `test_all.sh` parallel + cache (2026-08-15)
+
+Driver refactor on top of the Phase 9 fixes. Same 54 declared cases
+(48 runnable + 6 libgguf/libggml CMake-gated skips), same PASS/SKIP
+distribution as the serial driver, but compile and cache-key work now
+fans out across `nproc` workers. Architecturally:
+
+- **Per-test content-hash binary cache.** Cache key is
+  `sha1(canonicalized CXX args ∪ g++ -MM -MG dep list ∪ uname ∪ TS_BLAS)`.
+  On a re-run with no source change, the test binary is fetched from the
+  cache and the compile step is skipped.
+- **3-stage pipeline.** Stage 1 declares every test as one job record
+  (`name | kind | args`) into `$DECL_FILE`. Stage 2 fans out cache-key
+  computation across `xargs -P $JOBS`, with skip-gate tests evaluated
+  lazily so a gated test does not pay the dep-scan cost. Stage 3 folds
+  the keys + gate decisions back into declaration order, splitting
+  into `$RESULTS_FILE` (cache_hit / skip_gate) and `$COMPILE_FILE`
+  (compile work). Phase 4 fans out the compile pool via xargs; the
+  workers append `compiled` / `compile_fail` records to `$RESULTS_FILE`.
+  Phase 4.5 re-folds RESULTS_FILE onto declaration order so phase 5
+  prints in source order regardless of compile completion order.
+- **Apple/Linux gating already in place.** `tessera-quant.cpp` uses
+  `#if defined(__APPLE__)` for vDSP; the `tessera-metal-stub.cpp`
+  no-op shim resolves `ts_metal_*` symbols on non-Mac; the Linux build
+  skips the `.metal` pipeline compile. No new gating needed; the
+  Linux build was never carrying Apple-specific artifacts.
+
+Duckdb amalgamation is built once in phase 0 (with content-hash cache
+on `duckdb.cpp`) so the parallel pool does not serialize on the
+amalgamation. `$BIN/duckdb.o` is consumed by both `tessera_db_indexes`
+and `ga_model_role`; if the .o fails to build both convert to
+`SKIP (duckdb amalgamation build failed)`.
+
+Measured on the 780M (8-core box):
+
+| Scenario | Wall clock | PASS / SKIP / FAIL |
+|---|---|---|
+| Cold cache (`rm -rf /tmp/tessera_test_bin`) | 13m10s | 48 / 6 / 0 |
+| Warm cache (no source change) | 11s | 48 / 6 / 0 (1 run hit the w4a4 flake) |
+| One source touch (`tessera-awq.cpp`) | 16s | 48 / 6 / 0 |
+
+Cache hit rate on a warm re-run: 48/48 binaries. Cache invalidation is
+content-hash-precise — touching `tessera-awq.cpp` rebuilds every test
+that consumes it (via `g++ -MM -MG`) and leaves the rest on cache.
+Phase-0 dep scan is the new dominant cost on warm runs (~40ms/test ÷
+nproc). The driver falls back to `g++` as `CXX`; parallelism is
+`TESSERA_TEST_JOBS=N` (default `nproc`).
+
+Pre-existing flake: `w4a4` is RNG-dependent and passes ~17/20 runs
+(85%). Not a driver regression; the cached binary is byte-identical
+across runs but the calibration sequence varies. Tracked as a Phase
+10 item (seed the calibration RNG in `test_w4a4.cpp`).
+
 ---
 
 ## What works today
@@ -204,7 +319,7 @@ integration work is bringing Tessera's commits onto current master:
 |---|---|---|
 | `llama-cli` | builds + runs | tessera fork, integration branch |
 | `llama-server` | builds + runs | tessera fork, integration branch |
-| `llama-imatrix` | builds + runs | tessera fork, integration branch |
+| `llama-imatrix` | builds + runs (HIP-accelerated per-row sumsq when present) | tessera fork, integration branch; `ts_hip_imatrix_sumsq` shim in `tessera-metal-hip.cpp` replaces the dense + MoE inner-loop accumulation, gated by `TS_USE_TESSERA_METAL` |
 | Per-tensor GA calibration | ready for use | `tessera-awq.{h,cpp}` (step 5c of `ts_dispatch_run`) |
 | dspark-gguf-patch preprocessor | ready | `tools/dspark-gguf-patch/` |
 | Spec-decoding telemetry v1 | ready | `tools/imatrix/imatrix.cpp` |
@@ -212,8 +327,11 @@ integration work is bringing Tessera's commits onto current master:
 | DFlash drafter | 30 % accept on Q4_K_M, Q5_K_M | via llama-imatrix spec path |
 | DSpark drafter | 33 % accept on Q4_0 (1-step), 11 % on Q5_K_M (3-step) | via dspark-gguf-patch |
 | Per-tensor quant policy loading | ready | `tile640_quantize_v3.py --calibration-policy` |
-| Kernel-direct GA fitness (L6) | ready | `kernel-fitness --enabled --dir --blend` |
-| rocBLAS BLAS lane (AMD) | ready | `tools/quantize/tessera/tessera-rocblas.{h,cpp}`; 17 cblas sites + `ts_mm_awq_mse` sgemm rewrite; bound to HIP stream |
+| Kernel-direct GA fitness (L6) | ready (HIP-accelerated F64 ratio when present) | `kernel-fitness --enabled --dir --blend`; `ts_hip_l1_ratio` shim replaces the scalar `ts_l1_kernel_direct_t2` inner loop with a per-block F64 reduction kernel, gated by `TS_USE_TESSERA_METAL` |
+| rocBLAS BLAS lane (AMD) | ready (XNACK-independent) | `tools/quantize/tessera/tessera-rocblas.{h,cpp}`; 24 cblas sites + `ts_mm_awq_mse` sgemm rewrite; caller-managed `ts_rblas_buf` scratch + dedicated HIP stream; every input H2D-copied via `ts_rblas_buf_get`. Works uniformly on XNACK-on and XNACK-off APUs (incl. gfx1103 / Ryzen 7040 iGPU). |
+| GA-loop device cache | ready | `ts_awq_eval_cache` in `tessera-awq.h`; H2D cost for stable layer fields (weights, train/heldout activations, ref outputs) drops from {per candidate x 5 fields} to {per worker thread x 5 fields once}. Hot path through `ts_awq_eval_with_cache`; scalar fallback when `TS_USE_ROCBLAS` is unset. |
+| Per-tensor GA `make_qx_quants` (HIP) | ready | `ts_hip_make_qx_quants` shim replaces the upstream `make_qx_quants` scale sweep with a per-element 19-trial shared-memory reduction; bridge in `ggml/src/ggml-quants.c` falls back to scalar when the shim returns -1; gated by `TS_USE_TESSERA_METAL`. |
+| Tile640 interleaved matmul (Metal + HIP) | M1 device foundation | HIP port of `kernel_TILE640_MATMUL_INTERLEAVED` in `ggml/src/ggml-cuda/tile640-interleaved.cu`; Metal wire-up gated by `TESSERA_TILE640_INTERLEAVED` (pipeline fetcher + ops handler added next to the existing `kernel_TILE640_MATMUL` path; CMake embeds the interleaved .metal file). Dispatch goes through the existing `kernel_TILE640_MATMUL` path when the env var is unset. |
 | ANE MTP prefill | compiles, untested runtime | `common/ane-mtp.{h,mm}` |
 | XDNA NPU runtime (AMD Ryzen AI) | M1 device foundation (heap BO, identity, SHMEM+DEV BO alloc/sync, xclbin parse); context create best-effort on AIE 1.1 + amdxdna v7.1.y | `common/xdna-runtime.{h,cpp}` |
 | `dft.` observer prefix | applied | `src/llama-graph.cpp` |

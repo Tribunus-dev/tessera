@@ -51,6 +51,9 @@ struct ts_metal_context {
 
     // persistent per-process scratch (sized to the largest tensor seen)
     ts_hip_buf ws, core, tern, recon, partials, clip_limits, thresholds;
+    // two scratch slots for make_qx_quants: integer and fractional halves
+    // are kept separate so the (int)q count is preserved exactly.
+    ts_hip_buf qx_partials_l, qx_partials_lx;  // [19 * n_blocks_max] floats each
 };
 
 struct ts_metal_weights {
@@ -415,6 +418,212 @@ __global__ void ts_hip_awq_grid(ts_awq_args args,
 }
 
 // ---------------------------------------------------------------------------
+// Kernel: imatrix per-row sum-of-squares
+// ---------------------------------------------------------------------------
+// Replaces the scalar inner loop in IMatrixCollector::collect_imatrix
+// (tools/imatrix/imatrix.cpp:618 for MoE, :675 for dense). One block per
+// source row; 256 threads cooperate to compute the F32 sum-of-squares
+// over `channels` elements, then atomicAdd the result into the per-row
+// target slot in the collector's stats vector (host-resident, atomic via
+// the device atomicAdd on the value_dev buffer that the shim mirrors).
+//
+// Two layouts:
+//   dense  : values_dev[mat_start + j] += x[j] * x[j]
+//   MoE    : values_dev[mat_id * channels + j] += x[j] * x[j]
+//
+// The shim does the H2D copy of x, runs one kernel, D2H-copies the row
+// totals back. On hosts without the HIP lane the function returns 1 and
+// the caller falls back to the scalar loop.
+
+__global__ void ts_hip_imatrix_sumsq(const float * __restrict__ x,
+                                      float * __restrict__ values_dev,
+                                      uint32_t channels,
+                                      uint32_t row_offset_floats) {
+    const uint32_t row = blockIdx.x;
+    const uint32_t tid = threadIdx.x;
+    const uint32_t nt  = blockDim.x;
+    const float * xrow = x + (uint64_t)row * channels;
+
+    float local = 0.0f;
+    for (uint32_t c = tid; c < channels; c += nt) {
+        float v = xrow[c];
+        local += v * v;
+    }
+    __shared__ float tg[TS_SCT_THREADS];
+    ts_block_reduce_sum(tg, local);
+    if (tid == 0u && tg[0] != 0.0f) {
+        // Atomic add to the per-row slot. The shim pre-zeros the device
+        // buffer for the dense case; the MoE case accumulates across
+        // tokens, so the slot starts at zero.
+        atomicAdd(values_dev + (uint64_t)row_offset_floats + (uint64_t)row * channels,
+                  tg[0]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Kernel: F64 Frobenius ratio (||approx||_F^2 / ||target||_F^2)
+// ---------------------------------------------------------------------------
+// Replaces the scalar Frobenius loop in ts_l1_kernel_direct_t2
+// (tools/quantize/tessera/tessera-l1-fitness.cpp). F64 accumulation rules
+// out the rocBLAS shim (F32-only). One block per 8192 elements, 256 threads,
+// per-thread F64 partial sums, warp-shuffle then shared-memory reduction,
+// atomicAdd into the per-block slot. The host folds the per-block pairs
+// into a single numerator+denominator (block count is small).
+
+#define TS_L1_BLOCK_THREADS 256
+#define TS_L1_BLOCK_ELEMS  8192
+
+__global__ void ts_hip_l1_ratio(const float * __restrict__ approx,
+                                const float * __restrict__ target,
+                                double * __restrict__ partials,
+                                uint32_t n,
+                                uint32_t n_blocks) {
+    const uint32_t bid = blockIdx.x;
+    const uint32_t tid = threadIdx.x;
+    const uint32_t nt  = blockDim.x;
+    const uint64_t base = (uint64_t)bid * (uint64_t)TS_L1_BLOCK_ELEMS;
+    const uint64_t end  = min((uint64_t)n, base + (uint64_t)TS_L1_BLOCK_ELEMS);
+
+    double local_num = 0.0;
+    double local_den = 0.0;
+    for (uint64_t i = base + (uint64_t)tid; i < end; i += (uint64_t)nt) {
+        const double a = (double)approx[i];
+        const double b = (double)target[i];
+        local_num += a * a;
+        local_den += b * b;
+    }
+
+    // warp-shuffle reduce within each warp (wave32 on gfx1103 / wave64 on
+    // CDNA). The shuffle mask is 32 lanes; for lane >= 32 the result is
+    // unchanged, so the warp reduction is correct on wave32. On wave64 the
+    // latter two warps end up with their original partial sums (a no-op), and
+    // the cross-warp fold in shared memory still produces the block sum.
+    unsigned mask = 0xffffffffu;
+    for (int off = 16; off > 0; off >>= 1) {
+        local_num += __shfl_down(local_num, (unsigned)off, mask);
+        local_den += __shfl_down(local_den, (unsigned)off, mask);
+    }
+    const uint32_t lane = tid & 31u;
+    const uint32_t warp = tid >> 5;
+    const uint32_t n_warps = (nt + 31u) >> 5;
+
+    __shared__ double sh_num[TS_L1_BLOCK_THREADS / 32];
+    __shared__ double sh_den[TS_L1_BLOCK_THREADS / 32];
+    if (lane == 0u) {
+        sh_num[warp] = local_num;
+        sh_den[warp] = local_den;
+    }
+    __syncthreads();
+
+    if (warp == 0u) {
+        const uint32_t w = (n_warps > lane) ? lane : 0u;
+        double wn = (lane < n_warps) ? sh_num[w] : 0.0;
+        double wd = (lane < n_warps) ? sh_den[w] : 0.0;
+        for (int off = 16; off > 0; off >>= 1) {
+            wn += __shfl_down(wn, (unsigned)off, mask);
+            wd += __shfl_down(wd, (unsigned)off, mask);
+        }
+        if (lane == 0u && (uint64_t)bid < (uint64_t)n_blocks) {
+            // 2 doubles per block: [num_0, den_0, num_1, den_1, ...].
+            atomicAdd(partials + (uint64_t)bid * 2u,         wn);
+            atomicAdd(partials + (uint64_t)bid * 2u + 1u,   wd);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Kernel: make_qx_quants 19-trial scale sweep
+// ---------------------------------------------------------------------------
+// Replaces the 19-trial scale sweep in upstream make_qx_quants
+// (ggml/src/ggml-quants.c:1435-1502). One block per 8192 elements, 256
+// threads, per-thread accumulation across 19 trials, a shared-memory
+// reduction over the 19 trials, and a single atomicAdd per (trial, block)
+// to a per-trial scratch slot. The host folds the per-block partials into
+// the 19 quant_max outputs.
+//
+// Each trial produces two accumulators: suml (integer count, large - the
+// (int)q cast), and sumlx (fractional remainder in [0, n)). The upstream
+// output is suml + sumlx/n. The kernel keeps the two halves separate (so
+// the integer count is preserved exactly) and the host does the final
+// suml + sumlx/n fold.
+//
+// Per-element work is lightweight (~95 FLOPs/element across 19 trials), so
+// the kernel is memory-bandwidth-bound. The 19 atomicAdds per block are
+// the only cross-block synchronization; the host folds the two halves of
+// the [19 * n_blocks] partials into 19 floats in a single pass.
+
+#define TS_QX_TRIALS       19
+#define TS_QX_BLOCK_ELEMS  8192
+
+__global__ void ts_hip_make_qx_quants(const float * __restrict__ x,
+                                      float * __restrict__ partials_l,    // [19 * n_blocks]
+                                      float * __restrict__ partials_lx,   // [19 * n_blocks]
+                                      uint32_t n,
+                                      uint32_t n_blocks,
+                                      float inv_l2) {
+    const uint32_t bid = blockIdx.x;
+    const uint32_t tid = threadIdx.x;
+    const uint32_t nt  = blockDim.x;
+    const uint64_t base = (uint64_t)bid * (uint64_t)TS_QX_BLOCK_ELEMS;
+    const uint64_t end  = min((uint64_t)n, base + (uint64_t)TS_QX_BLOCK_ELEMS);
+
+    // Per-thread accumulators across all 19 trials. Two arrays keep the
+    // integer and fractional halves separate so the (int)q cast on the
+    // CPU side stays integer-typed here too.
+    float local_suml [TS_QX_TRIALS];
+    float local_sumlx[TS_QX_TRIALS];
+    for (int t = 0; t < TS_QX_TRIALS; ++t) {
+        local_suml [t] = 0.0f;
+        local_sumlx[t] = 0.0f;
+    }
+
+    for (uint64_t i = base + (uint64_t)tid; i < end; i += (uint64_t)nt) {
+        const float v = x[i] * x[i];
+        if (v > 0.0f) {
+            for (int t = 0; t < TS_QX_TRIALS; ++t) {
+                const float qmax = 0.95f * powf(1.0f - 0.05f * (float)t, 0.5f);
+                const float q    = v * inv_l2 * qmax * qmax;
+                const float qq   = sqrtf(q);
+                const int   qi   = (int)qq;
+                local_suml [t] += (float)qi;
+                local_sumlx[t] += qq - (float)qi;
+            }
+        }
+    }
+
+    // Block reduction over the 256 threads, per trial, for both halves.
+    // 19 trials x 2 halves -> 38 shared sums. Fold serially.
+    __shared__ float tg_l [TS_QX_TRIALS * TS_SCT_THREADS];
+    __shared__ float tg_lx[TS_QX_TRIALS * TS_SCT_THREADS];
+    for (int t = 0; t < TS_QX_TRIALS; ++t) {
+        tg_l [t * TS_SCT_THREADS + tid] = local_suml [t];
+        tg_lx[t * TS_SCT_THREADS + tid] = local_sumlx[t];
+    }
+    __syncthreads();
+    for (uint32_t s = nt / 2u; s > 0u; s >>= 1u) {
+        if (tid < s) {
+            for (int t = 0; t < TS_QX_TRIALS; ++t) {
+                tg_l [t * TS_SCT_THREADS + tid] += tg_l [t * TS_SCT_THREADS + tid + s];
+                tg_lx[t * TS_SCT_THREADS + tid] += tg_lx[t * TS_SCT_THREADS + tid + s];
+            }
+        }
+        __syncthreads();
+    }
+
+    // One atomicAdd per (trial, block) per half: 38 atomic ops per block.
+    // The host zeros both partial buffers before launch so the accumulation
+    // is exact.
+    if (tid == 0u && (uint64_t)bid < (uint64_t)n_blocks) {
+        for (int t = 0; t < TS_QX_TRIALS; ++t) {
+            atomicAdd(partials_l  + (uint64_t)t * (uint64_t)n_blocks + (uint64_t)bid,
+                      tg_l [t * TS_SCT_THREADS]);
+            atomicAdd(partials_lx + (uint64_t)t * (uint64_t)n_blocks + (uint64_t)bid,
+                      tg_lx[t * TS_SCT_THREADS]);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // global context
 // ---------------------------------------------------------------------------
 
@@ -540,7 +749,8 @@ void ts_metal_shutdown(void) {
     if (g_ctx != nullptr) {
         ts_hip_buf * bufs[] = { &g_ctx->ws, &g_ctx->core, &g_ctx->tern,
                                 &g_ctx->recon, &g_ctx->partials,
-                                &g_ctx->clip_limits, &g_ctx->thresholds };
+                                &g_ctx->clip_limits, &g_ctx->thresholds,
+                                &g_ctx->qx_partials_l, &g_ctx->qx_partials_lx };
         for (ts_hip_buf * b : bufs) {
             if (b->ptr != nullptr) (void)hipFree(b->ptr);
         }
@@ -954,6 +1164,239 @@ int ts_metal_awq_grid_search(ts_metal_weights_t * w,
 
     (void)hipFree(grid_dev);
     (void)hipFree(abs_partials_dev);
+    return ok ? 0 : 1;
+}
+
+// -----------------------------------------------------------------------
+// Kernel: imatrix per-row sum-of-squares (host shim)
+// -----------------------------------------------------------------------
+// Drives ts_hip_imatrix_sumsq over a [rows, channels] activation block.
+// Returns 1 when the shim is unavailable or the dispatch fails (caller
+// falls back to the scalar loop in IMatrixCollector::collect_imatrix).
+//
+// values_host is the collector's m_stats[stats_key].values buffer. The
+// shim H2D-copies the activation rows, runs one kernel, D2H-copies the
+// row-totals into values_host + host_offset. The collector's m_mutex
+// already serializes concurrent invocations, so the host shim does not
+// add a separate lock.
+int ts_metal_imatrix_sumsq(const float * x,
+                           int64_t channels,
+                           int64_t rows,
+                           float * values_host,
+                           int64_t host_offset) {
+    if (!ts_metal_available() || g_ctx == nullptr || x == nullptr ||
+        values_host == nullptr || channels <= 0 || rows <= 0) {
+        return 1;
+    }
+    if ((uint64_t)channels > (uint64_t)2147483647u ||
+        (uint64_t)rows > (uint64_t)65535u) {  // grid.x dim limit on this lane
+        return 1;
+    }
+
+    hipStream_t stream = g_ctx->stream;
+
+    const size_t row_bytes = (size_t)channels * sizeof(float);
+    const size_t values_bytes = (size_t)channels * sizeof(float);
+
+    float * x_dev = nullptr;
+    float * values_dev = nullptr;
+    bool ok = (hipMalloc((void **)&x_dev, (size_t)rows * row_bytes) == hipSuccess);
+    if (ok) {
+        ok = (hipMalloc((void **)&values_dev, values_bytes) == hipSuccess);
+    }
+    if (ok) {
+        // Zero the device values buffer (the kernel uses atomicAdd, so the
+        // destination must start at zero; the host side will overwrite via
+        // the D2H copy below).
+        ok = (hipMemsetAsync(values_dev, 0, values_bytes, stream) == hipSuccess);
+    }
+    if (ok) {
+        ok = (hipMemcpyAsync(x_dev, x, (size_t)rows * row_bytes,
+                             hipMemcpyHostToDevice, stream) == hipSuccess);
+    }
+    if (ok) {
+        hipLaunchKernelGGL(ts_hip_imatrix_sumsq,
+                           dim3((unsigned)rows),
+                           dim3(TS_SCT_THREADS), 0, stream,
+                           x_dev, values_dev,
+                           (uint32_t)channels, 0u);
+        ok = (hipGetLastError() == hipSuccess);
+    }
+    // D2H the row-totals into values_host + host_offset (one row of channels
+    // floats - the kernel atomicAdded them all into the [0, channels)
+    // slice, but the actual stats vector slot spans the full [mat_start,
+    // mat_start + channels) range; the caller sets host_offset = mat_start
+    // for dense or mat_id * channels for MoE).
+    if (ok) {
+        ok = (hipMemcpyAsync(values_host + host_offset, values_dev,
+                             values_bytes, hipMemcpyDeviceToHost, stream)
+              == hipSuccess);
+    }
+    if (ok) ok = (hipStreamSynchronize(stream) == hipSuccess);
+
+    if (x_dev != nullptr) (void)hipFree(x_dev);
+    if (values_dev != nullptr) (void)hipFree(values_dev);
+    return ok ? 0 : 1;
+}
+
+// -----------------------------------------------------------------------
+// Kernel: F64 Frobenius ratio (host shim)
+// -----------------------------------------------------------------------
+// Drives ts_hip_l1_ratio. Returns -1.0 when the shim is unavailable, the
+// dispatch fails, or the per-block partials cannot be folded (caller falls
+// back to the scalar loop in ts_l1_kernel_direct_t2). The block count is
+// small (n_blocks = ceil(n / 8192)), so a host-side fold is cheap and the
+// extra H2D copy of approx/target is the only wide-bandwidth cost.
+double ts_metal_l1_ratio(const float * approx, const float * target, int64_t n) {
+    if (!ts_metal_available() || g_ctx == nullptr || approx == nullptr ||
+        target == nullptr || n <= 0) {
+        return -1.0;
+    }
+    if ((uint64_t)n > (uint64_t)2147483647u) {  // grid.x dim limit on this lane
+        return -1.0;
+    }
+
+    const uint32_t n_uint   = (uint32_t)n;
+    const uint32_t n_blocks = (n_uint + TS_L1_BLOCK_ELEMS - 1u) / TS_L1_BLOCK_ELEMS;
+
+    std::lock_guard<std::mutex> lk(g_dispatch_mutex);
+    hipStream_t stream = g_ctx->stream;
+
+    const size_t n_bytes = (size_t)n * sizeof(float);
+    const size_t part_bytes = (size_t)n_blocks * 2u * sizeof(double);
+
+    float * approx_dev = nullptr;
+    float * target_dev = nullptr;
+    double * partials_dev = nullptr;
+    bool ok = (hipMalloc((void **)&approx_dev, n_bytes) == hipSuccess);
+    if (ok) ok = (hipMalloc((void **)&target_dev, n_bytes) == hipSuccess);
+    if (ok) ok = (hipMalloc((void **)&partials_dev, part_bytes) == hipSuccess);
+    if (ok) ok = (hipMemsetAsync(partials_dev, 0, part_bytes, stream) == hipSuccess);
+    if (ok) ok = (hipMemcpyAsync(approx_dev, approx, n_bytes,
+                                 hipMemcpyHostToDevice, stream) == hipSuccess);
+    if (ok) ok = (hipMemcpyAsync(target_dev, target, n_bytes,
+                                 hipMemcpyHostToDevice, stream) == hipSuccess);
+    if (ok) {
+        hipLaunchKernelGGL(ts_hip_l1_ratio,
+                           dim3(n_blocks), dim3(TS_L1_BLOCK_THREADS), 0, stream,
+                           approx_dev, target_dev, partials_dev, n_uint, n_blocks);
+        ok = (hipGetLastError() == hipSuccess);
+    }
+
+    std::vector<double> part((size_t)n_blocks * 2u);
+    if (ok) {
+        ok = (hipMemcpyAsync(part.data(), partials_dev, part_bytes,
+                             hipMemcpyDeviceToHost, stream) == hipSuccess);
+    }
+    if (ok) ok = (hipStreamSynchronize(stream) == hipSuccess);
+
+    double sum_num = 0.0;
+    double sum_den = 0.0;
+    if (ok) {
+        for (uint32_t b = 0; b < n_blocks; b++) {
+            sum_num += part[(size_t)b * 2u];
+            sum_den += part[(size_t)b * 2u + 1u];
+        }
+    }
+
+    if (approx_dev   != nullptr) (void)hipFree(approx_dev);
+    if (target_dev   != nullptr) (void)hipFree(target_dev);
+    if (partials_dev != nullptr) (void)hipFree(partials_dev);
+
+    if (!ok || sum_den == 0.0) return -1.0;
+    return sum_num / sum_den;
+}
+
+// -----------------------------------------------------------------------
+// Kernel: make_qx_quants 19-trial scale sweep (host shim)
+// -----------------------------------------------------------------------
+// Drives ts_hip_make_qx_quants over the source vector x. The host pre-computes
+// inv_l2 = 1 / (sqrt(sum(x^2))), mirrors the canonical upstream make_qx_quants
+// (ggml/src/ggml-quants.c:1435-1502). The kernel runs one block per 8192
+// elements; the host folds the per-block partials along the n_blocks axis
+// into the 19 quant_max outputs. The kernel keeps suml vs sumlx separate
+// (different magnitudes) so the integer-count information is preserved
+// exactly; the host does the final suml + sumlx/n fold.
+//
+// Returns 0 on success, 1 when the shim is unavailable or the dispatch
+// fails (caller falls back to the scalar 19-trial loop in make_qx_quants).
+int ts_metal_make_qx_quants(const float * x, int64_t n, float * quant_max) {
+    if (!ts_metal_available() || g_ctx == nullptr || x == nullptr ||
+        quant_max == nullptr || n <= 0) {
+        return 1;
+    }
+    if ((uint64_t)n > (uint64_t)2147483647u) {  // grid.x dim limit on this lane
+        return 1;
+    }
+
+    const uint32_t n_uint   = (uint32_t)n;
+    const uint32_t n_blocks = (n_uint + TS_QX_BLOCK_ELEMS - 1u) / TS_QX_BLOCK_ELEMS;
+
+    const size_t n_bytes = (size_t)n * sizeof(float);
+    const size_t part_bytes = (size_t)TS_QX_TRIALS * (size_t)n_blocks * sizeof(float);
+
+    double l2_sq = 0.0;
+    for (int64_t i = 0; i < n; i++) {
+        const double v = (double)x[i];
+        l2_sq += v * v;
+    }
+    if (l2_sq <= 0.0) {
+        for (int t = 0; t < TS_QX_TRIALS; ++t) quant_max[t] = 0.0f;
+        return 0;
+    }
+    const float inv_l2 = (float)(1.0 / sqrt(l2_sq));
+
+    std::lock_guard<std::mutex> lk(g_dispatch_mutex);
+    hipStream_t stream = g_ctx->stream;
+
+    float * x_dev = nullptr;
+    bool ok = (hipMalloc((void **)&x_dev, n_bytes) == hipSuccess);
+    if (ok) ok = ensure_buf(g_ctx->qx_partials_l,  part_bytes);
+    if (ok) ok = ensure_buf(g_ctx->qx_partials_lx, part_bytes);
+    if (ok) ok = (hipMemsetAsync(g_ctx->qx_partials_l.ptr,  0, part_bytes, stream) == hipSuccess);
+    if (ok) ok = (hipMemsetAsync(g_ctx->qx_partials_lx.ptr, 0, part_bytes, stream) == hipSuccess);
+    if (ok) ok = (hipMemcpyAsync(x_dev, x, n_bytes,
+                                 hipMemcpyHostToDevice, stream) == hipSuccess);
+    if (ok) {
+        hipLaunchKernelGGL(ts_hip_make_qx_quants,
+                           dim3(n_blocks), dim3(TS_SCT_THREADS), 0, stream,
+                           x_dev,
+                           (float *)g_ctx->qx_partials_l.ptr,
+                           (float *)g_ctx->qx_partials_lx.ptr,
+                           n_uint, n_blocks, inv_l2);
+        ok = (hipGetLastError() == hipSuccess);
+    }
+
+    std::vector<float> part_l ((size_t)TS_QX_TRIALS * (size_t)n_blocks);
+    std::vector<float> part_lx((size_t)TS_QX_TRIALS * (size_t)n_blocks);
+    if (ok) {
+        ok = (hipMemcpyAsync(part_l.data(), g_ctx->qx_partials_l.ptr, part_bytes,
+                             hipMemcpyDeviceToHost, stream) == hipSuccess);
+    }
+    if (ok) {
+        ok = (hipMemcpyAsync(part_lx.data(), g_ctx->qx_partials_lx.ptr, part_bytes,
+                             hipMemcpyDeviceToHost, stream) == hipSuccess);
+    }
+    if (ok) ok = (hipStreamSynchronize(stream) == hipSuccess);
+
+    if (ok) {
+        // Fold per-block partials along n_blocks; quant_max[t] = suml + sumlx/n.
+        // Accumulate in double to match the CPU scalar reference's precision.
+        std::vector<double> suml ((size_t)TS_QX_TRIALS, 0.0);
+        std::vector<double> sumlx((size_t)TS_QX_TRIALS, 0.0);
+        for (uint32_t b = 0; b < n_blocks; b++) {
+            for (int t = 0; t < TS_QX_TRIALS; ++t) {
+                suml [(size_t)t] += (double)part_l [(size_t)t * (size_t)n_blocks + (size_t)b];
+                sumlx[(size_t)t] += (double)part_lx[(size_t)t * (size_t)n_blocks + (size_t)b];
+            }
+        }
+        const float inv_n = 1.0f / (float)n;
+        for (int t = 0; t < TS_QX_TRIALS; ++t) {
+            quant_max[t] = (float)suml[(size_t)t] + (float)sumlx[(size_t)t] * inv_n;
+        }
+    }
+
+    if (x_dev != nullptr) (void)hipFree(x_dev);
     return ok ? 0 : 1;
 }
 

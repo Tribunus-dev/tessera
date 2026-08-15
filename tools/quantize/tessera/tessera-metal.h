@@ -142,6 +142,49 @@ int ts_metal_awq_grid_search(ts_metal_weights_t * w,
                              int64_t n_grid,
                              float * mse_out);
 
+// -----------------------------------------------------------------------
+// Kernel 4: imatrix per-row sum-of-squares (HIP shim)
+// -----------------------------------------------------------------------
+//
+// Replaces the scalar inner loop in IMatrixCollector::collect_imatrix
+// (tools/imatrix/imatrix.cpp:618 for MoE, :675 for dense). H2D-copies a
+// [rows, channels] activation block, runs one block-per-row kernel that
+// accumulates x[j] * x[j] per row, and D2H-copies the row totals into
+// values_host[host_offset .. host_offset + channels]. Returns 0 on success;
+// when Metal/HIP is unavailable or dispatch fails returns non-zero and the
+// caller falls back to the scalar loop.
+int ts_metal_imatrix_sumsq(const float * x,
+                           int64_t channels,
+                           int64_t rows,
+                           float * values_host,
+                           int64_t host_offset);
+
+// -----------------------------------------------------------------------
+// Kernel 5: F64 Frobenius ratio (HIP shim)
+// -----------------------------------------------------------------------
+//
+// Replaces the scalar Frobenius loop in ts_l1_kernel_direct_t2
+// (tools/quantize/tessera/tessera-l1-fitness.cpp). Returns the F64 ratio
+// sum(approx[i]^2) / sum(target[i]^2) on success, or -1.0 when Metal/HIP
+// is unavailable or the dispatch fails (caller falls back to the scalar
+// loop). The shim takes two arrays and computes the ratio directly on
+// the device; the host folds the per-block partials.
+double ts_metal_l1_ratio(const float * approx,
+                         const float * target,
+                         int64_t n);
+
+// -----------------------------------------------------------------------
+// Kernel 6: make_qx_quants 19-trial scale sweep (HIP shim)
+// -----------------------------------------------------------------------
+//
+// Replaces the 19-trial scale sweep in upstream make_qx_quants
+// (ggml/src/ggml-quants.c:1435-1502). On success, returns 0 and writes
+// quant_max[0..18] exactly as the scalar loop would; on Metal/HIP
+// unavailable or dispatch failure returns 1 and the caller falls back to
+// the scalar loop. The shim pre-computes inv_l2 from x so the kernel
+// only does the per-element work.
+int ts_metal_make_qx_quants(const float * x, int64_t n, float * quant_max);
+
 #ifdef __cplusplus
 }
 #endif
