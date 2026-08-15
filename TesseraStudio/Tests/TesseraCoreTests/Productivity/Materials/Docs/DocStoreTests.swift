@@ -176,4 +176,76 @@ final class DocStoreTests: XCTestCase {
         XCTAssertEqual(receiptsAfter.count, receiptsBefore.count)
     }
 
+    // MARK: - Search (persistence round trip, gap closure)
+
+    /// A doc whose body is a single paragraph block with well-known text,
+    /// letting find/replace tests assert directly on the block's own
+    /// content (joined, since `splice` can leave a match's replacement
+    /// as its own run alongside the untouched head/tail runs).
+    private func makeSearchableDoc() -> (doc: Doc, blockID: UUID) {
+        let blockID = UUID()
+        let block = Block(id: blockID, type: .paragraph, content: [InlineRun(text: "The quick brown fox jumps over the lazy dog")])
+        let ast = DocumentAST(blocks: [blockID: block], rootChildren: [blockID])
+        let doc = Doc(title: "Find Replace Round Trip", body: ast)
+        return (doc, blockID)
+    }
+
+    func testFindAndReplaceReplacesMatchedTextAndPersists() async throws {
+        let dataLayer = try await makeRevisionsDataLayer()
+        let store = DocStore(dataLayer: dataLayer)
+        let (fixture, blockID) = makeSearchableDoc()
+        let saved = try await store.upsert(fixture)
+
+        let (updated, replacedCount) = try await store.findAndReplace("fox", with: "cat", for: saved.id)
+        XCTAssertEqual(replacedCount, 1)
+        let updatedText = try XCTUnwrap(updated.body.blocks[blockID]).content.map { $0.text }.joined()
+        XCTAssertEqual(updatedText, "The quick brown cat jumps over the lazy dog")
+
+        let reloaded = try await store.get(id: saved.id)
+        let reloadedText = try XCTUnwrap(reloaded?.body.blocks[blockID]).content.map { $0.text }.joined()
+        XCTAssertEqual(reloadedText, "The quick brown cat jumps over the lazy dog")
+    }
+
+    /// A query that matches nothing is a no-op through: no upsert (so
+    /// the persisted doc, re-fetched independently of `findAndReplace`'s
+    /// own return value, has the identical `updatedAt`) and no new
+    /// receipt in the chain.
+    func testFindAndReplaceNoMatchIsNoOpAndDoesNotTouchPersistedDoc() async throws {
+        let dataLayer = try await makeRevisionsDataLayer()
+        let store = DocStore(dataLayer: dataLayer)
+        let (fixture, _) = makeSearchableDoc()
+        let saved = try await store.upsert(fixture)
+        let receiptsBefore = try await dataLayer.receipts(forEntity: saved.id)
+
+        let (result, replacedCount) = try await store.findAndReplace("giraffe", with: "cat", for: saved.id)
+        XCTAssertEqual(replacedCount, 0)
+        XCTAssertEqual(result.body, saved.body)
+
+        let receiptsAfter = try await dataLayer.receipts(forEntity: saved.id)
+        XCTAssertEqual(receiptsAfter.count, receiptsBefore.count)
+
+        let reloaded = try await store.get(id: saved.id)
+        XCTAssertEqual(reloaded?.updatedAt, result.updatedAt)
+    }
+
+    func testFindAndReplaceEmitsFindReplaceReceiptWhenSomethingChanged() async throws {
+        let dataLayer = try await makeRevisionsDataLayer()
+        let store = DocStore(dataLayer: dataLayer)
+        let (fixture, _) = makeSearchableDoc()
+        let saved = try await store.upsert(fixture)
+
+        _ = try await store.findAndReplace("fox", with: "cat", for: saved.id)
+
+        let receipts = try await dataLayer.receipts(forEntity: saved.id)
+        let receipt = try XCTUnwrap(receipts.first { $0.receiptType == DocReceiptType.findReplace.rawValue })
+        XCTAssertEqual(receipt.payload["query"], .string("fox"))
+        XCTAssertEqual(receipt.payload["replacement"], .string("cat"))
+        XCTAssertEqual(receipt.payload["replacedCount"], .number(1))
+        // DocumentSearchIndex's own placeholder "receiptType" field is
+        // stripped before persisting - DocReceiptType.findReplace is now
+        // the receipt's real receipt_type, so the literal would be a
+        // redundant duplicate.
+        XCTAssertNil(receipt.payload["receiptType"])
+    }
+
 }

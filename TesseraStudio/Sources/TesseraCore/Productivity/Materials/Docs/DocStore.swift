@@ -218,6 +218,40 @@ public struct DocStore: Sendable {
         return doc
     }
 
+    // MARK: - Search
+
+    /// Runs `DocumentSearchIndex.replacingAll` against the doc's body and
+    /// persists the result. A query that matches nothing is a no-op - no
+    /// upsert, no receipt - matching `acceptRevision`/`rejectRevision`'s
+    /// "only emit when something actually changed" precedent.
+    public func findAndReplace(
+        _ query: String,
+        with replacement: String,
+        options: DocumentSearchIndex.SearchOptions = .init(),
+        for docID: UUID
+    ) async throws -> (doc: Doc, replacedCount: Int) {
+        var doc = try await loadOrFail(id: docID)
+        let (ast, replacedCount, receiptPayload) = DocumentSearchIndex.replacingAll(
+            query, with: replacement, in: doc.body, options: options
+        )
+        guard replacedCount > 0 else { return (doc, 0) }
+        doc.body = ast
+        doc.updatedAt = Date()
+        _ = try await upsert(doc)
+        // receiptPayload's own "receiptType" field is DocumentSearchIndex's
+        // pre-DocReceiptType placeholder literal - redundant now that the
+        // real enum case is the receipt's actual receipt_type, so it is
+        // dropped rather than persisted twice.
+        var payload = receiptPayload
+        payload.removeValue(forKey: "receiptType")
+        try await appendReceipt(
+            entityID: docID,
+            receiptType: DocReceiptType.findReplace.rawValue,
+            payload: payload
+        )
+        return (doc, replacedCount)
+    }
+
     // MARK: - Archive / Trash / Favorite
 
     public func archive(_ docID: UUID) async throws -> Doc {
