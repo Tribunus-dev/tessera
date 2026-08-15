@@ -57,4 +57,19 @@ public enum DocReceiptType: String, Codable, Sendable, CaseIterable {
     /// The document was imported from an external format
     /// (python-docx, Pandoc, HTML via SwiftSoup).
     case `import` = "doc_imported"
+    /// A footnote or endnote block was inserted (P1 1.2, lifecycle
+    /// closed P2-0).
+    case insertNote = "doc_note_inserted"
+    /// A footnote or endnote block was deleted (P2-0).
+    case deleteNote = "doc_note_deleted"
+    /// A comment thread was added, anchored to a block range (P2-0;
+    /// DocStore had no comment lifecycle before this - Sheet/Slide
+    /// equivalents landed P1 1.22).
+    case addComment = "doc_comment_added"
+    /// A reply was appended to an existing comment thread (P2-0).
+    case commentReplied = "doc_comment_replied"
+    /// A comment thread was marked resolved (P2-0).
+    case commentResolved = "doc_comment_resolved"
+    /// A comment thread was deleted (P2-0).
+    case commentDeleted = "doc_comment_deleted"
 }

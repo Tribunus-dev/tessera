@@ -17,7 +17,9 @@ import Foundation
 /// `export`/`import`/`diff` from that same doc are explicitly marked
 /// P1 there and have no corresponding ``DrawingStore`` method yet, so
 /// they're not cases here either - a receipt type with nothing that
-/// ever emits it would be dead vocabulary.
+/// ever emits it would be dead vocabulary. `group`/`ungroup` graduate
+/// to real cases in P2-0 alongside the corresponding `DrawingStore`
+/// methods (row 48 closure); `export`/`import`/`diff` remain reserved.
 public enum DrawingReceiptType: String, Codable, Sendable, CaseIterable {
     /// A drawing was created or fully upserted.
     case upsert = "drawing_upsert"
@@ -75,4 +77,8 @@ public enum DrawingReceiptType: String, Codable, Sendable, CaseIterable {
     case layerVisibilityChanged = "drawing_layer_visibility_changed"
     /// A layer's lock state (isLocked) was changed.
     case layerLockChanged = "drawing_layer_lock_changed"
+    /// Two or more shapes were grouped into one (row 48, P2-0).
+    case groupShapes = "drawing_shapes_grouped"
+    /// A shape group was dissolved back into its members (P2-0).
+    case ungroupShapes = "drawing_shapes_ungrouped"
 }

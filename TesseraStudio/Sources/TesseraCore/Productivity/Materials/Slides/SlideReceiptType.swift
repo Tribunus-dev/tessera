@@ -66,4 +66,20 @@ public enum SlideReceiptType: String, Codable, Sendable, CaseIterable {
     case `import` = "slide_imported"
     /// A comment thread was added, anchored to a slide (P1 1.22).
     case addComment = "slide_comment_added"
+    /// A reply was appended to an existing comment thread (P2-0).
+    case commentReplied = "slide_comment_replied"
+    /// A comment thread was marked resolved (P2-0).
+    case commentResolved = "slide_comment_resolved"
+    /// A comment thread was deleted (P2-0).
+    case commentDeleted = "slide_comment_deleted"
+    /// A slide's animation effect list was defined or changed (P2-0,
+    /// prerequisite for 2.1's SMILAnimationTree evolution).
+    case setAnimationEffects = "slide_animation_effects_changed"
+    /// A single animation effect was removed from a slide (P2-0).
+    case removeAnimationEffect = "slide_animation_effect_removed"
+    /// A media block (audio/video) was attached to a slide (P1 1.4,
+    /// wired P2-0).
+    case attachMedia = "slide_media_attached"
+    /// A media block was removed from a slide (P2-0).
+    case removeMedia = "slide_media_removed"
 }

@@ -63,6 +63,12 @@ public enum SheetReceiptType: String, Codable, Sendable, CaseIterable {
     case undefineNamedRange = "sheet_named_range_undefined"
     /// A comment thread was added, anchored to a cell (P1 1.22).
     case addComment = "sheet_comment_added"
+    /// A reply was appended to an existing comment thread (P2-0).
+    case commentReplied = "sheet_comment_replied"
+    /// A comment thread was marked resolved (P2-0).
+    case commentResolved = "sheet_comment_resolved"
+    /// A comment thread was deleted (P2-0).
+    case commentDeleted = "sheet_comment_deleted"
     /// A multi-key sort was applied (QueryEngine.sort). Matches
     /// QueryEngine.ReceiptType.sorted verbatim - keep in sync.
     case sorted = "sheet_sorted"

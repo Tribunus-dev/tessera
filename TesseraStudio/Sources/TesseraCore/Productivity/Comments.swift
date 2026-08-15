@@ -195,6 +195,32 @@ extension CommentMessage: Codable {
     }
 }
 
+// MARK: - CommentThread + lifecycle (P2-0: reply/resolve/delete)
+
+extension CommentThread {
+    /// A copy with `message` appended to `messages`. `messages` is
+    /// `let`, so this goes through the memberwise `init` rather than
+    /// mutating in place - same shape as `Sheet.addingCommentThread`.
+    public func addingReply(_ message: CommentMessage) -> CommentThread {
+        CommentThread(
+            id: id,
+            anchor: anchor,
+            author: author,
+            createdAt: createdAt,
+            messages: messages + [message],
+            isResolved: isResolved
+        )
+    }
+
+    /// A copy with `isResolved` set true. `isResolved` is `var`, so
+    /// this one *can* mutate a local copy directly.
+    public func resolved() -> CommentThread {
+        var updated = self
+        updated.isResolved = true
+        return updated
+    }
+}
+
 // MARK: - MentionOffset
 
 /// A `@mention` inside a `CommentMessage`'s plain text. UTF-16 start/end
@@ -393,6 +419,24 @@ extension Sheet {
         updated.commentThreads = effectiveCommentThreads + [thread]
         return updated
     }
+
+    /// A copy with the thread matching `thread.id` replaced (reply,
+    /// resolve - anything that produces a modified `CommentThread`
+    /// value rather than removing it). No-op (same array) if no
+    /// thread with that id exists.
+    public func replacingCommentThread(_ thread: CommentThread) -> Sheet {
+        var updated = self
+        updated.commentThreads = effectiveCommentThreads.map { $0.id == thread.id ? thread : $0 }
+        return updated
+    }
+
+    /// A copy with the thread matching `id` removed. No-op (same
+    /// array) if no thread with that id exists.
+    public func removingCommentThread(id: UUID) -> Sheet {
+        var updated = self
+        updated.commentThreads = effectiveCommentThreads.filter { $0.id != id }
+        return updated
+    }
 }
 
 // MARK: - SlideDeck + Comments
@@ -408,6 +452,23 @@ extension SlideDeck {
     public func addingCommentThread(_ thread: CommentThread) -> SlideDeck {
         var updated = self
         updated.commentThreads = effectiveCommentThreads + [thread]
+        return updated
+    }
+
+    /// A copy with the thread matching `thread.id` replaced. No-op
+    /// (same array) if no thread with that id exists. See
+    /// `Sheet.replacingCommentThread`.
+    public func replacingCommentThread(_ thread: CommentThread) -> SlideDeck {
+        var updated = self
+        updated.commentThreads = effectiveCommentThreads.map { $0.id == thread.id ? thread : $0 }
+        return updated
+    }
+
+    /// A copy with the thread matching `id` removed. No-op (same
+    /// array) if no thread with that id exists.
+    public func removingCommentThread(id: UUID) -> SlideDeck {
+        var updated = self
+        updated.commentThreads = effectiveCommentThreads.filter { $0.id != id }
         return updated
     }
 }
