@@ -314,6 +314,93 @@ public struct DrawingStore: Sendable {
         return drawing
     }
 
+    // MARK: - Layer mutations
+
+    @discardableResult
+    public func addLayer(_ layer: DrawLayer, to drawingID: UUID) async throws -> Drawing {
+        var drawing = try await loadOrFail(id: drawingID)
+        drawing = drawing.addingLayer(layer)
+        drawing.updatedAt = Date()
+        _ = try await upsert(drawing)
+        try await appendReceipt(
+            entityID: drawingID,
+            receiptType: DrawingReceiptType.layerAdded.rawValue,
+            payload: ["layerID": .string(layer.id.uuidString), "name": .string(layer.name)]
+        )
+        return drawing
+    }
+
+    @discardableResult
+    public func removeLayer(_ layerID: UUID, from drawingID: UUID) async throws -> Drawing {
+        var drawing = try await loadOrFail(id: drawingID)
+        drawing = drawing.removingLayer(layerID)
+        drawing.updatedAt = Date()
+        _ = try await upsert(drawing)
+        try await appendReceipt(entityID: drawingID, receiptType: DrawingReceiptType.layerDeleted.rawValue, payload: ["layerID": .string(layerID.uuidString)])
+        return drawing
+    }
+
+    @discardableResult
+    public func renameLayer(_ layerID: UUID, to newName: String, in drawingID: UUID) async throws -> Drawing {
+        var drawing = try await loadOrFail(id: drawingID)
+        drawing = drawing.renamingLayer(layerID, to: newName)
+        drawing.updatedAt = Date()
+        _ = try await upsert(drawing)
+        try await appendReceipt(
+            entityID: drawingID,
+            receiptType: DrawingReceiptType.layerRenamed.rawValue,
+            payload: ["layerID": .string(layerID.uuidString), "name": .string(newName)]
+        )
+        return drawing
+    }
+
+    @discardableResult
+    public func reorderLayers(_ newOrder: [UUID], in drawingID: UUID) async throws -> Drawing {
+        var drawing = try await loadOrFail(id: drawingID)
+        drawing = drawing.reorderingLayers(newOrder)
+        drawing.updatedAt = Date()
+        _ = try await upsert(drawing)
+        try await appendReceipt(
+            entityID: drawingID,
+            receiptType: DrawingReceiptType.layerReordered.rawValue,
+            payload: ["order": .array(newOrder.map { .string($0.uuidString) })]
+        )
+        return drawing
+    }
+
+    @discardableResult
+    public func setLayerVisibility(_ layerID: UUID, isVisible: Bool, in drawingID: UUID) async throws -> Drawing {
+        var drawing = try await loadOrFail(id: drawingID)
+        drawing = drawing.settingLayerVisibility(layerID, isVisible: isVisible)
+        drawing.updatedAt = Date()
+        _ = try await upsert(drawing)
+        try await appendReceipt(
+            entityID: drawingID,
+            receiptType: DrawingReceiptType.layerVisibilityChanged.rawValue,
+            payload: ["layerID": .string(layerID.uuidString), "isVisible": .bool(isVisible)]
+        )
+        return drawing
+    }
+
+    @discardableResult
+    public func setLayerLock(_ layerID: UUID, isLocked: Bool, in drawingID: UUID) async throws -> Drawing {
+        var drawing = try await loadOrFail(id: drawingID)
+        drawing = drawing.settingLayerLock(layerID, isLocked: isLocked)
+        drawing.updatedAt = Date()
+        _ = try await upsert(drawing)
+        try await appendReceipt(
+            entityID: drawingID,
+            receiptType: DrawingReceiptType.layerLockChanged.rawValue,
+            payload: ["layerID": .string(layerID.uuidString), "isLocked": .bool(isLocked)]
+        )
+        return drawing
+    }
+
+    @discardableResult
+    public func setConnector(_ info: ConnectorInfo?, forShape shapeID: UUID, in drawingID: UUID) async throws -> Drawing {
+        try await mutatingShape(shapeID, in: drawingID, receiptType: .setConnector) { $0.connector = info }
+    }
+
     // MARK: - Receipts
 
     public func receipts(forDrawing drawingID: UUID) async throws -> [GraphReceipt] {

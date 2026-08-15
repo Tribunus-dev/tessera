@@ -44,9 +44,11 @@ public struct CanvasSize: Codable, Sendable, Hashable {
 /// Layers: `layers` below plus `LayerStore`'s pure paint-order/
 /// render-list logic exist; `DrawingStore`-side layer CRUD (add/
 /// delete/hide/lock/reorder, each its own receipt -
-/// `docs/agent-tools-surface.md`'s `drawing_set_layer` tool) is still
-/// P1. `shapes` itself stays layer-unaware, in `body.rootChildren`
-/// order - exactly the raw input `LayerStore.paintOrder` expects.
+/// `docs/agent-tools-surface.md`'s `drawing_set_layer` tool) is built
+/// via the pure mutators below (``addingLayer(_:)`` etc.) plus their
+/// ``DrawingStore`` wrappers. `shapes` itself stays layer-unaware, in
+/// `body.rootChildren` order - exactly the raw input
+/// `LayerStore.paintOrder` expects.
 ///
 /// Drawings ride the same constitutional-receipt backbone as every
 /// other material: every mutation produces a signed receipt.
@@ -236,6 +238,76 @@ public struct Drawing: Codable, Sendable, Identifiable, Hashable {
             updated.body.blocks[shape.id]?.shape = shape
         }
         updated.body.rootChildren = reordered.map(\.id)
+        return updated
+    }
+
+    // MARK: - Layer mutations (pure)
+
+    /// A copy with `layer` appended to `layers` - the new layer paints
+    /// on top of every existing one, matching `LayerStore`'s
+    /// array-position-is-paint-order convention.
+    public func addingLayer(_ layer: DrawLayer) -> Drawing {
+        var updated = self
+        updated.layers.append(layer)
+        return updated
+    }
+
+    /// A copy with the layer matching `id` removed from `layers`. Any
+    /// shape whose `layerID` pointed at the removed layer has its
+    /// `layerID` cleared to `nil` - `LayerStore`'s own "unassigned
+    /// shapes paint on the implicit base layer" convention
+    /// (`LayerStore.band(of:layers:)`), never left as a dangling
+    /// reference. A no-op if no layer has that id.
+    public func removingLayer(_ id: UUID) -> Drawing {
+        var updated = self
+        guard updated.layers.contains(where: { $0.id == id }) else { return self }
+        updated.layers.removeAll { $0.id == id }
+        for shape in updated.shapes where shape.layerID == id {
+            var orphaned = shape
+            orphaned.layerID = nil
+            updated.body.blocks[orphaned.id]?.shape = orphaned
+        }
+        return updated
+    }
+
+    /// A copy with the layer matching `id` renamed to `newName`. A
+    /// no-op if no layer has that id.
+    public func renamingLayer(_ id: UUID, to newName: String) -> Drawing {
+        var updated = self
+        guard let index = updated.layers.firstIndex(where: { $0.id == id }) else { return self }
+        updated.layers[index].name = newName
+        return updated
+    }
+
+    /// A copy with `layers` reordered to `newOrder` - the full list of
+    /// layer ids in their new paint-order sequence (array position IS
+    /// paint order, per `LayerStore`). A no-op if `newOrder` doesn't
+    /// contain exactly the same set of ids as the current `layers`
+    /// array - reordering never silently drops a layer.
+    public func reorderingLayers(_ newOrder: [UUID]) -> Drawing {
+        var updated = self
+        guard newOrder.count == updated.layers.count,
+              Set(newOrder) == Set(updated.layers.map(\.id)) else { return self }
+        let byID = Dictionary(uniqueKeysWithValues: updated.layers.map { ($0.id, $0) })
+        updated.layers = newOrder.compactMap { byID[$0] }
+        return updated
+    }
+
+    /// A copy with the layer matching `id`'s `isVisible` set. A no-op
+    /// if no layer has that id.
+    public func settingLayerVisibility(_ id: UUID, isVisible: Bool) -> Drawing {
+        var updated = self
+        guard let index = updated.layers.firstIndex(where: { $0.id == id }) else { return self }
+        updated.layers[index].isVisible = isVisible
+        return updated
+    }
+
+    /// A copy with the layer matching `id`'s `isLocked` set. A no-op
+    /// if no layer has that id.
+    public func settingLayerLock(_ id: UUID, isLocked: Bool) -> Drawing {
+        var updated = self
+        guard let index = updated.layers.firstIndex(where: { $0.id == id }) else { return self }
+        updated.layers[index].isLocked = isLocked
         return updated
     }
 
