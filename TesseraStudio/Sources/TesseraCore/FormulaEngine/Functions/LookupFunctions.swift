@@ -5,6 +5,13 @@
 //  MATCH / VLOOKUP / HLOOKUP / XLOOKUP / CHOOSE. `INDEX` already existed
 //  but is close to unusable without `MATCH`, which is the pairing every
 //  model uses to look a value up by key.
+//
+//  OFFSET / INDIRECT are registered here too (name/arity/volatility
+//  metadata only - see the `call` closures below and `Evaluator.evalOffset`/
+//  `evalIndirect`, where the real implementation lives): they are the
+//  only functions in this registry that resolve a reference against the
+//  live sheet rather than computing purely from their already-evaluated
+//  `[Value]` arguments.
 //===----------------------------------------------------------------------===//
 
 import Foundation
@@ -92,6 +99,7 @@ extension FunctionRegistry {
         registerVHLookup()
         registerXLookup()
         registerChoose()
+        registerReferenceFunctions()
     }
 
     // MARK: MATCH
@@ -273,6 +281,48 @@ extension FunctionRegistry {
                 guard index >= 1, index <= choices.count else { return .error(.numberInvalid) }
                 return choices[index - 1]
             }
+        ))
+    }
+
+    // MARK: OFFSET / INDIRECT
+
+    /// Registers OFFSET and INDIRECT for name lookup, arity, and
+    /// volatility only. `Evaluator.evalFunction` special-cases both
+    /// names and never reaches these `call` closures in the live
+    /// evaluation path - resolving a reference against the sheet needs
+    /// the formula's own AST (OFFSET's `reference` argument) and live
+    /// engine access, neither of which `[Value] -> Value` carries. See
+    /// `Evaluator.evalOffset`/`evalIndirect` for the real implementation.
+    private func registerReferenceFunctions() {
+        register(BuiltInFunction(
+            signature: FunctionSignature(
+                name: "OFFSET",
+                description: "Returns a reference offset from a starting reference by a number of rows and columns.",
+                parameters: [
+                    FunctionParameter(name: "reference", description: "The starting reference.", acceptsRange: true),
+                    FunctionParameter(name: "rows", description: "Number of rows to shift by.", acceptsRange: false),
+                    FunctionParameter(name: "cols", description: "Number of columns to shift by.", acceptsRange: false),
+                    FunctionParameter(name: "height", description: "Height of the returned reference. Defaults to the starting reference's own height.", acceptsRange: false, optional: true),
+                    FunctionParameter(name: "width", description: "Width of the returned reference. Defaults to the starting reference's own width.", acceptsRange: false, optional: true),
+                ],
+                volatility: .volatile
+            ),
+            arity: 3...5,
+            call: { _ in .error(.referenceInvalid) }
+        ))
+
+        register(BuiltInFunction(
+            signature: FunctionSignature(
+                name: "INDIRECT",
+                description: "Returns the reference named by a text string.",
+                parameters: [
+                    FunctionParameter(name: "ref_text", description: "An A1-style cell or range reference as text.", acceptsRange: false),
+                    FunctionParameter(name: "a1", description: "TRUE or omitted for A1-style (the only style this engine supports).", acceptsRange: false, optional: true),
+                ],
+                volatility: .volatile
+            ),
+            arity: 1...2,
+            call: { _ in .error(.referenceInvalid) }
         ))
     }
 }
