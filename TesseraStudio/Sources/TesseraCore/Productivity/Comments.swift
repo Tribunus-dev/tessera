@@ -1,41 +1,87 @@
 import Foundation
 
+// MARK: - CommentAnchor
+
+/// Where a comment thread is attached. One polymorphic anchor across every
+/// material with comments (Writer/Calc/Impress), so the thread model
+/// doesn't fork per surface (studio-expansion-design-refinement-2026-08-14
+/// .md section 4, Calc cluster).
+public enum CommentAnchor: Codable, Sendable, Hashable {
+    /// A character range inside a text-bearing block (Writer). The only
+    /// anchor kind before this type existed - see `CommentThread`'s
+    /// legacy decode fallback, which produces this case.
+    case textRange(blockID: UUID, start: Int, end: Int)
+    /// A whole block, no character range (e.g. a shape or image comment).
+    case block(UUID)
+    /// A single cell on a sheet (Calc).
+    case cell(sheetID: UUID, row: Int, col: Int)
+    /// A whole slide (Impress).
+    case slide(UUID)
+
+    /// Shifts a `.cell` anchor on `sheetID` when `count` rows are inserted
+    /// at `insertedAt` (0-based; a row at or below `insertedAt` moves down
+    /// by `count` - Calc's "insert row above" semantics). Every other
+    /// anchor kind, and every `.cell` anchor on a different sheet, comes
+    /// back unchanged: a row insertion on one sheet must never perturb
+    /// another sheet's comments.
+    public func remapped(afterRowInsertedAt insertedAt: Int, count: Int, onSheet sheetID: UUID) -> CommentAnchor {
+        guard case let .cell(anchorSheetID, row, col) = self, anchorSheetID == sheetID, row >= insertedAt else {
+            return self
+        }
+        return .cell(sheetID: anchorSheetID, row: row + count, col: col)
+    }
+
+    /// Column counterpart of ``remapped(afterRowInsertedAt:count:onSheet:)``.
+    public func remapped(afterColumnInsertedAt insertedAt: Int, count: Int, onSheet sheetID: UUID) -> CommentAnchor {
+        guard case let .cell(anchorSheetID, row, col) = self, anchorSheetID == sheetID, col >= insertedAt else {
+            return self
+        }
+        return .cell(sheetID: anchorSheetID, row: row, col: col + count)
+    }
+}
+
 // MARK: - CommentThread
 
-/// A resolved comment thread in the document. One thread corresponds to one
-/// `BlockType.comment` block and zero or more `.comment` reply blocks as children.
-/// All blocks in a thread share the same `anchorBlockID` and `anchorRangeStart/End`.
+/// A resolved comment thread anchored somewhere in a document, sheet, or
+/// slide deck - one thread model across every material (studio-expansion
+/// -design-refinement-2026-08-14.md section 4). For Writer, one thread
+/// corresponds to one `BlockType.comment` block and zero or more
+/// `.comment` reply blocks as children (see `CommentStore`); Calc/Impress
+/// comments have no block tree to live in and are addressed purely by
+/// `anchor`.
 public struct CommentThread: Identifiable, Hashable {
     public let id: UUID
-    /// The UUID of the block this thread is anchored to.
-    public let anchorBlockID: UUID
-    /// The character offset into the anchor block where the highlight begins.
-    public let anchorRangeStart: Int
-    /// The character offset into the anchor block where the highlight ends.
-    public let anchorRangeEnd: Int
-    /// The author name shown in the UI.
+    /// Where the thread is attached. `.textRange` was the implicit-only
+    /// anchor kind before P1 1.22; see the legacy `Decodable` fallback
+    /// below for documents/threads written before this type existed.
+    public let anchor: CommentAnchor
+    /// Stable author identifier (a GUID), NOT a display name - no
+    /// `PersonRegistry`-shaped type exists yet in this codebase to
+    /// resolve it to a name/avatar (grepped for `PersonRegistry` and
+    /// similar before writing this), so the call site owns that lookup.
     public let author: String
-    /// The ISO-8601 timestamp of the first comment.
+    /// UTC timestamp of the first comment. Encoded/decoded with the
+    /// codebase's standard `.iso8601` `JSONEncoder`/`JSONDecoder`
+    /// strategy at the call site - see e.g. `SlideDeck.jsonData()`.
     public let createdAt: Date
-    /// The plain text of each comment in the thread, in order.
+    /// Every message in the thread, flat (not a tree) - see
+    /// `CommentMessage.parentMessageID` for how replies chain. Order is
+    /// not significant; a genuine reply chain is not necessarily append-
+    /// order.
     public let messages: [CommentMessage]
-    /// True when the thread has been marked resolved (stored in the comment block).
+    /// True when the thread has been marked resolved ("done").
     public var isResolved: Bool
 
     public init(
         id: UUID,
-        anchorBlockID: UUID,
-        anchorRangeStart: Int,
-        anchorRangeEnd: Int,
+        anchor: CommentAnchor,
         author: String,
         createdAt: Date,
         messages: [CommentMessage],
         isResolved: Bool = false
     ) {
         self.id = id
-        self.anchorBlockID = anchorBlockID
-        self.anchorRangeStart = anchorRangeStart
-        self.anchorRangeEnd = anchorRangeEnd
+        self.anchor = anchor
         self.author = author
         self.createdAt = createdAt
         self.messages = messages
@@ -43,20 +89,129 @@ public struct CommentThread: Identifiable, Hashable {
     }
 }
 
+extension CommentThread: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case id, anchor, author, createdAt, messages, isResolved
+        // Legacy flat shape (pre-P1-1.22): the anchor was always an
+        // implicit textRange, written as three top-level keys instead of
+        // a nested `anchor` - same three key names `BlockType.comment`
+        // blocks already use in `Block.attributes`.
+        case anchorBlockID, anchorRangeStart, anchorRangeEnd
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        if let decodedAnchor = try c.decodeIfPresent(CommentAnchor.self, forKey: .anchor) {
+            anchor = decodedAnchor
+        } else {
+            let blockID = try c.decode(UUID.self, forKey: .anchorBlockID)
+            let start = try c.decode(Int.self, forKey: .anchorRangeStart)
+            let end = try c.decode(Int.self, forKey: .anchorRangeEnd)
+            anchor = .textRange(blockID: blockID, start: start, end: end)
+        }
+        author = try c.decode(String.self, forKey: .author)
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
+        messages = try c.decode([CommentMessage].self, forKey: .messages)
+        isResolved = try c.decodeIfPresent(Bool.self, forKey: .isResolved) ?? false
+    }
+
+    /// Not backward-compatible by design: new JSON always writes `anchor`,
+    /// never the legacy flat keys. Only decode reads both shapes -
+    /// matching `Drawing.layers`'s Codable-evolution pattern.
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(anchor, forKey: .anchor)
+        try c.encode(author, forKey: .author)
+        try c.encode(createdAt, forKey: .createdAt)
+        try c.encode(messages, forKey: .messages)
+        try c.encode(isResolved, forKey: .isResolved)
+    }
+}
+
 // MARK: - CommentMessage
 
-/// One message inside a comment thread.
+/// One message inside a comment thread. A flat list, not a tree: a
+/// reply's place in the thread comes from `parentMessageID`, not from
+/// list order or nesting.
 public struct CommentMessage: Identifiable, Hashable {
     public let id: UUID
+    /// Stable author identifier (a GUID) - see `CommentThread.author`.
     public let author: String
     public let text: String
     public let createdAt: Date
+    /// nil = root message of the thread. Non-nil = a reply, pointing at
+    /// the message it replies to - NOT necessarily the thread's first
+    /// message, so a genuine reply chain (not just a flat list under one
+    /// root) is representable.
+    public let parentMessageID: UUID?
+    /// `@mention` offsets into `text`, plain-text-and-offsets rather than
+    /// rich inline markup.
+    public let mentions: [MentionOffset]
 
-    public init(id: UUID = UUID(), author: String, text: String, createdAt: Date = Date()) {
+    public init(
+        id: UUID = UUID(),
+        author: String,
+        text: String,
+        createdAt: Date = Date(),
+        parentMessageID: UUID? = nil,
+        mentions: [MentionOffset] = []
+    ) {
         self.id = id
         self.author = author
         self.text = text
         self.createdAt = createdAt
+        self.parentMessageID = parentMessageID
+        self.mentions = mentions
+    }
+}
+
+extension CommentMessage: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case id, author, text, createdAt, parentMessageID, mentions
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        author = try c.decode(String.self, forKey: .author)
+        text = try c.decode(String.self, forKey: .text)
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
+        // Both new in P1 1.22; absent in any message written before
+        // threading/mentions existed.
+        parentMessageID = try c.decodeIfPresent(UUID.self, forKey: .parentMessageID)
+        mentions = try c.decodeIfPresent([MentionOffset].self, forKey: .mentions) ?? []
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(author, forKey: .author)
+        try c.encode(text, forKey: .text)
+        try c.encode(createdAt, forKey: .createdAt)
+        try c.encodeIfPresent(parentMessageID, forKey: .parentMessageID)
+        try c.encode(mentions, forKey: .mentions)
+    }
+}
+
+// MARK: - MentionOffset
+
+/// A `@mention` inside a `CommentMessage`'s plain text. UTF-16 start/end
+/// offsets into `text`, the same shape `ChatMessage.swift`'s `RangeOffset`
+/// uses for the same reason (`Range<String.Index>` isn't `Codable`) -
+/// flattened here rather than composing `RangeOffset` directly because
+/// `RangeOffset` is only `Equatable`, not `Hashable`, and `CommentMessage`
+/// (and `CommentThread` above it) need to stay `Hashable` end to end.
+public struct MentionOffset: Codable, Sendable, Hashable {
+    public let start: Int
+    public let end: Int
+    public let personID: String
+
+    public init(start: Int, end: Int, personID: String) {
+        self.start = start
+        self.end = end
+        self.personID = personID
     }
 }
 
@@ -132,9 +287,7 @@ public enum CommentStore {
 
             threads.append(CommentThread(
                 id: id,
-                anchorBlockID: anchorBlockID,
-                anchorRangeStart: range.start,
-                anchorRangeEnd: range.end,
+                anchor: .textRange(blockID: anchorBlockID, start: range.start, end: range.end),
                 author: author,
                 createdAt: timestamp,
                 messages: messages,

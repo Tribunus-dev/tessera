@@ -64,4 +64,6 @@ public enum SlideReceiptType: String, Codable, Sendable, CaseIterable {
     /// The deck was imported from an external format (pptx via
     /// python-pptx, PDF via PDFKit/PDFMiner).
     case `import` = "slide_imported"
+    /// A comment thread was added, anchored to a slide (P1 1.22).
+    case addComment = "slide_comment_added"
 }

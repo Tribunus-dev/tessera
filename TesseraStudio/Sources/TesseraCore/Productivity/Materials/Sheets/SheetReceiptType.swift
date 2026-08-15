@@ -61,4 +61,6 @@ public enum SheetReceiptType: String, Codable, Sendable, CaseIterable {
     case defineNamedRange = "sheet_named_range_defined"
     /// A named range was removed.
     case undefineNamedRange = "sheet_named_range_undefined"
+    /// A comment thread was added, anchored to a cell (P1 1.22).
+    case addComment = "sheet_comment_added"
 }
