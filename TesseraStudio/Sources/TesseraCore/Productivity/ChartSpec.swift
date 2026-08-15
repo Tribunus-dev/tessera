@@ -1,0 +1,188 @@
+//===----------------------------------------------------------------------===//
+//  ChartSpec.swift
+//  Tessera Studio
+//
+//  The chart data model - peer of Shape.swift, the way ChartRenderer is
+//  a peer of ShapeRenderer. Series-typed (kind + series with roles +
+//  axes + legend), OOXML/ODF-shaped, deliberately NOT a Vega-Lite
+//  mark/encoding grammar: office chart XML is a series list, and a
+//  grammar forces lossy inference in both round-trip directions
+//  (design-refinement doc section 3, Gate 3). Only Vega-Lite's
+//  DEFAULTS philosophy is adopted here - an incomplete spec still
+//  renders sensibly; the inference itself lives in ``ChartRenderer``,
+//  not this file, matching Shape/ShapeRenderer's own division of labor
+//  (data model stays a plain value type, the renderer owns behavior).
+//===----------------------------------------------------------------------===//
+
+import Foundation
+
+// MARK: - ChartOrientation
+
+/// Differentiates column (vertical bars) from bar (horizontal bars) -
+/// per Gate 3's own reconciliation note ("Column/Bar: orientation
+/// flag"), modeled as one axis flag on
+/// ``ChartKind/columnOrBar(orientation:stacked:)`` rather than two
+/// duplicate cases, so ``ChartRenderer`` walks a chart's data once and
+/// only the final coordinate mapping (which physical axis is the value
+/// axis) differs by orientation.
+public enum ChartOrientation: String, Codable, Sendable, Hashable, CaseIterable {
+    case vertical
+    case horizontal
+}
+
+// MARK: - ChartKind
+
+/// The chart type catalog. P1a (this wave) implements full rendering
+/// for `columnOrBar`, `line`, `area`, `pie`, `scatter` - the dominant
+/// families, exercising the entire shared scale/tick/legend/palette
+/// core (studio-expansion-design-refinement-2026-08-14.md section 3,
+/// Gate 3 staging). The P1b cases below are represented now so a
+/// round-tripped document doesn't lose data on an unimplemented kind,
+/// but ``ChartRenderer`` only draws an honest placeholder for them
+/// until a later wave builds their rendering.
+public enum ChartKind: Codable, Sendable, Hashable {
+    /// Column (vertical bars) or bar (horizontal bars) - see
+    /// ``ChartOrientation``.
+    case columnOrBar(orientation: ChartOrientation, stacked: Bool)
+    case line
+    case area(stacked: Bool)
+    /// `donut: true` punches a hole in the center; the hole's radius
+    /// ratio is ``ChartRenderer``'s presentation concern, not stored
+    /// on the spec.
+    case pie(donut: Bool)
+    case scatter
+
+    // MARK: P1b (staged for a later wave - see type doc comment above)
+
+    case bubble
+    case net
+    case stock
+    case columnAndLine
+    case ofPie
+    case sparkline
+}
+
+// MARK: - ChartSeriesRole
+
+/// What a ``ChartSeries``' `values` represent. `.value` is the common
+/// case (one plotted series). `.category` is reserved for a series
+/// that supplies shared axis positions instead of its own plotted
+/// magnitude - e.g. the shared X column of an XY scatter, consumed by
+/// ``ChartRenderer`` rather than plotted itself. `.size` is for the
+/// P1b bubble kind's third dimension; present now so `ChartSeries`
+/// doesn't need a breaking change when bubble rendering lands.
+public enum ChartSeriesRole: String, Codable, Sendable, Hashable, CaseIterable {
+    case category
+    case value
+    case size
+}
+
+// MARK: - ChartSeries
+
+public struct ChartSeries: Codable, Sendable, Hashable {
+    public var name: String?
+    public var role: ChartSeriesRole
+    public var values: [Double]
+    /// Per-value display labels (pie slice names, category-axis
+    /// ticks). Matched to `values` by index; a mismatched count is
+    /// ignored by ``ChartRenderer``, which falls back to numeric
+    /// labels rather than mis-pairing a label with the wrong value.
+    public var categoryLabels: [String]?
+
+    public init(
+        name: String? = nil,
+        role: ChartSeriesRole = .value,
+        values: [Double] = [],
+        categoryLabels: [String]? = nil
+    ) {
+        self.name = name
+        self.role = role
+        self.values = values
+        self.categoryLabels = categoryLabels
+    }
+}
+
+// MARK: - ChartAxes
+
+/// Axis configuration. Every field is optional, and `nil` renders with
+/// an inferred default (auto-scaled niced domain, plain numeric tick
+/// labels, no title) - per the gate's defaults philosophy, an
+/// incomplete spec still renders, not only a fully-populated one.
+public struct ChartAxes: Codable, Sendable, Hashable {
+    /// A ``NumberFormatEngine`` format code (e.g. `"#,##0.00"`),
+    /// resolved via `NumberFormatEngine.format` at render time - not
+    /// resolved or cached here, so the same stored spec re-renders
+    /// correctly if the engine's locale changes.
+    public var xLabelFormat: String?
+    public var yLabelFormat: String?
+    public var xTitle: String?
+    public var yTitle: String?
+
+    public init(
+        xLabelFormat: String? = nil,
+        yLabelFormat: String? = nil,
+        xTitle: String? = nil,
+        yTitle: String? = nil
+    ) {
+        self.xLabelFormat = xLabelFormat
+        self.yLabelFormat = yLabelFormat
+        self.xTitle = xTitle
+        self.yTitle = yTitle
+    }
+}
+
+// MARK: - LegendPosition
+
+public enum LegendPosition: String, Codable, Sendable, Hashable, CaseIterable {
+    case top
+    case bottom
+    case leading
+    case trailing
+}
+
+// MARK: - ChartLegend
+
+public struct ChartLegend: Codable, Sendable, Hashable {
+    /// `nil` means "auto: shown when `series.count > 1`" (Vega-Lite's
+    /// defaults philosophy, per the gate) - resolved by
+    /// ``ChartRenderer``, not here, so the rule can't drift between
+    /// two call sites.
+    public var isVisible: Bool?
+    public var position: LegendPosition
+
+    public init(isVisible: Bool? = nil, position: LegendPosition = .bottom) {
+        self.isVisible = isVisible
+        self.position = position
+    }
+}
+
+// MARK: - ChartSpec
+
+/// One chart's full data + presentation spec - peer of ``Shape``, the
+/// way a chart is a peer of a vector shape on the same Draw/Impress
+/// canvas. Stored on a `.chart` block via `attributes["chart"]`; see
+/// `Block.chart`.
+public struct ChartSpec: Codable, Sendable, Identifiable, Hashable {
+    public let id: UUID
+    public var kind: ChartKind
+    public var series: [ChartSeries]
+    public var axes: ChartAxes
+    public var legend: ChartLegend
+    public var title: String?
+
+    public init(
+        id: UUID = UUID(),
+        kind: ChartKind,
+        series: [ChartSeries] = [],
+        axes: ChartAxes = ChartAxes(),
+        legend: ChartLegend = ChartLegend(),
+        title: String? = nil
+    ) {
+        self.id = id
+        self.kind = kind
+        self.series = series
+        self.axes = axes
+        self.legend = legend
+        self.title = title
+    }
+}

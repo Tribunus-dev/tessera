@@ -299,6 +299,12 @@ public final class DocumentExporter: Sendable {
             // size, and fill/stroke color are still accurate.
             return renderShapeDiv(block.shape)
 
+        case .chart:
+            // Same rationale as .shape above: a labeled placeholder div,
+            // not a ported copy of ChartRenderer's CoreGraphics drawing.
+            let title = block.chart?.title ?? "Chart"
+            return "<div class=\"chart\">\(escapeHTML(title))</div>"
+
         case .shapeGroup:
             var items: [String] = []
             for childID in block.children {

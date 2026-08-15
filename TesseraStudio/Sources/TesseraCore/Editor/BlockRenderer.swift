@@ -102,6 +102,8 @@ public struct BlockRenderer: Sendable {
             return renderShapePlaceholder(block, mode: mode)
         case .shapeGroup:
             return renderShapeGroupPlaceholder(block, mode: mode)
+        case .chart:
+            return renderChartPlaceholder(block, mode: mode)
         case .section:
             return renderSectionMarker(block, mode: mode)
         case .frame:
@@ -211,6 +213,21 @@ public struct BlockRenderer: Sendable {
         let label = "[Shape group - \(block.children.count) shapes]"
         return NSAttributedString(
             string: label,
+            attributes: [
+                .font: fontResolver.font(from: theme.bodyFont),
+                .foregroundColor: PlatformColor.secondaryLabelColor,
+            ]
+        )
+    }
+
+    /// Charts render on their own CGContext-backed surface
+    /// (ChartRenderer), not flowed into this text view - same
+    /// rationale as renderShapePlaceholder above. Exists so the
+    /// switch stays exhaustive.
+    private func renderChartPlaceholder(_ block: Block, mode: EditorMode) -> NSAttributedString {
+        let title = block.chart?.title ?? "Chart"
+        return NSAttributedString(
+            string: "[\(title)]",
             attributes: [
                 .font: fontResolver.font(from: theme.bodyFont),
                 .foregroundColor: PlatformColor.secondaryLabelColor,

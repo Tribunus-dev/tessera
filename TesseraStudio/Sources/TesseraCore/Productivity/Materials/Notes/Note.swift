@@ -234,7 +234,7 @@ public struct Note: Codable, Sendable, Identifiable, Hashable {
             }
         case .shape:
             if let text = block.shape?.text?.plainText, !text.isEmpty { out.append(text) }
-        case .toggle, .image, .divider, .equation, .comment, .trackInsertion, .trackDeletion:
+        case .toggle, .image, .chart, .divider, .equation, .comment, .trackInsertion, .trackDeletion:
             break
         }
         for child in block.children where block.type != .list && block.type != .table

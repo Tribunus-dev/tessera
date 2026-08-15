@@ -40,6 +40,9 @@ final class BlockTests: XCTestCase {
             // Writer section/frame (P0 0.5): multi-column/break regions
             // and anchored text-box containers.
             .section, .frame,
+            // Chart (P1 1.3): series-typed chart spec via the
+            // attributes["chart"] bridge, same pattern as .shape.
+            .chart,
         ]
         XCTAssertEqual(Set(BlockType.allCases), expected)
     }

@@ -96,6 +96,10 @@ public enum BlockType: String, Codable, Sendable, Hashable, CaseIterable {
     /// blocks. `attributes["frame"]` holds the JSON-encoded
     /// ``FrameProperties`` (position, size, anchor) - see ``Block/frame``.
     case frame
+    /// A chart on a Calc/Impress canvas. `attributes["chart"]` holds
+    /// the JSON-encoded ``ChartSpec`` (kind, series, axes, legend) -
+    /// see ``Block/chart``. A leaf: `content` and `children` are unused.
+    case chart
 }
 
 // MARK: - InlineRun
@@ -229,6 +233,32 @@ extension Block {
             guard let data = try? JSONEncoder().encode(newValue),
                   let raw = try? JSONDecoder().decode(AnyCodable.self, from: data) else { return }
             attributes["frame"] = raw
+        }
+    }
+}
+
+// MARK: - Block + Chart
+
+extension Block {
+    /// Reads/writes the block's ``ChartSpec`` via `attributes["chart"]`.
+    /// Same bridge shape as ``Block/shape``/``Block/frame`` and for the
+    /// same reason: `ChartSpec`'s own `Codable` conformance stays the
+    /// single source of truth for the wire shape.
+    public var chart: ChartSpec? {
+        get {
+            guard type == .chart, let raw = attributes["chart"] else { return nil }
+            guard let data = try? JSONEncoder().encode(raw) else { return nil }
+            return try? JSONDecoder().decode(ChartSpec.self, from: data)
+        }
+        set {
+            guard type == .chart else { return }
+            guard let newValue else {
+                attributes.removeValue(forKey: "chart")
+                return
+            }
+            guard let data = try? JSONEncoder().encode(newValue),
+                  let raw = try? JSONDecoder().decode(AnyCodable.self, from: data) else { return }
+            attributes["chart"] = raw
         }
     }
 }
