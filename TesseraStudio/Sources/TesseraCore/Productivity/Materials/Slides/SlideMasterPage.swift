@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - SlideMasterPage
 
-/// A deck-level presentation theme: background + text color, shared
+/// A deck-level presentation master: background + text color, shared
 /// across every slide that references it via
 /// ``SlideMeta/masterPageID``.
 ///
@@ -17,26 +17,50 @@ import Foundation
 /// consult this - see `SlideDeck.masterPage(forSlideAt:)`'s doc
 /// comment for the same "model ships before its live wiring" note
 /// used throughout this phase's other P0 items.
+///
+/// `backgroundColorHex` resolves through ``ColorRef`` as of P1 1.5: a
+/// `.literal` value paints as-is; a `.theme` value resolves against
+/// this master's theme catalog / active theme (`themeCatalog` /
+/// `activeThemeID` below) via ``Theme/resolve(_:)``. See
+/// ``ThemeStore``'s doc comment for why deck-level theme state is
+/// mirrored per-master here rather than living on `SlideDeck` itself.
 public struct SlideMasterPage: Codable, Sendable, Hashable, Identifiable {
     public let id: UUID
     public var name: String
-    /// `#RRGGBB`, matching `SheetCellFormat.fillHex`'s convention.
-    /// `nil` = the renderer's own default background.
-    public var backgroundColorHex: String?
+    /// `.literal("#RRGGBB")` or a `.theme` slot reference (P1 1.5).
+    /// `nil` = the renderer's own default background. The `.literal`
+    /// case keeps `SheetCellFormat.fillHex`'s hex-string convention.
+    public var backgroundColorHex: ColorRef?
     /// `#RRGGBB` default text color for placeholder content painted
     /// on top of this master. `nil` = the renderer's own default.
+    /// Stays a plain literal hex string at P1 - only master
+    /// backgrounds and Shape fills adopt `ColorRef` per the design
+    /// doc's Slides cluster, item 1.5.
     public var textColorHex: String?
+    /// The deck's theme catalog (P1 1.5), keyed by `Theme.id.uuidString`
+    /// - mirrored identically onto every master page in the owning
+    /// deck by `ThemeStore` (see its doc comment). `nil`/empty = no
+    /// theme defined yet, matching `masterPages ?? [:]`'s convention.
+    public var themeCatalog: [String: Theme]?
+    /// The catalog entry (by id) active for the deck, mirrored the
+    /// same way `themeCatalog` is. `nil` = no active theme; `.theme`
+    /// slots then resolve against `Theme.builtinDefault(for:)`.
+    public var activeThemeID: UUID?
 
     public init(
         id: UUID = UUID(),
         name: String,
-        backgroundColorHex: String? = nil,
-        textColorHex: String? = nil
+        backgroundColorHex: ColorRef? = nil,
+        textColorHex: String? = nil,
+        themeCatalog: [String: Theme]? = nil,
+        activeThemeID: UUID? = nil
     ) {
         self.id = id
         self.name = name
         self.backgroundColorHex = backgroundColorHex
         self.textColorHex = textColorHex
+        self.themeCatalog = themeCatalog
+        self.activeThemeID = activeThemeID
     }
 }
 
@@ -88,5 +112,57 @@ extension SlideDeck {
         let key = body.rootChildren[index].uuidString
         guard let masterID = slideMeta[key]?.masterPageID else { return nil }
         return effectiveMasterPages[masterID.uuidString]
+    }
+
+    // MARK: - Theme (P1 1.5)
+
+    /// The deck's theme catalog. Reads from (any) one master page
+    /// rather than a `SlideDeck` field of its own - see
+    /// ``SlideMasterPage/themeCatalog``'s doc comment and
+    /// ``ThemeStore``'s for why. Empty when the deck has no master
+    /// pages yet, or none has defined a theme.
+    public var effectiveThemes: [String: Theme] {
+        effectiveMasterPages.values.first?.themeCatalog ?? [:]
+    }
+
+    /// A copy with `theme` defined (or replaced, by matching `id`) in
+    /// the catalog, mirroring `settingMasterPage(_:)`'s shape. The
+    /// updated catalog is written onto every existing master page
+    /// (see `ThemeStore`'s doc comment for why); a deck with no
+    /// master pages is returned unchanged - `ThemeStore` is expected
+    /// to have already rejected that case before calling this.
+    public func settingTheme(_ theme: Theme) -> SlideDeck {
+        var updated = self
+        var catalog = effectiveThemes
+        catalog[theme.id.uuidString] = theme
+        var pages = effectiveMasterPages
+        for key in pages.keys { pages[key]?.themeCatalog = catalog }
+        updated.masterPages = pages
+        return updated
+    }
+
+    /// The deck's active theme id, read the same way `effectiveThemes` is.
+    public var activeThemeID: UUID? {
+        effectiveMasterPages.values.first?.activeThemeID
+    }
+
+    /// The resolved active theme, or `nil` when unset or the id no
+    /// longer resolves in the catalog (a removed/never-defined theme
+    /// leaves the deck with no active theme rather than a broken
+    /// reference, matching `removingMasterPage(_:)`'s "clear on
+    /// removal" precedent).
+    public var activeTheme: Theme? {
+        activeThemeID.flatMap { effectiveThemes[$0.uuidString] }
+    }
+
+    /// A copy with the deck's active theme set (or cleared, with
+    /// `themeID: nil`), mirrored onto every master page the same way
+    /// `settingTheme(_:)` mirrors the catalog.
+    public func settingActiveThemeID(_ themeID: UUID?) -> SlideDeck {
+        var updated = self
+        var pages = effectiveMasterPages
+        for key in pages.keys { pages[key]?.activeThemeID = themeID }
+        updated.masterPages = pages
+        return updated
     }
 }

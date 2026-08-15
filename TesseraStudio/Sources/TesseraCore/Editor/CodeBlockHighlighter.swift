@@ -114,7 +114,10 @@ public struct CodeBlockHighlighter: @unchecked Sendable {
     }
 
     #if canImport(Splash)
-    private func makeSplashTheme() -> Theme {
+    // Qualified Splash.Theme, not bare Theme: TesseraCore itself gained a
+    // Theme type (Materials/Slides/Theme.swift, P1 1.5) that would
+    // otherwise shadow Splash's same-named type in this module's scope.
+    private func makeSplashTheme() -> Splash.Theme {
         let splashFont = Font(size: Double(font.pointSize))
         var tokenColors: [TokenType: PlatformColor] = [:]
         tokenColors[.keyword] = PlatformColor.fromHex(theme.keyword) ?? .systemPurple
@@ -126,7 +129,7 @@ public struct CodeBlockHighlighter: @unchecked Sendable {
         tokenColors[.property] = PlatformColor.fromHex(theme.identifier) ?? .labelColor
         tokenColors[.dotAccess] = PlatformColor.fromHex(theme.operator) ?? .systemPurple
         tokenColors[.preprocessing] = PlatformColor.fromHex(theme.keyword) ?? .systemPurple
-        return Theme(
+        return Splash.Theme(
             font: splashFont,
             plainTextColor: PlatformColor.fromHex(theme.plain) ?? .labelColor,
             tokenColors: tokenColors,
