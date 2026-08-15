@@ -423,6 +423,13 @@ std::mutex         g_init_mutex;
 std::mutex         g_dispatch_mutex;
 std::atomic<int>   g_avail{0};   // -1 = untried/failed-final, 0 = unavailable, 1 = available
 
+// Stream accessor for the rocBLAS shim (tessera-rocblas.cpp). Returns the
+// process-global HIP stream when the Metal/HIP lane is initialized,
+// nullptr otherwise (callers fall back to the HIP default stream).
+extern "C" hipStream_t ts_metal_hip_stream() {
+    return (g_ctx != nullptr) ? g_ctx->stream : nullptr;
+}
+
 // Grow-only device scratch: hipMalloc of large buffers is expensive, and the
 // GA hot path dispatches hundreds of evals per layer. Buffers only grow;
 // ts_metal_shutdown frees them.

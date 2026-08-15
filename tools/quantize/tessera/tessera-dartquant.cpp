@@ -31,6 +31,8 @@
 #elif defined(GGML_USE_OPENBLAS)
 #include <cblas.h>
 #define TS_HAS_CBLAS 1
+#elif defined(TS_USE_ROCBLAS)
+#include "tessera-rocblas.h"
 #endif
 
 #include <cmath>
@@ -86,6 +88,21 @@ static void ts_dq_matmul(const float * A, const float * B, float * C,
                 (int)m, (int)n, (int)k,
                 1.0, Ad.data(), (int)k, Bd.data(), (int)n, 0.0, Cd.data(), (int)n);
     for (int64_t i = 0; i < m * n; i++) C[i] = (float)Cd[i];
+#elif defined(TS_USE_ROCBLAS)
+    std::vector<double> Ad((size_t)m * k), Bd((size_t)k * n), Cd((size_t)m * n);
+    for (int64_t i = 0; i < m * k; i++) Ad[i] = (double)A[i];
+    for (int64_t i = 0; i < k * n; i++) Bd[i] = (double)B[i];
+    {
+        const double alpha = 1.0;
+        const double beta  = 0.0;
+        rocblas_dgemm(ts_rocblas_handle(),
+                      rocblas_operation_none,
+                      rocblas_operation_none,
+                      (int)n, (int)m, (int)k,
+                      &alpha, Bd.data(), (int)n, Ad.data(), (int)k,
+                      &beta,  Cd.data(), (int)n);
+    }
+    for (int64_t i = 0; i < m * n; i++) C[i] = (float)Cd[i];
 #else
     for (int64_t i = 0; i < m; i++) {
         for (int64_t j = 0; j < n; j++) {
@@ -110,6 +127,21 @@ static void ts_dq_matmul_atb(const float * A, const float * B, float * C,
     cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
                 (int)n, (int)k, (int)m,
                 1.0, Ad.data(), (int)n, Bd.data(), (int)k, 0.0, Cd.data(), (int)k);
+    for (int64_t i = 0; i < n * k; i++) C[i] = (float)Cd[i];
+#elif defined(TS_USE_ROCBLAS)
+    std::vector<double> Ad((size_t)m * n), Bd((size_t)m * k), Cd((size_t)n * k);
+    for (int64_t i = 0; i < m * n; i++) Ad[i] = (double)A[i];
+    for (int64_t i = 0; i < m * k; i++) Bd[i] = (double)B[i];
+    {
+        const double alpha = 1.0;
+        const double beta  = 0.0;
+        rocblas_dgemm(ts_rocblas_handle(),
+                      rocblas_operation_transpose,
+                      rocblas_operation_none,
+                      (int)k, (int)n, (int)m,
+                      &alpha, Bd.data(), (int)k, Ad.data(), (int)n,
+                      &beta,  Cd.data(), (int)k);
+    }
     for (int64_t i = 0; i < n * k; i++) C[i] = (float)Cd[i];
 #else
     for (int64_t i = 0; i < n; i++) {
@@ -136,6 +168,21 @@ static void ts_dq_matmul_abt(const float * A, const float * B, float * C,
     cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
                 (int)m, (int)n, (int)k,
                 1.0, Ad.data(), (int)k, Bd.data(), (int)k, 0.0, Cd.data(), (int)n);
+    for (int64_t i = 0; i < m * n; i++) C[i] = (float)Cd[i];
+#elif defined(TS_USE_ROCBLAS)
+    std::vector<double> Ad((size_t)m * k), Bd((size_t)n * k), Cd((size_t)m * n);
+    for (int64_t i = 0; i < m * k; i++) Ad[i] = (double)A[i];
+    for (int64_t i = 0; i < n * k; i++) Bd[i] = (double)B[i];
+    {
+        const double alpha = 1.0;
+        const double beta  = 0.0;
+        rocblas_dgemm(ts_rocblas_handle(),
+                      rocblas_operation_transpose,
+                      rocblas_operation_none,
+                      (int)n, (int)m, (int)k,
+                      &alpha, Bd.data(), (int)k, Ad.data(), (int)k,
+                      &beta,  Cd.data(), (int)n);
+    }
     for (int64_t i = 0; i < m * n; i++) C[i] = (float)Cd[i];
 #else
     for (int64_t i = 0; i < m; i++) {
@@ -334,6 +381,24 @@ static float ts_output_mse_and_grad(const float * W, const float * R,
                     0.0, dL_dWp_d.data(), (int)K);
         for (int64_t i = 0; i < out_dim * K; i++)
             dL_dWp[i] = (float)dL_dWp_d[i];
+#elif defined(TS_USE_ROCBLAS)
+        std::vector<double> err_d((size_t)out_dim * X_count);
+        std::vector<double> X_d((size_t)X_count * K);
+        std::vector<double> dL_dWp_d((size_t)out_dim * K);
+        for (int64_t i = 0; i < out_dim * X_count; i++) err_d[i] = (double)err[i];
+        for (int64_t i = 0; i < X_count * K; i++) X_d[i] = (double)X[i];
+        {
+            const double alpha = inv;
+            const double beta  = 0.0;
+            rocblas_dgemm(ts_rocblas_handle(),
+                          rocblas_operation_none,
+                          rocblas_operation_none,
+                          (int)K, (int)out_dim, (int)X_count,
+                          &alpha, X_d.data(), (int)K, err_d.data(), (int)X_count,
+                          &beta,  dL_dWp_d.data(), (int)K);
+        }
+        for (int64_t i = 0; i < out_dim * K; i++)
+            dL_dWp[i] = (float)dL_dWp_d[i];
 #else
         for (int64_t o = 0; o < out_dim; o++) {
             for (int64_t j = 0; j < K; j++) {
@@ -507,6 +572,28 @@ void ts_dartquant_apply(const float * W, const float * R,
                     (int)out_dim, (int)block_size, (int)block_size,
                     1.0, Wd.data(), (int)block_size, Rd.data(), (int)block_size,
                     0.0, Cd.data(), (int)block_size);
+        for (int64_t i = 0; i < out_dim; i++)
+            for (int64_t j = 0; j < block_size; j++)
+                W_rot[i*in_dim + col_off + j] = (float)Cd[i*block_size + j];
+#elif defined(TS_USE_ROCBLAS)
+        std::vector<double> Wd((size_t)out_dim * block_size);
+        std::vector<double> Rd((size_t)block_size * block_size);
+        std::vector<double> Cd((size_t)out_dim * block_size);
+        for (int64_t i = 0; i < out_dim; i++)
+            for (int64_t k = 0; k < block_size; k++)
+                Wd[i*block_size + k] = (double)W[i*in_dim + col_off + k];
+        for (int64_t i = 0; i < block_size * block_size; i++)
+            Rd[i] = (double)R[i];
+        {
+            const double alpha = 1.0;
+            const double beta  = 0.0;
+            rocblas_dgemm(ts_rocblas_handle(),
+                          rocblas_operation_none,
+                          rocblas_operation_none,
+                          (int)block_size, (int)out_dim, (int)block_size,
+                          &alpha, Rd.data(), (int)block_size, Wd.data(), (int)block_size,
+                          &beta,  Cd.data(), (int)block_size);
+        }
         for (int64_t i = 0; i < out_dim; i++)
             for (int64_t j = 0; j < block_size; j++)
                 W_rot[i*in_dim + col_off + j] = (float)Cd[i*block_size + j];

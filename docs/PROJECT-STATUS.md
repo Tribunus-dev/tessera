@@ -213,6 +213,7 @@ integration work is bringing Tessera's commits onto current master:
 | DSpark drafter | 33 % accept on Q4_0 (1-step), 11 % on Q5_K_M (3-step) | via dspark-gguf-patch |
 | Per-tensor quant policy loading | ready | `tile640_quantize_v3.py --calibration-policy` |
 | Kernel-direct GA fitness (L6) | ready | `kernel-fitness --enabled --dir --blend` |
+| rocBLAS BLAS lane (AMD) | ready | `tools/quantize/tessera/tessera-rocblas.{h,cpp}`; 17 cblas sites + `ts_mm_awq_mse` sgemm rewrite; bound to HIP stream |
 | ANE MTP prefill | compiles, untested runtime | `common/ane-mtp.{h,mm}` |
 | XDNA NPU runtime (AMD Ryzen AI) | M1 device foundation (heap BO, identity, SHMEM+DEV BO alloc/sync, xclbin parse); context create best-effort on AIE 1.1 + amdxdna v7.1.y | `common/xdna-runtime.{h,cpp}` |
 | `dft.` observer prefix | applied | `src/llama-graph.cpp` |

@@ -37,6 +37,8 @@
 #elif defined(GGML_USE_OPENBLAS)
 #include <cblas.h>
 #define TS_HAS_CBLAS 1
+#elif defined(TS_USE_ROCBLAS)
+#include "tessera-rocblas.h"
 #endif
 
 #include <algorithm>
@@ -343,6 +345,23 @@ static void ts_fitness_matmul_at(const float * A, const float * B,
     cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
                 (int)M, (int)N, (int)K,
                 1.0f, A, (int)K, B, (int)K, 0.0f, C, (int)N);
+#elif defined(TS_USE_ROCBLAS)
+    // rocBLAS is column-major. The cblas_sgemm above computes
+    //   C(M,N) = A(M,K) * B^T(K,N)            (row-major)
+    // which in column-major view is
+    //   C^T(N,M) = B(N,K) * A^T(K,M)          (col-major)
+    // so we swap operand order and flip op(A) <-> op(B). lda/ldb follow the
+    // col-major operand leading dimensions (K for both B and A).
+    {
+        const float alpha = 1.0f;
+        const float beta  = 0.0f;
+        rocblas_sgemm(ts_rocblas_handle(),
+                      rocblas_operation_transpose,
+                      rocblas_operation_none,
+                      (int)N, (int)M, (int)K,
+                      &alpha, B, (int)K, A, (int)K,
+                      &beta,  C, (int)N);
+    }
 #else
     for (int64_t t = 0; t < M; t++) {
         const float * arow = A + t * K;

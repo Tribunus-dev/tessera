@@ -328,6 +328,37 @@ else()
         target_link_libraries(${TARGET} PRIVATE hip::host)
         set(TS_GPU_LANE TRUE)
         message(STATUS "Tessera: HIP GPU lane enabled (ROCm ${hip_VERSION})")
+
+        # Third BLAS dispatch lane: rocBLAS. Selected at runtime via the
+        # TS_USE_ROCBLAS define; falls back to the cblas / OpenBLAS / scalar
+        # path when rocBLAS is missing (or when rocblas.h is not on the
+        # include path). Same OBJECT-library + LANGUAGE-HIP split as
+        # tessera-metal-hip above so rocBLAS's HIP-bound compilation does
+        # not poison the CXX-only ${TARGET} compile graph.
+        # rocblas-config.cmake calls find_dependency(hip) which resets the
+        # search path; forward the hip cmake dir we already located so the
+        # dependency resolves. Same role for the include path - rocblas.h
+        # ships under <prefix>/include/rocblas/rocblas.h, not the top-level.
+        if(EXISTS "${ROCM_PATH}/lib64/cmake/hip/hip-config.cmake")
+            set(hip_DIR "${ROCM_PATH}/lib64/cmake/hip")
+        endif()
+        find_package(rocblas QUIET)
+        find_path(TS_ROCBLAS_INCLUDE_DIR NAMES rocblas.h PATH_SUFFIXES rocblas)
+        if(rocblas_FOUND AND TS_ROCBLAS_INCLUDE_DIR)
+            add_library(tessera-rocblas OBJECT tessera/tessera-rocblas.cpp)
+            set_target_properties(tessera-rocblas PROPERTIES POSITION_INDEPENDENT_CODE ON)
+            set_source_files_properties(tessera/tessera-rocblas.cpp PROPERTIES LANGUAGE HIP)
+            target_include_directories(tessera-rocblas PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/tessera
+                ${TS_ROCBLAS_INCLUDE_DIR})
+            target_link_libraries(tessera-rocblas PRIVATE hip::device roc::rocblas)
+            target_sources(${TARGET} PRIVATE $<TARGET_OBJECTS:tessera-rocblas>)
+            target_link_libraries(${TARGET} PUBLIC roc::rocblas)
+            target_compile_definitions(${TARGET} PUBLIC TS_USE_ROCBLAS)
+            message(STATUS "Tessera: rocBLAS BLAS lane enabled (${rocblas_VERSION})")
+        else()
+            message(STATUS "Tessera: rocBLAS not found - cblas / OpenBLAS BLAS lane in use")
+        endif()
     else()
         target_sources(${TARGET} PRIVATE tessera/tessera-metal-stub.cpp)
         message(STATUS "Tessera: HIP not found - GPU lane stubbed (CPU fallback)")

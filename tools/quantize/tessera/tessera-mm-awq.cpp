@@ -12,6 +12,19 @@
 
 #include "tessera-mm-awq.h"
 
+#if defined(__APPLE__)
+#ifndef ACCELERATE_NEW_LAPACK
+#define ACCELERATE_NEW_LAPACK
+#endif
+#include <Accelerate/Accelerate.h>
+#define TS_HAS_CBLAS 1
+#elif defined(GGML_USE_OPENBLAS)
+#include <cblas.h>
+#define TS_HAS_CBLAS 1
+#elif defined(TS_USE_ROCBLAS)
+#include "tessera-rocblas.h"
+#endif
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -115,15 +128,48 @@ static float ts_mm_awq_mse(const float * weights, const float * act,
                            const float * scale) {
     double err = 0.0;
     if (calib_X != nullptr && ref_output != nullptr && n_tokens > 0) {
+        // Materialize the quantized weight Wq[r, c] = clamp(round(W*scale), -1, 1) / scale.
+        std::vector<float> Wq((size_t)out_dim * in_dim);
+        for (int64_t r = 0; r < out_dim; r++) {
+            for (int64_t c = 0; c < in_dim; c++) {
+                float q = std::round(weights[r * in_dim + c] * scale[c]);
+                q = std::min(std::max(q, -1.0f), 1.0f);
+                Wq[r * in_dim + c] = q / scale[c];
+            }
+        }
+        // acc[r, t] = sum_c Wq[r, c] * X[t, c] = Wq @ X^T  (out_dim x n_tokens).
+        std::vector<float> acc((size_t)out_dim * n_tokens);
+#if defined(TS_HAS_CBLAS)
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                    (int)out_dim, (int)n_tokens, (int)in_dim,
+                    1.0f, Wq.data(), (int)in_dim, calib_X, (int)in_dim,
+                    0.0f, acc.data(), (int)n_tokens);
+#elif defined(TS_USE_ROCBLAS)
+        {
+            const float alpha = 1.0f;
+            const float beta  = 0.0f;
+            rocblas_sgemm(ts_rocblas_handle(),
+                          rocblas_operation_transpose,
+                          rocblas_operation_none,
+                          (int)n_tokens, (int)out_dim, (int)in_dim,
+                          &alpha, calib_X, (int)in_dim, Wq.data(), (int)in_dim,
+                          &beta,  acc.data(), (int)n_tokens);
+        }
+#else
         for (int64_t r = 0; r < out_dim; r++) {
             for (int64_t t = 0; t < n_tokens; t++) {
-                float acc = 0.0f;
+                double s = 0.0;
                 for (int64_t c = 0; c < in_dim; c++) {
-                    float q = std::round(weights[r * in_dim + c] * scale[c]);
-                    q = std::min(std::max(q, -1.0f), 1.0f);
-                    acc += (q / scale[c]) * calib_X[t * in_dim + c];
+                    s += (double)Wq[r * in_dim + c] * (double)calib_X[t * in_dim + c];
                 }
-                double d = (double)acc - (double)ref_output[t * out_dim + r];
+                acc[r * n_tokens + t] = (float)s;
+            }
+        }
+#endif
+        for (int64_t r = 0; r < out_dim; r++) {
+            for (int64_t t = 0; t < n_tokens; t++) {
+                double d = (double)acc[r * n_tokens + t]
+                         - (double)ref_output[t * out_dim + r];
                 err += d * d;
             }
         }

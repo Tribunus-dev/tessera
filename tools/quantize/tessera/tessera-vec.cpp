@@ -17,6 +17,8 @@
 #include <Accelerate/Accelerate.h>
 #elif defined(GGML_USE_OPENBLAS)
 #include <cblas.h>
+#elif defined(TS_USE_ROCBLAS)
+#include "tessera-rocblas.h"
 #endif
 
 #include <cmath>
@@ -122,6 +124,10 @@ float ts_vec_dotpr(const float * a, const float * b, int64_t n) {
     return r;
 #elif defined(GGML_USE_OPENBLAS)
     return cblas_sdot((int)n, a, 1, b, 1);
+#elif defined(TS_USE_ROCBLAS)
+    float r = 0.0f;
+    rocblas_sdot(ts_rocblas_handle(), (int)n, a, 1, b, 1, &r);
+    return r;
 #else
     float s = 0.0f;
     for (int64_t i = 0; i < n; ++i) {
@@ -290,6 +296,23 @@ void ts_mat_mul(const float * A, const float * B, float * C,
     cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
                 (int)M, (int)N, (int)K,
                 1.0f, A, (int)K, B, (int)N, 0.0f, C, (int)N);
+#elif defined(TS_USE_ROCBLAS)
+    // rocBLAS is column-major. The cblas_sgemm above computes
+    //   C(M,N) = A(M,K) * B(K,N)                 (row-major)
+    // which in column-major view is
+    //   C^T(N,M) = B^T(N,K) * A^T(K,M)           (col-major)
+    // so we swap operand order; both A and B keep NoTrans because the
+    // col-major view sees them transposed already.
+    {
+        const float alpha = 1.0f;
+        const float beta  = 0.0f;
+        rocblas_sgemm(ts_rocblas_handle(),
+                      rocblas_operation_none,
+                      rocblas_operation_none,
+                      (int)N, (int)M, (int)K,
+                      &alpha, B, (int)N, A, (int)K,
+                      &beta,  C, (int)N);
+    }
 #else
     for (int64_t i = 0; i < M; ++i) {
         for (int64_t j = 0; j < N; ++j) {
@@ -313,6 +336,24 @@ void ts_mat_mul_at(const float * A, const float * B, float * C,
     cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
                 (int)M, (int)N, (int)K,
                 1.0f, A, (int)M, B, (int)N, 0.0f, C, (int)N);
+#elif defined(TS_USE_ROCBLAS)
+    // rocBLAS is column-major. The cblas_sgemm above computes
+    //   C(M,N) = A^T(M,K) * B(K,N)               (row-major, A stored as KxM)
+    // which in column-major view is
+    //   C^T(N,M) = B^T(N,K) * A(M,K)             (col-major)
+    // B is read transposed (to match its col-major view of the row-major
+    // KxN storage); A is read as-is (its col-major view is the KxM transposed
+    // form, which is exactly what we want to be A(M,K)).
+    {
+        const float alpha = 1.0f;
+        const float beta  = 0.0f;
+        rocblas_sgemm(ts_rocblas_handle(),
+                      rocblas_operation_transpose,
+                      rocblas_operation_none,
+                      (int)N, (int)M, (int)K,
+                      &alpha, B, (int)N, A, (int)M,
+                      &beta,  C, (int)N);
+    }
 #else
     // A stored as (K x M): element A[k][m] lives at A[k * M + m]
     for (int64_t i = 0; i < M; ++i) {

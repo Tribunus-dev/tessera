@@ -11,6 +11,8 @@
 #elif defined(GGML_USE_OPENBLAS)
 #include <cblas.h>
 #define TS_HAS_CBLAS 1
+#elif defined(TS_USE_ROCBLAS)
+#include "tessera-rocblas.h"
 #endif
 
 #include <cmath>
@@ -222,6 +224,17 @@ static float ts_champq_eval(const float * x, float * grad, int64_t n, void * ctx
     cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
                 (int)out_dim, (int)K, (int)K,
                 1.0f, W, (int)K, x, (int)K, 0.0f, W_perm.data(), (int)K);
+#elif defined(TS_USE_ROCBLAS)
+    {
+        const float alpha = 1.0f;
+        const float beta  = 0.0f;
+        rocblas_sgemm(ts_rocblas_handle(),
+                      rocblas_operation_none,
+                      rocblas_operation_none,
+                      (int)K, (int)out_dim, (int)K,
+                      &alpha, x, (int)K, W, (int)K,
+                      &beta,  W_perm.data(), (int)K);
+    }
 #else
     for (int64_t r = 0; r < out_dim; r++) {
         const float * Wr = W + r * K;
@@ -277,6 +290,17 @@ static float ts_champq_eval(const float * x, float * grad, int64_t n, void * ctx
                 (int)K, (int)K, (int)out_dim,
                 1.0f, W, (int)K, g.data(), (int)K,
                 0.0f, grad, (int)K);
+#elif defined(TS_USE_ROCBLAS)
+    {
+        const float alpha = 1.0f;
+        const float beta  = 0.0f;
+        rocblas_sgemm(ts_rocblas_handle(),
+                      rocblas_operation_transpose,
+                      rocblas_operation_none,
+                      (int)K, (int)K, (int)out_dim,
+                      &alpha, W, (int)K, g.data(), (int)K,
+                      &beta,  grad, (int)K);
+    }
 #else
     for (int64_t i = 0; i < K; i++) {
         for (int64_t k = 0; k < K; k++) {
