@@ -24,8 +24,8 @@ final class FieldControllerTests: DoctrineTestCase {
 
     private let fixedClock: () -> Date = { Date(timeIntervalSince1970: 1_700_000_000) }
 
-    private func fieldBlock(kind: FieldKind, dirty: Bool = true) -> Block {
-        var block = Block(type: .field)
+    private func fieldBlock(id: UUID = UUID(), kind: FieldKind, dirty: Bool = true) -> Block {
+        var block = Block(id: id, type: .field)
         block.field = FieldSpec(kind: kind, dirty: dirty)
         return block
     }
@@ -98,9 +98,9 @@ final class FieldControllerTests: DoctrineTestCase {
         let secondID = UUID()
         let thirdID = UUID() // different sequence name - must not share the counter
         var ast = DocumentAST()
-        ast.blocks[firstID] = fieldBlock(kind: .sequence(name: "Figure"))
-        ast.blocks[secondID] = fieldBlock(kind: .sequence(name: "Figure"))
-        ast.blocks[thirdID] = fieldBlock(kind: .sequence(name: "Table"))
+        ast.blocks[firstID] = fieldBlock(id: firstID, kind: .sequence(name: "Figure"))
+        ast.blocks[secondID] = fieldBlock(id: secondID, kind: .sequence(name: "Figure"))
+        ast.blocks[thirdID] = fieldBlock(id: thirdID, kind: .sequence(name: "Table"))
         ast.rootChildren = [firstID, secondID, thirdID]
 
         let firstRefreshed = FieldController.refresh(ast.blocks[firstID]!, in: ast, clock: fixedClock)
@@ -118,7 +118,7 @@ final class FieldControllerTests: DoctrineTestCase {
     func testSequenceFieldNotYetInAstCountsAsNextOrdinal() {
         let existingID = UUID()
         var ast = DocumentAST()
-        ast.blocks[existingID] = fieldBlock(kind: .sequence(name: "Figure"))
+        ast.blocks[existingID] = fieldBlock(id: existingID, kind: .sequence(name: "Figure"))
         ast.rootChildren = [existingID]
 
         let detached = fieldBlock(kind: .sequence(name: "Figure"))
