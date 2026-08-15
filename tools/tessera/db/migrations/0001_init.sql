@@ -82,9 +82,22 @@ CREATE TABLE IF NOT EXISTS entity_links (
 -- `signature` is a 64-byte ed25519 signature; ABSENT (NULL) for now --
 -- signing is a follow-up but the column exists so the schema doesn't
 -- need to migrate when signing lands.
+--
+-- entity_id is deliberately NOT a foreign key. This table is the
+-- permanent, append-only audit trail ("constitutional" receipt log) --
+-- it must keep recording history for an entity that has since been
+-- deleted, and a store's own "entity deleted" receipt is itself
+-- written AFTER the entity row is gone. A `REFERENCES graph_entities
+-- (id) ON DELETE CASCADE` here does the opposite of what an audit log
+-- needs on both counts: it silently wipes prior receipts the moment
+-- their entity is deleted, and it makes the deletion receipt itself
+-- impossible to insert (FK violation, since the parent row no longer
+-- exists by the time the store appends it). Every store's own
+-- `receipts(for:)` lookup already scopes by entity_id at the
+-- application layer, so no join ever required the constraint.
 CREATE TABLE IF NOT EXISTS graph_receipts (
     id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    entity_id       uuid NOT NULL REFERENCES graph_entities(id) ON DELETE CASCADE,
+    entity_id       uuid NOT NULL,
     receipt_type    text NOT NULL,
     payload         jsonb NOT NULL,
     signature       bytea,
