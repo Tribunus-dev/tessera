@@ -43,6 +43,17 @@ final class BlockTests: XCTestCase {
             // Chart (P1 1.3): series-typed chart spec via the
             // attributes["chart"] bridge, same pattern as .shape.
             .chart,
+            // Field (P1 1.1): page/date/ref/sequence/... field spec via
+            // the attributes["field"] bridge, same pattern as .shape.
+            .field,
+            // Footnote/endnote (P1 1.2): out-of-flow note body blocks
+            // registered in DocumentMeta.notes; in-text refs via
+            // InlineRun.Annotation.noteRef(UUID); numbering derived,
+            // never stored - see DocumentAST.deriveNoteNumbering().
+            .footnote, .endnote,
+            // Media (P1 1.4): audio/video object via the
+            // attributes["media"] bridge, same pattern as .shape/.chart.
+            .media,
         ]
         XCTAssertEqual(Set(BlockType.allCases), expected)
     }
@@ -173,6 +184,95 @@ final class BlockTests: XCTestCase {
         XCTAssertEqual(decoded.meta.pageLayout.pageWidth, 595)
     }
 
+    // MARK: - Notes (footnote/endnote) + DocumentMeta.notes
+
+    func testNoteRegistryRoundTripsThroughDocumentMeta() throws {
+        let footnoteBody = Block(type: .footnote, content: [InlineRun(text: "a footnote")])
+        var ast = DocumentAST(blocks: [:], rootChildren: [])
+        ast.meta.notes[footnoteBody.id] = footnoteBody
+
+        let decoded = try DocumentAST.from(jsonData: try ast.jsonData())
+        XCTAssertEqual(decoded.meta.notes[footnoteBody.id]?.type, .footnote)
+        XCTAssertEqual(decoded.meta.notes[footnoteBody.id]?.content.first?.text, "a footnote")
+    }
+
+    func testDocumentMetaWithoutNotesKeyDecodesAsEmpty() throws {
+        // A document written after .section shipped (P0) but before
+        // .footnote/.endnote shipped (P1 1.2) has a "sections" key but
+        // no "notes" key at all - the decoder must default to empty,
+        // not throw. Same shape as testDocumentMetaWithoutSectionsKeyDecodesAsEmpty
+        // above, one field later in the timeline.
+        let json = """
+        {"blocks": {}, "rootChildren": [], "meta": {"pageLayout": {
+            "pageWidth": 595, "pageHeight": 842,
+            "marginTop": 72, "marginBottom": 72, "marginLeft": 72, "marginRight": 72,
+            "columnCount": 1, "columnGap": 18, "pageColor": "#FFFFFF"
+        }, "sections": {}}}
+        """
+        let decoded = try DocumentAST.from(jsonData: Data(json.utf8))
+        XCTAssertTrue(decoded.meta.notes.isEmpty)
+        XCTAssertEqual(decoded.meta.pageLayout.pageWidth, 595)
+    }
+
+    // MARK: - Note numbering (DocumentAST.deriveNoteNumbering)
+
+    func testNoteNumberingReorderRederivesFootnoteAndEndnoteSequencesIndependently() {
+        let footnoteA = Block(type: .footnote, content: [InlineRun(text: "fn a")])
+        let footnoteB = Block(type: .footnote, content: [InlineRun(text: "fn b")])
+        let endnoteX = Block(type: .endnote, content: [InlineRun(text: "en x")])
+
+        // Reading order: the paragraph referencing footnote B comes
+        // first, then the one referencing footnote A, then the endnote.
+        let p1 = Block(type: .paragraph, content: [InlineRun(text: "one", annotations: [.noteRef(footnoteB.id)])])
+        let p2 = Block(type: .paragraph, content: [InlineRun(text: "two", annotations: [.noteRef(footnoteA.id)])])
+        let p3 = Block(type: .paragraph, content: [InlineRun(text: "three", annotations: [.noteRef(endnoteX.id)])])
+
+        var ast = DocumentAST(
+            blocks: [p1.id: p1, p2.id: p2, p3.id: p3],
+            rootChildren: [p1.id, p2.id, p3.id]
+        )
+        ast.meta.notes[footnoteA.id] = footnoteA
+        ast.meta.notes[footnoteB.id] = footnoteB
+        ast.meta.notes[endnoteX.id] = endnoteX
+
+        let numbering = ast.deriveNoteNumbering()
+        XCTAssertEqual(numbering.footnotes[footnoteB.id], 1)
+        XCTAssertEqual(numbering.footnotes[footnoteA.id], 2)
+        XCTAssertEqual(numbering.endnotes[endnoteX.id], 1)
+
+        // Reorder: swap which footnote-referencing paragraph comes
+        // first in reading order. The numbers must swap accordingly.
+        ast.rootChildren = [p2.id, p1.id, p3.id]
+        let reordered = ast.deriveNoteNumbering()
+        XCTAssertEqual(reordered.footnotes[footnoteA.id], 1)
+        XCTAssertEqual(reordered.footnotes[footnoteB.id], 2)
+        XCTAssertEqual(reordered.endnotes[endnoteX.id], 1)
+    }
+
+    func testNoteNumberingNumbersOnlyOnFirstOccurrenceOfARepeatedReference() {
+        let footnote = Block(type: .footnote, content: [InlineRun(text: "shared")])
+        let p1 = Block(type: .paragraph, content: [InlineRun(text: "one", annotations: [.noteRef(footnote.id)])])
+        let p2 = Block(type: .paragraph, content: [InlineRun(text: "two", annotations: [.noteRef(footnote.id)])])
+        var ast = DocumentAST(blocks: [p1.id: p1, p2.id: p2], rootChildren: [p1.id, p2.id])
+        ast.meta.notes[footnote.id] = footnote
+
+        let numbering = ast.deriveNoteNumbering()
+        XCTAssertEqual(numbering.footnotes.count, 1)
+        XCTAssertEqual(numbering.footnotes[footnote.id], 1)
+    }
+
+    func testNoteNumberingSkipsDanglingReference() {
+        // A noteRef pointing at a UUID absent from meta.notes contributes
+        // no number in either sequence.
+        let dangling = UUID()
+        let p1 = Block(type: .paragraph, content: [InlineRun(text: "one", annotations: [.noteRef(dangling)])])
+        let ast = DocumentAST(blocks: [p1.id: p1], rootChildren: [p1.id])
+
+        let numbering = ast.deriveNoteNumbering()
+        XCTAssertTrue(numbering.footnotes.isEmpty)
+        XCTAssertTrue(numbering.endnotes.isEmpty)
+    }
+
     // MARK: - InlineRun
 
     func testPlainInlineRun() throws {
@@ -254,6 +354,19 @@ final class BlockTests: XCTestCase {
             XCTAssertEqual(hex, "#FF00FF")
         } else {
             XCTFail("expected .color annotation")
+        }
+    }
+
+    func testNoteRefAnnotation() throws {
+        let noteID = UUID()
+        let run = InlineRun(text: "text*", annotations: [.noteRef(noteID)])
+        let data = try JSONEncoder().encode(run)
+        let decoded = try JSONDecoder().decode(InlineRun.self, from: data)
+        XCTAssertEqual(decoded.annotations.count, 1)
+        if case .noteRef(let decodedID) = decoded.annotations[0] {
+            XCTAssertEqual(decodedID, noteID)
+        } else {
+            XCTFail("expected .noteRef annotation")
         }
     }
 

@@ -108,6 +108,12 @@ public struct BlockRenderer: Sendable {
             return renderSectionMarker(block, mode: mode)
         case .frame:
             return renderFrameMarker(block, mode: mode)
+        case .field:
+            return renderFieldPlaceholder(block, mode: mode)
+        case .footnote, .endnote:
+            return renderNotePlaceholder(block, mode: mode)
+        case .media:
+            return renderMediaPlaceholder(block, mode: mode)
         }
     }
 
@@ -228,6 +234,42 @@ public struct BlockRenderer: Sendable {
         let title = block.chart?.title ?? "Chart"
         return NSAttributedString(
             string: "[\(title)]",
+            attributes: [
+                .font: fontResolver.font(from: theme.bodyFont),
+                .foregroundColor: PlatformColor.secondaryLabelColor,
+            ]
+        )
+    }
+
+    /// A `.field`'s cached `content` already holds the resolved text as
+    /// ordinary runs (`FieldController`'s own contract), so a field
+    /// encountered here renders through the normal inline path, not a
+    /// bracketed placeholder - there is real text to show.
+    private func renderFieldPlaceholder(_ block: Block, mode: EditorMode) -> NSAttributedString {
+        renderInline(block.content, mode: mode)
+    }
+
+    /// `.footnote`/`.endnote` are out-of-flow note bodies (registered in
+    /// `DocumentMeta.notes`, referenced in-text via
+    /// `InlineRun.Annotation.noteRef`) - not normally walked as a
+    /// top-level content block. This placeholder exists so the switch
+    /// stays exhaustive if one is ever encountered directly, matching
+    /// `renderShapePlaceholder`'s own rationale.
+    private func renderNotePlaceholder(_ block: Block, mode: EditorMode) -> NSAttributedString {
+        let text = block.content.map { $0.text }.joined()
+        return NSAttributedString(
+            string: text.isEmpty ? "[Note]" : text,
+            attributes: [
+                .font: fontResolver.font(from: theme.bodyFont),
+                .foregroundColor: PlatformColor.secondaryLabelColor,
+            ]
+        )
+    }
+
+    private func renderMediaPlaceholder(_ block: Block, mode: EditorMode) -> NSAttributedString {
+        let label = block.media.map { $0.kind == .video ? "Video" : "Audio" } ?? "Media"
+        return NSAttributedString(
+            string: "[\(label)]",
             attributes: [
                 .font: fontResolver.font(from: theme.bodyFont),
                 .foregroundColor: PlatformColor.secondaryLabelColor,
@@ -508,6 +550,22 @@ public struct BlockRenderer: Sendable {
         case .color(let hex):
             if let c = PlatformColor.fromHex(hex) {
                 attrs[.foregroundColor] = c
+            }
+        case .noteRef:
+            // The marker's actual number is derived
+            // (DocumentAST.deriveNoteNumbering()), not available from a
+            // single annotation here - style only, same superscript
+            // treatment as .superscript above.
+            if let base = attrs[.font] as? PlatformFont {
+                #if canImport(AppKit)
+                let new = NSFont(descriptor: base.fontDescriptor, size: base.pointSize * 0.75)
+                #elseif canImport(UIKit)
+                let new = UIFont(descriptor: base.fontDescriptor, size: base.pointSize * 0.75)
+                #endif
+                if let new = new {
+                    attrs[.font] = new
+                }
+                attrs[.baselineOffset] = base.pointSize * 0.25
             }
         }
     }

@@ -332,6 +332,24 @@ public final class DocumentExporter: Sendable {
             let f = block.frame
             let style = "position:absolute;left:\(f?.x ?? 0)px;top:\(f?.y ?? 0)px;width:\(f?.width ?? 0)px;height:\(f?.height ?? 0)px;"
             return "<div class=\"frame\" style=\"\(style)\">\n\(items.joined(separator: "\n"))\n</div>"
+
+        case .field:
+            // Cached resolved text, same as any other run-bearing block.
+            let inner = try renderInlineRuns(block.content)
+            return "<span class=\"field\">\(inner)</span>"
+
+        case .footnote, .endnote:
+            // Out-of-flow note bodies (DocumentMeta.notes) - rendered
+            // only if walked directly, matching .shape's own "not the
+            // real UI, just an exhaustive-switch placeholder" rationale.
+            let inner = try renderInlineRuns(block.content)
+            return "<div class=\"note\">\(inner)</div>"
+
+        case .media:
+            let media = block.media
+            let src = media?.sourceURL ?? ""
+            let tag = media?.kind == .video ? "video" : "audio"
+            return "<\(tag) src=\"\(escapeHTML(src))\" controls></\(tag)>"
         }
     }
 
@@ -386,6 +404,13 @@ public final class DocumentExporter: Sendable {
                     hasAnnotations = true
                 case .color:
                     // HTML color annotations are inline styles; omit for compatibility.
+                    hasAnnotations = true
+                case .noteRef:
+                    // The marker's number is derived (DocumentAST.
+                    // deriveNoteNumbering()), not available per-run here;
+                    // <sup> matches the superscript convention every
+                    // word processor uses for a note reference.
+                    part = "<sup>\(part)</sup>"
                     hasAnnotations = true
                 }
             }

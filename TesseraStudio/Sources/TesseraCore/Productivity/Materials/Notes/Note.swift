@@ -205,7 +205,7 @@ public struct Note: Codable, Sendable, Identifiable, Hashable {
     ) {
         guard let block = ast.blocks[blockID] else { return }
         switch block.type {
-        case .paragraph, .heading, .quote, .listItem, .tableCell:
+        case .paragraph, .heading, .quote, .listItem, .tableCell, .field:
             let text = block.content.map { $0.text }.joined()
             if !text.isEmpty { out.append(text) }
         case .codeBlock:
@@ -234,7 +234,7 @@ public struct Note: Codable, Sendable, Identifiable, Hashable {
             }
         case .shape:
             if let text = block.shape?.text?.plainText, !text.isEmpty { out.append(text) }
-        case .toggle, .image, .chart, .divider, .equation, .comment, .trackInsertion, .trackDeletion:
+        case .toggle, .image, .chart, .divider, .equation, .comment, .trackInsertion, .trackDeletion, .footnote, .endnote, .media:
             break
         }
         for child in block.children where block.type != .list && block.type != .table

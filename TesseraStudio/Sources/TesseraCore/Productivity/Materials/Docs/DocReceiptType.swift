@@ -17,6 +17,10 @@ public enum DocReceiptType: String, Codable, Sendable, CaseIterable {
     case revisionAccepted = "doc_revision_accepted"
     /// A track-changes revision was rejected, reverting it (P1 1.14).
     case revisionRejected = "doc_revision_rejected"
+    /// One or more `.field` blocks were refreshed, resolving their
+    /// cached `content` to current values (P1 1.1). Emitted only when
+    /// a refresh actually changed something - see `FieldController`.
+    case fieldsRefreshed = "doc_fields_refreshed"
     /// The document was archived.
     case archive = "doc_archived"
     /// The document was unarchived (restored from archive).

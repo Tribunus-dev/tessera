@@ -246,6 +246,7 @@ public enum Mutation: Codable, Sendable, Hashable {
             case .superscript: label = "superscript"
             case .link: label = "link"
             case .color: label = "color"
+            case .noteRef: label = "note reference"
             }
             return "set \(label) annotation"
         case .setDocumentTitle(let title):

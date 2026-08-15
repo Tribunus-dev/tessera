@@ -100,6 +100,37 @@ public enum BlockType: String, Codable, Sendable, Hashable, CaseIterable {
     /// the JSON-encoded ``ChartSpec`` (kind, series, axes, legend) -
     /// see ``Block/chart``. A leaf: `content` and `children` are unused.
     case chart
+    /// A field (page number, date, ref, sequence, ...) in a Writer
+    /// document. `attributes["field"]` holds the JSON-encoded
+    /// ``FieldSpec`` (kind + dirty flag) - see ``Block/field``.
+    /// `content` holds the CACHED RESOLVED text as ordinary
+    /// `InlineRun`s, not attributes, so `plainText()`/`DocumentExporter`/
+    /// agent context see real text with no field-aware special-casing -
+    /// see ``FieldController/refresh(_:in:clock:)``.
+    case field
+    /// An out-of-flow footnote body in a Writer document. NOT placed
+    /// inline in the document's reading flow - it lives registered in
+    /// ``DocumentMeta/notes`` keyed by this block's own `id` (the
+    /// `headerBlockID`/`footerBlockID` precedent on
+    /// ``DocumentPageLayout``, generalized to a dictionary since a
+    /// document can have many notes). `content` holds the note's own
+    /// text directly, same as `.paragraph`. In-text references point
+    /// at this id via ``InlineRun/Annotation/noteRef(_:)`` without
+    /// embedding the note. The 1..n number shown to the reader is
+    /// DERIVED from reference order, never stored - see
+    /// ``DocumentAST/deriveNoteNumbering()``.
+    case footnote
+    /// An out-of-flow endnote body. Same registry, reference, and
+    /// content shape as ``footnote``; endnotes number independently
+    /// (their own 1..n sequence, not continuing the footnote sequence).
+    case endnote
+    /// An audio/video object on an Impress canvas. `attributes["media"]`
+    /// holds the JSON-encoded ``MediaBlock`` (kind, source, duration,
+    /// poster image, autoplay/loop) - see ``Block/media``. A leaf:
+    /// `content` and `children` are unused. The data model carries no
+    /// AVFoundation type (not simply Codable/Sendable-friendly);
+    /// playback is a view-layer concern that reads this spec.
+    case media
 }
 
 // MARK: - InlineRun
@@ -123,6 +154,12 @@ public struct InlineRun: Codable, Sendable, Hashable {
         case `superscript`
         case link(URL)
         case color(hex: String)
+        /// Points at a `.footnote`/`.endnote` body block's own `id` in
+        /// ``DocumentMeta/notes`` - the in-text reference marker. Does
+        /// not embed the note; the referenced block carries the actual
+        /// text. The displayed number is derived, not carried here -
+        /// see ``DocumentAST/deriveNoteNumbering()``.
+        case noteRef(UUID)
     }
 
     public var text: String
@@ -263,6 +300,61 @@ extension Block {
     }
 }
 
+// MARK: - Block + Field
+
+extension Block {
+    /// Reads/writes the block's ``FieldSpec`` via `attributes["field"]`.
+    /// Same bridge shape as ``Block/shape``/``Block/frame``/``Block/chart``
+    /// and for the same reason: `FieldSpec`'s own `Codable` conformance
+    /// stays the single source of truth for the wire shape. The
+    /// RESOLVED text lives in the block's own `content`, not here -
+    /// see ``FieldController``.
+    public var field: FieldSpec? {
+        get {
+            guard type == .field, let raw = attributes["field"] else { return nil }
+            guard let data = try? JSONEncoder().encode(raw) else { return nil }
+            return try? JSONDecoder().decode(FieldSpec.self, from: data)
+        }
+        set {
+            guard type == .field else { return }
+            guard let newValue else {
+                attributes.removeValue(forKey: "field")
+                return
+            }
+            guard let data = try? JSONEncoder().encode(newValue),
+                  let raw = try? JSONDecoder().decode(AnyCodable.self, from: data) else { return }
+            attributes["field"] = raw
+        }
+    }
+}
+
+// MARK: - Block + Media
+
+extension Block {
+    /// Reads/writes the block's ``MediaBlock`` via `attributes["media"]`.
+    /// Same bridge shape as ``Block/shape``/``Block/frame``/``Block/chart``/
+    /// ``Block/field`` and for the same reason: `MediaBlock`'s own
+    /// `Codable` conformance stays the single source of truth for the
+    /// wire shape.
+    public var media: MediaBlock? {
+        get {
+            guard type == .media, let raw = attributes["media"] else { return nil }
+            guard let data = try? JSONEncoder().encode(raw) else { return nil }
+            return try? JSONDecoder().decode(MediaBlock.self, from: data)
+        }
+        set {
+            guard type == .media else { return }
+            guard let newValue else {
+                attributes.removeValue(forKey: "media")
+                return
+            }
+            guard let data = try? JSONEncoder().encode(newValue),
+                  let raw = try? JSONDecoder().decode(AnyCodable.self, from: data) else { return }
+            attributes["media"] = raw
+        }
+    }
+}
+
 // MARK: - DocumentPageLayout
 
 /// Page layout for a document. Stored in ``DocumentAST/meta``.
@@ -328,13 +420,32 @@ public struct DocumentMeta: Sendable, Hashable {
     /// `attributes["sectionRef"]` - see ``SectionStore``. Keyed by
     /// section ID.
     public var sections: [UUID: DocumentSection]
+    /// Footnote/endnote body blocks (`.footnote`/`.endnote`), keyed
+    /// by their own `id` - the `headerBlockID`/`footerBlockID`
+    /// precedent on ``DocumentPageLayout``, generalized to a
+    /// dictionary since a document can have many notes. In-text
+    /// content points into this registry via
+    /// ``InlineRun/Annotation/noteRef(_:)``; the displayed 1..n
+    /// number is derived from reference order (see
+    /// ``DocumentAST/deriveNoteNumbering()``), never stored here.
+    public var notes: [UUID: Block]
+    /// Paragraph/character/table/list style definitions, keyed by the
+    /// style's own id - the `sections` registry precedent, generalized
+    /// the same way `notes` was: a document can define many styles, and
+    /// `Block.attributes["styleRef"]`/run-level style refs look them up
+    /// by id here rather than embedding them. See ``StyleRegistry``.
+    public var styles: [UUID: StyleDefinition]
 
     public init(
         pageLayout: DocumentPageLayout = DocumentPageLayout(),
-        sections: [UUID: DocumentSection] = [:]
+        sections: [UUID: DocumentSection] = [:],
+        notes: [UUID: Block] = [:],
+        styles: [UUID: StyleDefinition] = [:]
     ) {
         self.pageLayout = pageLayout
         self.sections = sections
+        self.notes = notes
+        self.styles = styles
     }
 }
 
@@ -342,6 +453,8 @@ extension DocumentMeta: Codable {
     private enum CodingKeys: String, CodingKey {
         case pageLayout
         case sections
+        case notes
+        case styles
     }
 
     public init(from decoder: Decoder) throws {
@@ -364,6 +477,38 @@ extension DocumentMeta: Codable {
             sections[uuid] = value
         }
         self.sections = sections
+        // `notes` is new; absent entirely in documents written before
+        // BlockType.footnote/.endnote existed. Same bridge as `sections`,
+        // for the same reason.
+        let rawNotes = try container.decodeIfPresent([String: Block].self, forKey: .notes) ?? [:]
+        var notes: [UUID: Block] = [:]
+        for (key, value) in rawNotes {
+            guard let uuid = UUID(uuidString: key) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .notes,
+                    in: container,
+                    debugDescription: "invalid UUID '\(key)' as note key"
+                )
+            }
+            notes[uuid] = value
+        }
+        self.notes = notes
+        // `styles` is new; absent entirely in documents written before
+        // StyleRegistry existed. Same bridge as `sections`/`notes`, for
+        // the same reason.
+        let rawStyles = try container.decodeIfPresent([String: StyleDefinition].self, forKey: .styles) ?? [:]
+        var styles: [UUID: StyleDefinition] = [:]
+        for (key, value) in rawStyles {
+            guard let uuid = UUID(uuidString: key) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .styles,
+                    in: container,
+                    debugDescription: "invalid UUID '\(key)' as style key"
+                )
+            }
+            styles[uuid] = value
+        }
+        self.styles = styles
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -373,6 +518,14 @@ extension DocumentMeta: Codable {
             acc[entry.key.uuidString] = entry.value
         }
         try container.encode(rawSections, forKey: .sections)
+        let rawNotes = notes.reduce(into: [String: Block]()) { acc, entry in
+            acc[entry.key.uuidString] = entry.value
+        }
+        try container.encode(rawNotes, forKey: .notes)
+        let rawStyles = styles.reduce(into: [String: StyleDefinition]()) { acc, entry in
+            acc[entry.key.uuidString] = entry.value
+        }
+        try container.encode(rawStyles, forKey: .styles)
     }
 }
 
@@ -487,6 +640,63 @@ public struct DocumentAST: Codable, Sendable, Hashable {
         guard let block = blocks[id] else { return }
         out.append(id)
         for child in block.children { walk(child, into: &out) }
+    }
+}
+
+// MARK: - Note numbering (footnote/endnote)
+
+/// Footnote/endnote reference numbers, derived fresh from document
+/// order - never persisted anywhere (not on the block, not in
+/// `DocumentMeta`). Footnotes and endnotes number independently:
+/// each is its own 1-based sequence, matching standard word-processor
+/// convention.
+public struct NoteNumbering: Sendable, Equatable {
+    public var footnotes: [UUID: Int]
+    public var endnotes: [UUID: Int]
+
+    public init(footnotes: [UUID: Int] = [:], endnotes: [UUID: Int] = [:]) {
+        self.footnotes = footnotes
+        self.endnotes = endnotes
+    }
+}
+
+extension DocumentAST {
+    /// Walks the document in ``depthFirstOrder()`` and assigns each
+    /// distinct ``InlineRun/Annotation/noteRef(_:)`` UUID a 1-based
+    /// number the first time it is encountered, scoped by the
+    /// referenced note block's type (`.footnote` or `.endnote`) in
+    /// ``DocumentMeta/notes``. A `noteRef` whose UUID has no entry in
+    /// `meta.notes` (a dangling reference) is skipped - it contributes
+    /// no number in either sequence. Reordering which note is
+    /// referenced first re-derives the numbering; nothing here reads
+    /// or writes stored state.
+    public func deriveNoteNumbering() -> NoteNumbering {
+        var numbering = NoteNumbering()
+        var nextFootnote = 1
+        var nextEndnote = 1
+        for blockID in depthFirstOrder() {
+            guard let block = blocks[blockID] else { continue }
+            for run in block.content {
+                for annotation in run.annotations {
+                    guard case .noteRef(let noteID) = annotation else { continue }
+                    switch meta.notes[noteID]?.type {
+                    case .footnote:
+                        if numbering.footnotes[noteID] == nil {
+                            numbering.footnotes[noteID] = nextFootnote
+                            nextFootnote += 1
+                        }
+                    case .endnote:
+                        if numbering.endnotes[noteID] == nil {
+                            numbering.endnotes[noteID] = nextEndnote
+                            nextEndnote += 1
+                        }
+                    default:
+                        break
+                    }
+                }
+            }
+        }
+        return numbering
     }
 }
 
