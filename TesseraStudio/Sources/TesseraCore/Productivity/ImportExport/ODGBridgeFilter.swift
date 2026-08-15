@@ -334,16 +334,28 @@ public actor ODGBridgeFilter {
         return points
     }
 
-    /// `draw:type`'s exact ODF enumeration (and whether "standard" is
-    /// really the schema default vs. one option among several) was NOT
-    /// verified against a real soffice-produced fodg sample in this
-    /// pass - see this item's report. "standard" is used unconditionally
-    /// rather than attempting to round-trip `ConnectorStyle`
-    /// (straight/curved/elbow) through it, on the theory that a
-    /// probably-the-default value is lower-risk than a guessed
-    /// enumeration that could make soffice reject the whole document.
+    /// `draw:type`'s real ODF enumeration, confirmed empirically against
+    /// LibreOffice 26.2.5.2: hand-authored a fodg with four connectors
+    /// typed "standard"/"lines"/"curve"/(no attribute), round-tripped
+    /// each through real `soffice --convert-to odg` then `--convert-to
+    /// fodg` (twice, to confirm stability), and diffed the resulting
+    /// `draw:connector` elements. Only THREE values are real: "standard"
+    /// is the schema default - writing it explicitly round-trips to no
+    /// `draw:type` attribute at all on soffice's own re-export, same as
+    /// omitting it; "lines" is the one that survives unchanged and is
+    /// the correct target for `ConnectorStyle.straight` (a single
+    /// straight run between each endpoint's short perpendicular stub -
+    /// there is no literal "straight" token: writing `draw:type=
+    /// "straight"` degrades silently to "standard", identical to
+    /// writing a nonsense value like "bogus"); "curve" also survives
+    /// unchanged and is `ConnectorStyle.curved`. Representative observed
+    /// fragments (soffice's own re-export):
+    /// `<draw:connector draw:type="lines" ... svg:d="M4000 2000h501l2998 7000h501" .../>`
+    /// `<draw:connector draw:type="curve" ... svg:d="M4000 24000c1000 0 2000 1750 2000 3500s1000 3500 2000 3500" .../>`
+    /// `<draw:connector ... svg:d="M4000 13000h2000v7000h2000" .../>` (no
+    /// `draw:type` - this one was authored as "standard").
     private static func connectorAttributes(_ shape: Shape, allShapes: [Shape]) -> [String: String] {
-        var attributes: [String: String] = ["draw:type": "standard"]
+        var attributes: [String: String] = ["draw:type": drawType(for: shape.connector?.style ?? .elbow)]
         guard let info = shape.connector else { return attributes }
         var byID: [UUID: Shape] = Dictionary(minimumCapacity: allShapes.count)
         for s in allShapes { byID[s.id] = s }
@@ -369,6 +381,20 @@ public actor ODGBridgeFilter {
         attributes["svg:x2"] = formatLength(Double(end.x))
         attributes["svg:y2"] = formatLength(Double(end.y))
         return attributes
+    }
+
+    /// The three real `draw:type` tokens - see `connectorAttributes`'s
+    /// doc comment for how these were confirmed. `.elbow` writes
+    /// "standard" explicitly (rather than omitting the attribute)
+    /// purely so the PURE `flatODFTree`/`drawing(fromFodgData:)` half
+    /// round-trips `.elbow` correctly on its own, without depending on
+    /// soffice being the one to supply the default.
+    private static func drawType(for style: ConnectorStyle) -> String {
+        switch style {
+        case .straight: return "lines"
+        case .curved: return "curve"
+        case .elbow: return "standard"
+        }
     }
 
     // MARK: - Element <-> shape (import)
@@ -411,10 +437,21 @@ public actor ODGBridgeFilter {
         }
     }
 
-    /// `draw:type`'s value is deliberately not read (see
-    /// `connectorAttributes`'s doc comment) - every imported connector
-    /// gets `ConnectorInfo`'s own default style (`.elbow`) rather than
-    /// a guessed mapping from an unverified enumeration.
+    /// The inverse of `drawType(for:)`: "lines" -> `.straight`, "curve"
+    /// -> `.curved`. "standard", a missing attribute, and any other
+    /// value (a foreign document's own scheme, or soffice's own
+    /// re-export of "standard"/an invalid token, both of which drop the
+    /// attribute entirely - see `connectorAttributes`'s doc comment) all
+    /// degrade to `ConnectorInfo`'s own default, `.elbow` - "malformed
+    /// data degrades," matching this file's other import parsing.
+    private static func connectorStyle(fromDrawType raw: String?) -> ConnectorStyle {
+        switch raw {
+        case "lines": return .straight
+        case "curve": return .curved
+        default: return .elbow
+        }
+    }
+
     private static func connectorInfo(_ element: FlatODFElement, drawIDToShapeID: [String: UUID]) -> ConnectorInfo {
         func endpoint(shapeAttr: String, glueAttr: String, xAttr: String, yAttr: String) -> ConnectorEndpoint {
             if let drawID = element.attributes[shapeAttr],
@@ -426,7 +463,8 @@ public actor ODGBridgeFilter {
         }
         return ConnectorInfo(
             start: endpoint(shapeAttr: "draw:start-shape", glueAttr: "draw:start-glue-point", xAttr: "svg:x1", yAttr: "svg:y1"),
-            end: endpoint(shapeAttr: "draw:end-shape", glueAttr: "draw:end-glue-point", xAttr: "svg:x2", yAttr: "svg:y2")
+            end: endpoint(shapeAttr: "draw:end-shape", glueAttr: "draw:end-glue-point", xAttr: "svg:x2", yAttr: "svg:y2"),
+            style: connectorStyle(fromDrawType: element.attributes["draw:type"])
         )
     }
 

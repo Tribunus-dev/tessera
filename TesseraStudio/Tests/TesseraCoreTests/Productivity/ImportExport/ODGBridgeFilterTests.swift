@@ -231,4 +231,51 @@ final class ODGBridgeFilterTests: XCTestCase {
         XCTAssertEqual(reimported.shapeCount, drawing.shapeCount)
         XCTAssertEqual(Set(reimported.shapes.map(\.kind)), Set(drawing.shapes.map(\.kind)))
     }
+
+    /// `draw:type`'s real ODF enumeration only has three values -
+    /// "standard" (the schema default), "lines", and "curve" - confirmed
+    /// empirically against real soffice output (see `connectorAttributes`'s
+    /// doc comment). This asserts the non-default cases actually survive
+    /// a real `soffice` round trip rather than every imported connector
+    /// silently degrading to `.elbow`.
+    func testExportThenImportRoundTripsConnectorStyle() async throws {
+        let filter = ODGBridgeFilter()
+        try await XCTSkipIf(!filter.isAvailable, "soffice not installed")
+
+        let rectA = Shape(kind: .rect, geometry: ShapeGeometry(x: 10, y: 10, width: 100, height: 50))
+        let rectB = Shape(kind: .rect, geometry: ShapeGeometry(x: 200, y: 200, width: 100, height: 50))
+        let curvedConnector = Shape(
+            kind: .connector,
+            geometry: ShapeGeometry(x: 0, y: 0, width: 0, height: 0),
+            connector: ConnectorInfo(
+                start: .attached(shapeID: rectA.id, gluePointIndex: 1),
+                end: .attached(shapeID: rectB.id, gluePointIndex: 3),
+                style: .curved
+            )
+        )
+        let straightConnector = Shape(
+            kind: .connector,
+            geometry: ShapeGeometry(x: 0, y: 0, width: 0, height: 0),
+            connector: ConnectorInfo(start: .free(x: 5, y: 5), end: .free(x: 60, y: 90), style: .straight)
+        )
+        var drawing = Drawing.makeBlank(title: "ConnectorStyleRoundTrip")
+        drawing = drawing.insertingShape(rectA)
+        drawing = drawing.insertingShape(rectB)
+        drawing = drawing.insertingShape(curvedConnector)
+        drawing = drawing.insertingShape(straightConnector)
+
+        let workDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tessera-odg-filter-connector-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let odgURL = workDir.appendingPathComponent("connectors.odg")
+
+        try await filter.export(drawing, to: odgURL)
+        let reimported = try await filter.`import`(from: odgURL)
+
+        let reimportedConnectors = reimported.shapes.filter { $0.kind == .connector }
+        XCTAssertEqual(reimportedConnectors.count, 2)
+        XCTAssertTrue(reimportedConnectors.contains { $0.connector?.style == .curved })
+        XCTAssertTrue(reimportedConnectors.contains { $0.connector?.style == .straight })
+    }
 }
