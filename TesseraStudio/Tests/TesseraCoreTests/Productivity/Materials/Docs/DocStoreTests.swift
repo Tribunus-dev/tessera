@@ -243,18 +243,184 @@ final class DocStoreTests: DoctrineTestCase {
 
     // MARK: - Archive / trash / favorite idempotence + payload flags
 
-    func testArchivingAnAlreadyArchivedDocStillEmitsAReceiptWithWasAlreadyArchivedTrue() async throws {
+    func testArchivingAnUnarchivedDocPersistsAndEmitsExactlyOneArchiveReceipt() async throws {
+        try requireDBIntegration()
+        let store = try await makeStore()
+        let docID = UUID()
+        _ = try await store.upsert(Doc(id: docID, title: "Archive Test"))
+        let before = try await store.receipts(forDoc: docID)
+
+        let doc = try await store.archive(docID)
+
+        XCTAssertTrue(doc.isArchived)
+        let after = try await store.receipts(forDoc: docID)
+        XCTAssertEqual(after.count - before.count, 1)
+        XCTAssertEqual(after.last?.receiptType, DocReceiptType.archive.rawValue)
+        XCTAssertEqual(after.last?.payload["wasAlreadyArchived"], .bool(false))
+    }
+
+    func testArchivingAnAlreadyArchivedDocEmitsNoReceiptAndDoesNotPersist() async throws {
         try requireDBIntegration()
         let store = try await makeStore()
         let docID = UUID()
         _ = try await store.upsert(Doc(id: docID, title: "Archive Test", isArchived: true))
+        let before = try await store.receipts(forDoc: docID)
 
         let doc = try await store.archive(docID)
-        XCTAssertTrue(doc.isArchived)
 
-        let receipts = try await store.receipts(forDoc: docID)
-        let archiveReceipt = receipts.last { $0.receiptType == DocReceiptType.archive.rawValue }
-        XCTAssertEqual(archiveReceipt?.payload["wasAlreadyArchived"], .bool(true))
+        XCTAssertTrue(doc.isArchived)
+        let after = try await store.receipts(forDoc: docID)
+        XCTAssertEqual(after.count, before.count, "archiving an already-archived doc must not emit a receipt")
+    }
+
+    func testUnarchivingAnArchivedDocPersistsAndEmitsExactlyOneUnarchiveReceipt() async throws {
+        try requireDBIntegration()
+        let store = try await makeStore()
+        let docID = UUID()
+        _ = try await store.upsert(Doc(id: docID, title: "Unarchive Test", isArchived: true))
+        let before = try await store.receipts(forDoc: docID)
+
+        let doc = try await store.unarchive(docID)
+
+        XCTAssertFalse(doc.isArchived)
+        let after = try await store.receipts(forDoc: docID)
+        XCTAssertEqual(after.count - before.count, 1)
+        XCTAssertEqual(after.last?.receiptType, DocReceiptType.unarchive.rawValue)
+        XCTAssertEqual(after.last?.payload["wasArchived"], .bool(true))
+    }
+
+    func testUnarchivingADocThatWasNeverArchivedEmitsNoReceipt() async throws {
+        try requireDBIntegration()
+        let store = try await makeStore()
+        let docID = UUID()
+        _ = try await store.upsert(Doc(id: docID, title: "Unarchive Test"))
+        let before = try await store.receipts(forDoc: docID)
+
+        let doc = try await store.unarchive(docID)
+
+        XCTAssertFalse(doc.isArchived)
+        let after = try await store.receipts(forDoc: docID)
+        XCTAssertEqual(after.count, before.count, "unarchiving a doc that was never archived must not emit a receipt")
+    }
+
+    func testTrashingAnUntrashedDocPersistsAndEmitsExactlyOneTrashReceipt() async throws {
+        try requireDBIntegration()
+        let store = try await makeStore()
+        let docID = UUID()
+        _ = try await store.upsert(Doc(id: docID, title: "Trash Test"))
+        let before = try await store.receipts(forDoc: docID)
+
+        let doc = try await store.trash(docID)
+
+        XCTAssertTrue(doc.isTrashed)
+        let after = try await store.receipts(forDoc: docID)
+        XCTAssertEqual(after.count - before.count, 1)
+        XCTAssertEqual(after.last?.receiptType, DocReceiptType.trash.rawValue)
+        XCTAssertEqual(after.last?.payload["wasAlreadyTrashed"], .bool(false))
+    }
+
+    func testTrashingAnAlreadyTrashedDocEmitsNoReceipt() async throws {
+        try requireDBIntegration()
+        let store = try await makeStore()
+        let docID = UUID()
+        _ = try await store.upsert(Doc(id: docID, title: "Trash Test", isTrashed: true))
+        let before = try await store.receipts(forDoc: docID)
+
+        let doc = try await store.trash(docID)
+
+        XCTAssertTrue(doc.isTrashed)
+        let after = try await store.receipts(forDoc: docID)
+        XCTAssertEqual(after.count, before.count, "trashing an already-trashed doc must not emit a receipt")
+    }
+
+    func testRestoringATrashedDocPersistsAndEmitsExactlyOneRestoreReceipt() async throws {
+        try requireDBIntegration()
+        let store = try await makeStore()
+        let docID = UUID()
+        _ = try await store.upsert(Doc(id: docID, title: "Restore Test", isTrashed: true))
+        let before = try await store.receipts(forDoc: docID)
+
+        let doc = try await store.restore(docID)
+
+        XCTAssertFalse(doc.isTrashed)
+        let after = try await store.receipts(forDoc: docID)
+        XCTAssertEqual(after.count - before.count, 1)
+        XCTAssertEqual(after.last?.receiptType, DocReceiptType.restore.rawValue)
+        XCTAssertEqual(after.last?.payload["wasTrashed"], .bool(true))
+    }
+
+    func testRestoringADocThatWasNeverTrashedEmitsNoReceipt() async throws {
+        try requireDBIntegration()
+        let store = try await makeStore()
+        let docID = UUID()
+        _ = try await store.upsert(Doc(id: docID, title: "Restore Test"))
+        let before = try await store.receipts(forDoc: docID)
+
+        let doc = try await store.restore(docID)
+
+        XCTAssertFalse(doc.isTrashed)
+        let after = try await store.receipts(forDoc: docID)
+        XCTAssertEqual(after.count, before.count, "restoring a doc that was never trashed must not emit a receipt")
+    }
+
+    func testFavoritingAnUnfavoritedDocPersistsAndEmitsExactlyOneFavoriteReceipt() async throws {
+        try requireDBIntegration()
+        let store = try await makeStore()
+        let docID = UUID()
+        _ = try await store.upsert(Doc(id: docID, title: "Favorite Test"))
+        let before = try await store.receipts(forDoc: docID)
+
+        let doc = try await store.favorite(docID)
+
+        XCTAssertTrue(doc.isFavorite)
+        let after = try await store.receipts(forDoc: docID)
+        XCTAssertEqual(after.count - before.count, 1)
+        XCTAssertEqual(after.last?.receiptType, DocReceiptType.favorite.rawValue)
+        XCTAssertEqual(after.last?.payload["wasAlreadyFavorite"], .bool(false))
+    }
+
+    func testFavoritingAnAlreadyFavoriteDocEmitsNoReceipt() async throws {
+        try requireDBIntegration()
+        let store = try await makeStore()
+        let docID = UUID()
+        _ = try await store.upsert(Doc(id: docID, title: "Favorite Test", isFavorite: true))
+        let before = try await store.receipts(forDoc: docID)
+
+        let doc = try await store.favorite(docID)
+
+        XCTAssertTrue(doc.isFavorite)
+        let after = try await store.receipts(forDoc: docID)
+        XCTAssertEqual(after.count, before.count, "favoriting an already-favorite doc must not emit a receipt")
+    }
+
+    func testUnfavoritingAFavoriteDocPersistsAndEmitsExactlyOneUnfavoriteReceipt() async throws {
+        try requireDBIntegration()
+        let store = try await makeStore()
+        let docID = UUID()
+        _ = try await store.upsert(Doc(id: docID, title: "Unfavorite Test", isFavorite: true))
+        let before = try await store.receipts(forDoc: docID)
+
+        let doc = try await store.unfavorite(docID)
+
+        XCTAssertFalse(doc.isFavorite)
+        let after = try await store.receipts(forDoc: docID)
+        XCTAssertEqual(after.count - before.count, 1)
+        XCTAssertEqual(after.last?.receiptType, DocReceiptType.unfavorite.rawValue)
+        XCTAssertEqual(after.last?.payload["wasFavorite"], .bool(true))
+    }
+
+    func testUnfavoritingADocThatWasNeverFavoriteEmitsNoReceipt() async throws {
+        try requireDBIntegration()
+        let store = try await makeStore()
+        let docID = UUID()
+        _ = try await store.upsert(Doc(id: docID, title: "Unfavorite Test"))
+        let before = try await store.receipts(forDoc: docID)
+
+        let doc = try await store.unfavorite(docID)
+
+        XCTAssertFalse(doc.isFavorite)
+        let after = try await store.receipts(forDoc: docID)
+        XCTAssertEqual(after.count, before.count, "unfavoriting a doc that was never favorite must not emit a receipt")
     }
 
     // MARK: - Error path: not-found throws without writing

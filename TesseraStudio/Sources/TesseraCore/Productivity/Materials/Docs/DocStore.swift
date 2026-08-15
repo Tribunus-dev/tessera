@@ -363,98 +363,88 @@ public struct DocStore: Sendable {
 
     public func archive(_ docID: UUID) async throws -> Doc {
         var doc = try await loadOrFail(id: docID)
-        let wasArchived = doc.isArchived
-        if !wasArchived {
-            doc.isArchived = true
-            doc.updatedAt = Date()
-            _ = try await persist(doc)
-        }
+        guard !doc.isArchived else { return doc }
+        doc.isArchived = true
+        doc.updatedAt = Date()
+        _ = try await persist(doc)
         try await appendReceipt(
             entityID: docID,
             receiptType: DocReceiptType.archive.rawValue,
-            payload: ["wasAlreadyArchived": .bool(wasArchived)]
+            payload: ["wasAlreadyArchived": .bool(false)]
         )
         return doc
     }
 
     public func unarchive(_ docID: UUID) async throws -> Doc {
         var doc = try await loadOrFail(id: docID)
-        let wasArchived = doc.isArchived
-        if wasArchived {
-            doc.isArchived = false
-            doc.updatedAt = Date()
-            _ = try await persist(doc)
-        }
+        guard doc.isArchived else { return doc }
+        doc.isArchived = false
+        doc.updatedAt = Date()
+        _ = try await persist(doc)
         try await appendReceipt(
             entityID: docID,
             receiptType: DocReceiptType.unarchive.rawValue,
-            payload: ["wasArchived": .bool(wasArchived)]
+            payload: ["wasArchived": .bool(true)]
         )
         return doc
     }
 
-    /// Move to trash (soft delete). Idempotent.
+    /// Move to trash (soft delete). Idempotent - a no-op (no persist, no
+    /// receipt) if the doc is already trashed.
     public func trash(_ docID: UUID) async throws -> Doc {
         var doc = try await loadOrFail(id: docID)
-        let wasTrashed = doc.isTrashed
-        if !wasTrashed {
-            doc.isTrashed = true
-            doc.updatedAt = Date()
-            _ = try await persist(doc)
-        }
+        guard !doc.isTrashed else { return doc }
+        doc.isTrashed = true
+        doc.updatedAt = Date()
+        _ = try await persist(doc)
         try await appendReceipt(
             entityID: docID,
             receiptType: DocReceiptType.trash.rawValue,
-            payload: ["wasAlreadyTrashed": .bool(wasTrashed)]
+            payload: ["wasAlreadyTrashed": .bool(false)]
         )
         return doc
     }
 
-    /// Restore from trash. Idempotent.
+    /// Restore from trash. Idempotent - a no-op (no persist, no receipt)
+    /// if the doc was never trashed.
     public func restore(_ docID: UUID) async throws -> Doc {
         var doc = try await loadOrFail(id: docID)
-        let wasTrashed = doc.isTrashed
-        if wasTrashed {
-            doc.isTrashed = false
-            doc.updatedAt = Date()
-            _ = try await persist(doc)
-        }
+        guard doc.isTrashed else { return doc }
+        doc.isTrashed = false
+        doc.updatedAt = Date()
+        _ = try await persist(doc)
         try await appendReceipt(
             entityID: docID,
             receiptType: DocReceiptType.restore.rawValue,
-            payload: ["wasTrashed": .bool(wasTrashed)]
+            payload: ["wasTrashed": .bool(true)]
         )
         return doc
     }
 
     public func favorite(_ docID: UUID) async throws -> Doc {
         var doc = try await loadOrFail(id: docID)
-        let wasFavorite = doc.isFavorite
-        if !wasFavorite {
-            doc.isFavorite = true
-            doc.updatedAt = Date()
-            _ = try await persist(doc)
-        }
+        guard !doc.isFavorite else { return doc }
+        doc.isFavorite = true
+        doc.updatedAt = Date()
+        _ = try await persist(doc)
         try await appendReceipt(
             entityID: docID,
             receiptType: DocReceiptType.favorite.rawValue,
-            payload: ["wasAlreadyFavorite": .bool(wasFavorite)]
+            payload: ["wasAlreadyFavorite": .bool(false)]
         )
         return doc
     }
 
     public func unfavorite(_ docID: UUID) async throws -> Doc {
         var doc = try await loadOrFail(id: docID)
-        let wasFavorite = doc.isFavorite
-        if wasFavorite {
-            doc.isFavorite = false
-            doc.updatedAt = Date()
-            _ = try await persist(doc)
-        }
+        guard doc.isFavorite else { return doc }
+        doc.isFavorite = false
+        doc.updatedAt = Date()
+        _ = try await persist(doc)
         try await appendReceipt(
             entityID: docID,
             receiptType: DocReceiptType.unfavorite.rawValue,
-            payload: ["wasFavorite": .bool(wasFavorite)]
+            payload: ["wasFavorite": .bool(true)]
         )
         return doc
     }
