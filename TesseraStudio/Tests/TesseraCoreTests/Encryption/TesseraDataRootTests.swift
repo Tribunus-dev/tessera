@@ -41,9 +41,7 @@ final class TesseraDataRootTests: DoctrineTestCase {
         let sandbox = URL(fileURLWithPath: "/tmp/doctrine-sandbox-\(UUID().uuidString)")
         TesseraDataRoot.setSandboxRoot(sandbox, for: .appSupport)
         let resolved = TesseraDataRoot.appSupport()
-        XCTExpectFailure("SUSPECTED CODE BUG: insideVolume's non-mounted/sandbox-override branch never appends `subdirectory` to the resolved sandbox root (only the mounted branch does); appSupport() additionally passes fallbackFile: \"default.store\" into insideVolume, so under a sandbox override it returns the override root with \"default.store\" appended instead of \"Library/Application Support/TesseraStudio\" - see findings") {
-            XCTAssertEqual(resolved.path, sandbox.appendingPathComponent("Library/Application Support/TesseraStudio", isDirectory: true).path)
-        }
+        XCTAssertEqual(resolved.path, sandbox.appendingPathComponent("Library/Application Support/TesseraStudio", isDirectory: true).path)
     }
 
     func testAppSupportStoreFileAppendsDefaultStoreToAppSupport() {
@@ -56,18 +54,14 @@ final class TesseraDataRootTests: DoctrineTestCase {
         let sandbox = URL(fileURLWithPath: "/tmp/doctrine-caches-\(UUID().uuidString)")
         TesseraDataRoot.setSandboxRoot(sandbox, for: .caches)
         let resolved = TesseraDataRoot.caches()
-        XCTExpectFailure("SUSPECTED CODE BUG: insideVolume's non-mounted/sandbox-override branch never appends `subdirectory` to the resolved sandbox root - it returns the bare override untouched instead of override + \"Library/Caches/TesseraStudio\" - see findings") {
-            XCTAssertEqual(resolved.path, sandbox.appendingPathComponent("Library/Caches/TesseraStudio", isDirectory: true).path)
-        }
+        XCTAssertEqual(resolved.path, sandbox.appendingPathComponent("Library/Caches/TesseraStudio", isDirectory: true).path)
     }
 
     func testPreferencesFallsBackToSandboxPreferencesRoot() {
         let sandbox = URL(fileURLWithPath: "/tmp/doctrine-prefs-\(UUID().uuidString)")
         TesseraDataRoot.setSandboxRoot(sandbox, for: .preferences)
         let resolved = TesseraDataRoot.preferences()
-        XCTExpectFailure("SUSPECTED CODE BUG: insideVolume's non-mounted/sandbox-override branch never appends `subdirectory` to the resolved sandbox root - it returns the bare override untouched instead of override + \"Library/Preferences\" - see findings") {
-            XCTAssertEqual(resolved.path, sandbox.appendingPathComponent("Library/Preferences", isDirectory: true).path)
-        }
+        XCTAssertEqual(resolved.path, sandbox.appendingPathComponent("Library/Preferences", isDirectory: true).path)
     }
 
     func testIsUsingEncryptedVolumeIsFalseWhenNotMounted() {
@@ -84,9 +78,7 @@ final class TesseraDataRootTests: DoctrineTestCase {
         XCTAssertEqual(TesseraDataRoot.preferences().path, mount.appendingPathComponent("Library/Preferences", isDirectory: true).path)
         XCTAssertEqual(TesseraDataRoot.postgresDataDir().path, mount.appendingPathComponent("postgres/data", isDirectory: true).path)
         XCTAssertEqual(TesseraDataRoot.valkeyDataDir().path, mount.appendingPathComponent("valkey/data", isDirectory: true).path)
-        XCTExpectFailure("SUSPECTED CODE BUG: insideVolume's mounted branch (volumeRoot.appendingPathComponent(subdirectory:...)) never applies `fallbackFile`, so duckdbFile() - the one insideVolume caller that needs a FILE, not a directory - returns the bare \"duckdb\" directory instead of \"duckdb/tessera.duckdb\" while mounted - see findings") {
-            XCTAssertEqual(TesseraDataRoot.duckdbFile().path, mount.appendingPathComponent("duckdb", isDirectory: true).appendingPathComponent("tessera.duckdb").path)
-        }
+        XCTAssertEqual(TesseraDataRoot.duckdbFile().path, mount.appendingPathComponent("duckdb", isDirectory: true).appendingPathComponent("tessera.duckdb").path)
     }
 
     func testIsUsingEncryptedVolumeIsTrueWhenMounted() {
@@ -100,9 +92,7 @@ final class TesseraDataRootTests: DoctrineTestCase {
         TesseraDataRoot.setMountedRoot(URL(fileURLWithPath: "/tmp/doctrine-mounted"))
         XCTAssertTrue(TesseraDataRoot.appSupport().path.hasPrefix("/tmp/doctrine-mounted"))
         TesseraDataRoot.setMountedRoot(nil)
-        XCTExpectFailure("SUSPECTED CODE BUG: same insideVolume non-mounted-branch defect as testAppSupportFallsBackToSandboxRootWhenNotMounted - see findings") {
-            XCTAssertEqual(TesseraDataRoot.appSupport().path, sandbox.appendingPathComponent("Library/Application Support/TesseraStudio", isDirectory: true).path)
-        }
+        XCTAssertEqual(TesseraDataRoot.appSupport().path, sandbox.appendingPathComponent("Library/Application Support/TesseraStudio", isDirectory: true).path)
     }
 
     func testMountedRootAccessorReflectsWhatWasSet() {
@@ -116,8 +106,6 @@ final class TesseraDataRootTests: DoctrineTestCase {
     func testDuckdbFileNameIsTesseraDuckdb() {
         let mount = URL(fileURLWithPath: "/tmp/doctrine-volume-2")
         TesseraDataRoot.setMountedRoot(mount)
-        XCTExpectFailure("SUSPECTED CODE BUG: same insideVolume mounted-branch-ignores-fallbackFile defect as testAllDataPathsRootAtTheMountedVolumeWhenMounted - see findings") {
-            XCTAssertEqual(TesseraDataRoot.duckdbFile().lastPathComponent, "tessera.duckdb")
-        }
+        XCTAssertEqual(TesseraDataRoot.duckdbFile().lastPathComponent, "tessera.duckdb")
     }
 }

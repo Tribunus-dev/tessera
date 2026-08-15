@@ -108,9 +108,7 @@ final class ChatMessageCitationTests: DoctrineTestCase {
         // must succeed and default `sources` to [].
         let json = Data(#"{"success":true,"output":"ok"}"#.utf8)
         let decoded = try? JSONDecoder().decode(ToolResultPayload.self, from: json)
-        XCTExpectFailure("SUSPECTED CODE BUG: ToolResultPayload.sources is a non-Optional [Citation] with no custom Decodable init, so Swift's synthesized decoder requires the \"sources\" key and throws keyNotFound on pre-3A on-disk JSON instead of defaulting to [] - confidenceBand (a genuine Optional) does correctly default via decodeIfPresent, sources does not - see findings") {
-            XCTAssertNotNil(decoded, "legacy JSON missing the sources field (added in item 3A) must still decode")
-        }
+        XCTAssertNotNil(decoded, "legacy JSON missing the sources field (added in item 3A) must still decode")
     }
 
     // MARK: - ChatMessage.sources (SwiftData @Model, plain-object construction)

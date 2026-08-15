@@ -198,6 +198,28 @@ public struct ToolResultPayload: Codable, Sendable {
         self.confidenceBand = confidenceBand
         self.sources = sources
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case success, output, error, confidenceBand, sources
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.success = try c.decode(Bool.self, forKey: .success)
+        self.output = try c.decode(String.self, forKey: .output)
+        self.error = try c.decodeIfPresent(String.self, forKey: .error)
+        self.confidenceBand = try c.decodeIfPresent(ConfidenceBand.self, forKey: .confidenceBand)
+        self.sources = try c.decodeIfPresent([Citation].self, forKey: .sources) ?? []
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(success, forKey: .success)
+        try c.encode(output, forKey: .output)
+        try c.encodeIfPresent(error, forKey: .error)
+        try c.encodeIfPresent(confidenceBand, forKey: .confidenceBand)
+        try c.encode(sources, forKey: .sources)
+    }
 }
 
 @Model

@@ -94,9 +94,7 @@ final class SecureOverwriteTests: DoctrineTestCase {
         try Data("the quick brown fox".utf8).write(to: file)
         try SecureOverwrite.randomPasses(under: dir, passes: 1, randomFill: deterministicFill)
         let after = try Data(contentsOf: file)
-        XCTExpectFailure("SUSPECTED CODE BUG: writeRandomPass() always re-invokes randomFill() as its first statement, so the pre-zeroed buffer for the documented 'final zero pass' is overwritten before any bytes are written -- the final pass never actually writes zeros to disk - see findings") {
-            XCTAssertTrue(after.allSatisfy { $0 == 0 }, "the doc comment promises a final zero pass after the N random passes")
-        }
+        XCTAssertTrue(after.allSatisfy { $0 == 0 }, "the doc comment promises a final zero pass after the N random passes")
     }
 
     func testRandomPassesUnderDirectoryWalksNestedSubdirectories() throws {

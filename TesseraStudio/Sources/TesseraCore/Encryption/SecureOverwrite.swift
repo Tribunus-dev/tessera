@@ -188,7 +188,7 @@ public enum SecureOverwrite {
         // 4. Final zero pass.
         for i in 0..<buffer.count { buffer[i] = 0 }
         try writeRandomPass(fd: fd, size: size, chunk: chunk,
-                            buffer: &buffer, randomFill: randomFill)
+                            buffer: &buffer, randomFill: randomFill, refillPerChunk: false)
 
         // 5. fsync, truncate to 0, close.
         if fsync(fd) != 0 {
@@ -210,7 +210,8 @@ public enum SecureOverwrite {
         size: Int,
         chunk: Int,
         buffer: inout [UInt8],
-        randomFill: RandomFill
+        randomFill: RandomFill,
+        refillPerChunk: Bool = true
     ) throws {
         if lseek(fd, 0, SEEK_SET) == -1 {
             throw OverwriteError.writeFailed(path: "<fd=\(fd)>", underlying: currentErrno())
@@ -218,10 +219,12 @@ public enum SecureOverwrite {
         var written = 0
         while written < size {
             let n = min(chunk, size - written)
-            randomFill(&buffer, n)
-            // Zero the tail of the buffer so a previous pass's
-            // residue does not leak past this write's end.
-            for i in n..<buffer.count { buffer[i] = 0 }
+            if refillPerChunk {
+                randomFill(&buffer, n)
+                // Zero the tail of the buffer so a previous pass's
+                // residue does not leak past this write's end.
+                for i in n..<buffer.count { buffer[i] = 0 }
+            }
             let rc = buffer.withUnsafeBufferPointer { ptr -> Int in
                 let base = ptr.baseAddress!
                 var total = 0

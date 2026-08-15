@@ -28,7 +28,7 @@ public enum TesseraDataRoot {
     public static func appSupport() -> URL {
         insideVolume(
             subdirectory: "Library/Application Support/TesseraStudio",
-            fallbackFile: "default.store"
+            fallbackFile: nil
         )
     }
 
@@ -133,18 +133,20 @@ public enum TesseraDataRoot {
 
     /// Compute a path inside the mounted volume, or fall back to the
     /// sandbox path if the volume is not currently mounted. The
-    /// `subdirectory` is appended to the volume root; `fallbackFile`,
-    /// if set, is appended to the sandbox root (so callers that want
+    /// `subdirectory` is appended to whichever root applies; `fallbackFile`,
+    /// if set, is appended on top of that (so callers that want
     /// a file URL don't have to re-build the path).
     private static func insideVolume(subdirectory: String, fallbackFile: String?) -> URL {
+        let root: URL
         if let volumeRoot = volumeRootIfMounted() {
-            return volumeRoot.appendingPathComponent(subdirectory, isDirectory: true)
+            root = volumeRoot.appendingPathComponent(subdirectory, isDirectory: true)
+        } else {
+            root = sandboxRoot(for: sandboxKind(for: subdirectory)).appendingPathComponent(subdirectory, isDirectory: true)
         }
-        let sandbox = sandboxRoot(for: sandboxKind(for: subdirectory))
         if let file = fallbackFile {
-            return sandbox.appendingPathComponent(file, isDirectory: false)
+            return root.appendingPathComponent(file, isDirectory: false)
         }
-        return sandbox
+        return root
     }
 
     private static func sandboxKind(for subdirectory: String) -> SubdirectoryKind {
