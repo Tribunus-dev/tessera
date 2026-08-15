@@ -34,6 +34,133 @@ final class SheetStoreTests: XCTestCase {
         XCTAssertEqual(SheetReceiptType.setProtection.rawValue, "sheet_protection_changed")
         XCTAssertEqual(SheetReceiptType.defineNamedRange.rawValue, "sheet_named_range_defined")
         XCTAssertEqual(SheetReceiptType.undefineNamedRange.rawValue, "sheet_named_range_undefined")
+        XCTAssertEqual(SheetReceiptType.sorted.rawValue, "sheet_sorted")
+        XCTAssertEqual(SheetReceiptType.filterApplied.rawValue, "sheet_filter_applied")
+        XCTAssertEqual(SheetReceiptType.filterCleared.rawValue, "sheet_filter_cleared")
+    }
+
+    /// `SheetStore.sortRange`/`.applyFilter`/`.clearFilter` append
+    /// `outcome.receiptType` straight from `QueryEngine.ReceiptType`
+    /// rather than reconstructing a `SheetReceiptType` - these two
+    /// vocabularies must never drift apart.
+    func testQueryReceiptTypesMatchQueryEngineReceiptTypeConstants() {
+        XCTAssertEqual(SheetReceiptType.sorted.rawValue, QueryEngine.ReceiptType.sorted)
+        XCTAssertEqual(SheetReceiptType.filterApplied.rawValue, QueryEngine.ReceiptType.filterApplied)
+        XCTAssertEqual(SheetReceiptType.filterCleared.rawValue, QueryEngine.ReceiptType.filterCleared)
+    }
+
+    // MARK: - Query (sort/filter): Sheet.effectiveFilterState
+
+    func testEffectiveFilterStateDefaultsToEmptyWhenNil() {
+        let sheet = Sheet(title: "x", body: .empty)
+        XCTAssertNil(sheet.filterState)
+        XCTAssertEqual(sheet.effectiveFilterState, .empty)
+    }
+
+    func testEffectiveFilterStateReturnsStoredValue() {
+        var sheet = Sheet(title: "x", body: .empty)
+        let criteria = [
+            SheetFilterColumn(columnIndex: 0, criteria: SheetFilterCriteria(kind: .valueSet, values: ["A"])),
+        ]
+        let state = SheetFilterState(criteria: criteria, hiddenRows: [2, 4])
+        sheet.filterState = state
+        XCTAssertEqual(sheet.effectiveFilterState, state)
+    }
+
+    // MARK: - Query (sort/filter): fixture-level row permutation
+
+    /// `SheetStore.sortRange` computes `QueryEngine.sort`'s row
+    /// `order` then reorders the primary table's cell-ID children in
+    /// whole-row slices (row `r`'s cells occupy `[r*cols, r*cols+cols)`).
+    /// This pins that exact slicing algorithm - the piece `sortRange`
+    /// adds on top of the already-tested `QueryEngine.sortedRowOrder`
+    /// (see `QueryEngineTests.swift`) - against a `Sheet.makeBlank`
+    /// fixture, independent of persistence: `sortRange` itself needs a
+    /// live data layer to exercise end-to-end (see this item's
+    /// openQuestions).
+    func testRowPermutationAlgorithmReordersFixtureRowsBySortedValue() {
+        var sheet = Sheet.makeBlank(title: "Fixture", rows: 3, cols: 1)
+        // Column 0, top to bottom: "C", "A", "B".
+        sheet = sheet.settingCellText(row: 0, col: 0, "C")
+        sheet = sheet.settingCellText(row: 1, col: 0, "A")
+        sheet = sheet.settingCellText(row: 2, col: 0, "B")
+        sheet = sheet.settingCellValue(row: 0, col: 0, .text("C"))
+        sheet = sheet.settingCellValue(row: 1, col: 0, .text("A"))
+        sheet = sheet.settingCellValue(row: 2, col: 0, .text("B"))
+
+        let (order, _) = QueryEngine.sort(
+            rowCount: 3,
+            conditions: [SheetSortCondition(columnIndex: 0, ascending: true)],
+            cellValue: { row, col in sheet.cellValue(row: row, col: col) }
+        )
+        XCTAssertEqual(order, [1, 2, 0], "A(1) < B(2) < C(0)")
+
+        // The exact algorithm `SheetStore.sortRange` applies to
+        // `table.children`: slice each source row's cell IDs out in
+        // `order` and concatenate.
+        let tableID = sheet.body.rootChildren.first { sheet.body.blocks[$0]?.type == .table }!
+        var table = sheet.body.blocks[tableID]!
+        let cols = 1
+        var reordered: [UUID] = []
+        for r in order {
+            let start = r * cols
+            reordered.append(contentsOf: table.children[start..<(start + cols)])
+        }
+        table.children = reordered
+        sheet.body.blocks[tableID] = table
+
+        XCTAssertEqual(sheet.cellText(row: 0, col: 0), "A")
+        XCTAssertEqual(sheet.cellText(row: 1, col: 0), "B")
+        XCTAssertEqual(sheet.cellText(row: 2, col: 0), "C")
+    }
+
+    /// The exact closures `SheetStore.applyFilter` wires
+    /// `QueryEngine.applyFilter` through - `Sheet.cellValue` /
+    /// `.cellText` / `.cellFormat` - against a fixture sheet, pinning
+    /// that a simple `.valueSet` criterion hides the right rows once
+    /// read off real `Sheet` cell storage (not a hand-built
+    /// `SheetFilterRowInput` array, which is all `QueryEngineTests.swift`
+    /// exercises).
+    func testApplyFilterWiringComputesHiddenRowsFromSheetCells() {
+        var sheet = Sheet.makeBlank(title: "Fixture", rows: 3, cols: 1)
+        for (row, text) in [(0, "A"), (1, "B"), (2, "A")] {
+            sheet = sheet.settingCellText(row: row, col: 0, text)
+            sheet = sheet.settingCellValue(row: row, col: 0, .text(text))
+        }
+
+        let criteria = [
+            SheetFilterColumn(columnIndex: 0, criteria: SheetFilterCriteria(kind: .valueSet, values: ["A"])),
+        ]
+        let (state, outcome) = QueryEngine.applyFilter(
+            rowCount: 3,
+            criteria: criteria,
+            value: { row, col in sheet.cellValue(row: row, col: col) },
+            displayText: { row, col in sheet.cellText(row: row, col: col) },
+            format: { row, col in sheet.cellFormat(row: row, col: col) }
+        )
+
+        XCTAssertEqual(state.hiddenRows, [1], "row 1 (\"B\") is the only row not in the value set")
+        XCTAssertEqual(state.criteria, criteria)
+        XCTAssertEqual(outcome.receiptType, SheetReceiptType.filterApplied.rawValue)
+    }
+
+    /// `SheetStore.clearFilter`'s exact assignment - `sheet.filterState
+    /// = QueryEngine.clearFilter(previousState:).state` - resets a
+    /// non-empty `filterState` back to `.empty`.
+    func testClearFilterResetsFilterStateToEmpty() {
+        let criteria = [
+            SheetFilterColumn(columnIndex: 0, criteria: SheetFilterCriteria(kind: .valueSet, values: ["A"])),
+        ]
+        var sheet = Sheet(title: "x", body: .empty)
+        sheet.filterState = SheetFilterState(criteria: criteria, hiddenRows: [1, 2])
+
+        let (state, outcome) = QueryEngine.clearFilter(previousState: sheet.effectiveFilterState)
+        sheet.filterState = state
+
+        XCTAssertEqual(sheet.effectiveFilterState, .empty)
+        XCTAssertEqual(outcome.receiptType, SheetReceiptType.filterCleared.rawValue)
+        XCTAssertEqual(outcome.payload["clearedColumnCount"]?.numberValue, 1)
+        XCTAssertEqual(outcome.payload["unhiddenRowCount"]?.numberValue, 2)
     }
 
     // MARK: - JSON helpers

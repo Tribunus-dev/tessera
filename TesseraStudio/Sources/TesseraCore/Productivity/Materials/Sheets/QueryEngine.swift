@@ -537,6 +537,19 @@ public struct SheetFilterState: Codable, Sendable, Hashable {
     public static let empty = SheetFilterState()
 }
 
+// MARK: - Sheet.effectiveFilterState
+
+/// This file owns ``SheetFilterState``, so - matching
+/// `SheetConditionalFormat.swift`'s `effectiveConditionalFormats`/
+/// `SheetNamedRange.swift`'s `effectiveNamedRanges` convention of the
+/// concept's owning file extending ``Sheet`` - it also owns the
+/// "nil means none active" read-through for `Sheet.filterState`.
+public extension Sheet {
+    var effectiveFilterState: SheetFilterState {
+        filterState ?? .empty
+    }
+}
+
 // MARK: - SheetSortCondition
 
 /// One key of a multi-key sort - OOXML's sortCondition, applied in

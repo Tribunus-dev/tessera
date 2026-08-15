@@ -482,6 +482,88 @@ public struct SheetStore: Sendable {
         return sheet
     }
 
+    // MARK: - Query (sort/filter)
+
+    /// Sort the primary table's rows by `conditions` (see
+    /// ``QueryEngine/sort(rowCount:conditions:cellValue:)``) and
+    /// persist the new physical row order.
+    ///
+    /// `filterState` is left exactly as it was: a sort permutes which
+    /// row holds what, it does not re-run or invalidate an autofilter,
+    /// so `criteria`/`hiddenRows` carry over unchanged (see
+    /// `QueryEngine.sort`'s `(order:, outcome:)` return shape - there is
+    /// no mutated `SheetFilterState` for a sort to hand back).
+    public func sortRange(_ conditions: [SheetSortCondition], for sheetID: UUID) async throws -> Sheet {
+        var sheet = try await loadOrFail(id: sheetID)
+        try guardUnlocked(sheet)
+        guard let tableID = primaryTableID(of: sheet.body),
+              var table = sheet.body.blocks[tableID] else {
+            throw SheetStoreError.noTable(sheetID: sheetID)
+        }
+        let rows = Int(table.attributes["rows"]?.numberValue ?? 0)
+        let cols = Int(table.attributes["cols"]?.numberValue ?? 0)
+        let (order, outcome) = QueryEngine.sort(
+            rowCount: rows,
+            conditions: conditions,
+            cellValue: { row, col in sheet.cellValue(row: row, col: col) }
+        )
+        if cols > 0 {
+            var reordered: [UUID] = []
+            reordered.reserveCapacity(table.children.count)
+            for r in order {
+                let start = r * cols
+                reordered.append(contentsOf: table.children[start..<(start + cols)])
+            }
+            table.children = reordered
+            sheet.body.blocks[tableID] = table
+        }
+        sheet.updatedAt = Date()
+        _ = try await upsert(sheet)
+        try await appendReceipt(entityID: sheetID, receiptType: outcome.receiptType, payload: outcome.payload)
+        return sheet
+    }
+
+    /// Evaluate `criteria` against the live grid (see
+    /// ``QueryEngine/applyFilter(rowCount:criteria:referenceDate:value:displayText:format:)``)
+    /// and persist the resulting ``SheetFilterState``.
+    ///
+    /// `displayText` reads through `Sheet.cellText`, the same stored
+    /// inline-run text every other cell-reading path in this file
+    /// uses - not a number-format-rendered string (no
+    /// `SheetValueRenderer` dependency here; see the type header).
+    public func applyFilter(_ criteria: [SheetFilterColumn], for sheetID: UUID) async throws -> Sheet {
+        var sheet = try await loadOrFail(id: sheetID)
+        try guardUnlocked(sheet)
+        guard let tableDims = tableDimensions(of: sheet.body) else {
+            throw SheetStoreError.noTable(sheetID: sheetID)
+        }
+        let (state, outcome) = QueryEngine.applyFilter(
+            rowCount: tableDims.rows,
+            criteria: criteria,
+            value: { row, col in sheet.cellValue(row: row, col: col) },
+            displayText: { row, col in sheet.cellText(row: row, col: col) },
+            format: { row, col in sheet.cellFormat(row: row, col: col) }
+        )
+        sheet.filterState = state
+        sheet.updatedAt = Date()
+        _ = try await upsert(sheet)
+        try await appendReceipt(entityID: sheetID, receiptType: outcome.receiptType, payload: outcome.payload)
+        return sheet
+    }
+
+    /// Drop every active autofilter criterion and unhide every row
+    /// (see ``QueryEngine/clearFilter(previousState:)``).
+    public func clearFilter(for sheetID: UUID) async throws -> Sheet {
+        var sheet = try await loadOrFail(id: sheetID)
+        try guardUnlocked(sheet)
+        let (state, outcome) = QueryEngine.clearFilter(previousState: sheet.effectiveFilterState)
+        sheet.filterState = state
+        sheet.updatedAt = Date()
+        _ = try await upsert(sheet)
+        try await appendReceipt(entityID: sheetID, receiptType: outcome.receiptType, payload: outcome.payload)
+        return sheet
+    }
+
     // MARK: - Archive / Trash / Favorite
 
     public func archive(_ sheetID: UUID) async throws -> Sheet {
