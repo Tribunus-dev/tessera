@@ -55,53 +55,6 @@ let cllamaCSettings: [CSetting] = hasLlamaHeaders
         .define("CLLAMA_NO_HEADERS"),
     ]
 
-// Python 3.14, used by CPythonBridge (headers) and linked as
-// Python.framework by everything that pulls in TesseraCore.
-//
-// `python3.14-config --includes` prints the authoritative value, but
-// manifests run sandboxed and cannot shell out, so probe the known
-// install layouts instead. Set TESSERA_PYTHON_FRAMEWORKS to the
-// directory *containing* Python.framework to override (CI, pyenv, a
-// non-standard prefix).
-let pythonVersion = "3.14"
-
-let pythonFrameworksCandidates: [String] = [
-    ProcessInfo.processInfo.environment["TESSERA_PYTHON_FRAMEWORKS"],
-    // Homebrew, Apple silicon. Formula: <Cellar>/python@3.14/<version>/.
-    "/opt/homebrew/opt/python@\(pythonVersion)/Frameworks",
-    // Homebrew, Intel.
-    "/usr/local/opt/python@\(pythonVersion)/Frameworks",
-    // python.org installer.
-    "/Library/Frameworks",
-].compactMap { $0 }
-
-func pythonIncludePath(forFrameworksDir dir: String) -> String {
-    "\(dir)/Python.framework/Versions/\(pythonVersion)/include/python\(pythonVersion)"
-}
-
-// Pick the first candidate that actually has Python.h. Falling back to
-// the Homebrew arm64 path when none match keeps the manifest loadable
-// (`swift package dump-package`, editor tooling) and defers the failure
-// to the compiler, which names the missing header.
-let pythonFrameworksDir = pythonFrameworksCandidates.first {
-    FileManager.default.fileExists(
-        atPath: pythonIncludePath(forFrameworksDir: $0) + "/Python.h"
-    )
-} ?? "/opt/homebrew/opt/python@\(pythonVersion)/Frameworks"
-
-let pythonIncludeDir = pythonIncludePath(forFrameworksDir: pythonFrameworksDir)
-
-// Python.framework lives outside the default framework search paths, so
-// every target that LINKS it needs -F, not just the app. The setting does
-// not propagate across target dependencies: CPythonBridge declares
-// `.linkedFramework("Python")`, but each final linked product (the app
-// executable and the test bundle) must supply the search path itself.
-// Omitting it on the test target is what made `swift test` fail with
-// `ld: framework 'Python' not found` while `swift build` succeeded.
-let pythonLinkerSettings: [LinkerSetting] = [
-    .unsafeFlags(["-F", pythonFrameworksDir]),
-]
-
 let package = Package(
     name: "TesseraStudio",
     platforms: [
@@ -165,30 +118,11 @@ let package = Package(
             path: "Sources/CTesseraFFI",
             publicHeadersPath: "include"
         ),
-        // CPythonBridge: C library that provides linkable wrappers for Python's
-        // C API macros (PyDict_Check etc.) and renamed globals (Py_None/True/False
-        // in Python 3.14). Swift imports these via @_silgen_name; the compiled
-        // symbols are linked into TesseraCore via the target dependency.
-        .target(
-            name: "CPythonBridge",
-            dependencies: [],
-            path: "Sources/CPythonBridge",
-            publicHeadersPath: "include",
-            cSettings: [
-                .unsafeFlags(["-I", pythonIncludeDir]),
-                // PythonBridge.h lives at Sources/CPythonBridge/include/CPythonBridge/.
-                .unsafeFlags(["-I", repoRoot.appendingPathComponent("TesseraStudio/Sources/CPythonBridge/include").path]),
-            ],
-            linkerSettings: [
-                .linkedFramework("Python"),
-            ]
-        ),
         .target(
             name: "TesseraCore",
             dependencies: [
                 "CLlama",
                 "CTesseraFFI",
-                "CPythonBridge",
                 // DuckDB: analytics ETL layer. See
                 // docs/linux-data-contracts.md §DuckDB.
                 .product(name: "DuckDB", package: "duckdb-swift"),
@@ -211,24 +145,17 @@ let package = Package(
                 .product(name: "ForceSimulation", package: "Grape"),
             ],
             path: "Sources/TesseraCore",
-            // Exclude agent work-in-progress files and the Python service script
-            // (loaded at runtime via dlopen, not compiled into the module).
+            // Exclude agent work-in-progress files (disabled agent implementations).
             exclude: [
-                // Agent work-in-progress files (disabled agent implementations).
                 "Agent/UpdateSystemPromptTool.swift.DISABLED",
                 "Agent/TesseraCurationCuratorTool.swift.DISABLED",
                 "Agent/SystemPromptStore.swift.DISABLED",
                 "Agent/TesseraVerdictDrivenOverlayProcessor.swift.DISABLED",
                 "Agent/GetSystemPromptContextTool.swift.DISABLED",
-                // Python service loaded at runtime via dlopen, not compiled in.
-                "DocumentProcessing/LibreOffice/tessera_lo_service.py",
             ],
             // Ships the Skills format doc so the target has a resource bundle
             // (Bundle.module); the skill loader looks here for bundled skills.
-            resources: [.copy("Skills/README.md")],
-            // Python bridging is handled by the CPythonBridge target (C library).
-            // The compiled symbols (bridge_PyDict_Check etc.) are linked into
-            // TesseraCore via the CPythonBridge dependency. No local cSettings needed.
+            resources: [.copy("Skills/README.md")]
         ),
         .executableTarget(
             name: "TesseraStudioMac",
@@ -236,17 +163,7 @@ let package = Package(
                 "TesseraCore",
                 .product(name: "STTextView", package: "STTextView"),
             ],
-            path: "Sources/TesseraStudioMac",
-            // CPythonBridge links Python.framework. Add a framework search path so
-            // the linker can resolve Python at link time (Homebrew installs to a
-            // non-standard location that SPM doesn't know about by default).
-            // Python.framework sits outside the default search paths.
-            // The package deploys below Python.framework's own build
-            // target, so the linker warns "built for newer version";
-            // harmless at runtime, and absent from the .pkg pipeline,
-            // which builds via xcodebuild at MACOSX_DEPLOYMENT_TARGET
-            // 26.0.
-            linkerSettings: pythonLinkerSettings
+            path: "Sources/TesseraStudioMac"
         ),
         .target(
             name: "TesseraStudioiOS",
@@ -259,10 +176,7 @@ let package = Package(
             path: "Tests/TesseraCoreTests",
             // Copied verbatim so the loader's `<name>/SKILL.md` nesting is
             // preserved when the fixtures are read back via Bundle.module.
-            resources: [.copy("Fixtures")],
-            // The test bundle links TesseraCore -> CPythonBridge ->
-            // Python.framework, so it needs the search path too.
-            linkerSettings: pythonLinkerSettings
+            resources: [.copy("Fixtures")]
         ),
     ]
 )
