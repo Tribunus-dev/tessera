@@ -602,14 +602,25 @@ public actor TesseraDataStore {
     ) async throws -> [GraphEntity] {
         guard let client else { throw TesseraDataStoreError.closed }
         let pattern = labelPrefix + "%"
-        let query: PostgresQuery = """
-            SELECT id, entity_type, subtype, label, body, source_url, created_at, updated_at, embedding::text
-              FROM graph_entities
-             WHERE entity_type = \(entityType)
-               AND LOWER(label) LIKE LOWER(\(pattern))
-             ORDER BY label ASC
-             LIMIT \(limit)
-            """
+        // "any" is GraphStore.search's sentinel for "every entity type" -
+        // a literal `entity_type = 'any'` filter would never match a real
+        // row, since no entity is ever stored with that type.
+        let query: PostgresQuery = entityType == "any"
+            ? """
+                SELECT id, entity_type, subtype, label, body, source_url, created_at, updated_at, embedding::text
+                  FROM graph_entities
+                 WHERE LOWER(label) LIKE LOWER(\(pattern))
+                 ORDER BY label ASC
+                 LIMIT \(limit)
+                """
+            : """
+                SELECT id, entity_type, subtype, label, body, source_url, created_at, updated_at, embedding::text
+                  FROM graph_entities
+                 WHERE entity_type = \(entityType)
+                   AND LOWER(label) LIKE LOWER(\(pattern))
+                 ORDER BY label ASC
+                 LIMIT \(limit)
+                """
         let rows = try await client.query(query, logger: logger)
         var out: [GraphEntity] = []
         for try await row in rows {
@@ -857,15 +868,35 @@ public actor TesseraDataStore {
         limit: Int? = nil
     ) async throws -> [(chainIndex: Int64, receipt: GraphReceipt)] {
         guard let client else { throw TesseraDataStoreError.closed }
-        let limitClause: String = limit.map { " LIMIT \(Int32($0))" } ?? ""
-        let query: PostgresQuery = """
-            SELECT rc.chain_index,
-                   gr.id, gr.entity_id, gr.receipt_type, gr.payload::text, gr.signature, gr.witnessed_at
-              FROM receipt_chain rc
-              JOIN graph_receipts gr ON gr.id = rc.receipt_id
-             WHERE rc.document_id = \(documentID)
-             ORDER BY rc.chain_index ASC\(limitClause)
-            """
+        // Interpolating a Swift String holding a full SQL fragment (the
+        // old `limitClause` approach) does not splice raw SQL text -
+        // PostgresQuery's string interpolation binds every `\(...)` as a
+        // parameter placeholder, so " LIMIT 20" landed as a bound value
+        // next to the literal "ASC" instead of becoming part of the
+        // query, producing a syntax error on every call. Branching on
+        // two full query literals keeps the LIMIT value itself bound
+        // (safe) while ORDER BY/LIMIT stay literal SQL.
+        let query: PostgresQuery
+        if let limit {
+            query = """
+                SELECT rc.chain_index,
+                       gr.id, gr.entity_id, gr.receipt_type, gr.payload::text, gr.signature, gr.witnessed_at
+                  FROM receipt_chain rc
+                  JOIN graph_receipts gr ON gr.id = rc.receipt_id
+                 WHERE rc.document_id = \(documentID)
+                 ORDER BY rc.chain_index ASC
+                 LIMIT \(Int32(limit))
+                """
+        } else {
+            query = """
+                SELECT rc.chain_index,
+                       gr.id, gr.entity_id, gr.receipt_type, gr.payload::text, gr.signature, gr.witnessed_at
+                  FROM receipt_chain rc
+                  JOIN graph_receipts gr ON gr.id = rc.receipt_id
+                 WHERE rc.document_id = \(documentID)
+                 ORDER BY rc.chain_index ASC
+                """
+        }
         let rows = try await client.query(query, logger: logger)
         var out: [(Int64, GraphReceipt)] = []
         for try await row in rows {
