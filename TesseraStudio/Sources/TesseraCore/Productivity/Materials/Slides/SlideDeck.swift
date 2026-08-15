@@ -111,6 +111,11 @@ public struct SlideDeck: Codable, Sendable, Identifiable, Hashable {
     /// through `effectiveMasterPages` (SlideMasterPage.swift), not
     /// this field directly.
     public var masterPages: [String: SlideMasterPage]?
+    /// Nil (the implicit default) means no comments. Slides have no
+    /// block tree to anchor a `.comment` block to the way Writer does,
+    /// so slide comments live in this flat list instead, each
+    /// anchored via `CommentAnchor.slide`.
+    public var commentThreads: [CommentThread]?
     public var isArchived: Bool
     public var isTrashed: Bool
     public var isFavorite: Bool
@@ -419,18 +424,29 @@ public struct SlideMeta: Codable, Sendable, Hashable {
     /// behind its content. `nil` = no master (the renderer's own
     /// default background) - see `SlideDeck.masterPage(forSlideAt:)`.
     public var masterPageID: UUID?
+    /// The `TransitionSpec.id` this slide transitions in with, or
+    /// `nil` for no transition. Must resolve in `TransitionCatalog`
+    /// when non-nil - `TransitionStore.setSlideTransition` validates
+    /// this before ever assigning it.
+    public var transitionID: String?
 
-    public init(layout: SlideLayout = .titleAndContent, notes: String = "", masterPageID: UUID? = nil) {
+    public init(
+        layout: SlideLayout = .titleAndContent,
+        notes: String = "",
+        masterPageID: UUID? = nil,
+        transitionID: String? = nil
+    ) {
         self.layout = layout
         self.notes = notes
         self.masterPageID = masterPageID
+        self.transitionID = transitionID
     }
 
     public static let `default` = SlideMeta(layout: .titleAndContent, notes: "")
 
     /// Returns a copy with the notes field updated.
     public func copyWith(notes newNotes: String) -> SlideMeta {
-        SlideMeta(layout: self.layout, notes: newNotes, masterPageID: self.masterPageID)
+        SlideMeta(layout: self.layout, notes: newNotes, masterPageID: self.masterPageID, transitionID: self.transitionID)
     }
 }
 

@@ -103,6 +103,19 @@ public struct Sheet: Codable, Sendable, Identifiable, Hashable {
     /// (SheetPivotDefinition.swift), not this field directly.
     public var pivotDefinitions: [SheetPivotDefinition]?
 
+    /// Nil (the implicit default, like the fields above) means no
+    /// active sort/filter - read through `effectiveFilterState`
+    /// (QueryEngine.swift), not this field directly. `QueryEngine`
+    /// itself never re-derives `hiddenRows` from `criteria`; only
+    /// `SheetStore.sortRange`/`.applyFilter`/`.clearFilter` write here.
+    public var filterState: SheetFilterState?
+
+    /// Nil (the implicit default, like the fields above) means no
+    /// comments. Sheets have no block tree to anchor a `.comment`
+    /// block to the way Writer does, so cell comments live in this
+    /// flat list instead, each anchored via `CommentAnchor.cell`.
+    public var commentThreads: [CommentThread]?
+
     public init(
         id: UUID = UUID(),
         title: String = "",

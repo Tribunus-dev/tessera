@@ -21,6 +21,15 @@ public enum DocReceiptType: String, Codable, Sendable, CaseIterable {
     /// cached `content` to current values (P1 1.1). Emitted only when
     /// a refresh actually changed something - see `FieldController`.
     case fieldsRefreshed = "doc_fields_refreshed"
+    /// A find-and-replace mutation ran (DocumentSearchIndex.replacingAll).
+    /// One receipt per call, regardless of how many matches it touched.
+    case findReplace = "doc_find_replace"
+    /// A style definition was created or replaced in DocumentMeta.styles.
+    case defineStyle = "doc_style_defined"
+    /// A style definition was removed; StyleRegistry.deletingStyle
+    /// already rebound any orphaned children to the deleted style's
+    /// own parent before this fires.
+    case deleteStyle = "doc_style_deleted"
     /// The document was archived.
     case archive = "doc_archived"
     /// The document was unarchived (restored from archive).

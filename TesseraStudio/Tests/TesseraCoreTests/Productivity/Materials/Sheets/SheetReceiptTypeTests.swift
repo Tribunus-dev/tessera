@@ -17,12 +17,25 @@ final class SheetReceiptTypeTests: XCTestCase {
         // A deliberate tripwire: raw values are persisted, so adding or
         // removing a case is a vocabulary change. If this breaks, add
         // the new case to the stability pins below and bump the count.
-        // 25 (P1 1.22 added addComment = "sheet_comment_added").
-        XCTAssertEqual(SheetReceiptType.allCases.count, 25)
+        // 28 (P1 1.22 addComment; gap-closure wave: sorted,
+        // filterApplied, filterCleared).
+        XCTAssertEqual(SheetReceiptType.allCases.count, 28)
     }
 
     func testAddCommentIsStable() {
         XCTAssertEqual(SheetReceiptType.addComment.rawValue, "sheet_comment_added")
+    }
+
+    func testSortedIsStable() {
+        XCTAssertEqual(SheetReceiptType.sorted.rawValue, "sheet_sorted")
+    }
+
+    func testFilterAppliedIsStable() {
+        XCTAssertEqual(SheetReceiptType.filterApplied.rawValue, "sheet_filter_applied")
+    }
+
+    func testFilterClearedIsStable() {
+        XCTAssertEqual(SheetReceiptType.filterCleared.rawValue, "sheet_filter_cleared")
     }
 
     func testSetCellFormatIsStable() {

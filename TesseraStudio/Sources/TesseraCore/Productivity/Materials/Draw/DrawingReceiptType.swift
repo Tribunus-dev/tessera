@@ -10,14 +10,14 @@ import Foundation
 ///
 /// Case names match `docs/agent-tools-surface.md`'s planned
 /// `drawing_*` agent tool surface (`insertShape`/`deleteShape`/
-/// `setGeometry`/`setFill`/`setStroke`/`setText`/`setZOrder`) even
-/// though those tools aren't wired up yet - so when they are, the
-/// receipt vocabulary this store already emits lines up without a
-/// rename. `group`/`ungroup`/`setLayer`/`export`/`import`/`diff` from
-/// that same doc are explicitly marked P1 there and have no
-/// corresponding ``DrawingStore`` method yet, so they're not cases
-/// here either - a receipt type with nothing that ever emits it would
-/// be dead vocabulary.
+/// `setGeometry`/`setFill`/`setStroke`/`setText`/`setZOrder`/
+/// `setLayer` family/`setConnector`) even though those tools aren't
+/// wired up yet - so when they are, the receipt vocabulary this store
+/// already emits lines up without a rename. `group`/`ungroup`/
+/// `export`/`import`/`diff` from that same doc are explicitly marked
+/// P1 there and have no corresponding ``DrawingStore`` method yet, so
+/// they're not cases here either - a receipt type with nothing that
+/// ever emits it would be dead vocabulary.
 public enum DrawingReceiptType: String, Codable, Sendable, CaseIterable {
     /// A drawing was created or fully upserted.
     case upsert = "drawing_upsert"
@@ -59,4 +59,20 @@ public enum DrawingReceiptType: String, Codable, Sendable, CaseIterable {
     case setText = "drawing_shape_text_changed"
     /// A shape's z-order (paint position) was changed.
     case setZOrder = "drawing_shape_z_order_changed"
+    /// A shape's connector info (attached endpoints, style) was
+    /// changed. Reuses DrawingStore's mutatingShape helper, same as
+    /// setGeometry/setFill/setStroke/setText.
+    case setConnector = "drawing_shape_connector_changed"
+    /// A layer was added.
+    case layerAdded = "drawing_layer_added"
+    /// A layer was renamed.
+    case layerRenamed = "drawing_layer_renamed"
+    /// A layer was deleted.
+    case layerDeleted = "drawing_layer_deleted"
+    /// Layer paint order was changed.
+    case layerReordered = "drawing_layer_reordered"
+    /// A layer's visibility (isVisible) was changed.
+    case layerVisibilityChanged = "drawing_layer_visibility_changed"
+    /// A layer's lock state (isLocked) was changed.
+    case layerLockChanged = "drawing_layer_lock_changed"
 }
