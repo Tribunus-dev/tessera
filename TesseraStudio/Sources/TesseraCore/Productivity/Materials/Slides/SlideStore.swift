@@ -308,20 +308,54 @@ public struct SlideStore: Sendable {
         return deck
     }
 
+    /// Applies one of `SlideLayout`'s 4 compact cases. Delegates to the
+    /// ``SlideLayoutSpec``-based overload via ``SlideLayoutSpec/default(for:)``
+    /// so both paths share the same idx-then-type block-matching logic
+    /// (P1 1.9) - kept as its own overload because `SlidesViewModel`
+    /// and the agent tools surface still pass the compact enum, not a
+    /// full spec.
     public func setSlideLayout(
         at index: Int,
         layout: SlideLayout,
+        for deckID: UUID
+    ) async throws -> SlideDeck {
+        try await setSlideLayout(at: index, spec: SlideLayoutSpec.default(for: layout), for: deckID)
+    }
+
+    /// Applies an arbitrary catalog entry (P1 1.9: any of
+    /// ``SlideLayoutSpec/builtins``, not just the 4 `SlideLayout`
+    /// cases) - the mutation `MasterPageLayoutPicker` calls. Rearranges
+    /// the slide's blocks to the spec's placeholder shape via
+    /// ``applyingLayout(_:atSlideIndex:to:)`` (idx-then-type matching,
+    /// PowerPoint orphan rule - see that function), then reuses the
+    /// SAME `SlideReceiptType.setSlideLayout` receipt as the compact-enum
+    /// overload: one receipt for the whole operation, however many
+    /// blocks it touches.
+    ///
+    /// When `spec.id` names one of the 4 `SlideLayout` cases,
+    /// `SlideMeta.layout` is updated to match (preserves existing
+    /// chrome/rendering behavior for those 4). For a catalog-only spec
+    /// with no `SlideLayout` equivalent, `SlideMeta.layout` is left as
+    /// whatever it already was - `SlideMeta` has no field yet for an
+    /// arbitrary spec id; the block arrangement itself is the source of
+    /// truth for those until a future item adds one.
+    @discardableResult
+    public func setSlideLayout(
+        at index: Int,
+        spec: SlideLayoutSpec,
         for deckID: UUID
     ) async throws -> SlideDeck {
         var deck = try await loadOrFail(id: deckID)
         guard index >= 0, index < deck.slideCount else {
             throw SlideStoreError.slideOutOfBounds(index: index, count: deck.slideCount)
         }
-        let rootID = deck.body.rootChildren[index]
-        let key = rootID.uuidString
-        var meta = deck.slideMeta[key] ?? .default
-        meta.layout = layout
-        deck.slideMeta[key] = meta
+        deck = Self.applyingLayout(spec, atSlideIndex: index, to: deck)
+        if let matchedLayout = SlideLayout.allCases.first(where: { $0.rawValue == spec.id }) {
+            let key = deck.body.rootChildren[index].uuidString
+            var meta = deck.slideMeta[key] ?? .default
+            meta.layout = matchedLayout
+            deck.slideMeta[key] = meta
+        }
         deck.updatedAt = Date()
         _ = try await upsert(deck)
         try await appendReceipt(
@@ -329,10 +363,137 @@ public struct SlideStore: Sendable {
             receiptType: SlideReceiptType.setSlideLayout.rawValue,
             payload: [
                 "index": .number(Double(index)),
-                "layout": .string(layout.rawValue),
+                "layout": .string(spec.id),
             ]
         )
         return deck
+    }
+
+    // MARK: - Layout application (pure, P1 1.9)
+
+    /// The apply-layout block rearrangement (refinement doc section 4,
+    /// Slides cluster, item 1.9): matches the slide's existing blocks
+    /// to `spec`'s placeholders first by recorded `attributes
+    /// ["placeholderIdx"]`, then by `blockType`, in that order.
+    /// Placeholders with no match get a freshly created empty block.
+    /// Existing blocks matching NOTHING are NEVER deleted (PowerPoint
+    /// orphan rule) - they survive as unassigned children (their
+    /// `placeholderIdx` cleared). Re-running with the same `spec`
+    /// reproduces the identical assignment: every matched block already
+    /// carries the idx it will match on again.
+    ///
+    /// A pure `SlideDeck -> SlideDeck` transform, no `dataLayer` - kept
+    /// `internal` (not `private`) so it's directly testable without a
+    /// live `TesseraDataLayer`, mirroring why `MasterPageStoreTests`
+    /// tests its own mutation logic at the pure-model level instead of
+    /// through the store's async API.
+    static func applyingLayout(_ spec: SlideLayoutSpec, atSlideIndex index: Int, to deck: SlideDeck) -> SlideDeck {
+        var copy = deck
+        guard index >= 0, index < copy.body.rootChildren.count else { return copy }
+        let oldRootID = copy.body.rootChildren[index]
+        guard let oldRoot = copy.body.blocks[oldRootID] else { return copy }
+
+        // Existing content blocks: the root's own children when it's a
+        // pure wrapper (the `.titleAndContent` convention - a toggle
+        // whose children ARE the placeholders), else the root itself.
+        let rootIsWrapper = !oldRoot.children.isEmpty
+        let existingBlocks: [Block] = rootIsWrapper
+            ? oldRoot.children.compactMap { copy.body.blocks[$0] }
+            : [oldRoot]
+
+        // Target slots: every `SlideLayoutSpec.builtins` entry has
+        // exactly one top-level placeholder (see that type's header
+        // comment) - its children when it wraps any, else itself.
+        let topPlaceholder = spec.placeholders.first
+        let targetSlots: [SlideLayoutPlaceholder] = topPlaceholder.map { $0.children.isEmpty ? [$0] : $0.children } ?? []
+
+        // Pass 1: idx match. `idx` is scoped to its OWN spec (not
+        // globally unique across the catalog - see `SlideLayoutPlaceholder
+        // .idx`'s doc comment), so a recorded idx is only trusted when
+        // the target slot at that idx is ALSO the same blockType -
+        // otherwise a block carrying idx 1 from a spec where idx 1 was
+        // `.paragraph` could wrongly bind to a DIFFERENT spec's idx-1
+        // slot that happens to be `.table`. A type mismatch here falls
+        // through to pass 2 instead.
+        var claimedSlots = Set<Int>()
+        var claimedBlocks = Set<UUID>()
+        var assignment: [Int: Block] = [:]
+        for block in existingBlocks {
+            guard let recorded = block.attributes["placeholderIdx"]?.numberValue.map({ Int($0) }) else { continue }
+            guard let slotPos = targetSlots.firstIndex(where: { $0.idx == recorded && $0.blockType == block.type }),
+                  !claimedSlots.contains(slotPos) else { continue }
+            assignment[slotPos] = block
+            claimedSlots.insert(slotPos)
+            claimedBlocks.insert(block.id)
+        }
+        // Pass 2: type match, for whatever pass 1 left unclaimed.
+        for block in existingBlocks where !claimedBlocks.contains(block.id) {
+            guard let slotPos = targetSlots.indices.first(where: { !claimedSlots.contains($0) && targetSlots[$0].blockType == block.type }) else { continue }
+            assignment[slotPos] = block
+            claimedSlots.insert(slotPos)
+            claimedBlocks.insert(block.id)
+        }
+
+        // Fill every slot - matched block, or a fresh empty one - and
+        // (re)tag it with the slot's idx so the NEXT apply idx-matches.
+        var filled: [Block] = []
+        for (slotPos, targetSlot) in targetSlots.enumerated() {
+            var block = assignment[slotPos] ?? emptyBlock(for: targetSlot)
+            if let idx = targetSlot.idx { block.attributes["placeholderIdx"] = .number(Double(idx)) }
+            filled.append(block)
+        }
+        // Orphans: existing blocks the new layout matched nothing for.
+        // Kept, unassigned (placeholderIdx cleared) - never deleted.
+        let orphans: [Block] = existingBlocks
+            .filter { !claimedBlocks.contains($0.id) }
+            .map { block in
+                var b = block
+                b.attributes.removeValue(forKey: "placeholderIdx")
+                return b
+            }
+
+        let newChildren = filled + orphans
+        let newRootID: UUID
+        if newChildren.count == 1, var only = newChildren.first {
+            only.parentID = nil
+            copy.body.blocks[only.id] = only
+            newRootID = only.id
+            if rootIsWrapper && oldRootID != only.id {
+                copy.body.blocks.removeValue(forKey: oldRootID)
+            }
+        } else {
+            let wrapperID = rootIsWrapper ? oldRootID : UUID()
+            var childIDs: [UUID] = []
+            for var child in newChildren {
+                child.parentID = wrapperID
+                copy.body.blocks[child.id] = child
+                childIDs.append(child.id)
+            }
+            let wrapperAttributes = rootIsWrapper ? oldRoot.attributes : ["expanded": .bool(true)]
+            copy.body.blocks[wrapperID] = Block(id: wrapperID, type: .toggle, attributes: wrapperAttributes, children: childIDs)
+            newRootID = wrapperID
+        }
+
+        copy.body.rootChildren[index] = newRootID
+        if newRootID != oldRootID, let meta = copy.slideMeta.removeValue(forKey: oldRootID.uuidString) {
+            copy.slideMeta[newRootID.uuidString] = meta
+        }
+        return copy
+    }
+
+    /// A fresh, empty block for a placeholder with nothing matched to
+    /// it - the same minimal-attribute convention `SlideDeck
+    /// .insertingSlide` uses per `blockType`.
+    private static func emptyBlock(for placeholder: SlideLayoutPlaceholder) -> Block {
+        var attributes: [String: AnyCodable] = [:]
+        switch placeholder.blockType {
+        case .heading: attributes["level"] = .number(1)
+        case .image: attributes["source"] = .string(""); attributes["alt"] = .string(placeholder.name ?? "")
+        case .table: attributes["rows"] = .number(1); attributes["cols"] = .number(1)
+        case .list: attributes["style"] = .string("unordered")
+        default: break
+        }
+        return Block(type: placeholder.blockType, attributes: attributes)
     }
 
     // MARK: - Archive / Trash / Favorite

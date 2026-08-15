@@ -12,9 +12,14 @@ final class SlideLayoutSpecTests: XCTestCase {
     // MARK: - Builtins cover every SlideLayout case
 
     func testBuiltinsCoverEverySlideLayoutCase() {
+        // Not equality: P1 1.9 extended builtins with the ~25-entry LO
+        // AutoLayout catalog as DATA, on top of the 4 ids the closed
+        // SlideLayout enum names - builtins is now intentionally a
+        // superset. The invariant this test actually protects is that
+        // every SlideLayout case still resolves to a builtin.
         let builtinIDs = Set(SlideLayoutSpec.builtins.map(\.id))
         let layoutIDs = Set(SlideLayout.allCases.map(\.rawValue))
-        XCTAssertEqual(builtinIDs, layoutIDs)
+        XCTAssertTrue(layoutIDs.isSubset(of: builtinIDs))
     }
 
     func testDefaultForEachLayoutReturnsTheMatchingBuiltin() {
@@ -63,13 +68,24 @@ final class SlideLayoutSpecTests: XCTestCase {
         )
     }
 
+    /// Strips idx/name/frameU (P1 1.9/1.7 additions, absent from
+    /// `insertingSlide`'s own output per its doc comment - that switch
+    /// is deliberately unrefactored) so the comparison below is purely
+    /// about blockType/children shape, matching what `shape(of:)`
+    /// above already produces.
+    private func stripMetadata(_ placeholders: [SlideLayoutPlaceholder]) -> [SlideLayoutPlaceholder] {
+        placeholders.map {
+            SlideLayoutPlaceholder(blockType: $0.blockType, children: stripMetadata($0.children))
+        }
+    }
+
     func testEveryBuiltinMatchesWhatInsertingSlideActuallyProduces() {
         let deck = SlideDeck.makeEmpty(title: "T")
         for layout in SlideLayout.allCases {
             let withSlide = deck.insertingSlide(at: 0, layout: layout)
             let actualShape = placeholderShape(ofSlideAt: 0, in: withSlide)
             XCTAssertEqual(
-                actualShape, SlideLayoutSpec.default(for: layout).placeholders,
+                actualShape, stripMetadata(SlideLayoutSpec.default(for: layout).placeholders),
                 "SlideLayoutSpec.default(for: \(layout)) has drifted from insertingSlide's real output"
             )
         }
