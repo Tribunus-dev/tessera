@@ -30,11 +30,12 @@ public struct SlideLayoutPlaceholder: Codable, Sendable, Hashable {
     /// `ShapeGeometry`'s documented convention elsewhere in this
     /// codebase, so a layout renders identically at any output size
     /// (canvas, thumbnail, print) without a separate per-size frame
-    /// table. `nil` means no explicit frame: none of ``builtins`` sets
-    /// one yet (P1 1.9 shipped `idx`/`name` only), so
-    /// ``SlideDeckRenderer`` falls back to a reasonable default
-    /// position/size for the placeholder's `blockType` rather than
-    /// crashing or drawing at zero size.
+    /// table. Every entry in ``builtins`` sets a real one (P1 1.7);
+    /// `nil` remains valid for a placeholder that predates this field
+    /// or a future custom layout, in which case ``SlideDeckRenderer``
+    /// falls back to a reasonable default position/size for the
+    /// placeholder's `blockType` rather than crashing or drawing at
+    /// zero size.
     public var frameU: CGRect?
 
     public init(
@@ -105,7 +106,10 @@ public struct SlideLayoutSpec: Codable, Sendable, Hashable, Identifiable {
     public static let title = SlideLayoutSpec(
         id: SlideLayout.title.rawValue,
         name: SlideLayout.title.displayName,
-        placeholders: [SlideLayoutPlaceholder(blockType: .heading, idx: 0, name: "Title")]
+        placeholders: [SlideLayoutPlaceholder(
+            blockType: .heading, idx: 0, name: "Title",
+            frameU: CGRect(x: 0.08, y: 0.38, width: 0.84, height: 0.24)
+        )]
     )
 
     /// Mirrors the `.titleAndContent` case: one top-level toggle
@@ -115,8 +119,14 @@ public struct SlideLayoutSpec: Codable, Sendable, Hashable, Identifiable {
         name: SlideLayout.titleAndContent.displayName,
         placeholders: [
             SlideLayoutPlaceholder(blockType: .toggle, children: [
-                SlideLayoutPlaceholder(blockType: .heading, idx: 0, name: "Title"),
-                SlideLayoutPlaceholder(blockType: .paragraph, idx: 1, name: "Content"),
+                SlideLayoutPlaceholder(
+                    blockType: .heading, idx: 0, name: "Title",
+                    frameU: CGRect(x: 0.05, y: 0.05, width: 0.90, height: 0.13)
+                ),
+                SlideLayoutPlaceholder(
+                    blockType: .paragraph, idx: 1, name: "Content",
+                    frameU: CGRect(x: 0.05, y: 0.22, width: 0.90, height: 0.73)
+                ),
             ]),
         ]
     )
@@ -125,29 +135,35 @@ public struct SlideLayoutSpec: Codable, Sendable, Hashable, Identifiable {
     public static let image = SlideLayoutSpec(
         id: SlideLayout.image.rawValue,
         name: SlideLayout.image.displayName,
-        placeholders: [SlideLayoutPlaceholder(blockType: .image, idx: 0, name: "Picture")]
+        placeholders: [SlideLayoutPlaceholder(
+            blockType: .image, idx: 0, name: "Picture",
+            frameU: CGRect(x: 0.05, y: 0.10, width: 0.90, height: 0.85)
+        )]
     )
 
     /// Mirrors the `.blank` case: one empty top-level paragraph.
     public static let blank = SlideLayoutSpec(
         id: SlideLayout.blank.rawValue,
         name: SlideLayout.blank.displayName,
-        placeholders: [SlideLayoutPlaceholder(blockType: .paragraph, idx: 0, name: "Content")]
+        placeholders: [SlideLayoutPlaceholder(
+            blockType: .paragraph, idx: 0, name: "Content",
+            frameU: CGRect(x: 0.05, y: 0.10, width: 0.90, height: 0.85)
+        )]
     )
 
     // MARK: - AutoLayout catalog (P1 1.9)
 
     /// A real content slot: a leaf placeholder with stable per-spec
     /// `idx` identity and a picker-facing label.
-    private static func slot(_ type: BlockType, _ idx: Int, _ name: String) -> SlideLayoutPlaceholder {
-        SlideLayoutPlaceholder(blockType: type, idx: idx, name: name)
+    private static func slot(_ type: BlockType, _ idx: Int, _ name: String, _ frameU: CGRect) -> SlideLayoutPlaceholder {
+        SlideLayoutPlaceholder(blockType: type, idx: idx, name: name, frameU: frameU)
     }
 
     /// A catalog entry whose content is a single, unwrapped placeholder
     /// - matches `insertingSlide`'s bare-block convention (`.title` /
     /// `.image` / `.blank`).
-    private static func single(_ id: String, _ name: String, _ type: BlockType, _ slotName: String) -> SlideLayoutSpec {
-        SlideLayoutSpec(id: id, name: name, placeholders: [slot(type, 0, slotName)])
+    private static func single(_ id: String, _ name: String, _ type: BlockType, _ slotName: String, _ frameU: CGRect) -> SlideLayoutSpec {
+        SlideLayoutSpec(id: id, name: name, placeholders: [slot(type, 0, slotName, frameU)])
     }
 
     /// A catalog entry whose root placeholder wraps 2+ content slots -
@@ -165,70 +181,99 @@ public struct SlideLayoutSpec: Codable, Sendable, Hashable, Identifiable {
     /// `.toggle` is reserved for the wrapping container, never a
     /// content slot, matching the built-ins' own convention.
     private static let autoLayoutCatalog: [SlideLayoutSpec] = [
-        single("titleOnly", "Title Only", .heading, "Title"),
+        single("titleOnly", "Title Only", .heading, "Title", CGRect(x: 0.05, y: 0.05, width: 0.90, height: 0.13)),
         wrapping("sectionHeader", "Section Header", [
-            slot(.heading, 0, "Title"), slot(.paragraph, 1, "Text"),
+            slot(.heading, 0, "Title", CGRect(x: 0.05, y: 0.05, width: 0.90, height: 0.13)),
+            slot(.paragraph, 1, "Text", CGRect(x: 0.05, y: 0.22, width: 0.90, height: 0.73)),
         ]),
         wrapping("titleAndTable", "Title, Table", [
-            slot(.heading, 0, "Title"), slot(.table, 1, "Table"),
+            slot(.heading, 0, "Title", CGRect(x: 0.05, y: 0.05, width: 0.90, height: 0.13)),
+            slot(.table, 1, "Table", CGRect(x: 0.05, y: 0.22, width: 0.90, height: 0.73)),
         ]),
         wrapping("titleAndPicture", "Title, Picture", [
-            slot(.heading, 0, "Title"), slot(.image, 1, "Picture"),
+            slot(.heading, 0, "Title", CGRect(x: 0.05, y: 0.05, width: 0.90, height: 0.13)),
+            slot(.image, 1, "Picture", CGRect(x: 0.05, y: 0.22, width: 0.90, height: 0.73)),
         ]),
         wrapping("titleAndList", "Title, Bulleted List", [
-            slot(.heading, 0, "Title"), slot(.list, 1, "Bulleted List"),
+            slot(.heading, 0, "Title", CGRect(x: 0.05, y: 0.05, width: 0.90, height: 0.13)),
+            slot(.list, 1, "Bulleted List", CGRect(x: 0.05, y: 0.22, width: 0.90, height: 0.73)),
         ]),
         wrapping("twoContent", "Two Content", [
-            slot(.heading, 0, "Title"), slot(.paragraph, 1, "Content Left"), slot(.paragraph, 2, "Content Right"),
+            slot(.heading, 0, "Title", CGRect(x: 0.05, y: 0.05, width: 0.90, height: 0.13)),
+            slot(.paragraph, 1, "Content Left", CGRect(x: 0.05, y: 0.22, width: 0.425, height: 0.73)),
+            slot(.paragraph, 2, "Content Right", CGRect(x: 0.525, y: 0.22, width: 0.425, height: 0.73)),
         ]),
         wrapping("comparison", "Comparison", [
-            slot(.heading, 0, "Title"),
-            slot(.paragraph, 1, "Caption Left"), slot(.paragraph, 2, "Content Left"),
-            slot(.paragraph, 3, "Caption Right"), slot(.paragraph, 4, "Content Right"),
+            slot(.heading, 0, "Title", CGRect(x: 0.05, y: 0.05, width: 0.90, height: 0.13)),
+            slot(.paragraph, 1, "Caption Left", CGRect(x: 0.05, y: 0.22, width: 0.425, height: 0.10)),
+            slot(.paragraph, 2, "Content Left", CGRect(x: 0.05, y: 0.34, width: 0.425, height: 0.61)),
+            slot(.paragraph, 3, "Caption Right", CGRect(x: 0.525, y: 0.22, width: 0.425, height: 0.10)),
+            slot(.paragraph, 4, "Content Right", CGRect(x: 0.525, y: 0.34, width: 0.425, height: 0.61)),
         ]),
         wrapping("contentWithCaption", "Content with Caption", [
-            slot(.heading, 0, "Title"), slot(.paragraph, 1, "Text"), slot(.image, 2, "Content"),
+            slot(.heading, 0, "Title", CGRect(x: 0.05, y: 0.05, width: 0.90, height: 0.13)),
+            slot(.paragraph, 1, "Text", CGRect(x: 0.05, y: 0.22, width: 0.425, height: 0.73)),
+            slot(.image, 2, "Content", CGRect(x: 0.525, y: 0.22, width: 0.425, height: 0.73)),
         ]),
         wrapping("pictureWithCaption", "Picture with Caption", [
-            slot(.heading, 0, "Title"), slot(.image, 1, "Picture"), slot(.paragraph, 2, "Caption"),
+            slot(.heading, 0, "Title", CGRect(x: 0.05, y: 0.05, width: 0.90, height: 0.13)),
+            slot(.image, 1, "Picture", CGRect(x: 0.05, y: 0.22, width: 0.90, height: 0.35)),
+            slot(.paragraph, 2, "Caption", CGRect(x: 0.05, y: 0.60, width: 0.90, height: 0.35)),
         ]),
         wrapping("titleTwoContentOverContent", "Title, Two Content over Content", [
-            slot(.heading, 0, "Title"),
-            slot(.paragraph, 1, "Content Top Left"), slot(.paragraph, 2, "Content Top Right"),
-            slot(.paragraph, 3, "Content Bottom"),
+            slot(.heading, 0, "Title", CGRect(x: 0.05, y: 0.05, width: 0.90, height: 0.13)),
+            slot(.paragraph, 1, "Content Top Left", CGRect(x: 0.05, y: 0.22, width: 0.425, height: 0.32)),
+            slot(.paragraph, 2, "Content Top Right", CGRect(x: 0.525, y: 0.22, width: 0.425, height: 0.32)),
+            slot(.paragraph, 3, "Content Bottom", CGRect(x: 0.05, y: 0.60, width: 0.90, height: 0.35)),
         ]),
         wrapping("titleContentOverTwoContent", "Title, Content over Two Content", [
-            slot(.heading, 0, "Title"), slot(.paragraph, 1, "Content Top"),
-            slot(.paragraph, 2, "Content Bottom Left"), slot(.paragraph, 3, "Content Bottom Right"),
+            slot(.heading, 0, "Title", CGRect(x: 0.05, y: 0.05, width: 0.90, height: 0.13)),
+            slot(.paragraph, 1, "Content Top", CGRect(x: 0.05, y: 0.22, width: 0.90, height: 0.35)),
+            slot(.paragraph, 2, "Content Bottom Left", CGRect(x: 0.05, y: 0.60, width: 0.425, height: 0.32)),
+            slot(.paragraph, 3, "Content Bottom Right", CGRect(x: 0.525, y: 0.60, width: 0.425, height: 0.32)),
         ]),
         wrapping("titleFourContent", "Title, Four Content", [
-            slot(.heading, 0, "Title"),
-            slot(.paragraph, 1, "Content 1"), slot(.paragraph, 2, "Content 2"),
-            slot(.paragraph, 3, "Content 3"), slot(.paragraph, 4, "Content 4"),
+            slot(.heading, 0, "Title", CGRect(x: 0.05, y: 0.05, width: 0.90, height: 0.13)),
+            slot(.paragraph, 1, "Content 1", CGRect(x: 0.05, y: 0.22, width: 0.425, height: 0.35)),
+            slot(.paragraph, 2, "Content 2", CGRect(x: 0.525, y: 0.22, width: 0.425, height: 0.35)),
+            slot(.paragraph, 3, "Content 3", CGRect(x: 0.05, y: 0.60, width: 0.425, height: 0.35)),
+            slot(.paragraph, 4, "Content 4", CGRect(x: 0.525, y: 0.60, width: 0.425, height: 0.35)),
         ]),
         wrapping("titleSixContent", "Title, Six Content", [
-            slot(.heading, 0, "Title"),
-            slot(.paragraph, 1, "Content 1"), slot(.paragraph, 2, "Content 2"), slot(.paragraph, 3, "Content 3"),
-            slot(.paragraph, 4, "Content 4"), slot(.paragraph, 5, "Content 5"), slot(.paragraph, 6, "Content 6"),
+            slot(.heading, 0, "Title", CGRect(x: 0.05, y: 0.05, width: 0.90, height: 0.13)),
+            slot(.paragraph, 1, "Content 1", CGRect(x: 0.05, y: 0.22, width: 0.425, height: 0.225)),
+            slot(.paragraph, 2, "Content 2", CGRect(x: 0.525, y: 0.22, width: 0.425, height: 0.225)),
+            slot(.paragraph, 3, "Content 3", CGRect(x: 0.05, y: 0.46, width: 0.425, height: 0.225)),
+            slot(.paragraph, 4, "Content 4", CGRect(x: 0.525, y: 0.46, width: 0.425, height: 0.225)),
+            slot(.paragraph, 5, "Content 5", CGRect(x: 0.05, y: 0.70, width: 0.425, height: 0.225)),
+            slot(.paragraph, 6, "Content 6", CGRect(x: 0.525, y: 0.70, width: 0.425, height: 0.225)),
         ]),
-        single("centeredText", "Centered Text", .paragraph, "Text"),
+        single("centeredText", "Centered Text", .paragraph, "Text", CGRect(x: 0.05, y: 0.10, width: 0.90, height: 0.85)),
         wrapping("verticalTitleAndText", "Vertical Title and Text", [
-            slot(.heading, 0, "Title"), slot(.paragraph, 1, "Vertical Text"),
+            slot(.heading, 0, "Title", CGRect(x: 0.05, y: 0.05, width: 0.90, height: 0.13)),
+            slot(.paragraph, 1, "Vertical Text", CGRect(x: 0.05, y: 0.22, width: 0.90, height: 0.73)),
         ]),
         wrapping("verticalTitleVerticalText", "Vertical Title, Vertical Text", [
-            slot(.heading, 0, "Title"), slot(.list, 1, "Vertical Outline"),
+            slot(.heading, 0, "Title", CGRect(x: 0.05, y: 0.05, width: 0.90, height: 0.13)),
+            slot(.list, 1, "Vertical Outline", CGRect(x: 0.05, y: 0.22, width: 0.90, height: 0.73)),
         ]),
         wrapping("titleTableAndContent", "Title, Table and Content", [
-            slot(.heading, 0, "Title"), slot(.table, 1, "Table"), slot(.paragraph, 2, "Notes"),
+            slot(.heading, 0, "Title", CGRect(x: 0.05, y: 0.05, width: 0.90, height: 0.13)),
+            slot(.table, 1, "Table", CGRect(x: 0.05, y: 0.22, width: 0.90, height: 0.35)),
+            slot(.paragraph, 2, "Notes", CGRect(x: 0.05, y: 0.60, width: 0.90, height: 0.35)),
         ]),
         wrapping("titleTwoPicture", "Title, Two Picture", [
-            slot(.heading, 0, "Title"), slot(.image, 1, "Picture Left"), slot(.image, 2, "Picture Right"),
+            slot(.heading, 0, "Title", CGRect(x: 0.05, y: 0.05, width: 0.90, height: 0.13)),
+            slot(.image, 1, "Picture Left", CGRect(x: 0.05, y: 0.22, width: 0.425, height: 0.73)),
+            slot(.image, 2, "Picture Right", CGRect(x: 0.525, y: 0.22, width: 0.425, height: 0.73)),
         ]),
         wrapping("titleContentAndList", "Title, Content and List", [
-            slot(.heading, 0, "Title"), slot(.paragraph, 1, "Content"), slot(.list, 2, "Bulleted List"),
+            slot(.heading, 0, "Title", CGRect(x: 0.05, y: 0.05, width: 0.90, height: 0.13)),
+            slot(.paragraph, 1, "Content", CGRect(x: 0.05, y: 0.22, width: 0.425, height: 0.73)),
+            slot(.list, 2, "Bulleted List", CGRect(x: 0.525, y: 0.22, width: 0.425, height: 0.73)),
         ]),
-        single("tableOnly", "Table Only", .table, "Table"),
-        single("listOnly", "Bulleted List Only", .list, "Bulleted List"),
+        single("tableOnly", "Table Only", .table, "Table", CGRect(x: 0.05, y: 0.10, width: 0.90, height: 0.85)),
+        single("listOnly", "Bulleted List Only", .list, "Bulleted List", CGRect(x: 0.05, y: 0.10, width: 0.90, height: 0.85)),
     ]
 
     /// Every built-in - the 4 `SlideLayout`-backed defaults plus the

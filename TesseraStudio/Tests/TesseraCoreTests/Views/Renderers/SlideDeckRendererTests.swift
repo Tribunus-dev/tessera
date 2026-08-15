@@ -147,8 +147,6 @@ final class SlideDeckRendererTests: DoctrineTestCase {
         let leftFrame = SlideDeckRenderer.resolveFrame(for: leftBlock, at: 1, targetSlots: targetSlots, rect: rect)
         let rightFrame = SlideDeckRenderer.resolveFrame(for: rightBlock, at: 2, targetSlots: targetSlots, rect: rect)
 
-        XCTExpectFailure("SUSPECTED CODE BUG: multi-slot layouts render overlapping default bands because no builtin SlideLayoutSpec placeholder carries frameU (both same-type content slots fall back to the identical defaultFrameU(for:) rect) - contract: studio-expansion-design-refinement-2026-08-14.md section 4 Slides cluster item 1.7. Confirmed via docs/p1-post-claim-audit-2026-08-15.md item 1.7.") {
-            XCTAssertNotEqual(leftFrame, rightFrame, "Content Left and Content Right must resolve to different frames, not the identical default band")
-        }
+        XCTAssertNotEqual(leftFrame, rightFrame, "Content Left and Content Right must resolve to different frames, not the identical default band")
     }
 }

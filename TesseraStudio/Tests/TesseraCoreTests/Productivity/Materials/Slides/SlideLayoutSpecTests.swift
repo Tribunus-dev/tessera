@@ -67,9 +67,7 @@ final class SlideLayoutSpecTests: DoctrineTestCase {
         let allSlots = SlideLayoutSpec.builtins.flatMap(contentSlots(of:))
         let missingFrameU = allSlots.filter { $0.frameU == nil }
 
-        XCTExpectFailure("SUSPECTED CODE BUG: no builtin SlideLayoutSpec placeholder carries a non-nil frameU - contract: studio-expansion-design-refinement-2026-08-14.md section 4 Slides cluster item 1.7 (\"SlideLayoutSpec gains optional normalized frameU rects on placeholders\"). Confirmed via docs/p1-post-claim-audit-2026-08-15.md item 1.7: \"NO builtin layout currently carries frameU geometry - all multi-slot layouts render overlapping default bands\".") {
-            XCTAssertTrue(missingFrameU.isEmpty, "\(missingFrameU.count) of \(allSlots.count) content slots have no frameU")
-        }
+        XCTAssertTrue(missingFrameU.isEmpty, "\(missingFrameU.count) of \(allSlots.count) content slots have no frameU")
     }
 
     // MARK: - Round trip (rule 2)
