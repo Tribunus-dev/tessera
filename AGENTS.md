@@ -277,6 +277,13 @@ enterprise items (§6c/6c.1), and produced per-component design contracts:
 (SOTA evidence in `TesseraStudio/docs/.scratch/sota-*-report.md`). Wave
 briefs cite the refinement doc, not just the plan tables.
 
+Tests are governed by `TesseraStudio/docs/testing-doctrine.md`
+(2026-08-15, binding): tests are written FROM contracts, never from code;
+no receipt without a mutation; gated tests need ungated shadows;
+suspected code bugs become XCTExpectFailure findings, never weakened
+assertions. The pre-doctrine suite was deleted 2026-08-15 by architect
+directive; fixtures survive as pinned data contracts.
+
 The plan's no-versioned-implementations rule is binding for the expansion
 exactly the same way it is for the inference engine: every new component
 either **evolves an existing type** (`BlockType` cases, `SheetColumnType`

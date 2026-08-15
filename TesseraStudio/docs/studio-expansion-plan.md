@@ -962,6 +962,16 @@ waves cite this section; the wave briefs do not re-ask.
 architect the same day (chat approval). The five §6c.1 open-question
 defaults are adopted as recorded in row 16.
 
+**Decision 17 (RATIFIED 2026-08-15, chat approval):** the P2 execution
+package in `studio-p2-implementation-plan-2026-08-15.md` §6 - the eight
+new design contracts in `.scratch/sota-p2-core-report.md` (incl. 2.6 =
+native Swift goal-seek + linear simplex with nonlinear engines out of
+scope; 2.9 = Writer-first; 2.11 = data-only assembly manifest); Wave P2-0
+as a blocking gap-closure wave scoped by
+`p1-post-claim-audit-2026-08-15.md` §3; the P2-A..D wave structure and
+standing rules; the "no receipt without a mutation" standing rule; and
+per-wave audits replacing a single deferred audit.
+
 The remaining open questions (no longer blocking the rollout, but worth
 tracking):
 
