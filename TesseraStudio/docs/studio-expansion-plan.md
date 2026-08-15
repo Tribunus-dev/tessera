@@ -1,10 +1,10 @@
 # Tessera Studio Expansion Plan: LibreOffice Capability Parity
 
-**Status:** architect-approved (2026-08-13), Draw scope added 2026-08-13. Open questions resolved; see §8 decisions log.
-**Date:** 2026-08-13 (initial), 2026-08-13 (Draw scope added)
+**Status:** architect-approved (2026-08-13), Draw scope added 2026-08-13. Open questions resolved; see §8 decisions log. **P0 landed on main 2026-08-14** (16/16 deliverables; see §2.1 status refresh and the §6a execution addendum). **Refinement pass 2026-08-14**: post-P0 corrections, P1 entry gates (§6e), and per-component design definitions in `studio-expansion-design-refinement-2026-08-14.md` (companion doc; SOTA evidence in `docs/.scratch/sota-*-report.md`).
+**Date:** 2026-08-13 (initial), 2026-08-13 (Draw scope added), 2026-08-14 (P0 landed + refinement pass)
 **Author:** Mavis (orchestrator), with capability inventories from three explore agents
 **Scope:** documents (Writer), spreadsheets (Calc), presentations (Impress), drawings (Draw) - all to LibreOffice-class capability parity within tesseracore
-**Out of scope:** Math (StarMath standalone), Base (database), mail-merge UI wizards, Basic/VBA macros, Draw 3D objects + morph (heavy and out-of-scope for the productivity use case)
+**Out of scope:** Base as a separate database product surface, legacy `.ppt` write, and the reduced §6d list. (2026-08-14: nine former out-of-scope items - VBA/Basic macro compat, StarMath editor, forms, database connectivity, Draw 3D, Draw morph, GPU transitions, tagged PDF, mail-merge wizard - were promoted to P2 as 2.13-2.21; see §6c.1.)
 
 > **Architect decisions (2026-08-13).** Bridge for DOCX import. Keep the
 > `SheetWorkbook` name. `BlockType` case growth is fine. **Full** number-format
@@ -33,9 +33,12 @@ the current tesseracore. The detailed reports are at:
 - `docs/.scratch/lo-impress-report.md` - 27 capability rows
 
 This plan summarizes the consolidated findings, names the reusable components, and
-proposes a four-phase rollout. **Phase 0 (P0) is the MVP**: the ten reusable
-components that close the largest gaps and unlock Word-class / Calc-class / Impress-
-class file round-trips.
+proposes a four-phase rollout. **Phase 0 (P0) was the MVP**: sixteen deliverables
+(the "ten components" phrasing predates the Draw scope) that close the largest gaps
+and unlock Word-class / Calc-class / Impress-class file round-trips. P0 landed on
+main 2026-08-14; §2.1 maps each capability row to its landing commit, and the §6a
+addendum records the one substitution (the LO bridge shipped as CLI conversion, not
+in-process UNO).
 
 The no-versioned-implementations rule is binding: every new component either
 **evolves an existing type** (e.g. extend `BlockType`, `SheetWorkbook`, `SlideLayout`,
@@ -256,6 +259,44 @@ is in the scratch reports.
 break the per-source path evidence per row. Rows 44-63 are the Draw scope added
 2026-08-13: 17 new rows, 2 explicitly punted (3D + morph).)
 
+### 2.1 Post-P0 status refresh (2026-08-14)
+
+The matrix above is preserved as approved; this table layers the P0 outcome on
+top of it. "Closed (data model)" means the value types + store + tests landed;
+UI and format round-trip depth are tracked by the P1 items that consume them.
+
+| Row(s) | Status after P0 | Landing commit |
+|---|---|---|
+| 1 (section/frame) | closed (data model) - `.section`/`.frame` cases | `f9c901bba` |
+| 8 (table spans) | closed (data model) - rowSpans/colSpans/nested children | `a5ecb5f45` |
+| 11 (master pages) | closed (data model) - `MasterPageStore` + `SlideLayoutSpec`; picker UI is P1 1.9 | `b87b83f93` |
+| 15 (multi-sheet) | closed - `SheetWorkbook.sheets` + sheetOrder | `e0dc7326a` |
+| 16 (cell types) | largely closed - `CellValue` landed; merged-cell semantics ride the P1 style work | `3b3075a27` |
+| 17 (TokenArray IR) | closed | `e56431d3a` |
+| 18 (recalc states) | closed - `RecalcState` + dirty-cone landed INSIDE `DependencyGraph`/`SheetEngine` (legal under "evolves DependencyGraph"; there is no `RecalcScheduler.swift` file - wave briefs must cite the real seam) | `9d00cf877` |
+| 22 (named ranges) | closed (registry) | `ec3a5d246` |
+| 23 (number formats) | partial - `NumberFormatEngine` landed grammar-full with documented gaps (fractions, elapsed time, fill/pad directives, locale-ID currency tags); see §6e gate 2 | `2140af305` |
+| 26 (pivot) | definition type landed early (`SheetPivotDefinition`); `PivotTableStore` remains P2 2.2 | `517beb58c` |
+| 27/28 (validation/CF) | registries landed at P0 (ahead of plan); P1 1.12/1.13 are evaluation + UI on top, not green-field | `50c0bc924`, `648341741` |
+| 32 (protection) | closed at P0 (the row's P1 label was stale) | `ef2e02dcb` |
+| 38 (Writer readers) | partial via SUBSTITUTED architecture - `LibreOfficeConverter` CLI + `WriterBridgeFilter` (ODT/RTF via DOCX); see §6a addendum | `ef605c4dc` |
+| 44/45/46 (shapes/z-order) | closed (data model) - `Shape`, `ShapeCatalog`, `ShapeRenderer`, Draw quartet, z-order | `7234d1e92`, `5efccdf2a`, `731369cc0` |
+
+Stale-row corrections found in the 2026-08-14 refinement pass:
+
+- **Row 21 (array/dynamic arrays) is stale**: `SheetEngine` already implements
+  spill semantics (`spillOrigin`/`SpillSize`, spilled cells refuse edits). The
+  residual P1 work is implicit intersection / `@`, array volatility (row 20),
+  and `#SPILL!` surfacing - scoped as P1 1.21 in §6b, sized by the calc SOTA
+  report.
+- **Row 30/33 contradiction resolved**: subtotals and statistics wizards are
+  P2 (2.7, 2.8), matching the rollout; the matrix rows' P1 labels were stale.
+- **Row 16 of §1f was corrected on 2026-08-13** (SpreadsheetDigester is
+  csv/tsv-only); the Calc import path through the CLI converter flattens
+  formulas on ODS/XLS import and carries a single sheet - the fidelity
+  boundary is documented in `CalcBridgeFilter.swift` and its closure is part
+  of the §6e bridge decision.
+
 ---
 
 ## 3. The unified tesseracore component catalog (priority-ordered)
@@ -283,12 +324,19 @@ no-versioned-implementations check.
 | 14 | `Drawing` material (full peer) | `TesseraCore/Productivity/Materials/Draw/Drawing.swift` | **peer of** `SlideDeck`; the durable `graph_entity` row for a single-page vector drawing | P0 |
 | 15 | `DrawingStore` + `DrawingsViewModel` + `DrawingReceiptType` + `DrawingsGraphConnector` | `TesseraCore/Productivity/Materials/Draw/*` | **peer of** `SlideStore` + `SlidesViewModel` + `SlideReceiptType` + `SlidesGraphConnector`; same `*Store`/`*ViewModel`/`*ReceiptType`/`*GraphConnector` quartet | P0 |
 | 16 | `MasterPageLayoutPicker` (full UI surface) | `TesseraCore/Productivity/Materials/Slides/MasterPageLayoutPicker.swift` | **peer of** the existing `SlideDetailView` slides surface; consumes `MasterPageStore`. **Full picker UI** per architect decision, not data-only. | P1 |
-| 12 | `Theme` + `ThemeStore` | `TesseraCore/Productivity/Materials/Slides/Theme.swift` + `ThemeStore.swift` | **peer of** `SlideStore`/`DocStore` (no theme in v1) | P1 |
-| 13 | `LOBridgeDeckIO` (ODP/PPTX import+export, PDF deck export) | `TesseraCore/DocumentProcessing/LibreOffice/LOBridgeDeckIO.swift` | **evolves** `EmbeddedPythonBridge` (adds two methods; no v2 bridge) | P1 |
-| 14 | `SlideDeckRenderer` (Core Graphics) | `TesseraCore/Productivity/Materials/Slides/SlideDeckRenderer.swift` | **evolves** `BlockRenderer` (mode-aware: `EditorMode.document` vs `EditorMode.slideCanvas`) | P1 |
-| 15 | `ChartRenderer` (Core Graphics, full LO chart type parity) | `TesseraCore/Views/Renderers/ChartRenderer.swift` | **peer of** the other `Views/Renderers/*` (no v2 renderer base). **Core Graphics** per architect decision, not Swift Charts. | P1 |
-| 16 | `QueryEngine` (sort / filter / subtotals) | `TesseraCore/Productivity/Materials/Sheets/QueryEngine.swift` | **peer of** `SheetsViewModel` (subscribes to the same `DependencyGraph`) | P1 |
-| 17 | `FieldController` + `RevisionController` | `TesseraCore/Productivity/Editor/{FieldController,RevisionController}.swift` | **evolves** `BlockType.field` and the existing `trackInsertion`/`trackDeletion` types (adds the accept/reject lifecycle, the per-revision ID) | P1 |
+| 17 | `Theme` + `ThemeStore` | `TesseraCore/Productivity/Materials/Slides/Theme.swift` + `ThemeStore.swift` | **peer of** `SlideStore`/`DocStore` (no theme in v1) | P1 |
+| 18 | `LOBridgeDeckIO` (ODP/PPTX import+export, PDF deck export) | `TesseraCore/DocumentProcessing/LibreOffice/LOBridgeDeckIO.swift` | **evolves** `EmbeddedPythonBridge` (adds two methods; no v2 bridge) | P1 |
+| 19 | `SlideDeckRenderer` (Core Graphics) | `TesseraCore/Productivity/Materials/Slides/SlideDeckRenderer.swift` | **evolves** `BlockRenderer` (mode-aware: `EditorMode.document` vs `EditorMode.slideCanvas`) | P1 |
+| 20 | `ChartRenderer` (Core Graphics, full LO chart type parity) | `TesseraCore/Views/Renderers/ChartRenderer.swift` | **peer of** the other `Views/Renderers/*` (no v2 renderer base). **Core Graphics** per architect decision, not Swift Charts. | P1 |
+| 21 | `QueryEngine` (sort / filter / subtotals) | `TesseraCore/Productivity/Materials/Sheets/QueryEngine.swift` | **peer of** `SheetsViewModel` (subscribes to the same `DependencyGraph`) | P1 |
+| 22 | `FieldController` + `RevisionController` | `TesseraCore/Productivity/Editor/{FieldController,RevisionController}.swift` | **evolves** `BlockType.field` and the existing `trackInsertion`/`trackDeletion` types (adds the accept/reject lifecycle, the per-revision ID) | P1 |
+| 23 | `LayerStore` + `TransformController` + `SnapEngine` (Draw UI) | `TesseraCore/Productivity/Materials/Draw/{LayerStore,TransformController,SnapEngine}.swift` | **peers of** `DrawingStore` / `ShapeRenderer`; consume the landed `Shape` geometry + z-order | P1 |
+| 24 | `ODGBridgeFilter` + `SVGBridgeFilter` + `PDFExportBridge` (Draw I/O) | `TesseraCore/Productivity/ImportExport/{ODGBridgeFilter,SVGBridgeFilter,PDFExportBridge}.swift` | **peers of** `WriterBridgeFilter` / `CalcBridgeFilter`; architecture is gated on the §6e bridge decision | P1 |
+
+(Renumbered 2026-08-14: the original table reused priorities 12-16 across the
+P0 and P1 blocks after the Draw splice, which made §7's "#13" citation
+ambiguous, and omitted rows 23-24 entirely. 24 rows now match the "24
+reusable components" claim; P0 = rows 1-15, P1 = rows 16-24.)
 
 Plus, at P2, three substantial pieces of work whose design the architect
 has already chosen:
@@ -306,6 +354,12 @@ has already chosen:
   `PivotTableStyleInfo`, layout properties, output properties, save/load
   (`dpsave.hxx` / `dpdimsave.hxx`). Lives at
   `TesseraCore/Productivity/Materials/Sheets/PivotTableStore.swift`. Phase 2.
+- **`BezierPathController`** - the Draw custom-geometry piece (the bezier
+  curve edit mode; the P0 freeform becomes a full vector path tool). Lives
+  at `TesseraCore/Productivity/Materials/Draw/BezierPathController.swift`,
+  peer of `ShapeRenderer`. Phase 2. (Added to this list 2026-08-14; §6c row
+  2.3 always carried it - the "three pieces" sentence below previously
+  listed only two.)
 
 24 components at P0+P1, three substantial design-locked pieces at P2. The
 "evolve" column is the binding constraint: every new component either adds
@@ -318,6 +372,12 @@ Nothing paralleled; nothing v2.
 
 The `LibreOfficeBootstrap` + `EmbeddedPythonBridge` + `tessera_lo_service.py`
 stack is a working UNO gateway. The right division of labor is:
+
+> **2026-08-14:** "the bridge" in this section now means the Gate-1
+> architecture (CLI `LibreOfficeConverter` + FlatODF readers/writers, with
+> a scoped URP client as the only live-UNO fallback) - NOT in-process UNO,
+> which died at P0 (§6a addendum). The division-of-labor logic below
+> stands; the transport changed. See §6e gate 1.
 
 ### 4a. Call UNO (drive the bridge) for:
 
@@ -409,6 +469,25 @@ work rolls in under `tessera-analyst` for design study, `worker` for
 implementation, and `verifier` for the review gate before each promotion to
 main. The branch namespaces (`scratch/<feature>/agent-X`, `evolve-review/...`,
 `champions/<id>`, `evolve-baseline/wN`) carry through unchanged.
+
+**Process record (2026-08-14):** P0 did NOT follow this section. It executed
+as ~28 sequential worker commits directly on `main` (via the
+`tessera-docwork` worktree) - no wave branches, no `evolve-review`, no
+`verifier` gate, no alphaevolve run registration. The execution quality was
+good (candid scope notes, empirical blocker verification, 27 new test
+files), but the divergence was silent. P1 is UI-heavy and bridge-risky -
+exactly where the wave + verifier + post-claim-audit machinery earns its
+cost - so P1 restores this protocol as written unless the architect
+explicitly amends it. A P1 wave that ships without the verifier gate and
+both §11 audit passes is unverified by this plan's own definition.
+
+**Architect amendment (2026-08-14, for the P1 implementation run):** the
+architect authorized an aggressive implementation pass on a scratch branch
+with MILESTONE COMMITS and MINIMAL verification (build + targeted tests
+per milestone; machine-strain constraints on the 16GB host), explicitly
+DEFERRING the verifier gate + both §11 audit passes to a review pass that
+runs BEFORE any merge of that branch to main. The gate is deferred, not
+waived; the branch does not merge without it.
 
 ### 5e. The agent-ux-fatigue rules still apply
 
@@ -555,29 +634,37 @@ via the embedded Python interpreter) is the path this resolution avoids for
 the two confirmed reasons above. It is left untouched rather than partially
 updated to describe a schema its own bootstrap path can't safely serve.
 
-### 6b. Phase 1 - the second wave (19 deliverables)
+### 6b. Phase 1 - the second wave (23 deliverables; 19 original + 4 added by the 2026-08-14 refinement)
+
+Design contracts for every row live in
+`studio-expansion-design-refinement-2026-08-14.md` (§4); wave briefs cite
+that doc, not just this table.
 
 | # | Deliverable | Surface |
 |---|---|---|
+| 1.0 | Round-trip fixture corpus harness (added 2026-08-14; see §6f) - lands BEFORE any parity claim; the primary-metric source for every P1/P2 item | All |
 | 1.1 | `BlockType.field` + `FieldController` (page #, cross-ref, formula, user, date) | Writer |
 | 1.2 | `BlockType.footnote` / `.endnote` (with `DocumentPageLayout` header/footer body) | Writer |
-| 1.3 | `BlockType.chart` + `ChartRenderer` (CoreGraphics, full LO chart type parity - not Swift Charts) | Calc + Impress |
+| 1.3 | `BlockType.chart` + `ChartRenderer` (CoreGraphics, full LO chart type parity - not Swift Charts). Staged per §6e gate 3: series-typed `ChartSpec`; P1a = column/bar/line/area/pie/scatter, P1b = bubble/net/stock/column-and-line/of-pie; pivot/box/sparkline reconcile as data-source/technique/preset of the same renderer | Calc + Impress |
 | 1.4 | `BlockType.media` + `MediaBlock` (audio/video via AVFoundation) | Impress |
 | 1.5 | `Theme` + `ThemeStore` | Impress + Writer |
 | 1.6 | `TransitionSpec` + `TransitionStore` (LO has 30+ presets; ship a JSON catalog) | Impress |
 | 1.7 | `SlideDeckRenderer` (Core Graphics) + `DeckExportCoordinator` (PNG/JPG export) | Impress |
-| 1.8 | `LOBridgeDeckIO` (ODP/PPTX import + export, PDF deck export) | Impress |
+| 1.8 | `LOBridgeDeckIO` (ODP/PPTX import + export, PDF deck export). Architecture per §6e gate 1: CLI converter + `FlatODFReader/Writer` over fodp (verified: masters, placeholders, notes, transitions all round-trip); speaker-notes PDF supported, handout-layout PDF impossible in any architecture (recorded out of scope) | Impress |
 | 1.9 | `MasterPageLayoutPicker` (full UI surface, architect-chosen) | Impress |
 | 1.10 | `QueryEngine` (sort, filter, autofilter) | Calc |
-| 1.11 | `CellStyle` extension (font, fill, border, alignment per cell) | Calc |
+| 1.11 | Per-cell style completion. NAMING CORRECTION (2026-08-14): the shipped type is `SheetCellFormat` and it already applies per-cell via block attributes - do NOT introduce a `CellStyle` type. Scope = wire `NumberFormatEngine` into `SheetValueRenderer` (it has zero consumers today), evolve `SheetNumberFormat` cases into format-code presets, complete borders/alignment, and the dxf subset 1.12 needs | Calc |
 | 1.12 | `ConditionalFormat` registry (rules, databars, color scales, icon sets) | Calc |
 | 1.13 | `DataValidation` (per-range rule) | Calc |
 | 1.14 | `RevisionController` (accept/reject lifecycle for track-changes; rides receipts) | Writer |
 | 1.15 | `LayerStore` (add/delete/hide/lock/reorder layers; per-Drawing; rides receipts) | Draw |
 | 1.16 | `TransformController` (rotate/flip/scale handles; geometry mutation with undo) | Draw |
 | 1.17 | `SnapEngine` (snap to grid + snap to object + alignment helpers) | Draw |
-| 1.18 | `ODGBridgeFilter` + `SVGBridgeFilter` + `PDFExportBridge` (Draw format I/O via UNO); PNG/JPG export is **native** (`UIGraphicsImageRenderer` over `ShapeRenderer`) | Draw |
-| 1.19 | Text frames on shapes (`Shape.text: ShapeText?` lives at P0; P1 adds the canvas editing UX, the bullet list inside shape text, the connector `ShapeKind`) | Draw + Impress |
+| 1.18 | `ODGBridgeFilter` + `SVGBridgeFilter` + `PDFExportBridge` (Draw format I/O - "via UNO" superseded by §6e gate 1: CLI converter + fodg, verified carrying layers/connectors/glue points/beziers/custom shapes); PNG/JPG export is **native** (`UIGraphicsImageRenderer` over `ShapeRenderer`). SVG IMPORT ships as embedded-image fidelity at P1 (verified CLI limitation), marked as such in the AST; shape-level SVG import = P3 native parser or a future URP `.uno:Break`, decided at scoping | Draw |
+| 1.19 | Text frames on shapes (`Shape.text: ShapeText?` lives at P0; P1 adds the canvas editing UX and the connector `ShapeKind` with computed glue points + elbow routing; group/ungroup UX from row 48 rides this cluster; bullet lists inside shape text stay P2 per 2.12) | Draw + Impress |
+| 1.20 | `AnimationEffectList` flat interim (numbered 2026-08-14; was prose-only in §6b.1) + the REQUIRED pinned serialization-contract fixture proving the list is a pre-order flattening of the future SMIL tree | Impress |
+| 1.21 | Dynamic-array completion (added 2026-08-14): implicit intersection `@` + legacy-import prefixing, `#SPILL!` surfacing, volatile-resize protection, register OFFSET/INDIRECT as volatile. Spill itself already landed (matrix row 21 was stale). `FunctionVolatility.array` (row 20) is DROPPED - the axis exists in no surveyed engine; per-formula recalc bits (LO `ScRecalcMode` ONLOAD axes) are the adopted model | Calc |
+| 1.22 | Cell + slide comment anchors (added 2026-08-14; rows 31): polymorphic `CommentAnchor` on the shared `Comments.swift` model (no per-surface fork); threaded-comments shape; legacy-placeholder dual parts are an export shim only | Calc + Impress |
 
 P1 = the full P0 + the second-tier features that make the MVP feel like a
 real product. **Phase 1 is the milestone that hits Word-class / Calc-class /
@@ -599,7 +686,12 @@ Productivity/Materials/Slides/AnimationEffectList.swift`; P2
 introduces `SMILAnimationTree.swift` and the list moves to be a
 serialization of the tree.
 
-### 6c. Phase 2 - the advanced features (21 deliverables)
+(2026-08-14: this milestone is now numbered deliverable 1.20, with the
+pinned-fixture serialization-contract test spelled out in the refinement
+doc §4 - the fixture is committed at P1 and never edited at P2; load-compat
+IS the contract.)
+
+### 6c. Phase 2 core - the advanced features (12 deliverables)
 
 | # | Deliverable | Surface |
 |---|---|---|
@@ -615,6 +707,31 @@ serialization of the tree.
 | 2.10 | Custom shows (data only, no UI) | Impress |
 | 2.11 | Master documents (uses `Doc.linkedEntityIDs` + a new `MasterDoc` material) | Writer |
 | 2.12 | Draw advanced (annotations, measure/dimension lines, Draw-side tables, bullet lists inside shape text) | Draw |
+
+P2 core = the long tail of the parity plan. Features a power user expects
+and that round-trip real-world files, but that are not day-one must-haves.
+2.1, 2.2, and 2.3 are architect-locked substantial pieces (3-5K LoC each,
+per the upstream references in the sibling reports); the rest are smaller.
+2.6 (solver) is additionally gated on the §6e bridge decision - it was
+specced as a UNO call.
+
+### 6c.1 Phase 2 enterprise track (9 deliverables, design-gated)
+
+The nine items below were promoted from §6d's out-of-scope table on
+2026-08-14 (decision 11, commit `9623b4017`) for corporate-adoption
+reasons. They are a different KIND of work than 6c: each was originally
+excluded for an architectural reason that still applies, so each carries
+its promoted-with note. **Split rule (2026-08-14 refinement): an
+enterprise-track item cannot enter a wave brief until its design position
+in `studio-expansion-design-refinement-2026-08-14.md` is
+architect-ratified.** 2.13, 2.15, and 2.16 carry genuinely open design
+questions (2.16 additionally conflicts with the no-egress doctrine as
+written); the others have recommended positions ready to ratify.
+**(Gate discharged 2026-08-14: all nine design positions were ratified as
+§8 row 16, with the open-question defaults recorded there.)**
+
+| # | Deliverable | Surface |
+|---|---|---|
 | 2.13 | `MacroCompatLayer` (VBA/Basic macro read + limited execution) - promoted from out-of-scope 2026-08-14 for corporate-adoption reasons; the original objection stands as a real constraint, not just a priority call: `basic/source/comp/*` is a separate language and runtime, embedding it balloons the binary. Needs its own design pass before implementation - most likely a read-and-flag-for-agent-tool-rewrite path rather than a real VBA interpreter, not a small addition. | Writer + Calc + Impress |
 | 2.14 | `StarMathEditor` (equation authoring/editing UI over a real equation engine) - promoted from out-of-scope 2026-08-14. `starmath/` is its own sibling module with a custom TeX-like engine; `BlockType.equation`'s `latex` string already covers read/round-trip (shipped), this adds the authoring UI + engine on top. | Writer |
 | 2.15 | Form controls (new material or `BlockType` addition - design TBD) - promoted from out-of-scope 2026-08-14. Ties into the XForms / UNO control hierarchy; Tessera materials are document-shaped today, not form-shaped, so this is the "Tessera Forms" track the original plan deferred, now pulled into P2 scope rather than left as a someday idea. | Writer + Calc |
@@ -625,15 +742,14 @@ serialization of the tree.
 | 2.20 | Tagged PDF / Section 508 / PDF-UA export (`EnhancedPDFExportHelper.cxx` parity) - promoted from out-of-scope 2026-08-14 for corporate/government compliance reasons (can be a hard procurement blocker, not a nice-to-have, for public-sector or publicly-traded customers). A distinct code path from plain PDF export, not an extension of it. | Writer + Calc + Impress |
 | 2.21 | Mail-merge wizard UI (`mailmergewizard.cxx`-equivalent guided flow) - promoted from out-of-scope 2026-08-14. Layers a guided UI on top of 2.4's `MailMergeCoordinator` single-submit endpoint, which stays the underlying engine either way. | Writer |
 
-P2 = the long tail. The features that a power user expects and that round-
-trip real-world files, but that are not day-one must-haves. Note that 2.1,
-2.2, and 2.3 are architect-locked substantial pieces (3-5K LoC each, per
-the upstream references in the sibling reports); 2.13-2.21 were promoted
-from §6d's out-of-scope list on 2026-08-14 (see that section for what's
-left there and why) - three of them (2.13 `MacroCompatLayer`, 2.15 Forms,
-2.16 database connectivity) carry real open design questions, not just
-unscoped effort, and need their own design pass before implementation
-starts, the same way 2.1-2.3 do. The rest are smaller.
+Enterprise-track sizing and design positions (per item: recommended
+architecture, effort class, tier mapping for new agent tools, and the open
+question the architect must answer, if any) live in the refinement doc.
+2.19 is reframed there: LO's "OpenGL transitions" are an anachronism on
+macOS - the item is GPU-rendered transitions via Metal/CoreAnimation.
+2.20 has a candidate cheap path: LO's own tagged-PDF export driven
+through the already-shipped CLI converter's filter options, validated by
+an external PDF/UA checker in the corpus harness.
 
 ### 6d. Out of scope (P3+ / never)
 
@@ -658,6 +774,88 @@ didn't originate.
 | Auto-text / glossary blocks | `sw/source/core/swg/SwXMLTextBlocks{,1}.cxx`; `Doc.tags` + the document search index subsume most uses. |
 | Scenarios UI | `scenwnd.cxx`; rare in modern spreadsheets. |
 
+### 6e. P1 entry gates (added 2026-08-14)
+
+**All three gates were RATIFIED 2026-08-14** (§8 rows 12-14); P1 wave
+briefs are unblocked. The gate texts below are kept as the decision record.
+The full proposals with SOTA evidence are in
+`studio-expansion-design-refinement-2026-08-14.md`.
+
+**Gate 1 - bridge architecture for structured I/O.** The in-process UNO
+path died empirically at P0 (pyuno 3.12 vs linked Python 3.14 ABI; LO's
+bundled python3.12 hangs under Gatekeeper even after a clean reinstall -
+see the §6a addendum). The shipped `LibreOfficeConverter` CLI covers
+whole-file conversion only. P1 items 1.8 and 1.18 (and P2 2.6 solver, and
+the 2.20 tagged-PDF path) need a ratified architecture for STRUCTURED
+reads before their wave briefs can be written. Candidates: (a) CLI +
+flat-ODF Swift readers, (b) LibreOfficeKit C ABI in-process, (c) URP
+socket process pool. The refinement doc carries the comparison and a
+recommendation; the decision also settles the disposition of the stranded
+`EmbeddedPythonBridge.swift` + `tessera_lo_service.py` (~1.4K lines dead
+on the abandoned path, plus the linked Python 3.14 framework).
+
+**Proposal on file (2026-08-14, empirically probed):** (a) CLI + FlatODF
+primary - flat ODF verifiably carries formulas/number styles/multi-sheet
+(fods), masters/placeholders/notes/transitions (fodp), and layers/
+connectors/glue points/beziers (fodg), and the tagged-PDF filter options
+work end to end on the installed 26.2.5.2; (b) REJECTED - a LOK probe
+hard-crashes at init on the stock cask (AppKit main-thread violation; no
+headless VCL plugin exists on macOS, upstream-confirmed unfunded); (c)
+fallback only, at P2, if 2.6 or SVG shape decomposition demands a live UNO
+session (the `--accept` acceptor verifiably starts headless; only the
+Swift client side is missing). Stranded Python stack: delete. Full
+evidence: `.scratch/sota-bridge-report.md`; proposal text: refinement doc
+§1. Ratification adds §8 row 12.
+
+**Gate 2 - NumberFormatEngine scope ratification.** The landed engine
+(`FormulaEngine/NumberFormatEngine.swift`, commit `2140af305`) is
+grammar-full but delegates locale data to Foundation and documents five
+gaps in its own header (fractions, elapsed-time formats, fill `*` / pad
+`_` directives, locale-ID currency tags). That is a defensible engineering
+position - svl's locale tables bottom out in the same ICU/CLDR data
+Foundation carries - but it is NOT the §8 decision-4 "full parity with
+svl/source/numbers" as written. Either the architect re-ratifies the
+landed scope (recommended; the refinement doc sizes each gap so the
+residual can be scheduled deliberately), or a completion deliverable joins
+P1. P1 items 1.11/1.12/1.13 render through this engine; the claim and the
+code must agree before they ship.
+
+**Gate 3 - ChartRenderer staged type coverage.** Decision 6 says
+CoreGraphics with parity across all 14 LO chart types "long-term". Item
+1.3 as written prices 14-type parity as one row among nineteen. The gate:
+ratify a staged split (P1a core families, P1b/P2 long-tail families, one
+`ChartRenderer` component throughout - staging type coverage does not
+violate the no-versioned-implementations rule) with the cut line taken
+from the canvas/charts SOTA report.
+
+### 6f. Measurement architecture for P1+ (added 2026-08-14)
+
+The agent-ux-fatigue measurement rule (AGENTS.md: one primary + one trust
++ one anti-metric per shipped move, with a real deadline) binds every P1
+and P2 unit. P0 shipped without it; P1 does not. Two mechanics make it
+cheap:
+
+- **Deliverable 1.0 - round-trip fixture corpus harness** (new; lands
+  before any other P1 item claims parity). A checked-in corpus of real
+  documents (target: 20+ DOCX, 10+ ODS/XLSX, 10+ PPTX/ODP, 5+ ODG/SVG,
+  including files with tables, footnotes, charts, themes, master layouts,
+  conditional formats) plus a test target that imports each, exports it,
+  and scores survival per feature axis (blocks, cells, formulas, styles,
+  shapes, layouts). The harness IS the primary-metric source for every
+  parity claim, and it satisfies the §11 post-claim-audit "metrics
+  runnable" requirement by construction - the 2026-08-13 audit found 42
+  unrunnable metrics precisely because measurement was bolted on after
+  the claims.
+- **Per-item metric template.** Each P1 wave brief states, before
+  implementation: primary = corpus survival percentage on the axes the
+  item owns (direction + target + week); trust = import failure / crash
+  rate on the corpus (must not regress); anti = one of import latency,
+  binary size, or memory (the metric that catches over-correction). Example
+  for 1.12: primary "conditional-format rules surviving ODS round-trip
+  >= 90 percent by week 2"; trust "corpus import failures stay at 0";
+  anti "recalc p95 latency on the 10K-cell fixture regresses < 10
+  percent".
+
 ---
 
 ## 7. Top reusable components to build first (the action list)
@@ -671,7 +869,9 @@ above, run in three waves:
   `.shapeGroup` for Draw), MasterPageStore, SlideLayoutSpec,
   WriterBridgeFilter, CalcBridgeFilter, SheetProtection, **Shape value
   type, ShapeCatalog, ShapeRenderer, Drawing material quartet, z-order**.
-- **P1 (19 items, parity milestone)**: BlockType evolutions (P1 cases),
+- **P1 (23 items after the 2026-08-14 refinement: 19 original + 1.0
+  corpus harness + 1.20 animation interim + 1.21 dynamic-array completion
+  + 1.22 comment anchors; parity milestone)**: BlockType evolutions (P1 cases),
   FieldController, Footnote/Endnote, ChartRenderer (CoreGraphics),
   MediaBlock, Theme/ThemeStore, TransitionStore, SlideDeckRenderer,
   LOBridgeDeckIO, MasterPageLayoutPicker, QueryEngine, CellStyle extension,
@@ -679,7 +879,7 @@ above, run in three waves:
   TransformController, SnapEngine, ODG/SVG/PDF-export bridge filters,
   text frames on shapes**. Plus the flat `AnimationEffectList` as a SMIL
   interim.
-- **P2 (21 items, advanced + architect-locked substantial work)**:
+- **P2 (12 core items + 9 design-gated enterprise items, see §6c/6c.1)**:
   SMILAnimationTree (full XAnimationNode tree, 3-5K LoC),
   PivotTableStore (full ScDPObject schema, 4-6K LoC),
   **BezierPathController (Draw custom-geometry paths)**, mail merge,
@@ -691,7 +891,7 @@ above, run in three waves:
   Draw morph, OpenGL transitions, tagged-PDF/Section 508 export, and the
   mail-merge wizard UI** - MacroCompatLayer, form controls, and database
   connectivity still need their own design pass before implementation
-  (see §6c's 2.13/2.15/2.16 notes).
+  (see §6c.1's 2.13/2.15/2.16 notes and the split rule there).
 
 The ordering is by:
 
@@ -749,7 +949,18 @@ waves cite this section; the wave briefs do not re-ask.
 | 7 | Animations: flat list or SMIL tree? | **Evolve to SMIL tree** at P2. | `SMILAnimationTree` is a faithful port of `CustomAnimationEffect.cxx` (3,461 LoC). Includes `ParallelTimeContainer`, `SequenceTimeContainer`, `Animate`, `AnimateMotion`, `AnimateColor`, `AnimateTransform`, `Audio`, `Command`, `IterateContainer`, `Event`. P1 ships a flat `AnimationEffectList` as an interim; P2 evolves it (the list becomes a serialization of the tree, not a parallel v2). |
 | 8 | Pivot tables: Swift or UNO? | **Swift with full UNO parity.** | `PivotTableStore` ships the full `ScDPObject` schema: `DataPilotFieldOrientation` matrix, page/row/column/data/filter bins, `PivotTableStyleInfo`, layout + output properties, save/load via `dpsave.hxx` / `dpdimsave.hxx`. Reuses `QueryEngine` infrastructure. |
 | 9 | **Draw: separate surface or feature of Impress?** | **Separate surface.** Draw is a first-class peer of Impress with its own `Drawing` material at `Materials/Draw/`. A deck is a sequence of slides; a drawing is a single page of vector graphics. The shared `sd/` upstream binary is a single source-of-truth for the *implementation* (UNO bridge), but the *product* surfaces are distinct. | New `Drawing` material + `*Store` + `*ViewModel` + `*ReceiptType` + `*GraphConnector` quartet. New `Shape` value type peer of `Block`. `ShapeCatalog`, `ShapeRenderer` are peers of `SlideLayoutSpec`, `BlockRenderer`. |
-| 10 | **Draw: 3D objects + morph in scope?** | **3D + morph out of scope.** The 2D capability set is in scope (shape catalog, geometry, fill/stroke, z-order, layers, snap, transform, group, connector, text frame, ODG/SVG/PDF I/O). 3D objects (`fucon3d.cxx`) and morph (`fumorph.cxx`) are explicitly punted. | The Draw surface delivers a full 2D vector graphics app. If a future "Tessera 3D" or "Tessera Morph" track is greenlit, it would land in a separate wave; the existing 2D primitives are the foundation. |
+| 10 | **Draw: 3D objects + morph in scope?** | **3D + morph out of scope.** The 2D capability set is in scope (shape catalog, geometry, fill/stroke, z-order, layers, snap, transform, group, connector, text frame, ODG/SVG/PDF I/O). 3D objects (`fucon3d.cxx`) and morph (`fumorph.cxx`) are explicitly punted. **Superseded on the scope point by decision 11 (2026-08-14).** | The Draw surface delivers a full 2D vector graphics app. If a future "Tessera 3D" or "Tessera Morph" track is greenlit, it would land in a separate wave; the existing 2D primitives are the foundation. |
+| 11 | **2026-08-14 product decision: re-open nine out-of-scope items?** | **Promoted to P2 as 2.13-2.21** (commit `9623b4017`): VBA/Basic macro compat, StarMath editor, form controls, database connectivity, Draw 3D, Draw morph, GPU transitions, tagged-PDF/508 export, mail-merge wizard UI. Rationale: several are corporate-adoption blockers (VBA + DB for enterprise Excel/Access workflows; tagged PDF for government/public-company procurement), not nice-to-haves. Legacy `.ppt` write stays out per explicit instruction. | Partially supersedes decisions 7 (OpenGL transitions row) and 10 (3D/morph scope). The original architectural objections are preserved as notes on each item; 2.13/2.15/2.16 are DESIGN-GATED - they cannot enter a wave brief until their design pass is ratified (see §6c.1). 2.16 carries an unresolved no-egress policy conflict that only the architect can settle. |
+| 12 | Bridge architecture for structured I/O (gate 1)? | **CLI + FlatODF primary; LOK rejected; URP client only as a scoped P2 fallback.** Ratified 2026-08-14 on empirical probes (LOK init crash on the stock cask; flat-ODF coverage verified; tagged-PDF filter options verified). | `FlatODFReader/Writer` land at P1; stranded `EmbeddedPythonBridge.swift` + `tessera_lo_service.py` + `LibreOfficeBootstrap.swift` + the `CPythonBridge` target are DELETED; `CalcBridgeFilter` migrates CSV -> fods; handout PDF recorded out of scope; SVG import = embedded-image fidelity at P1. |
+| 13 | NumberFormatEngine: landed scope vs full svl parity (gate 2)? | **Landed scope ratified: grammar-full parser, locale data via Foundation/ICU; gaps closed by frequency** - locale tags + fill/pad at P1 (with the engine WIRED into rendering at 1.11; it has zero consumers today), elapsed + fractions at P2, conditional sections last. Architect note on record: prefer the 95% now; do not spend weeks chasing 100%. | Supersedes the "full parity with svl" reading of decision 4; 1.11 wave briefs cite this row. |
+| 14 | ChartRenderer staging (gate 3)? | **Series-typed `ChartSpec`; one component; P1a = column/bar/line/area/pie/scatter, P1b = bubble/net/stock/column-and-line/of-pie inside the P1 wave.** Pivot chart = data source, box plot = stacked-column technique, sparkline = chrome-less preset. | No grammar model; axis `labelFormat` rides NumberFormatEngine; staging is type coverage, not architecture. |
+| 15 | P1 scope additions + row-20 drop + ownership? | **Ratified**: 1.0 corpus harness, 1.20 AnimationEffectList (+ pinned fixture), 1.21 dynamic-array completion, 1.22 comment anchors; `FunctionVolatility.array` dropped (phantom axis); ownership per the refinement doc (style registry / search index / comment anchors = expansion; list-level behavior + find & comment UIs = word-class plan). | P1 = 23 deliverables; §6f measurement architecture binds each. |
+| 16 | Enterprise-track designs 2.13-2.21? | **Ratified as scoped in the refinement doc**: never-execute VBA (parse + preserve + agent rewrite), LaTeX-first equations over SwiftMath, `w:sdt` content controls as Block attributes, local-file-only `DatabaseConnector` (no network DSNs ever), CI/Metal transition tier (S-scope with declared fallbacks acceptable), CLI tagged-PDF + veraPDF harness, document-only mail merge. Open-question defaults adopted: stored playbook for `macro_translate`; equation numbering joins `FieldController`; forms denial-by-protection routed through `TesseraSafetyDecision`; DuckDB xlsx boundary blessed (material files query via sheet tools only); xlsx dropped from the v1 db path if iOS linking is awkward. | The §6c.1 design gate is discharged; 2.13-2.21 may enter wave briefs. Any adopted default can be re-opened inline if implementation surfaces a conflict. |
+
+**Refinement pass 2026-08-14:** decisions 12-16 above were drafted in
+`studio-expansion-design-refinement-2026-08-14.md` and RATIFIED by the
+architect the same day (chat approval). The five §6c.1 open-question
+defaults are adopted as recorded in row 16.
 
 The remaining open questions (no longer blocking the rollout, but worth
 tracking):
@@ -759,8 +970,9 @@ tracking):
 - **Multi-user coediting / CRDT layer** - the receipt backbone is the
   audit log, but real-time coediting is a different design conversation.
   Out of scope for this expansion.
-- **Draw 3D + morph** - punted (decision #10). Re-evaluate if a future
-  track is greenlit.
+- **Draw 3D + morph** - re-opened by decision 11 (2026-08-14) as 2.17/2.18;
+  both need the design position in the refinement doc before any wave
+  picks them up.
 - **Draw star/polygon + complex preset shapes** - the P0 set covers rect,
   ellipse, line, arrow, polygon, star, freeform. The full LO preset shape
   catalog (`oox/source/ppt/pptshape.cxx` has 200+ entries) is a P2+

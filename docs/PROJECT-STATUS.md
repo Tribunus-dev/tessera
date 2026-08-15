@@ -691,13 +691,30 @@ path evidence.
 | Animations | **Evolve to SMIL tree** at P2 (`SMILAnimationTree`, port of `CustomAnimationEffect.cxx`). P1 ships a flat `AnimationEffectList` as an interim; P2 evolves it. |
 | Pivot tables | **Swift with full UNO parity** (`PivotTableStore`, parity with `ScDPObject`). Not a simplified model. |
 | **Draw: separate surface or feature of Impress?** | **Separate surface** (`Materials/Draw/` quartet + `Shape` value type). A deck is a sequence of slides; a drawing is a single page of vector graphics. Shared `sd/` upstream binary; distinct Tessera product surfaces. |
-| **Draw: 3D objects + morph in scope?** | **Out of scope.** 2D capability set is in scope (shape catalog, geometry, fill/stroke, z-order, layers, snap, transform, group, connector, text frame, ODG / SVG / PDF I/O). 3D (`fucon3d.cxx`) + morph (`fumorph.cxx`) explicitly punted. |
+| **Draw: 3D objects + morph in scope?** | **Out of scope at approval; RE-OPENED 2026-08-14** (plan decision 11) as design-gated P2 2.17/2.18. Minimal viable designs on file (extrude-only via SceneKit; id-matched shape interpolation) in the refinement doc. |
 
 ### Phased rollout
 
-- **P0 - MVP (16 deliverables)**: `SheetWorkbook` multi-sheet, `RecalcScheduler` + `TokenArray` IR + shared formula groups, `CellValue`/`CellFormat`/`NumberFormat` index, `NumberFormatEngine` (full parser), `BlockType` evolutions (`.section`/`.frame`/`.shape`/`.shapeGroup`), `BlockType.table` rowSpans/colSpans/nested, `MasterPageStore` + `SlideLayoutSpec`, `WriterBridgeFilter` (UNO), `CalcBridgeFilter` (UNO), `SheetProtection`, **`Shape` value type + `ShapeCatalog` + `ShapeRenderer` (Draw data model)**, **`Drawing` material quartet (data only)**, **`BlockType.shape` z-order**, plus the `tessera_lo_service.py` schema update.
-- **P1 - parity milestone (19 deliverables)**: `BlockType` evolutions (`.field`/`.footnote`/`.endnote`/`.chart`/`.media`), `FieldController`, `Footnote`/`Endnote`, `ChartRenderer` (CoreGraphics), `MediaBlock`, `Theme`/`ThemeStore`, `TransitionStore`, `SlideDeckRenderer` + `DeckExportCoordinator` (PNG/JPG), `LOBridgeDeckIO`, `MasterPageLayoutPicker`, `QueryEngine`, `CellStyle`, `ConditionalFormat`, `DataValidation`, `RevisionController`, **`LayerStore` + `TransformController` + `SnapEngine` (Draw UI)**, **`ODGBridgeFilter` + `SVGBridgeFilter` + `PDFExportBridge` (Draw format I/O)**, **text frames on shapes (connector, bullet lists inside shape text)**, plus the flat `AnimationEffectList` as a SMIL interim.
-- **P2 - advanced + architect-locked substantial work (12 deliverables)**: `SMILAnimationTree` (3-5K LoC, full `XAnimationNode` tree), `PivotTableStore` (4-6K LoC, full `ScDPObject` schema), **`BezierPathController` (Draw custom-geometry paths)**, mail merge, ToC/index, solver (UNO), subtotals, statistics wizards, change-track reviewer, custom shows, master documents, **Draw advanced (annotations, measure, Draw tables, bullet lists inside shape text)**.
+**Status update 2026-08-14: P0 LANDED on main (16/16), with one
+substitution** - the LO bridge shipped as `LibreOfficeConverter`
+(`soffice --headless --convert-to` CLI) + `WriterBridgeFilter`/
+`CalcBridgeFilter`, NOT in-process UNO (pyuno 3.12 vs linked Python 3.14
+ABI + LO's bundled python3.12 hangs under Gatekeeper; plan §6a addendum).
+0.11 (`tessera_lo_service.py` schema update) was deliberately not done; the
+file is stranded pending the §6e gate-1 ratification (proposal: delete).
+The 2026-08-14 refinement pass (P1 gates, P1 grown to 23 deliverables, P2
+split 12 core + 9 design-gated) lives in
+`TesseraStudio/docs/studio-expansion-design-refinement-2026-08-14.md`; the
+counts below reflect it.
+
+- **P0 - MVP (16 deliverables, LANDED 2026-08-14)**: `SheetWorkbook` multi-sheet, `RecalcScheduler` + `TokenArray` IR + shared formula groups, `CellValue`/`CellFormat`/`NumberFormat` index, `NumberFormatEngine` (full parser), `BlockType` evolutions (`.section`/`.frame`/`.shape`/`.shapeGroup`), `BlockType.table` rowSpans/colSpans/nested, `MasterPageStore` + `SlideLayoutSpec`, `WriterBridgeFilter` (UNO), `CalcBridgeFilter` (UNO), `SheetProtection`, **`Shape` value type + `ShapeCatalog` + `ShapeRenderer` (Draw data model)**, **`Drawing` material quartet (data only)**, **`BlockType.shape` z-order**, plus the `tessera_lo_service.py` schema update.
+- **P1 - parity milestone (23 deliverables: 19 original + 1.0 corpus
+  harness + 1.20 animation interim + 1.21 dynamic-array completion + 1.22
+  comment anchors; "CellStyle" corrected to evolving `SheetCellFormat`)**: `BlockType` evolutions (`.field`/`.footnote`/`.endnote`/`.chart`/`.media`), `FieldController`, `Footnote`/`Endnote`, `ChartRenderer` (CoreGraphics), `MediaBlock`, `Theme`/`ThemeStore`, `TransitionStore`, `SlideDeckRenderer` + `DeckExportCoordinator` (PNG/JPG), `LOBridgeDeckIO`, `MasterPageLayoutPicker`, `QueryEngine`, `CellStyle`, `ConditionalFormat`, `DataValidation`, `RevisionController`, **`LayerStore` + `TransformController` + `SnapEngine` (Draw UI)**, **`ODGBridgeFilter` + `SVGBridgeFilter` + `PDFExportBridge` (Draw format I/O)**, **text frames on shapes (connector, bullet lists inside shape text)**, plus the flat `AnimationEffectList` as a SMIL interim.
+- **P2 - split 2026-08-14 into 12 core deliverables + 9 design-gated
+  enterprise items (2.13-2.21, promoted from out-of-scope; cannot enter a
+  wave brief until their refinement-doc design positions are ratified)**.
+  Core: `SMILAnimationTree` (3-5K LoC, full `XAnimationNode` tree), `PivotTableStore` (4-6K LoC, full `ScDPObject` schema), **`BezierPathController` (Draw custom-geometry paths)**, mail merge, ToC/index, solver (UNO), subtotals, statistics wizards, change-track reviewer, custom shows, master documents, **Draw advanced (annotations, measure, Draw tables, bullet lists inside shape text)**.
 
 ### Top reusable components (priority-ordered)
 

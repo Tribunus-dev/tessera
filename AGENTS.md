@@ -261,9 +261,21 @@ every wave):
   `Materials/Draw/`. New `Shape` value type peer of `Block`. Full 2D
   vector capability set in scope: shape catalog, geometry, fill/stroke,
   z-order, layers, snap, transform, group, connector, text frame, ODG /
-  SVG / PDF I/O. **3D objects + morph are out of scope** (`fucon3d.cxx`
-  and `fumorph.cxx` are explicitly punted; the productivity use case
-  is dominated by 2D).
+  SVG / PDF I/O. **3D objects + morph were re-opened 2026-08-14** as
+  design-gated P2 items 2.17/2.18 (plan decision 11; the original punt
+  rationale is preserved as notes on each - minimal viable designs are
+  extrude-only-via-SceneKit and id-matched interpolation respectively,
+  per the refinement doc below).
+
+The P0 wave LANDED on main 2026-08-14 (16/16, with the LO bridge
+substituted: in-process UNO is dead, `soffice --convert-to` CLI +
+flat-ODF is the proposed architecture - plan §6a addendum + §6e gate 1).
+The 2026-08-14 refinement pass added P1 entry gates, four P1 deliverables
+(1.0/1.20/1.21/1.22 -> 23 total), split P2 into 12 core + 9 design-gated
+enterprise items (§6c/6c.1), and produced per-component design contracts:
+`TesseraStudio/docs/studio-expansion-design-refinement-2026-08-14.md`
+(SOTA evidence in `TesseraStudio/docs/.scratch/sota-*-report.md`). Wave
+briefs cite the refinement doc, not just the plan tables.
 
 The plan's no-versioned-implementations rule is binding for the expansion
 exactly the same way it is for the inference engine: every new component
