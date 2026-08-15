@@ -496,6 +496,63 @@ public struct SlideStore: Sendable {
         return Block(type: placeholder.blockType, attributes: attributes)
     }
 
+    // MARK: - Comments
+
+    /// Attaches a new comment thread to the deck (P1 1.22 gap closure -
+    /// `CommentThread`/`CommentAnchor` already existed; this is the
+    /// write path that actually creates one). The thread carries a
+    /// single `CommentMessage` built from `author`/`text` - the same
+    /// single-message-thread shape `SheetStore`'s own comment-adding
+    /// method would build for a `.cell` anchor.
+    ///
+    /// A `.slide` anchor is validated against `deck.body.rootChildren`
+    /// before the thread is created: unlike a Sheet's arbitrary cell
+    /// coordinate, a slide id is a closed, checkable set, so an anchor
+    /// pointing at a slide that doesn't exist is rejected rather than
+    /// silently persisted. Every other anchor kind (`.textRange`,
+    /// `.block`, `.cell`) is accepted unchecked, matching how `Sheet`
+    /// comments are anchored.
+    public func addComment(
+        anchor: CommentAnchor, author: String, text: String, for deckID: UUID
+    ) async throws -> SlideDeck {
+        var deck = try await loadOrFail(id: deckID)
+        if case let .slide(slideID) = anchor, !deck.body.rootChildren.contains(slideID) {
+            throw SlideStoreError.slideNotFound(id: slideID)
+        }
+        let message = CommentMessage(author: author, text: text)
+        let thread = CommentThread(
+            id: UUID(), anchor: anchor, author: author, createdAt: Date(), messages: [message]
+        )
+        deck = deck.addingCommentThread(thread)
+        deck.updatedAt = Date()
+        _ = try await upsert(deck)
+        try await appendReceipt(
+            entityID: deckID,
+            receiptType: SlideReceiptType.addComment.rawValue,
+            payload: [
+                "commentID": .string(thread.id.uuidString),
+                "anchor": .string(Self.describeAnchor(anchor)),
+            ]
+        )
+        return deck
+    }
+
+    /// A short, human-readable description of an anchor for receipt
+    /// payloads - not round-trippable, just enough to identify what a
+    /// comment was attached to when reading `graph_receipts` directly.
+    private static func describeAnchor(_ anchor: CommentAnchor) -> String {
+        switch anchor {
+        case let .textRange(blockID, start, end):
+            return "textRange(block: \(blockID.uuidString), \(start)..<\(end))"
+        case let .block(blockID):
+            return "block(\(blockID.uuidString))"
+        case let .cell(sheetID, row, col):
+            return "cell(sheet: \(sheetID.uuidString), row: \(row), col: \(col))"
+        case let .slide(slideID):
+            return "slide(\(slideID.uuidString))"
+        }
+    }
+
     // MARK: - Archive / Trash / Favorite
 
     public func archive(_ deckID: UUID) async throws -> SlideDeck {
