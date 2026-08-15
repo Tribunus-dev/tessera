@@ -12,6 +12,11 @@ public enum DocReceiptType: String, Codable, Sendable, CaseIterable {
     case upsert = "doc_upsert"
     /// The document's body AST was replaced.
     case updateBody = "doc_body_changed"
+    /// A track-changes revision (insertion or deletion block) was
+    /// accepted, resolving it into plain content (P1 1.14).
+    case revisionAccepted = "doc_revision_accepted"
+    /// A track-changes revision was rejected, reverting it (P1 1.14).
+    case revisionRejected = "doc_revision_rejected"
     /// The document was archived.
     case archive = "doc_archived"
     /// The document was unarchived (restored from archive).
