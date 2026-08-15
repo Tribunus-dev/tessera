@@ -28,6 +28,15 @@ public enum SlideReceiptType: String, Codable, Sendable, CaseIterable {
     case undefineMasterPage = "slide_master_page_undefined"
     /// A slide's assigned master page was changed (or cleared).
     case setSlideMasterPage = "slide_master_page_assigned"
+    /// A theme was defined (or replaced) on the deck (P1 1.5).
+    case defineTheme = "slide_theme_defined"
+    /// The deck's active theme was changed (or cleared) (P1 1.5).
+    case setDeckTheme = "slide_theme_assigned"
+    /// A transition was defined (or replaced) in the deck's catalog
+    /// reference (P1 1.6).
+    case defineTransition = "slide_transition_defined"
+    /// A slide's assigned transition was changed (or cleared) (P1 1.6).
+    case setSlideTransition = "slide_transition_assigned"
     /// The deck was archived.
     case archive = "slide_archived"
     /// The deck was unarchived.
