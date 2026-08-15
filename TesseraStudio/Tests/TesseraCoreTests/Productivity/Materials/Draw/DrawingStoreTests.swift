@@ -119,9 +119,7 @@ final class DrawingStoreTests: DoctrineTestCase {
         _ = try? await store.removeLayer(unknownLayerID, from: drawing.id)
         let receiptsAfter = try await store.receipts(forDrawing: drawing.id).count
 
-        XCTExpectFailure("SUSPECTED CODE BUG: DrawingStore.removeLayer upserts + emits drawing_layer_deleted even when the underlying Drawing.removingLayer no-op'd on an unknown layer id - violates receipts law (rule 1). See docs/p1-post-claim-audit-2026-08-15.md Class A item 1.") {
-            XCTAssertEqual(receiptsAfter, receiptsBefore, "no-op layer removal must not append a receipt")
-        }
+        XCTAssertEqual(receiptsAfter, receiptsBefore, "no-op layer removal must not append a receipt")
     }
 
     func testRenameLayerOfUnknownIDEmitsNoReceiptAndDoesNotPersist() async throws {
@@ -134,9 +132,7 @@ final class DrawingStoreTests: DoctrineTestCase {
         _ = try? await store.renameLayer(unknownLayerID, to: "New Name", in: drawing.id)
         let receiptsAfter = try await store.receipts(forDrawing: drawing.id).count
 
-        XCTExpectFailure("SUSPECTED CODE BUG: DrawingStore.renameLayer upserts + emits drawing_layer_renamed even when the underlying Drawing.renamingLayer no-op'd on an unknown layer id - violates receipts law (rule 1). See docs/p1-post-claim-audit-2026-08-15.md Class A item 1.") {
-            XCTAssertEqual(receiptsAfter, receiptsBefore, "no-op layer rename must not append a receipt")
-        }
+        XCTAssertEqual(receiptsAfter, receiptsBefore, "no-op layer rename must not append a receipt")
     }
 
     func testReorderLayersWithMismatchedOrderEmitsNoReceiptAndDoesNotPersist() async throws {
@@ -151,9 +147,7 @@ final class DrawingStoreTests: DoctrineTestCase {
         _ = try? await store.reorderLayers(mismatchedOrder, in: drawing.id)
         let receiptsAfter = try await store.receipts(forDrawing: drawing.id).count
 
-        XCTExpectFailure("SUSPECTED CODE BUG: DrawingStore.reorderLayers upserts + emits drawing_layer_reordered even when the underlying Drawing.reorderingLayers no-op'd on a mismatched id set - violates receipts law (rule 1). See docs/p1-post-claim-audit-2026-08-15.md Class A item 1.") {
-            XCTAssertEqual(receiptsAfter, receiptsBefore, "no-op layer reorder must not append a receipt")
-        }
+        XCTAssertEqual(receiptsAfter, receiptsBefore, "no-op layer reorder must not append a receipt")
     }
 
     func testSetLayerVisibilityOfUnknownIDEmitsNoReceiptAndDoesNotPersist() async throws {
@@ -166,9 +160,7 @@ final class DrawingStoreTests: DoctrineTestCase {
         _ = try? await store.setLayerVisibility(unknownLayerID, isVisible: false, in: drawing.id)
         let receiptsAfter = try await store.receipts(forDrawing: drawing.id).count
 
-        XCTExpectFailure("SUSPECTED CODE BUG: DrawingStore.setLayerVisibility upserts + emits drawing_layer_visibility_changed even when the underlying Drawing.settingLayerVisibility no-op'd on an unknown layer id - violates receipts law (rule 1). See docs/p1-post-claim-audit-2026-08-15.md Class A item 1.") {
-            XCTAssertEqual(receiptsAfter, receiptsBefore, "no-op visibility change must not append a receipt")
-        }
+        XCTAssertEqual(receiptsAfter, receiptsBefore, "no-op visibility change must not append a receipt")
     }
 
     func testSetLayerLockOfUnknownIDEmitsNoReceiptAndDoesNotPersist() async throws {
@@ -181,9 +173,7 @@ final class DrawingStoreTests: DoctrineTestCase {
         _ = try? await store.setLayerLock(unknownLayerID, isLocked: true, in: drawing.id)
         let receiptsAfter = try await store.receipts(forDrawing: drawing.id).count
 
-        XCTExpectFailure("SUSPECTED CODE BUG: DrawingStore.setLayerLock upserts + emits drawing_layer_lock_changed even when the underlying Drawing.settingLayerLock no-op'd on an unknown layer id - violates receipts law (rule 1). See docs/p1-post-claim-audit-2026-08-15.md Class A item 1.") {
-            XCTAssertEqual(receiptsAfter, receiptsBefore, "no-op lock change must not append a receipt")
-        }
+        XCTAssertEqual(receiptsAfter, receiptsBefore, "no-op lock change must not append a receipt")
     }
 
     // MARK: - Shape mutation error path

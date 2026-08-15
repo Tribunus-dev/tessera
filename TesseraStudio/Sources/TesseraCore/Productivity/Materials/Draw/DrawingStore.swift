@@ -333,7 +333,9 @@ public struct DrawingStore: Sendable {
     @discardableResult
     public func removeLayer(_ layerID: UUID, from drawingID: UUID) async throws -> Drawing {
         var drawing = try await loadOrFail(id: drawingID)
+        let before = drawing.layers
         drawing = drawing.removingLayer(layerID)
+        guard drawing.layers != before else { return drawing }
         drawing.updatedAt = Date()
         _ = try await upsert(drawing)
         try await appendReceipt(entityID: drawingID, receiptType: DrawingReceiptType.layerDeleted.rawValue, payload: ["layerID": .string(layerID.uuidString)])
@@ -343,7 +345,9 @@ public struct DrawingStore: Sendable {
     @discardableResult
     public func renameLayer(_ layerID: UUID, to newName: String, in drawingID: UUID) async throws -> Drawing {
         var drawing = try await loadOrFail(id: drawingID)
+        let before = drawing.layers
         drawing = drawing.renamingLayer(layerID, to: newName)
+        guard drawing.layers != before else { return drawing }
         drawing.updatedAt = Date()
         _ = try await upsert(drawing)
         try await appendReceipt(
@@ -357,7 +361,9 @@ public struct DrawingStore: Sendable {
     @discardableResult
     public func reorderLayers(_ newOrder: [UUID], in drawingID: UUID) async throws -> Drawing {
         var drawing = try await loadOrFail(id: drawingID)
+        let before = drawing.layers
         drawing = drawing.reorderingLayers(newOrder)
+        guard drawing.layers != before else { return drawing }
         drawing.updatedAt = Date()
         _ = try await upsert(drawing)
         try await appendReceipt(
@@ -371,7 +377,9 @@ public struct DrawingStore: Sendable {
     @discardableResult
     public func setLayerVisibility(_ layerID: UUID, isVisible: Bool, in drawingID: UUID) async throws -> Drawing {
         var drawing = try await loadOrFail(id: drawingID)
+        let before = drawing.layers
         drawing = drawing.settingLayerVisibility(layerID, isVisible: isVisible)
+        guard drawing.layers != before else { return drawing }
         drawing.updatedAt = Date()
         _ = try await upsert(drawing)
         try await appendReceipt(
@@ -385,7 +393,9 @@ public struct DrawingStore: Sendable {
     @discardableResult
     public func setLayerLock(_ layerID: UUID, isLocked: Bool, in drawingID: UUID) async throws -> Drawing {
         var drawing = try await loadOrFail(id: drawingID)
+        let before = drawing.layers
         drawing = drawing.settingLayerLock(layerID, isLocked: isLocked)
+        guard drawing.layers != before else { return drawing }
         drawing.updatedAt = Date()
         _ = try await upsert(drawing)
         try await appendReceipt(
