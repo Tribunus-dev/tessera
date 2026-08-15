@@ -121,20 +121,20 @@ does only the data-layer write; all 16 other mutation methods now call
 `persist(_:)` directly, so only their own specific receipt fires. Verified:
 all 4 previously-failing tests pass; default suite unaffected.
 
-**Related, not addressed:** reading `DocStore.swift` for this fix surfaced
-a second, distinct pattern in the same file —
-`archive`/`unarchive`/`trash`/`restore`/`favorite`/`unfavorite` all append
-their receipt *unconditionally, outside the `if` that guards the actual
+**Related, also fixed** (`27c0f6ebc`, after review): reading `DocStore.swift`
+for the above fix surfaced a second, distinct pattern in the same file —
+`archive`/`unarchive`/`trash`/`restore`/`favorite`/`unfavorite` all appended
+their receipt *unconditionally, outside the `if` that guarded the actual
 mutation* (the exact shape already fixed in `SheetStore`/`DrawingStore`
-earlier this wave). Unlike those two, `DocStoreTests` has an existing,
-currently-passing test —
-`testArchivingAnAlreadyArchivedDocStillEmitsAReceiptWithWasAlreadyArchivedTrue`
-— that explicitly asserts this as the *intended* contract, written that way
-in the prior test-rewrite wave. That's inconsistent with the
-`SheetStore`/`DrawingStore` precedent from this same wave and worth a
-decision, but changing it means rewriting a currently-passing test's
-asserted contract rather than fixing a currently-failing one, so it wasn't
-touched without that decision being made explicitly.
+earlier this wave). Unlike those two, `DocStoreTests` had an existing,
+currently-passing test asserting this as the *intended* contract, written
+that way in the prior test-rewrite wave — reviewed with Julian and
+confirmed it's the same bug, not an intentional difference. All 6 methods
+now guard on current state and return unchanged with zero receipts on a
+no-op, matching `SheetStore` exactly. `DocStoreTests` had no positive-case
+coverage at all for this method family (only the one, now-corrected,
+no-op test existed) - replaced it with the full quartet coverage shape
+(positive + no-op per method, 12 tests) rather than a 1:1 swap.
 
 ## Part 3 — known, not fixed this wave
 
