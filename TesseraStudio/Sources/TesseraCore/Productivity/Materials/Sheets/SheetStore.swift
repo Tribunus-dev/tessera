@@ -628,96 +628,84 @@ public struct SheetStore: Sendable {
 
     public func archive(_ sheetID: UUID) async throws -> Sheet {
         var sheet = try await loadOrFail(id: sheetID)
-        let wasArchived = sheet.isArchived
-        if !wasArchived {
-            sheet.isArchived = true
-            sheet.updatedAt = Date()
-            _ = try await upsert(sheet)
-        }
+        guard !sheet.isArchived else { return sheet }
+        sheet.isArchived = true
+        sheet.updatedAt = Date()
+        _ = try await upsert(sheet)
         try await appendReceipt(
             entityID: sheetID,
             receiptType: SheetReceiptType.archive.rawValue,
-            payload: ["wasAlreadyArchived": .bool(wasArchived)]
+            payload: ["wasAlreadyArchived": .bool(false)]
         )
         return sheet
     }
 
     public func unarchive(_ sheetID: UUID) async throws -> Sheet {
         var sheet = try await loadOrFail(id: sheetID)
-        let wasArchived = sheet.isArchived
-        if wasArchived {
-            sheet.isArchived = false
-            sheet.updatedAt = Date()
-            _ = try await upsert(sheet)
-        }
+        guard sheet.isArchived else { return sheet }
+        sheet.isArchived = false
+        sheet.updatedAt = Date()
+        _ = try await upsert(sheet)
         try await appendReceipt(
             entityID: sheetID,
             receiptType: SheetReceiptType.unarchive.rawValue,
-            payload: ["wasArchived": .bool(wasArchived)]
+            payload: ["wasArchived": .bool(true)]
         )
         return sheet
     }
 
     public func trash(_ sheetID: UUID) async throws -> Sheet {
         var sheet = try await loadOrFail(id: sheetID)
-        let wasTrashed = sheet.isTrashed
-        if !wasTrashed {
-            sheet.isTrashed = true
-            sheet.updatedAt = Date()
-            _ = try await upsert(sheet)
-        }
+        guard !sheet.isTrashed else { return sheet }
+        sheet.isTrashed = true
+        sheet.updatedAt = Date()
+        _ = try await upsert(sheet)
         try await appendReceipt(
             entityID: sheetID,
             receiptType: SheetReceiptType.trash.rawValue,
-            payload: ["wasAlreadyTrashed": .bool(wasTrashed)]
+            payload: ["wasAlreadyTrashed": .bool(false)]
         )
         return sheet
     }
 
     public func restore(_ sheetID: UUID) async throws -> Sheet {
         var sheet = try await loadOrFail(id: sheetID)
-        let wasTrashed = sheet.isTrashed
-        if wasTrashed {
-            sheet.isTrashed = false
-            sheet.updatedAt = Date()
-            _ = try await upsert(sheet)
-        }
+        guard sheet.isTrashed else { return sheet }
+        sheet.isTrashed = false
+        sheet.updatedAt = Date()
+        _ = try await upsert(sheet)
         try await appendReceipt(
             entityID: sheetID,
             receiptType: SheetReceiptType.restore.rawValue,
-            payload: ["wasTrashed": .bool(wasTrashed)]
+            payload: ["wasTrashed": .bool(true)]
         )
         return sheet
     }
 
     public func favorite(_ sheetID: UUID) async throws -> Sheet {
         var sheet = try await loadOrFail(id: sheetID)
-        let wasFavorite = sheet.isFavorite
-        if !wasFavorite {
-            sheet.isFavorite = true
-            sheet.updatedAt = Date()
-            _ = try await upsert(sheet)
-        }
+        guard !sheet.isFavorite else { return sheet }
+        sheet.isFavorite = true
+        sheet.updatedAt = Date()
+        _ = try await upsert(sheet)
         try await appendReceipt(
             entityID: sheetID,
             receiptType: SheetReceiptType.favorite.rawValue,
-            payload: ["wasAlreadyFavorite": .bool(wasFavorite)]
+            payload: ["wasAlreadyFavorite": .bool(false)]
         )
         return sheet
     }
 
     public func unfavorite(_ sheetID: UUID) async throws -> Sheet {
         var sheet = try await loadOrFail(id: sheetID)
-        let wasFavorite = sheet.isFavorite
-        if wasFavorite {
-            sheet.isFavorite = false
-            sheet.updatedAt = Date()
-            _ = try await upsert(sheet)
-        }
+        guard sheet.isFavorite else { return sheet }
+        sheet.isFavorite = false
+        sheet.updatedAt = Date()
+        _ = try await upsert(sheet)
         try await appendReceipt(
             entityID: sheetID,
             receiptType: SheetReceiptType.unfavorite.rawValue,
-            payload: ["wasFavorite": .bool(wasFavorite)]
+            payload: ["wasFavorite": .bool(true)]
         )
         return sheet
     }
@@ -748,14 +736,7 @@ public struct SheetStore: Sendable {
         let normalized = Sheet.normalizeTags([tag])
         guard let first = normalized.first else { return try await loadOrFail(id: sheetID) }
         var sheet = try await loadOrFail(id: sheetID)
-        if sheet.tags.contains(first) {
-            try await appendReceipt(
-                entityID: sheetID,
-                receiptType: SheetReceiptType.tagAdded.rawValue,
-                payload: ["tag": .string(first), "wasAlreadyPresent": .bool(true)]
-            )
-            return sheet
-        }
+        guard !sheet.tags.contains(first) else { return sheet }
         sheet.tags.append(first)
         sheet.updatedAt = Date()
         _ = try await upsert(sheet)
@@ -771,14 +752,7 @@ public struct SheetStore: Sendable {
         let normalized = Sheet.normalizeTags([tag])
         guard let first = normalized.first else { return try await loadOrFail(id: sheetID) }
         var sheet = try await loadOrFail(id: sheetID)
-        guard let index = sheet.tags.firstIndex(of: first) else {
-            try await appendReceipt(
-                entityID: sheetID,
-                receiptType: SheetReceiptType.tagRemoved.rawValue,
-                payload: ["tag": .string(first), "wasPresent": .bool(false)]
-            )
-            return sheet
-        }
+        guard let index = sheet.tags.firstIndex(of: first) else { return sheet }
         sheet.tags.remove(at: index)
         sheet.updatedAt = Date()
         _ = try await upsert(sheet)

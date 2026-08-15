@@ -43,6 +43,24 @@ final class SheetStoreTests: DoctrineTestCase {
         receipts.map(\.receiptType)
     }
 
+    /// `store.receipts(forSheet:)`, filtering out the fire-and-forget
+    /// `SheetReceiptPayload.receiptType` ("sheet_operation") material
+    /// receipt every `SheetStore.upsert(_:)` call schedules on an
+    /// unawaited `Task` (see `SheetStore.upsert`'s own "Fire-and-forget
+    /// material receipt: failure does not block the upsert" comment).
+    /// That task's completion is a genuine race against this test file's
+    /// own before/after receipt-count snapshots: a test with no real
+    /// mutation between creating the sheet and capturing "before" can
+    /// observe the material receipt landing at an arbitrary point
+    /// relative to its own assertions, non-deterministically inflating
+    /// either count by one. Filtering it out here scopes every
+    /// before/after comparison in this file to the receipt types
+    /// `SheetStore`'s own constitutional-receipt contract actually
+    /// governs, independent of that unrelated background task's timing.
+    private func sheetReceipts(_ store: SheetStore, forSheet id: UUID) async throws -> [GraphReceipt] {
+        try await store.receipts(forSheet: id).filter { $0.receiptType != SheetReceiptPayload.receiptType }
+    }
+
     // MARK: - upsert / get / delete
 
     func testUpsertEmitsExactlyOneUpsertReceiptAndPersistsTheSheet() async throws {
@@ -128,7 +146,7 @@ final class SheetStoreTests: DoctrineTestCase {
 
         XCTAssertEqual(updated.cellFormat(row: 0, col: 0), format)
         XCTAssertEqual(updated.cellText(row: 0, col: 0), "42", "a restyle must not touch the cell's own text/value")
-        let receipts = try await store.receipts(forSheet: sheet.id)
+        let receipts = try await sheetReceipts(store, forSheet: sheet.id)
         XCTAssertEqual(receiptTypes(receipts).filter { $0 == SheetReceiptType.setCellFormat.rawValue }.count, 1)
     }
 
@@ -138,7 +156,7 @@ final class SheetStoreTests: DoctrineTestCase {
         let store = try await makeConnectedStore()
         var sheet = try await store.upsert(freshSheet())
         sheet = try await store.setProtection(SheetProtection(isLocked: true, reason: "published"), for: sheet.id)
-        let receiptsBeforeAttempt = try await store.receipts(forSheet: sheet.id)
+        let receiptsBeforeAttempt = try await sheetReceipts(store, forSheet: sheet.id)
 
         do {
             _ = try await store.setCell(row: 0, col: 0, value: "x", for: sheet.id)
@@ -147,7 +165,7 @@ final class SheetStoreTests: DoctrineTestCase {
             XCTAssertEqual(sheetID, sheet.id)
         }
 
-        let receiptsAfterAttempt = try await store.receipts(forSheet: sheet.id)
+        let receiptsAfterAttempt = try await sheetReceipts(store, forSheet: sheet.id)
         XCTAssertEqual(receiptsAfterAttempt.count, receiptsBeforeAttempt.count, "the refused write must not append a receipt")
         let reloaded = try await store.get(id: sheet.id)
         XCTAssertEqual(reloaded?.cellText(row: 0, col: 0), "", "the refused write must not persist")
@@ -173,7 +191,7 @@ final class SheetStoreTests: DoctrineTestCase {
         let updated = try await store.insertRow(at: 0, for: sheet.id)
 
         XCTAssertEqual(updated.rowCount, 3)
-        let receipts = try await store.receipts(forSheet: sheet.id)
+        let receipts = try await sheetReceipts(store, forSheet: sheet.id)
         XCTAssertEqual(receiptTypes(receipts).filter { $0 == SheetReceiptType.insertRow.rawValue }.count, 1)
         let reloaded = try await store.get(id: sheet.id)
         XCTAssertEqual(reloaded?.rowCount, 3)
@@ -184,7 +202,7 @@ final class SheetStoreTests: DoctrineTestCase {
     func testDeleteRowOfTheLastRemainingRowThrowsWithoutPersistingOrReceipting() async throws {
         let store = try await makeConnectedStore()
         let sheet = try await store.upsert(freshSheet(rows: 1, cols: 2))
-        let receiptsBefore = try await store.receipts(forSheet: sheet.id)
+        let receiptsBefore = try await sheetReceipts(store, forSheet: sheet.id)
 
         do {
             _ = try await store.deleteRow(at: 0, for: sheet.id)
@@ -193,7 +211,7 @@ final class SheetStoreTests: DoctrineTestCase {
             // expected
         }
 
-        let receiptsAfter = try await store.receipts(forSheet: sheet.id)
+        let receiptsAfter = try await sheetReceipts(store, forSheet: sheet.id)
         XCTAssertEqual(receiptsAfter.count, receiptsBefore.count)
         let reloaded = try await store.get(id: sheet.id)
         XCTAssertEqual(reloaded?.rowCount, 1)
@@ -206,7 +224,7 @@ final class SheetStoreTests: DoctrineTestCase {
         let updated = try await store.deleteRow(at: 0, for: sheet.id)
 
         XCTAssertEqual(updated.rowCount, 1)
-        let receipts = try await store.receipts(forSheet: sheet.id)
+        let receipts = try await sheetReceipts(store, forSheet: sheet.id)
         XCTAssertEqual(receiptTypes(receipts).filter { $0 == SheetReceiptType.deleteRow.rawValue }.count, 1)
     }
 
@@ -222,7 +240,7 @@ final class SheetStoreTests: DoctrineTestCase {
 
         XCTAssertEqual(sorted.cellText(row: 0, col: 0), "1")
         XCTAssertEqual(sorted.cellText(row: 1, col: 0), "2")
-        let receipts = try await store.receipts(forSheet: sheet.id)
+        let receipts = try await sheetReceipts(store, forSheet: sheet.id)
         XCTAssertEqual(receiptTypes(receipts).filter { $0 == SheetReceiptType.sorted.rawValue }.count, 1)
     }
 
@@ -236,7 +254,7 @@ final class SheetStoreTests: DoctrineTestCase {
         let filtered = try await store.applyFilter(criteria, for: sheet.id)
 
         XCTAssertEqual(filtered.effectiveFilterState.hiddenRows, [1])
-        let receipts = try await store.receipts(forSheet: sheet.id)
+        let receipts = try await sheetReceipts(store, forSheet: sheet.id)
         XCTAssertEqual(receiptTypes(receipts).filter { $0 == SheetReceiptType.filterApplied.rawValue }.count, 1)
     }
 
@@ -250,7 +268,7 @@ final class SheetStoreTests: DoctrineTestCase {
         let cleared = try await store.clearFilter(for: sheet.id)
 
         XCTAssertEqual(cleared.effectiveFilterState, .empty)
-        let receipts = try await store.receipts(forSheet: sheet.id)
+        let receipts = try await sheetReceipts(store, forSheet: sheet.id)
         XCTAssertEqual(receiptTypes(receipts).filter { $0 == SheetReceiptType.filterCleared.rawValue }.count, 1)
     }
 
@@ -265,7 +283,7 @@ final class SheetStoreTests: DoctrineTestCase {
         )
 
         XCTAssertNotNil(updated.effectiveNamedRanges["MYRANGE"])
-        let receipts = try await store.receipts(forSheet: sheet.id)
+        let receipts = try await sheetReceipts(store, forSheet: sheet.id)
         XCTAssertEqual(receiptTypes(receipts).filter { $0 == SheetReceiptType.defineNamedRange.rawValue }.count, 1)
     }
 
@@ -273,12 +291,12 @@ final class SheetStoreTests: DoctrineTestCase {
     func testUndefineNamedRangeOfAnUndefinedNameIsANoOpEmittingNoReceiptAndNotPersisting() async throws {
         let store = try await makeConnectedStore()
         let sheet = try await store.upsert(freshSheet())
-        let receiptsBefore = try await store.receipts(forSheet: sheet.id)
+        let receiptsBefore = try await sheetReceipts(store, forSheet: sheet.id)
 
         let result = try await store.undefineNamedRange("NeverDefined", for: sheet.id)
 
         XCTAssertEqual(result.id, sheet.id)
-        let receiptsAfter = try await store.receipts(forSheet: sheet.id)
+        let receiptsAfter = try await sheetReceipts(store, forSheet: sheet.id)
         XCTAssertEqual(receiptsAfter.count, receiptsBefore.count, "undefining a name that was never defined must not emit a receipt")
     }
 
@@ -293,7 +311,7 @@ final class SheetStoreTests: DoctrineTestCase {
         )
 
         XCTAssertEqual(updated.effectiveCommentThreads.count, 1)
-        let receipts = try await store.receipts(forSheet: sheet.id)
+        let receipts = try await sheetReceipts(store, forSheet: sheet.id)
         let commentReceipts = receipts.filter { $0.receiptType == SheetReceiptType.addComment.rawValue }
         XCTAssertEqual(commentReceipts.count, 1)
         XCTAssertEqual(commentReceipts.first?.payload["anchor"], .object([
@@ -311,7 +329,7 @@ final class SheetStoreTests: DoctrineTestCase {
         let archived = try await store.archive(sheet.id)
 
         XCTAssertTrue(archived.isArchived)
-        let receipts = try await store.receipts(forSheet: sheet.id)
+        let receipts = try await sheetReceipts(store, forSheet: sheet.id)
         XCTAssertEqual(receiptTypes(receipts).filter { $0 == SheetReceiptType.archive.rawValue }.count, 1)
         let reloaded = try await store.get(id: sheet.id)
         XCTAssertEqual(reloaded?.isArchived, true)
@@ -328,81 +346,69 @@ final class SheetStoreTests: DoctrineTestCase {
         let store = try await makeConnectedStore()
         var sheet = try await store.upsert(freshSheet())
         sheet = try await store.archive(sheet.id)
-        let receiptsBeforeSecondCall = try await store.receipts(forSheet: sheet.id)
+        let receiptsBeforeSecondCall = try await sheetReceipts(store, forSheet: sheet.id)
 
         _ = try await store.archive(sheet.id)
-        let receiptsAfterSecondCall = try await store.receipts(forSheet: sheet.id)
+        let receiptsAfterSecondCall = try await sheetReceipts(store, forSheet: sheet.id)
 
-        XCTExpectFailure("SUSPECTED CODE BUG: archive() on an already-archived sheet still appends a sheet_archived receipt - see findings") {
-            XCTAssertEqual(receiptsAfterSecondCall.count, receiptsBeforeSecondCall.count)
-        }
+        XCTAssertEqual(receiptsAfterSecondCall.count, receiptsBeforeSecondCall.count)
     }
 
     func testUnarchivingASheetThatWasNeverArchivedEmitsNoReceipt() async throws {
         let store = try await makeConnectedStore()
         let sheet = try await store.upsert(freshSheet())
-        let receiptsBefore = try await store.receipts(forSheet: sheet.id)
+        let receiptsBefore = try await sheetReceipts(store, forSheet: sheet.id)
 
         _ = try await store.unarchive(sheet.id)
 
-        let receiptsAfter = try await store.receipts(forSheet: sheet.id)
-        XCTExpectFailure("SUSPECTED CODE BUG: unarchive() on a never-archived sheet still appends a sheet_unarchived receipt - see findings") {
-            XCTAssertEqual(receiptsAfter.count, receiptsBefore.count)
-        }
+        let receiptsAfter = try await sheetReceipts(store, forSheet: sheet.id)
+        XCTAssertEqual(receiptsAfter.count, receiptsBefore.count)
     }
 
     func testTrashingAnAlreadyTrashedSheetEmitsNoReceipt() async throws {
         let store = try await makeConnectedStore()
         var sheet = try await store.upsert(freshSheet())
         sheet = try await store.trash(sheet.id)
-        let receiptsBefore = try await store.receipts(forSheet: sheet.id)
+        let receiptsBefore = try await sheetReceipts(store, forSheet: sheet.id)
 
         _ = try await store.trash(sheet.id)
 
-        let receiptsAfter = try await store.receipts(forSheet: sheet.id)
-        XCTExpectFailure("SUSPECTED CODE BUG: trash() on an already-trashed sheet still appends a sheet_trashed receipt - see findings") {
-            XCTAssertEqual(receiptsAfter.count, receiptsBefore.count)
-        }
+        let receiptsAfter = try await sheetReceipts(store, forSheet: sheet.id)
+        XCTAssertEqual(receiptsAfter.count, receiptsBefore.count)
     }
 
     func testRestoringASheetThatWasNeverTrashedEmitsNoReceipt() async throws {
         let store = try await makeConnectedStore()
         let sheet = try await store.upsert(freshSheet())
-        let receiptsBefore = try await store.receipts(forSheet: sheet.id)
+        let receiptsBefore = try await sheetReceipts(store, forSheet: sheet.id)
 
         _ = try await store.restore(sheet.id)
 
-        let receiptsAfter = try await store.receipts(forSheet: sheet.id)
-        XCTExpectFailure("SUSPECTED CODE BUG: restore() on a never-trashed sheet still appends a sheet_restored receipt - see findings") {
-            XCTAssertEqual(receiptsAfter.count, receiptsBefore.count)
-        }
+        let receiptsAfter = try await sheetReceipts(store, forSheet: sheet.id)
+        XCTAssertEqual(receiptsAfter.count, receiptsBefore.count)
     }
 
     func testFavoritingAnAlreadyFavoriteSheetEmitsNoReceipt() async throws {
         let store = try await makeConnectedStore()
         var sheet = try await store.upsert(freshSheet())
         sheet = try await store.favorite(sheet.id)
-        let receiptsBefore = try await store.receipts(forSheet: sheet.id)
+        let receiptsBefore = try await sheetReceipts(store, forSheet: sheet.id)
 
         _ = try await store.favorite(sheet.id)
 
-        let receiptsAfter = try await store.receipts(forSheet: sheet.id)
-        XCTExpectFailure("SUSPECTED CODE BUG: favorite() on an already-favorite sheet still appends a sheet_favorited receipt - see findings") {
-            XCTAssertEqual(receiptsAfter.count, receiptsBefore.count)
-        }
+        let receiptsAfter = try await sheetReceipts(store, forSheet: sheet.id)
+        XCTAssertEqual(receiptsAfter.count, receiptsBefore.count)
     }
 
     func testUnfavoritingASheetThatWasNeverFavoriteEmitsNoReceipt() async throws {
         let store = try await makeConnectedStore()
         let sheet = try await store.upsert(freshSheet())
-        let receiptsBefore = try await store.receipts(forSheet: sheet.id)
+        let receiptsBefore = try await sheetReceipts(store, forSheet: sheet.id)
 
         _ = try await store.unfavorite(sheet.id)
 
-        let receiptsAfter = try await store.receipts(forSheet: sheet.id)
-        XCTExpectFailure("SUSPECTED CODE BUG: unfavorite() on a never-favorite sheet still appends a sheet_unfavorited receipt - see findings") {
-            XCTAssertEqual(receiptsAfter.count, receiptsBefore.count)
-        }
+        let receiptsAfter = try await sheetReceipts(store, forSheet: sheet.id)
+        XCTAssertEqual(receiptsAfter.count, receiptsBefore.count)
     }
 
     // MARK: - Tags
@@ -414,7 +420,7 @@ final class SheetStoreTests: DoctrineTestCase {
         let updated = try await store.setTags(["Alpha", " beta ", "alpha"], for: sheet.id)
 
         XCTAssertEqual(updated.tags, ["alpha", "beta"])
-        let receipts = try await store.receipts(forSheet: sheet.id)
+        let receipts = try await sheetReceipts(store, forSheet: sheet.id)
         XCTAssertEqual(receiptTypes(receipts).filter { $0 == SheetReceiptType.tagChange.rawValue }.count, 1)
     }
 
@@ -425,14 +431,12 @@ final class SheetStoreTests: DoctrineTestCase {
         let store = try await makeConnectedStore()
         var sheet = try await store.upsert(freshSheet())
         sheet = try await store.addTag("dup", to: sheet.id)
-        let receiptsBefore = try await store.receipts(forSheet: sheet.id)
+        let receiptsBefore = try await sheetReceipts(store, forSheet: sheet.id)
 
         _ = try await store.addTag("dup", to: sheet.id)
 
-        let receiptsAfter = try await store.receipts(forSheet: sheet.id)
-        XCTExpectFailure("SUSPECTED CODE BUG: addTag() of an already-present tag still appends a sheet_tag_added receipt - see findings") {
-            XCTAssertEqual(receiptsAfter.count, receiptsBefore.count)
-        }
+        let receiptsAfter = try await sheetReceipts(store, forSheet: sheet.id)
+        XCTAssertEqual(receiptsAfter.count, receiptsBefore.count)
     }
 
     /// SUSPECTED CODE BUG: `removeTag(_:from:)`'s not-present branch has
@@ -441,14 +445,12 @@ final class SheetStoreTests: DoctrineTestCase {
     func testRemovingATagThatIsNotPresentEmitsNoReceipt() async throws {
         let store = try await makeConnectedStore()
         let sheet = try await store.upsert(freshSheet())
-        let receiptsBefore = try await store.receipts(forSheet: sheet.id)
+        let receiptsBefore = try await sheetReceipts(store, forSheet: sheet.id)
 
         _ = try await store.removeTag("never-added", from: sheet.id)
 
-        let receiptsAfter = try await store.receipts(forSheet: sheet.id)
-        XCTExpectFailure("SUSPECTED CODE BUG: removeTag() of an absent tag still appends a sheet_tag_removed receipt - see findings") {
-            XCTAssertEqual(receiptsAfter.count, receiptsBefore.count)
-        }
+        let receiptsAfter = try await sheetReceipts(store, forSheet: sheet.id)
+        XCTAssertEqual(receiptsAfter.count, receiptsBefore.count)
     }
 
     func testAddTagEmitsExactlyOneReceiptOnAGenuinelyNewTag() async throws {
@@ -458,7 +460,7 @@ final class SheetStoreTests: DoctrineTestCase {
         let updated = try await store.addTag("new-tag", to: sheet.id)
 
         XCTAssertTrue(updated.tags.contains("new-tag"))
-        let receipts = try await store.receipts(forSheet: sheet.id)
+        let receipts = try await sheetReceipts(store, forSheet: sheet.id)
         XCTAssertEqual(receiptTypes(receipts).filter { $0 == SheetReceiptType.tagAdded.rawValue }.count, 1)
     }
 }
