@@ -16,15 +16,19 @@
 //  locale tables from scratch - svl's own locale data ultimately
 //  bottoms out at the same ICU/CLDR data Foundation already carries,
 //  so hand-porting it would duplicate data Swift already has, not add
-//  parity. NOT yet covered, and out of scope for this pass: fraction
-//  formats ("# ?/?"), elapsed-time formats ("[h]:mm:ss"), the
-//  repeat-to-fill ("*") and pad-to-width ("_") directives, and
-//  locale-ID currency tags beyond stripping them ("[$-409]"). These
-//  are real gaps against full svl parity, not silently patched over -
-//  `parse(_:)` still accepts the tokens it doesn't specially handle
-//  (folding them into literals) so a format string round-trips to
-//  *something* rather than throwing, but the specialized behavior
-//  those codes imply is not implemented yet.
+//  parity. Locale-ID currency tags ("[$EUR-407]", "[$-F800]" system
+//  date, "[$-x-sysdate]") and the repeat-to-fill ("*") / pad-to-width
+//  ("_") directives closed at P1 (1.11). Fill/pad degrade per the
+//  SheetJS ssf precedent when there is no column width to size
+//  against - drop "*", one space for "_x"; a width-aware renderer can
+//  special-case `.fillChar`/`.padChar` for the real behavior instead.
+//  NOT yet covered, and out of scope for this pass (P2): fraction
+//  formats ("# ?/?"), elapsed-time formats ("[h]:mm:ss"), and
+//  conditional sections ("[<=100]..."). `parse(_:)` still accepts the
+//  tokens it doesn't specially handle (folding them into literals) so
+//  a format string round-trips to *something* rather than throwing,
+//  but the specialized behavior those codes imply is not implemented
+//  yet.
 //===----------------------------------------------------------------------===//
 
 import Foundation
@@ -69,6 +73,8 @@ enum FormatToken: Sendable, Hashable {
     case dateToken(DateTokenKind, count: Int)
     case generalMarker          // "General"
     case currencySymbol(String)
+    case fillChar(Character)    // '*c' - repeat 'c' to fill the column width
+    case padChar(Character)     // '_c' - reserve one 'c'-glyph's advance width
 }
 
 enum DateTokenKind: Sendable, Hashable {
@@ -146,11 +152,19 @@ public enum NumberFormatEngine {
                 if isKnownColor(tag) {
                     colorName = tag
                 } else if tag.hasPrefix("$") {
-                    // "[$USD-409]" / "[$$-en-US]" style currency tag: the
-                    // literal currency symbol is between "$" and an
-                    // optional "-locale" suffix.
+                    // "[$EUR-407]" (currency code/symbol + locale ID),
+                    // "[$-F800]" (system long-date flag), "[$-x-sysdate]"
+                    // (LO system-date flag): the visible text, if any, is
+                    // everything between "$" and the FIRST "-". A
+                    // locale-only tag has nothing there (the "-" sits
+                    // right after "$"), which must parse as an empty
+                    // symbol, not as the locale ID / flag name itself.
+                    // `firstIndex(of:)` preserves that empty prefix;
+                    // `String.split(maxSplits:)` does not - it silently
+                    // omits a leading empty component and returns the
+                    // locale ID/flag as if it were the symbol.
                     let body = String(tag.dropFirst())
-                    let symbol = body.split(separator: "-", maxSplits: 1).first.map(String.init) ?? body
+                    let symbol = body.firstIndex(of: "-").map { String(body[..<$0]) } ?? body
                     if !symbol.isEmpty { tokens.append(.currencySymbol(symbol)) }
                 }
                 // Other bracket tags ([h], [Red] already handled, locale
@@ -176,6 +190,29 @@ public enum NumberFormatEngine {
                 }
                 index += 1
                 continue
+            case "*":
+                // Repeat-to-column-width fill. Consumes the fill
+                // character; the width to repeat it to is a property of
+                // the renderer, not the format code, so it rides on the
+                // token as data rather than being expanded here.
+                if index + 1 < chars.count {
+                    tokens.append(.fillChar(chars[index + 1]))
+                    index += 2
+                    continue
+                }
+                index += 1
+                continue
+            case "_":
+                // Pad-by-one-glyph. Same shape as '*': the character is
+                // carried on the token, the actual glyph width is a
+                // renderer concern.
+                if index + 1 < chars.count {
+                    tokens.append(.padChar(chars[index + 1]))
+                    index += 2
+                    continue
+                }
+                index += 1
+                continue
             case "0", "#", "?":
                 let (run, next) = consumeRun(chars, from: index, matching: { $0 == "0" || $0 == "#" || $0 == "?" })
                 for c in run {
@@ -196,11 +233,17 @@ public enum NumberFormatEngine {
                 // (and before end-of-section or '%') scale by 1000 per
                 // comma; a comma between digit placeholders is a grouping
                 // separator. Distinguishing needs the token stream so far.
-                if let last = tokens.last, isDigitToken(last),
-                   nextNonCommaIsNotDigit(chars, from: index) {
-                    tokens.append(.scaleByThousand)
+                // A comma that does NOT follow a digit placeholder at all
+                // (e.g. "mmm d, yyyy") has nothing to group or scale - it
+                // is punctuation and must render literally.
+                if let last = tokens.last, isDigitToken(last) {
+                    if nextNonCommaIsNotDigit(chars, from: index) {
+                        tokens.append(.scaleByThousand)
+                    } else {
+                        tokens.append(.groupingSeparator)
+                    }
                 } else {
-                    tokens.append(.groupingSeparator)
+                    tokens.append(.literal(","))
                 }
                 index += 1
                 continue
@@ -433,6 +476,16 @@ public enum NumberFormatEngine {
                 continue // handled by renderDate; not reachable for a number section
             case .generalMarker:
                 continue
+            case .fillChar:
+                // Width-less degradation (SheetJS ssf precedent): with
+                // no column width to fill against, '*' contributes
+                // nothing.
+                continue
+            case .padChar:
+                // One space stands in for one glyph's advance width; a
+                // width-aware renderer would size this to the padChar
+                // glyph instead.
+                out += " "
             }
         }
         _ = currencyEmitted
@@ -526,8 +579,10 @@ public enum NumberFormatEngine {
                 out += dateFieldString(kind, count: count, components: components, date: date, calendar: calendar, locale: locale)
             case .literal(let s):
                 out += s
+            case .padChar:
+                out += " "
             default:
-                continue
+                continue // .fillChar and anything else: no width model to fill against
             }
         }
         return out

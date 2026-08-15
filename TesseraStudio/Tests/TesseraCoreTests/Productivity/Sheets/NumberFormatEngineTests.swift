@@ -170,4 +170,47 @@ final class NumberFormatEngineTests: XCTestCase {
         XCTAssertEqual(NumberFormatEngine.format(.bool(true), using: NumberFormatEngine.parse("0"), locale: enUS), "1")
         XCTAssertEqual(NumberFormatEngine.format(.bool(false), using: NumberFormatEngine.parse("0"), locale: enUS), "0")
     }
+
+    // MARK: - Locale-ID currency tags (P1, 1.11)
+
+    func testCurrencyCodeTagWithLocaleIDRendersTheCodeAsLiteralText() {
+        XCTAssertEqual(fmt(1234.5, "[$EUR-407]#,##0.00"), "EUR1,234.50")
+    }
+
+    /// "[$-F800]" is a system-long-date FLAG, not a currency symbol - it
+    /// must contribute nothing to the rendered text. Before this fixed
+    /// `String.split(maxSplits:)`'s leading-empty-component drop, this
+    /// rendered the locale ID ("F800") as if it were the symbol.
+    func testSystemLongDateFlagCarriesNoVisibleText() {
+        XCTAssertEqual(fmt(5, "[$-F800]0"), "5")
+    }
+
+    /// Same bug class as above, LO's own system-date flag.
+    func testSystemSysdateFlagCarriesNoVisibleText() {
+        XCTAssertEqual(fmt(5, "[$-x-sysdate]0"), "5")
+    }
+
+    /// "[$$-409]" - a literal "$" tagged with the en-US locale ID; the
+    /// symbol is the single character before the first "-", not the
+    /// whole "$-409" run.
+    func testDollarLiteralWithLocaleIDTag() {
+        XCTAssertEqual(fmt(5, "[$$-409]0"), "$5")
+    }
+
+    // MARK: - Fill '*' / pad '_' (P1, 1.11)
+
+    func testFillDirectiveDropsInAWidthLessContext() {
+        XCTAssertEqual(fmt(5, "0*x"), "5", "no column width to fill against, so '*' contributes nothing")
+    }
+
+    func testPadDirectiveEmitsOneSpace() {
+        XCTAssertEqual(fmt(5, "0_)"), "5 ", "one space stands in for the reserved glyph's width")
+    }
+
+    /// Built-ins 41-44 shape (pad-open, literal "$", fill-space, digits,
+    /// pad-close) - the exact combination the design doc cites as the
+    /// frequency justification for closing this gap at P1.
+    func testAccountingBuiltinWithFillAndPadParsesAndDegradesSanely() {
+        XCTAssertEqual(fmt(1234.5, "_($* #,##0.00_)"), " $1,234.50 ")
+    }
 }

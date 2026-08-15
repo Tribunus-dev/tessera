@@ -259,4 +259,74 @@ final class SheetCellFormatTests: XCTestCase {
         let format = SheetCellFormat(numberFormat: .currency, decimals: 2)
         XCTAssertEqual(render(.null, format), Value.null.asString)
     }
+
+    // MARK: - NumberFormatEngine wiring (1.11)
+
+    /// The literal requirement behind 1.11: cell rendering routes
+    /// through `NumberFormatEngine` rather than a second, hand-rolled
+    /// formatter. Comparing the renderer's output directly against
+    /// `NumberFormatEngine.format` invoked with that format's own
+    /// preset code is what makes "wired" falsifiable - if
+    /// `SheetValueRenderer` ever reverts to computing digits itself,
+    /// the two sides of this assertion diverge.
+    func testCellRenderingRoutesThroughNumberFormatEngine() {
+        let format = SheetCellFormat(numberFormat: .currency, decimals: 3)
+        let code = SheetNumberFormat.currency.formatCode(decimals: 3, currencySymbol: usd.currencySymbol ?? "$")
+        let expected = NumberFormatEngine.format(-9876.54321, using: NumberFormatEngine.parse(code), locale: usd)
+        XCTAssertEqual(expected, "($9,876.543)")
+        XCTAssertEqual(render(.number(-9876.54321), format), expected)
+    }
+
+    /// `formatCode` quotes the currency symbol before splicing it into
+    /// the preset code specifically so a symbol containing a
+    /// digit-mask or date-token letter can't be mis-tokenized. "Md"
+    /// contains "M" (a month token) - unquoted, this would render as a
+    /// date field instead of literal text.
+    func testCurrencySymbolContainingFormatTokenCharactersIsNotMisparsed() {
+        let code = SheetNumberFormat.currency.formatCode(decimals: 2, currencySymbol: "Md")
+        let parsed = NumberFormatEngine.parse(code)
+        XCTAssertEqual(NumberFormatEngine.format(1234.5, using: parsed, locale: usd), "Md1,234.50")
+    }
+
+    // MARK: - SheetCellFormatOverlay (dxf subset, for 1.12)
+
+    func testOverlayWithNoFieldsIsEmptyAndANoOp() {
+        let overlay = SheetCellFormatOverlay()
+        XCTAssertTrue(overlay.isEmpty)
+        let base = SheetCellFormat(numberFormat: .currency, decimals: 2, isBold: true)
+        XCTAssertEqual(overlay.applied(over: base), base)
+    }
+
+    func testOverlaySubstitutesOnlyItsOwnFields() {
+        let base = SheetCellFormat(numberFormat: .currency, decimals: 2, isBold: true, borders: .underline, alignment: .center)
+        let overlay = SheetCellFormatOverlay(fillHex: "#FFC7CE", textHex: "#9C0006")
+        let result = overlay.applied(over: base)
+
+        XCTAssertEqual(result.fillHex, "#FFC7CE")
+        XCTAssertEqual(result.textHex, "#9C0006")
+        // Everything the overlay didn't mention passes through untouched.
+        XCTAssertEqual(result.numberFormat, .currency)
+        XCTAssertEqual(result.decimals, 2)
+        XCTAssertTrue(result.isBold)
+        XCTAssertEqual(result.borders, .underline)
+        XCTAssertEqual(result.alignment, .center)
+        XCTAssertFalse(overlay.isEmpty)
+    }
+
+    /// `decimals` is a field of its own on the overlay - switching
+    /// `numberFormat` alone must not silently reset it, unlike
+    /// `SheetCellFormat.settingNumberFormat`'s UI-click behavior.
+    func testOverlayNumberFormatWithoutDecimalsKeepsTheBaseDecimalCount() {
+        let base = SheetCellFormat(numberFormat: .number, decimals: 4)
+        let overlay = SheetCellFormatOverlay(numberFormat: .percent)
+        let result = overlay.applied(over: base)
+        XCTAssertEqual(result.numberFormat, .percent)
+        XCTAssertEqual(result.decimals, 4)
+    }
+
+    func testOverlayDecimalsClampLikeSheetCellFormats() {
+        let overlay = SheetCellFormatOverlay(decimals: 99)
+        XCTAssertEqual(overlay.decimals, 15)
+        XCTAssertEqual(overlay.applied(over: .standard).decimals, 15)
+    }
 }

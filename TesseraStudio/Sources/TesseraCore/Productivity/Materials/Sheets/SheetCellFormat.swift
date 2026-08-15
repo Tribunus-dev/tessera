@@ -66,6 +66,48 @@ public enum SheetNumberFormat: String, Codable, Sendable, Hashable, CaseIterable
     }
 }
 
+extension SheetNumberFormat {
+    /// The Excel/ODF format code this preset expands to - the
+    /// "categorical enum becomes a preset table" evolution: every case
+    /// bottoms out in a real code that ``NumberFormatEngine`` parses and
+    /// formats, rather than a hand-rolled render branch of its own.
+    ///
+    /// `decimals` is spliced in as a repeated digit mask; `currencySymbol`
+    /// (meaningful only for ``currency``) is locale data supplied by the
+    /// caller, not baked into the preset. Both are inserted quoted so a
+    /// symbol that happens to contain a digit-mask or date-token
+    /// character (e.g. an abbreviation using "m" or "d") cannot be
+    /// mis-tokenized as a format directive.
+    func formatCode(decimals: Int, currencySymbol: String) -> String {
+        let frac = decimals > 0 ? "." + String(repeating: "0", count: decimals) : ""
+        switch self {
+        case .general:
+            return "General"
+        case .number:
+            return "0" + frac
+        case .comma:
+            return "#,##0\(frac);(#,##0\(frac))"
+        case .currency:
+            let symbol = "\"\(currencySymbol)\""
+            return "\(symbol)#,##0\(frac);(\(symbol)#,##0\(frac))"
+        case .percent:
+            return "0\(frac)%"
+        case .scientific:
+            return "0\(frac)E+00"
+        case .date:
+            // Short month, unpadded day, 4-digit year - the grid's
+            // existing "Jan 1, 1970" convention, now produced by the
+            // engine instead of a second DateFormatter.
+            return "mmm d, yyyy"
+        case .text:
+            // Never reached on the render path (`SheetValueRenderer`
+            // short-circuits `.text` before it needs a code); listed for
+            // switch exhaustiveness. "@" is Excel's text-section token.
+            return "@"
+        }
+    }
+}
+
 // MARK: - SheetCellBorders
 
 /// Which edges of a cell are stroked. An `OptionSet` because the four
@@ -231,13 +273,93 @@ extension SheetCellFormat {
     }
 }
 
+// MARK: - SheetCellFormatOverlay (dxf subset)
+
+/// A partial override of ``SheetCellFormat``: every field optional,
+/// `nil` meaning "this overlay doesn't touch that property" rather than
+/// "clear it". This is OOXML's dxf (differential formatting record)
+/// concept - the shape a conditional-format rule's style needs, since a
+/// rule like "font red, fill yellow" must not reset the borders or
+/// alignment the cell already has when it applies.
+///
+/// `decimals` rides with `numberFormat` the same way it does on
+/// ``SheetCellFormat``: a rule that sets `.percent` but leaves `decimals`
+/// nil falls through to the base cell's own decimal count, not to
+/// `.percent`'s conventional default.
+///
+/// `fillHex`/`textHex` are a two-state `String?` (present = this color;
+/// absent = don't touch), not three-state - an overlay can set a color
+/// but cannot use this type to explicitly clear one the cell already
+/// has. No current rule kind needs that, and a double-optional for it
+/// is not worth the API weight; revisit only if a real rule needs
+/// "explicitly no fill" as distinct from "unspecified".
+///
+/// Introduced for 1.12 (``SheetConditionalFormat``): a matching rule
+/// applies its overlay via ``applied(over:)`` at paint time. It never
+/// touches the cell's own stored ``SheetCellFormat``.
+public struct SheetCellFormatOverlay: Codable, Sendable, Hashable {
+    public var numberFormat: SheetNumberFormat?
+    public var decimals: Int?
+    public var isBold: Bool?
+    public var isItalic: Bool?
+    public var fillHex: String?
+    public var textHex: String?
+    public var borders: SheetCellBorders?
+    public var alignment: SheetCellAlignment?
+
+    public init(
+        numberFormat: SheetNumberFormat? = nil,
+        decimals: Int? = nil,
+        isBold: Bool? = nil,
+        isItalic: Bool? = nil,
+        fillHex: String? = nil,
+        textHex: String? = nil,
+        borders: SheetCellBorders? = nil,
+        alignment: SheetCellAlignment? = nil
+    ) {
+        self.numberFormat = numberFormat
+        self.decimals = decimals.map { max(0, min($0, 15)) }
+        self.isBold = isBold
+        self.isItalic = isItalic
+        self.fillHex = fillHex
+        self.textHex = textHex
+        self.borders = borders
+        self.alignment = alignment
+    }
+
+    /// True when every field is `nil` - applying this overlay is a no-op.
+    public var isEmpty: Bool { self == SheetCellFormatOverlay() }
+
+    /// `base` with every non-nil field of this overlay substituted in.
+    /// Fields left `nil` here pass `base`'s value through unchanged.
+    public func applied(over base: SheetCellFormat) -> SheetCellFormat {
+        var result = base
+        if let numberFormat { result.numberFormat = numberFormat }
+        if let decimals { result.decimals = max(0, min(decimals, 15)) }
+        if let isBold { result.isBold = isBold }
+        if let isItalic { result.isItalic = isItalic }
+        if let fillHex { result.fillHex = fillHex }
+        if let textHex { result.textHex = textHex }
+        if let borders { result.borders = borders }
+        if let alignment { result.alignment = alignment }
+        return result
+    }
+}
+
 // MARK: - Rendering
 
 /// Turns a computed ``Value`` into the string the grid draws.
 ///
 /// Separate from ``SheetCellFormat`` so it can hold the locale and the
-/// cached `NumberFormatter`s: building a formatter per cell per redraw
-/// is measurably slow on a grid of any size.
+/// cached parsed ``NumberFormat``s: parsing a format code per cell per
+/// redraw is measurably slow on a grid of any size.
+///
+/// No formatting math lives here. Every ``SheetNumberFormat`` case
+/// expands to a real Excel/ODF format code
+/// (``SheetNumberFormat/formatCode(decimals:currencySymbol:)``) and the
+/// actual digit/date rendering runs through ``NumberFormatEngine`` - a
+/// second hand-rolled formatter here would silently drift from what a
+/// custom (non-preset) format code produces everywhere else in the app.
 public enum SheetValueRenderer {
 
     /// Render `value` under `format`. Errors always render as their
@@ -257,60 +379,27 @@ public enum SheetValueRenderer {
             return value.asString
         case .text:
             return value.asString
-        case .number:
-            return fixed(number, decimals: format.decimals, grouping: false, locale: locale)
-        case .comma:
-            return accounting(number, decimals: format.decimals, prefix: "", locale: locale)
-        case .currency:
-            let symbol = locale.currencySymbol ?? "$"
-            return accounting(number, decimals: format.decimals, prefix: symbol, locale: locale)
-        case .percent:
-            let scaled = number * 100
-            return fixed(scaled, decimals: format.decimals, grouping: false, locale: locale) + "%"
-        case .scientific:
-            return scientific(number, decimals: format.decimals)
         case .date:
-            return dateString(number, locale: locale)
+            guard let date = dateFromSerial(number) else { return String(number) }
+            let parsed = parsedFormat(for: .date, decimals: 0, currencySymbol: "")
+            return NumberFormatEngine.format(date, using: parsed, locale: locale)
+        default:
+            let symbol = format.numberFormat == .currency ? (locale.currencySymbol ?? "$") : ""
+            let parsed = parsedFormat(for: format.numberFormat, decimals: format.decimals, currencySymbol: symbol)
+            return NumberFormatEngine.format(number, using: parsed, locale: locale)
         }
     }
 
     /// Only genuine numbers are formatted. A bool is deliberately NOT
     /// coerced: TRUE rendered as "$1.00" hides what the cell holds.
+    /// `NumberFormatEngine.format` itself WOULD coerce (it accepts any
+    /// `Value` and reads `asNumber`, which maps bools/strings/dates to
+    /// numbers) - this guard runs before the engine is called at all,
+    /// rather than relying on the engine to enforce a rule it has no
+    /// way to know about.
     private static func numeric(_ value: Value) -> Double? {
         if case .number(let n) = value { return n }
         return nil
-    }
-
-    private static func fixed(
-        _ n: Double,
-        decimals: Int,
-        grouping: Bool,
-        locale: Locale
-    ) -> String {
-        let formatter = formatter(decimals: decimals, grouping: grouping, locale: locale)
-        return formatter.string(from: NSNumber(value: n)) ?? String(n)
-    }
-
-    /// Thousands-separated, with negatives in parentheses. The
-    /// accounting convention: a minus sign is easy to miss in a column
-    /// of numbers, and a misread sign is the expensive kind of error.
-    ///
-    /// The currency symbol is always a prefix. Correct for en_US and
-    /// wrong for the locales that suffix it (fr_FR, de_DE); fixing that
-    /// needs the locale's own currency pattern, not a bigger switch.
-    private static func accounting(
-        _ n: Double,
-        decimals: Int,
-        prefix: String,
-        locale: Locale
-    ) -> String {
-        let magnitude = fixed(abs(n), decimals: decimals, grouping: true, locale: locale)
-        let body = prefix + magnitude
-        return n < 0 ? "(" + body + ")" : body
-    }
-
-    private static func scientific(_ n: Double, decimals: Int) -> String {
-        String(format: "%.\(decimals)E", n)
     }
 
     /// Spreadsheet date serials count days from 1899-12-30, which is
@@ -323,57 +412,46 @@ public enum SheetValueRenderer {
     /// 1900-02-29, which makes every serial from 1900-03-01 onward
     /// agree with Excel. Serials 1..59 differ, and no real model uses
     /// them.
-    private static func dateString(_ serial: Double, locale: Locale) -> String {
+    private static func dateFromSerial(_ serial: Double) -> Date? {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .gmt
         var epoch = DateComponents()
         epoch.year = 1899
         epoch.month = 12
         epoch.day = 30
-        guard let base = calendar.date(from: epoch) else { return String(serial) }
-        let date = base.addingTimeInterval(serial * 86_400)
-        let formatter = DateFormatter()
-        formatter.locale = locale
-        formatter.timeZone = calendar.timeZone
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .none
-        return formatter.string(from: date)
+        guard let base = calendar.date(from: epoch) else { return nil }
+        return base.addingTimeInterval(serial * 86_400)
     }
 
-    // MARK: - Formatter cache
+    // MARK: - Parsed-format cache
 
-    /// Keyed by the three inputs that change a formatter's output.
-    /// `NumberFormatter` is expensive to build and is reused across
-    /// every cell that shares a format.
-    private struct FormatterKey: Hashable {
+    /// Keyed by the three inputs that change the parsed code: the
+    /// preset, its decimal count, and (for `.currency`) the locale's
+    /// symbol. `NumberFormatEngine.parse` tokenizes the whole code
+    /// string and is reused across every cell that shares a format -
+    /// the same reasoning the old per-decimals `NumberFormatter` cache
+    /// used, one layer up.
+    private struct ParsedFormatKey: Hashable {
+        let numberFormat: SheetNumberFormat
         let decimals: Int
-        let grouping: Bool
-        let localeID: String
+        let currencySymbol: String
     }
 
     private static let cacheLock = NSLock()
-    nonisolated(unsafe) private static var cache: [FormatterKey: NumberFormatter] = [:]
+    nonisolated(unsafe) private static var cache: [ParsedFormatKey: NumberFormat] = [:]
 
-    private static func formatter(
+    private static func parsedFormat(
+        for numberFormat: SheetNumberFormat,
         decimals: Int,
-        grouping: Bool,
-        locale: Locale
-    ) -> NumberFormatter {
-        let key = FormatterKey(
-            decimals: decimals,
-            grouping: grouping,
-            localeID: locale.identifier
-        )
+        currencySymbol: String
+    ) -> NumberFormat {
+        let key = ParsedFormatKey(numberFormat: numberFormat, decimals: decimals, currencySymbol: currencySymbol)
         cacheLock.lock()
         defer { cacheLock.unlock() }
         if let hit = cache[key] { return hit }
-        let formatter = NumberFormatter()
-        formatter.locale = locale
-        formatter.numberStyle = .decimal
-        formatter.usesGroupingSeparator = grouping
-        formatter.minimumFractionDigits = decimals
-        formatter.maximumFractionDigits = decimals
-        cache[key] = formatter
-        return formatter
+        let code = numberFormat.formatCode(decimals: decimals, currencySymbol: currencySymbol)
+        let parsed = NumberFormatEngine.parse(code)
+        cache[key] = parsed
+        return parsed
     }
 }
