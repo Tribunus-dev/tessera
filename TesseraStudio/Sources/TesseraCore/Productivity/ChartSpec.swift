@@ -32,14 +32,17 @@ public enum ChartOrientation: String, Codable, Sendable, Hashable, CaseIterable 
 
 // MARK: - ChartKind
 
-/// The chart type catalog. P1a (this wave) implements full rendering
-/// for `columnOrBar`, `line`, `area`, `pie`, `scatter` - the dominant
+/// The chart type catalog. P1a implements full rendering for
+/// `columnOrBar`, `line`, `area`, `pie`, `scatter` - the dominant
 /// families, exercising the entire shared scale/tick/legend/palette
 /// core (studio-expansion-design-refinement-2026-08-14.md section 3,
-/// Gate 3 staging). The P1b cases below are represented now so a
-/// round-tripped document doesn't lose data on an unimplemented kind,
-/// but ``ChartRenderer`` only draws an honest placeholder for them
-/// until a later wave builds their rendering.
+/// Gate 3 staging). P1b (this wave) adds `bubble`, `net`, `stock`,
+/// `columnAndLine`, `ofPie`, `sparkline` - each one orthogonal
+/// mechanism layered on that SAME unchanged core (a third numeric
+/// role, a polar coordinate mapping, OHLC glyphs, a secondary axis, a
+/// pie+column composition, a chromeless preset), per the gate's own
+/// staging rationale. No new ``ChartRenderer`` architecture; see that
+/// file's rendering methods for each mechanism.
 public enum ChartKind: Codable, Sendable, Hashable {
     /// Column (vertical bars) or bar (horizontal bars) - see
     /// ``ChartOrientation``.
@@ -51,15 +54,48 @@ public enum ChartKind: Codable, Sendable, Hashable {
     /// on the spec.
     case pie(donut: Bool)
     case scatter
-
-    // MARK: P1b (staged for a later wave - see type doc comment above)
-
+    /// Scatter (x/y positioning) plus a third numeric dimension: the
+    /// first ``ChartSeriesRole/size`` series maps to marker radius via
+    /// ``ChartRenderer/bubbleRadius(_:maxValue:maxRadius:)``.
     case bubble
+    /// Radar/spider chart: a polar transform of the same category/
+    /// value series model - each category an angular position, each
+    /// series a polygon connecting its values' radial positions. See
+    /// ``ChartRenderer/netAngle(index:count:)``.
     case net
-    case stock
+    /// OHLC chart; see ``ChartStockVariant`` for the 4 standard
+    /// subtypes. Plots the ``ChartSeriesRole/high``/``ChartSeriesRole/low``/
+    /// ``ChartSeriesRole/open``/``ChartSeriesRole/close`` series.
+    case stock(variant: ChartStockVariant)
+    /// Two series groups sharing the category axis: series with
+    /// ``ChartSeries/usesSecondaryAxis`` unset/false render as columns
+    /// against ``ChartAxes``' primary y-axis fields, series with it set
+    /// render as a line against ``ChartAxes``'s secondary y-axis fields.
     case columnAndLine
+    /// A pie plus a detail breakout: the second `.value` series (if
+    /// present) is the composition of the first series' exploded
+    /// wedge, drawn as a stacked-column detail chart alongside the
+    /// main pie. No second series -> renders as a plain pie.
     case ofPie
+    /// A cell-sized, chrome-free preset of the line renderer: no
+    /// title, legend, axes, or category labels - see
+    /// ``ChartRenderer/render(_:in:rect:)``'s early chrome-suppression
+    /// check.
     case sparkline
+}
+
+// MARK: - ChartStockVariant
+
+/// The 4 standard OOXML/ODF stock-chart subtypes. `.highLowClose` and
+/// `.openHighLowClose` render real OHLC glyphs; the two volume variants
+/// render the SAME price glyph as their non-volume counterpart without
+/// a separate volume sub-plot - a deliberate, documented simplification
+/// (P1b item's own report), not a silent gap.
+public enum ChartStockVariant: String, Codable, Sendable, Hashable, CaseIterable {
+    case highLowClose
+    case openHighLowClose
+    case volumeHighLowClose
+    case volumeOpenHighLowClose
 }
 
 // MARK: - ChartSeriesRole
@@ -68,13 +104,20 @@ public enum ChartKind: Codable, Sendable, Hashable {
 /// case (one plotted series). `.category` is reserved for a series
 /// that supplies shared axis positions instead of its own plotted
 /// magnitude - e.g. the shared X column of an XY scatter, consumed by
-/// ``ChartRenderer`` rather than plotted itself. `.size` is for the
-/// P1b bubble kind's third dimension; present now so `ChartSeries`
-/// doesn't need a breaking change when bubble rendering lands.
+/// ``ChartRenderer`` rather than plotted itself. `.size` is the P1b
+/// bubble kind's third dimension, mapped to marker radius. `.open`,
+/// `.high`, `.low`, `.close` are the P1b stock kind's four OHLC
+/// components - one series per component (matched to each other by
+/// index), not one series per data point, keeping every kind's data
+/// series-typed the same way.
 public enum ChartSeriesRole: String, Codable, Sendable, Hashable, CaseIterable {
     case category
     case value
     case size
+    case open
+    case high
+    case low
+    case close
 }
 
 // MARK: - ChartSeries
@@ -88,17 +131,28 @@ public struct ChartSeries: Codable, Sendable, Hashable {
     /// ignored by ``ChartRenderer``, which falls back to numeric
     /// labels rather than mis-pairing a label with the wrong value.
     public var categoryLabels: [String]?
+    /// `nil` (same as `false`) plots this series against the shared/
+    /// primary value axis; `true` plots it against ``ChartAxes``'s
+    /// secondary y-axis fields instead - `ChartLegend.isVisible`'s same
+    /// "nil is the common case, no migration needed for old specs"
+    /// idiom. Only ``ChartKind/columnAndLine`` consults this field:
+    /// its two series groups ARE exactly "not `usesSecondaryAxis`"
+    /// (columns) vs "`usesSecondaryAxis`" (line). Every other kind
+    /// ignores it.
+    public var usesSecondaryAxis: Bool?
 
     public init(
         name: String? = nil,
         role: ChartSeriesRole = .value,
         values: [Double] = [],
-        categoryLabels: [String]? = nil
+        categoryLabels: [String]? = nil,
+        usesSecondaryAxis: Bool? = nil
     ) {
         self.name = name
         self.role = role
         self.values = values
         self.categoryLabels = categoryLabels
+        self.usesSecondaryAxis = usesSecondaryAxis
     }
 }
 
@@ -117,17 +171,27 @@ public struct ChartAxes: Codable, Sendable, Hashable {
     public var yLabelFormat: String?
     public var xTitle: String?
     public var yTitle: String?
+    /// ``ChartKind/columnAndLine``'s secondary y-axis (its line group)
+    /// - the same format/title split as the primary `yLabelFormat`/
+    /// `yTitle` pair, just for the second independently-scaled axis.
+    /// Ignored by every other kind.
+    public var ySecondaryLabelFormat: String?
+    public var ySecondaryTitle: String?
 
     public init(
         xLabelFormat: String? = nil,
         yLabelFormat: String? = nil,
         xTitle: String? = nil,
-        yTitle: String? = nil
+        yTitle: String? = nil,
+        ySecondaryLabelFormat: String? = nil,
+        ySecondaryTitle: String? = nil
     ) {
         self.xLabelFormat = xLabelFormat
         self.yLabelFormat = yLabelFormat
         self.xTitle = xTitle
         self.yTitle = yTitle
+        self.ySecondaryLabelFormat = ySecondaryLabelFormat
+        self.ySecondaryTitle = ySecondaryTitle
     }
 }
 

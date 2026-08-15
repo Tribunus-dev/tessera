@@ -8,13 +8,16 @@
 //  studio-expansion-plan.md's chart-engine entry).
 //
 //  One shared core (nice-number scales/ticks, category bands, legend
-//  layout, palette, axis-label drawing) backs all six P1a kinds -
-//  that sharing is the point of the gate's staging rationale, not an
-//  incidental refactor. Only `.columnOrBar`, `.line`, `.area`, `.pie`,
-//  `.scatter` render fully this wave; the P1b kinds
-//  (`.bubble`/`.net`/`.stock`/`.columnAndLine`/`.ofPie`/`.sparkline`)
-//  draw an honest "not built yet" placeholder rather than crashing or
-//  silently doing nothing.
+//  layout, palette, axis-label drawing) backs all twelve kinds - P1a's
+//  `.columnOrBar`/`.line`/`.area`/`.pie`/`.scatter` and P1b's
+//  `.bubble`/`.net`/`.stock`/`.columnAndLine`/`.ofPie`/`.sparkline`.
+//  Each P1b kind is exactly one orthogonal mechanism layered on that
+//  SAME core, per the gate's staging rationale: bubble adds a radius
+//  scale to scatter's positioning, net adds a polar coordinate mapping
+//  next to the linear one, stock adds OHLC glyphs, columnAndLine adds
+//  a second independently-scaled axis, ofPie composes the existing
+//  pie and column paths, sparkline is a chrome-suppressed preset of
+//  the line path. None of them is a second rendering pipeline.
 //===----------------------------------------------------------------------===//
 
 import Foundation
@@ -62,15 +65,23 @@ public struct ChartRenderer: Sendable {
     /// Renders `spec` into `context`, confined to `rect`. Draws the
     /// title, then an auto-legend when `spec.legend.isVisible` is `nil`
     /// and `spec.series.count > 1` (the gate's own defaults rule), then
-    /// dispatches to the one P1a kind that matches `spec.kind` - or an
-    /// honest placeholder for a P1b kind not yet implemented.
+    /// dispatches to the kind that matches `spec.kind`.
+    ///
+    /// `.sparkline` is the one exception to that title/legend chrome:
+    /// per its own doc comment it is a chrome-free preset, so both
+    /// steps are skipped for it regardless of what `spec.title`/
+    /// `spec.legend` say, and `renderSparkline` gets the full `rect`
+    /// rather than a chrome-carved `area`.
     public func render(_ spec: ChartSpec, in context: CGContext, rect: CGRect) {
         context.saveGState()
         defer { context.restoreGState() }
         guard rect.width > 2, rect.height > 2 else { return }
 
+        let isSparkline: Bool
+        if case .sparkline = spec.kind { isSparkline = true } else { isSparkline = false }
+
         var area = rect
-        if let title = spec.title, !title.isEmpty {
+        if !isSparkline, let title = spec.title, !title.isEmpty {
             let titleRect = CGRect(x: area.minX, y: area.minY, width: area.width, height: 20)
             drawText(title, in: titleRect, fontSize: 14, colorHex: "#1A1A1A", alignment: .center, context: context)
             area.origin.y += 22
@@ -82,7 +93,7 @@ public struct ChartRenderer: Sendable {
         // ("series.count > 1", not "plotted-series.count > 1"); the
         // legend's CONTENT below only ever lists what actually got
         // plotted.
-        let legendVisible = spec.legend.isVisible ?? (spec.series.count > 1)
+        let legendVisible = !isSparkline && (spec.legend.isVisible ?? (spec.series.count > 1))
         if legendVisible {
             let items = legendItems(for: spec, valueSeries: valueSeries)
             if !items.isEmpty {
@@ -102,8 +113,19 @@ public struct ChartRenderer: Sendable {
             renderPie(spec, valueSeries: valueSeries, donut: donut, in: context, rect: area)
         case .scatter:
             renderScatter(spec, valueSeries: valueSeries, in: context, rect: area)
-        case .bubble, .net, .stock, .columnAndLine, .ofPie, .sparkline:
-            renderUnimplementedPlaceholder(in: context, rect: area)
+        case .bubble:
+            renderBubble(spec, valueSeries: valueSeries, in: context, rect: area)
+        case .net:
+            renderNet(spec, valueSeries: valueSeries, in: context, rect: area)
+        case .stock(let variant):
+            renderStock(spec, variant: variant, in: context, rect: area)
+        case .columnAndLine:
+            renderColumnAndLine(spec, valueSeries: valueSeries, in: context, rect: area)
+        case .ofPie:
+            renderOfPie(spec, valueSeries: valueSeries, in: context, rect: area)
+        case .sparkline:
+            // isSparkline suppressed all chrome above, so area == rect.
+            renderSparkline(valueSeries: valueSeries, in: context, rect: area)
         }
     }
 
@@ -257,17 +279,26 @@ public struct ChartRenderer: Sendable {
         drawCategoryLabels(labels, orientation: .vertical, context: context, plot: plot)
 
         for (seriesIndex, series) in valueSeries.enumerated() {
-            guard !series.values.isEmpty else { continue }
-            let path = CGMutablePath()
-            for i in 0..<Swift.min(count, series.values.count) {
-                let point = CGPoint(x: categoryCenter(index: i, count: count, plot: plot), y: valueToY(series.values[i], scale: scale, plot: plot))
-                if i == 0 { path.move(to: point) } else { path.addLine(to: point) }
-            }
-            context.addPath(path)
-            context.setStrokeColor(Self.color(forIndex: seriesIndex))
-            context.setLineWidth(2)
-            context.strokePath()
+            drawLinePath(series.values, count: count, scale: scale, plot: plot, color: Self.color(forIndex: seriesIndex), lineWidth: 2, context: context)
         }
+    }
+
+    /// One series' polyline, y-mapped through `scale`, x-banded by
+    /// `count` the same way `renderLine` bands its categories. Shared
+    /// by `renderLine`, `renderColumnAndLine`'s line group, and
+    /// `renderSparkline` - the P1b sparkline kind's own contract is
+    /// literally "reuse the line drawing code", not a second path.
+    private func drawLinePath(_ values: [Double], count: Int, scale: ChartNiceScale, plot: CGRect, color: CGColor, lineWidth: CGFloat, context: CGContext) {
+        guard !values.isEmpty else { return }
+        let path = CGMutablePath()
+        for i in 0..<Swift.min(count, values.count) {
+            let point = CGPoint(x: categoryCenter(index: i, count: count, plot: plot), y: valueToY(values[i], scale: scale, plot: plot))
+            if i == 0 { path.move(to: point) } else { path.addLine(to: point) }
+        }
+        context.addPath(path)
+        context.setStrokeColor(color)
+        context.setLineWidth(lineWidth)
+        context.strokePath()
     }
 
     // MARK: - Area
@@ -361,19 +392,7 @@ public struct ChartRenderer: Sendable {
         let plot = axisInsetPlotArea(rect)
         guard plot.width > 1, plot.height > 1 else { return }
 
-        // A .category-role series (when present) supplies the shared X
-        // values for every .value series - the XY-scatter convention
-        // (one X column, N Y columns). Absent one, points fall back to
-        // their own index as X, which still renders a sane scatter for
-        // a spec that only supplies Y data.
-        let categorySeries = spec.series.first { $0.role == .category }
-        let xValues: [Double]
-        if let categorySeries, !categorySeries.values.isEmpty {
-            xValues = categorySeries.values
-        } else {
-            let count = valueSeries.map(\.values.count).max() ?? 0
-            xValues = (0..<count).map(Double.init)
-        }
+        let xValues = scatterXValues(spec, valueSeries: valueSeries)
         guard !xValues.isEmpty else { return }
 
         let xScale = Self.ticks(min: xValues.min() ?? 0, max: xValues.max() ?? 1, targetCount: 5)
@@ -393,25 +412,342 @@ public struct ChartRenderer: Sendable {
         }
     }
 
-    // MARK: - P1b placeholder
+    /// A `.category`-role series (when present) supplies the shared X
+    /// values for every `.value` series - the XY-scatter convention
+    /// (one X column, N Y columns). Absent one, points fall back to
+    /// their own index as X, which still renders a sane scatter for a
+    /// spec that only supplies Y data. Shared by `renderScatter` and
+    /// `renderBubble` - bubble's x/y positioning IS scatter's, per the
+    /// gate's own "bubble reuses scatter's core" framing.
+    private func scatterXValues(_ spec: ChartSpec, valueSeries: [ChartSeries]) -> [Double] {
+        let categorySeries = spec.series.first { $0.role == .category }
+        if let categorySeries, !categorySeries.values.isEmpty {
+            return categorySeries.values
+        }
+        let count = valueSeries.map(\.values.count).max() ?? 0
+        return (0..<count).map(Double.init)
+    }
 
-    /// An honest "not built yet" placeholder for a P1b kind (bubble,
-    /// net, stock, columnAndLine, ofPie, sparkline) - per the gate's
-    /// own staging note, a placeholder here is acceptable; a crash or
-    /// a silent no-op is not.
-    private func renderUnimplementedPlaceholder(in context: CGContext, rect: CGRect) {
-        let inset = rect.insetBy(dx: 4, dy: 4)
-        guard inset.width > 0, inset.height > 0 else { return }
-        context.setStrokeColor(CGColor(gray: 0.7, alpha: 1))
-        context.setLineWidth(1)
-        context.stroke(inset)
-        let path = CGMutablePath()
-        path.move(to: CGPoint(x: inset.minX, y: inset.minY))
-        path.addLine(to: CGPoint(x: inset.maxX, y: inset.maxY))
-        path.move(to: CGPoint(x: inset.minX, y: inset.maxY))
-        path.addLine(to: CGPoint(x: inset.maxX, y: inset.minY))
-        context.addPath(path)
+    // MARK: - Bubble
+
+    /// Scatter's own x/y positioning (`scatterXValues`, the same
+    /// helper `renderScatter` uses) plus a third dimension: the first
+    /// `.size`-role series maps to marker radius via `bubbleRadius`.
+    /// No size series, or a size series with a zero/negative max,
+    /// falls back to a fixed dot - the bubble degrades to a plain
+    /// scatter rather than drawing invisible zero-radius circles.
+    private func renderBubble(_ spec: ChartSpec, valueSeries: [ChartSeries], in context: CGContext, rect: CGRect) {
+        guard !valueSeries.isEmpty else { return }
+        let plot = axisInsetPlotArea(rect)
+        guard plot.width > 1, plot.height > 1 else { return }
+
+        let xValues = scatterXValues(spec, valueSeries: valueSeries)
+        guard !xValues.isEmpty else { return }
+
+        let sizeSeries = spec.series.first { $0.role == .size }
+        let sizeMax = sizeSeries?.values.reduce(0) { Swift.max($0, $1) } ?? 0
+
+        let xScale = Self.ticks(min: xValues.min() ?? 0, max: xValues.max() ?? 1, targetCount: 5)
+        let yDomain = valueDomain(valueSeries: valueSeries, stacked: false, includeZero: false)
+        let yScale = Self.ticks(min: yDomain.min, max: yDomain.max, targetCount: 5)
+
+        drawValueAxisTicks(yScale, orientation: .vertical, formatCode: axisFormatCode(spec.axes, orientation: .vertical), context: context, plot: plot)
+        drawValueAxisTicks(xScale, orientation: .horizontal, formatCode: axisFormatCode(spec.axes, orientation: .horizontal), context: context, plot: plot)
+
+        for (seriesIndex, series) in valueSeries.enumerated() {
+            let color = Self.color(forIndex: seriesIndex)
+            for i in 0..<Swift.min(xValues.count, series.values.count) {
+                let x = valueToX(xValues[i], scale: xScale, plot: plot)
+                let y = valueToY(series.values[i], scale: yScale, plot: plot)
+                let radius: CGFloat
+                if let sizeSeries, i < sizeSeries.values.count, sizeMax > 0 {
+                    radius = Self.bubbleRadius(sizeSeries.values[i], maxValue: sizeMax)
+                } else {
+                    radius = 5
+                }
+                let bubbleRect = CGRect(x: x - radius, y: y - radius, width: radius * 2, height: radius * 2)
+                context.setFillColor(color.copy(alpha: 0.6) ?? color)
+                context.fillEllipse(in: bubbleRect)
+                context.setStrokeColor(color)
+                context.setLineWidth(1)
+                context.strokeEllipse(in: bubbleRect)
+            }
+        }
+    }
+
+    /// Sqrt-area bubble scale: radius is proportional to `sqrt(value)`,
+    /// not `value` directly, so a bubble's AREA (not its diameter)
+    /// scales linearly with the data value - the standard bubble-chart
+    /// convention. `value <= 0` (including the whole-series-is-zero
+    /// case `maxValue <= 0`) maps to a zero radius rather than a
+    /// negative or divide-by-zero one.
+    public static func bubbleRadius(_ value: Double, maxValue: Double, maxRadius: CGFloat = 20) -> CGFloat {
+        guard maxValue > 0, value > 0 else { return 0 }
+        let t = sqrt(Swift.min(value, maxValue) / maxValue)
+        return maxRadius * CGFloat(t)
+    }
+
+    // MARK: - Net (radar/spider)
+
+    /// A polar transform of the SAME category/value series model
+    /// `renderLine`/`renderColumnOrBar` use: each category becomes an
+    /// angular position via `netAngle`, each series becomes a closed
+    /// polygon connecting its values' radial positions via `ticks`'
+    /// SAME niced scale, just mapped to a radius instead of a y-pixel.
+    /// Concentric rings at each tick value (rather than the linear
+    /// gridlines `drawValueAxisTicks` draws) are this kind's own radial
+    /// analogue of an axis - drawn inline here rather than folded into
+    /// `drawValueAxisTicks`, since a ring is a category-gon, not a
+    /// straight line, and that one shape doesn't earn a third
+    /// orientation case in the shared axis drawer.
+    private func renderNet(_ spec: ChartSpec, valueSeries: [ChartSeries], in context: CGContext, rect: CGRect) {
+        guard !valueSeries.isEmpty else { return }
+        let count = valueSeries.map(\.values.count).max() ?? 0
+        guard count > 0 else { return }
+
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let maxRadius = Swift.min(rect.width, rect.height) / 2 * 0.72
+        guard maxRadius > 1 else { return }
+
+        let domain = valueDomain(valueSeries: valueSeries, stacked: false, includeZero: true)
+        let scale = Self.ticks(min: domain.min, max: domain.max, targetCount: 4)
+
+        func point(angle: Double, radius: CGFloat) -> CGPoint {
+            CGPoint(x: center.x + CGFloat(cos(angle)) * radius, y: center.y + CGFloat(sin(angle)) * radius)
+        }
+        func radiusFor(_ value: Double) -> CGFloat {
+            let t = (value - scale.min) / (scale.max - scale.min)
+            return CGFloat(Swift.max(t, 0)) * maxRadius
+        }
+
+        context.setStrokeColor(CGColor(gray: 0.85, alpha: 1))
+        context.setLineWidth(0.5)
+        for tick in scale.tickValues where tick > scale.min {
+            let ringRadius = radiusFor(tick)
+            let ring = CGMutablePath()
+            for i in 0...count {
+                let p = point(angle: Self.netAngle(index: i % count, count: count), radius: ringRadius)
+                if i == 0 { ring.move(to: p) } else { ring.addLine(to: p) }
+            }
+            context.addPath(ring)
+            context.strokePath()
+        }
+
+        let labels = categoryLabels(for: spec, count: count)
+        for i in 0..<count {
+            let labelPoint = point(angle: Self.netAngle(index: i, count: count), radius: maxRadius + 12)
+            drawText(labels[i], in: CGRect(x: labelPoint.x - 24, y: labelPoint.y - 6, width: 48, height: 12), fontSize: 9, colorHex: "#444444", alignment: .center, context: context)
+        }
+
+        for (seriesIndex, series) in valueSeries.enumerated() {
+            guard !series.values.isEmpty else { continue }
+            let path = CGMutablePath()
+            for i in 0..<Swift.min(count, series.values.count) {
+                let p = point(angle: Self.netAngle(index: i, count: count), radius: radiusFor(series.values[i]))
+                if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
+            }
+            path.closeSubpath()
+            context.addPath(path)
+            context.setStrokeColor(Self.color(forIndex: seriesIndex))
+            context.setLineWidth(2)
+            context.strokePath()
+        }
+    }
+
+    /// The angular position of category `index` of `count`, evenly
+    /// spaced around a full circle starting at 12 o'clock (`-pi/2`,
+    /// matching `renderPie`'s own start angle) and proceeding
+    /// clockwise in screen space. `count <= 0` degrades to 12 o'clock
+    /// rather than dividing by zero.
+    public static func netAngle(index: Int, count: Int) -> Double {
+        guard count > 0 else { return -Double.pi / 2 }
+        return -Double.pi / 2 + (2 * Double.pi * Double(index) / Double(count))
+    }
+
+    // MARK: - Stock (OHLC)
+
+    /// OHLC glyphs: a vertical high-low range line, with a left tick
+    /// for open (only on the two OHLC variants - HLC has no open data
+    /// to tick) and a right tick for close (every variant). The two
+    /// volume variants render this SAME glyph, omitting only the
+    /// volume sub-plot a real Excel/LO volume-stock chart would add
+    /// beneath it - a deliberate, documented simplification (see
+    /// ``ChartStockVariant``'s own doc comment), not a silent gap.
+    private func renderStock(_ spec: ChartSpec, variant: ChartStockVariant, in context: CGContext, rect: CGRect) {
+        guard let highSeries = spec.series.first(where: { $0.role == .high }),
+              let lowSeries = spec.series.first(where: { $0.role == .low }),
+              !highSeries.values.isEmpty, !lowSeries.values.isEmpty
+        else { return }
+        let closeSeries = spec.series.first { $0.role == .close }
+        let openSeries = spec.series.first { $0.role == .open }
+
+        let count = Swift.min(highSeries.values.count, lowSeries.values.count)
+        guard count > 0 else { return }
+        let plot = axisInsetPlotArea(rect)
+        guard plot.width > 1, plot.height > 1 else { return }
+
+        var domainValues = Array(highSeries.values.prefix(count)) + Array(lowSeries.values.prefix(count))
+        if let closeSeries { domainValues += closeSeries.values }
+        if let openSeries { domainValues += openSeries.values }
+        let scale = Self.ticks(min: domainValues.min() ?? 0, max: domainValues.max() ?? 1, targetCount: 5)
+
+        let labels = categoryLabels(for: spec, count: count)
+        drawValueAxisTicks(scale, orientation: .vertical, formatCode: axisFormatCode(spec.axes, orientation: .vertical), context: context, plot: plot)
+        drawCategoryLabels(labels, orientation: .vertical, context: context, plot: plot)
+
+        let showsOpenTick = variant == .openHighLowClose || variant == .volumeOpenHighLowClose
+        let bandLength = plot.width / CGFloat(count)
+        let tickLength = Swift.min(bandLength * 0.35, 8)
+
+        context.setStrokeColor(Self.color(forIndex: 0))
+        context.setLineWidth(1.5)
+        for i in 0..<count {
+            let x = categoryCenter(index: i, count: count, plot: plot)
+            context.move(to: CGPoint(x: x, y: valueToY(highSeries.values[i], scale: scale, plot: plot)))
+            context.addLine(to: CGPoint(x: x, y: valueToY(lowSeries.values[i], scale: scale, plot: plot)))
+            if showsOpenTick, let openSeries, i < openSeries.values.count {
+                let y = valueToY(openSeries.values[i], scale: scale, plot: plot)
+                context.move(to: CGPoint(x: x - tickLength, y: y))
+                context.addLine(to: CGPoint(x: x, y: y))
+            }
+            if let closeSeries, i < closeSeries.values.count {
+                let y = valueToY(closeSeries.values[i], scale: scale, plot: plot)
+                context.move(to: CGPoint(x: x, y: y))
+                context.addLine(to: CGPoint(x: x + tickLength, y: y))
+            }
+        }
         context.strokePath()
+    }
+
+    // MARK: - Column and Line
+
+    /// Two series groups sharing the category axis, split by
+    /// `ChartSeries.usesSecondaryAxis`: the "not set" group renders as
+    /// zero-baselined columns against the primary axis (this kind's
+    /// own inline column-drawing, not `renderColumnOrBar` - that
+    /// method's stacking/orientation machinery is more than a single
+    /// unstacked-vertical column group needs here), the "set" group
+    /// renders as a line against an independently-scaled secondary
+    /// axis via the SAME `drawLinePath` `renderLine` uses. Both groups
+    /// share one `plot` rect and one category-band layout - the
+    /// "sharing the category axis" part of the kind's own name.
+    private func renderColumnAndLine(_ spec: ChartSpec, valueSeries: [ChartSeries], in context: CGContext, rect: CGRect) {
+        guard !valueSeries.isEmpty else { return }
+        let count = valueSeries.map(\.values.count).max() ?? 0
+        guard count > 0 else { return }
+
+        let columnSeries = valueSeries.filter { !($0.usesSecondaryAxis ?? false) }
+        let lineSeries = valueSeries.filter { $0.usesSecondaryAxis ?? false }
+        let hasSecondary = !lineSeries.isEmpty
+
+        let rightMargin: CGFloat = hasSecondary ? Self.axisLabelMargin : 8
+        let plot = CGRect(
+            x: rect.minX + Self.axisLabelMargin,
+            y: rect.minY + 4,
+            width: Swift.max(rect.width - Self.axisLabelMargin - rightMargin, 0),
+            height: Swift.max(rect.height - Self.categoryLabelMargin - 4, 0)
+        )
+        guard plot.width > 1, plot.height > 1 else { return }
+
+        let labels = categoryLabels(for: spec, count: count)
+        drawCategoryLabels(labels, orientation: .vertical, context: context, plot: plot)
+
+        if !columnSeries.isEmpty {
+            let primaryDomain = valueDomain(valueSeries: columnSeries, stacked: false, includeZero: true)
+            let primaryScale = Self.ticks(min: primaryDomain.min, max: primaryDomain.max, targetCount: 5)
+            drawValueAxisTicks(primaryScale, orientation: .vertical, formatCode: spec.axes.yLabelFormat, context: context, plot: plot)
+
+            let bandLength = plot.width / CGFloat(count)
+            let barThickness = (bandLength * 0.6) / CGFloat(columnSeries.count)
+            for (seriesIndex, series) in columnSeries.enumerated() {
+                context.setFillColor(Self.color(forIndex: seriesIndex))
+                for i in 0..<Swift.min(count, series.values.count) {
+                    let x = plot.minX + CGFloat(i) * bandLength + bandLength * 0.2 + CGFloat(seriesIndex) * barThickness
+                    let y0 = valueToY(0, scale: primaryScale, plot: plot)
+                    let y1 = valueToY(series.values[i], scale: primaryScale, plot: plot)
+                    context.fill(CGRect(x: x, y: Swift.min(y0, y1), width: barThickness, height: Swift.max(abs(y1 - y0), 0.5)))
+                }
+            }
+        }
+
+        if hasSecondary {
+            let secondaryDomain = valueDomain(valueSeries: lineSeries, stacked: false, includeZero: false)
+            let secondaryScale = Self.ticks(min: secondaryDomain.min, max: secondaryDomain.max, targetCount: 5)
+            drawSecondaryValueAxisTicks(secondaryScale, formatCode: spec.axes.ySecondaryLabelFormat, context: context, plot: plot)
+            for (seriesIndex, series) in lineSeries.enumerated() {
+                drawLinePath(series.values, count: count, scale: secondaryScale, plot: plot, color: Self.color(forIndex: columnSeries.count + seriesIndex), lineWidth: 2, context: context)
+            }
+        }
+    }
+
+    /// The secondary y-axis's tick labels, drawn on the RIGHT edge of
+    /// `plot` (mirroring `drawValueAxisTicks`'s vertical-orientation
+    /// labels, which draw on the left) - no gridlines, so a chart with
+    /// both axes doesn't double up on horizontal lines at two
+    /// generally-different tick spacings.
+    private func drawSecondaryValueAxisTicks(_ scale: ChartNiceScale, formatCode: String?, context: CGContext, plot: CGRect) {
+        let format = formatCode.map(NumberFormatEngine.parse) ?? NumberFormat.general
+        for tick in scale.tickValues {
+            let y = valueToY(tick, scale: scale, plot: plot)
+            let label = NumberFormatEngine.format(tick, using: format)
+            drawText(label, in: CGRect(x: plot.maxX + 4, y: y - 6, width: 38, height: 12), fontSize: 9, colorHex: "#666666", alignment: .left, context: context)
+        }
+    }
+
+    // MARK: - Of Pie
+
+    /// A pie plus a detail breakout, composed from the two rendering
+    /// paths that already exist rather than any new primitive drawing
+    /// code: the main ring is a `renderPie` call restricted to the
+    /// first `.value` series (matching `renderPie`'s own "only the
+    /// first series plots" rule, so the detail series below never
+    /// leaks into the main wedges), and the breakout is a
+    /// `renderColumnOrBar` call over synthetic single-value series -
+    /// one series per detail part, all sharing category-band 0, so its
+    /// existing per-series stacking accumulation draws them as one
+    /// stacked column. No second `.value` series -> falls back to a
+    /// plain pie (the "of pie" mechanism is purely additive).
+    private func renderOfPie(_ spec: ChartSpec, valueSeries: [ChartSeries], in context: CGContext, rect: CGRect) {
+        guard let mainSeries = valueSeries.first, !mainSeries.values.isEmpty else { return }
+        guard valueSeries.count > 1, let detailSeries = valueSeries.dropFirst().first, !detailSeries.values.isEmpty else {
+            renderPie(spec, valueSeries: valueSeries, donut: false, in: context, rect: rect)
+            return
+        }
+
+        let pieRect = CGRect(x: rect.minX, y: rect.minY, width: rect.width * 0.55, height: rect.height)
+        let detailRect = CGRect(x: rect.minX + rect.width * 0.6, y: rect.minY, width: rect.width * 0.4, height: rect.height)
+
+        renderPie(spec, valueSeries: [mainSeries], donut: false, in: context, rect: pieRect)
+
+        let parts = detailSeries.values.enumerated().map { index, value in
+            ChartSeries(name: "Part \(index + 1)", role: .value, values: [value], categoryLabels: index == 0 ? ["Detail"] : nil)
+        }
+        let detailSpec = ChartSpec(kind: .columnOrBar(orientation: .vertical, stacked: true), series: parts, legend: ChartLegend(isVisible: false))
+        renderColumnOrBar(detailSpec, valueSeries: parts, orientation: .vertical, stacked: true, in: context, rect: detailRect)
+    }
+
+    // MARK: - Sparkline
+
+    /// Literally `drawLinePath` - the SAME per-series polyline drawing
+    /// `renderLine` uses - with no axis ticks, gridlines, or category
+    /// labels, and a 2pt inset instead of `axisInsetPlotArea`'s
+    /// 44pt-margin plot area. "a cell-sized no-chrome preset of the
+    /// SAME renderer" (gate's honest-reconciliation paragraph),
+    /// verbatim: not a second drawing path, and the chrome suppression
+    /// (title/legend) is handled one level up in `render` itself so
+    /// this method never has to know about `spec.title`/`spec.legend`.
+    private func renderSparkline(valueSeries: [ChartSeries], in context: CGContext, rect: CGRect) {
+        guard !valueSeries.isEmpty else { return }
+        let count = valueSeries.map(\.values.count).max() ?? 0
+        guard count > 0 else { return }
+        let plot = rect.insetBy(dx: 2, dy: 2)
+        guard plot.width > 1, plot.height > 1 else { return }
+
+        let domain = valueDomain(valueSeries: valueSeries, stacked: false, includeZero: false)
+        let scale = Self.ticks(min: domain.min, max: domain.max, targetCount: 3)
+        for (seriesIndex, series) in valueSeries.enumerated() {
+            drawLinePath(series.values, count: count, scale: scale, plot: plot, color: Self.color(forIndex: seriesIndex), lineWidth: 1.25, context: context)
+        }
     }
 
     // MARK: - Shared: scale coordinate mapping

@@ -22,8 +22,12 @@ final class ChartSpecTests: XCTestCase {
             .pie(donut: false),
             .pie(donut: true),
             .scatter,
-            // P1b - staged, not yet rendered, but must still round-trip.
-            .bubble, .net, .stock, .columnAndLine, .ofPie, .sparkline,
+            // P1b
+            .bubble, .net, .columnAndLine, .ofPie, .sparkline,
+            .stock(variant: .highLowClose),
+            .stock(variant: .openHighLowClose),
+            .stock(variant: .volumeHighLowClose),
+            .stock(variant: .volumeOpenHighLowClose),
         ]
         for kind in kinds {
             let spec = ChartSpec(kind: kind, series: [ChartSeries(name: "S1", values: [1, 2, 3])])
@@ -31,6 +35,15 @@ final class ChartSpecTests: XCTestCase {
             let decoded = try JSONDecoder().decode(ChartSpec.self, from: data)
             XCTAssertEqual(decoded.kind, kind, "round-trip failed for \(kind)")
             XCTAssertEqual(decoded.series, spec.series)
+        }
+    }
+
+    func testEveryChartSeriesRoleRoundTrips() throws {
+        for role in ChartSeriesRole.allCases {
+            let series = ChartSeries(role: role, values: [1, 2])
+            let data = try JSONEncoder().encode(series)
+            let decoded = try JSONDecoder().decode(ChartSeries.self, from: data)
+            XCTAssertEqual(decoded.role, role, "round-trip failed for \(role)")
         }
     }
 
@@ -42,6 +55,8 @@ final class ChartSpecTests: XCTestCase {
         XCTAssertNil(axes.yLabelFormat)
         XCTAssertNil(axes.xTitle)
         XCTAssertNil(axes.yTitle)
+        XCTAssertNil(axes.ySecondaryLabelFormat)
+        XCTAssertNil(axes.ySecondaryTitle)
     }
 
     func testChartLegendDefaultsToAutoVisibility() {
@@ -56,6 +71,24 @@ final class ChartSpecTests: XCTestCase {
         XCTAssertEqual(series.role, .value)
         XCTAssertTrue(series.values.isEmpty)
         XCTAssertNil(series.categoryLabels)
+        XCTAssertNil(series.usesSecondaryAxis, "nil is the documented 'primary axis' state")
+    }
+
+    /// `usesSecondaryAxis` follows `ChartLegend.isVisible`'s own nil-is-
+    /// the-common-case idiom: round-trips both the unset and explicit
+    /// states, and a JSON payload from before this field existed (no
+    /// key at all) still decodes.
+    func testUsesSecondaryAxisRoundTripsAndDefaultsToNilForOldJSON() throws {
+        for value in [nil, false, true] {
+            let series = ChartSeries(role: .value, values: [1], usesSecondaryAxis: value)
+            let data = try JSONEncoder().encode(series)
+            let decoded = try JSONDecoder().decode(ChartSeries.self, from: data)
+            XCTAssertEqual(decoded.usesSecondaryAxis, value)
+        }
+
+        let preExistingFieldJSON = Data(#"{"role":"value","values":[1,2]}"#.utf8)
+        let decoded = try JSONDecoder().decode(ChartSeries.self, from: preExistingFieldJSON)
+        XCTAssertNil(decoded.usesSecondaryAxis)
     }
 
     func testIncompleteChartSpecUsesDocumentedDefaults() {

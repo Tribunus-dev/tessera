@@ -4,12 +4,15 @@ import CoreGraphics
 
 /// Test contract (studio-expansion-design-refinement-2026-08-14.md
 /// section 3, Gate 3): every (kind x stacking x variant) combination
-/// among the 6 P1a kinds renders into an offscreen `CGContext` with no
-/// fallback path (no crash, no silent no-op), and
+/// among the 6 P1a kinds AND the 6 P1b kinds renders into an offscreen
+/// `CGContext` with no fallback path (no crash, no silent no-op), and
 /// `ChartRenderer.ticks(min:max:targetCount:)` yields 1-2-5 steps for
-/// hand-computed domain/target-count fixtures. Black-box, same
-/// approach as `ShapeRendererTests`: most assertions only need the
-/// render call to complete; one pixel-content check (mirroring
+/// hand-computed domain/target-count fixtures - plus, for the P1b
+/// kinds' own two pure mapping functions, hand-computed fixtures for
+/// `bubbleRadius`'s sqrt-area rule and `netAngle`'s evenly-spaced-
+/// around-circle rule. Black-box, same approach as
+/// `ShapeRendererTests`: most assertions only need the render call to
+/// complete; one pixel-content check (mirroring
 /// `ShapeRendererTests.testFilledRectPaintsItsInteriorColor`) confirms
 /// a chart isn't a silent no-op.
 final class ChartRendererTests: XCTestCase {
@@ -116,14 +119,132 @@ final class ChartRendererTests: XCTestCase {
         ChartRenderer().render(spec, in: context, rect: CGRect(x: 0, y: 0, width: 320, height: 220))
     }
 
-    // MARK: - No-crash: P1b placeholder kinds
+    // MARK: - No-crash: the 6 P1b kinds
 
-    func testEveryP1bKindRendersAnHonestPlaceholderInsteadOfCrashing() {
-        let p1bKinds: [ChartKind] = [.bubble, .net, .stock, .columnAndLine, .ofPie, .sparkline]
-        for kind in p1bKinds {
-            let context = makeContext(width: 200, height: 150)
-            ChartRenderer().render(twoSeriesSpec(kind: kind, title: nil), in: context, rect: CGRect(x: 0, y: 0, width: 200, height: 150))
-        }
+    /// P1b fixtures: same `twoSeriesSpec` shape the P1a no-crash tests
+    /// above use, wherever a kind's own model is just category/value
+    /// series (bubble, net, columnAndLine, ofPie, sparkline); stock
+    /// gets its own OHLC-role fixture since `twoSeriesSpec`'s series
+    /// are `.value`-role, not `.high`/`.low`/`.open`/`.close`.
+
+    func testBubbleRenders() {
+        let context = makeContext(width: 320, height: 220)
+        let spec = ChartSpec(
+            kind: .bubble,
+            series: [
+                ChartSeries(role: .category, values: [1, 2, 3, 4]),
+                ChartSeries(name: "Trial 1", role: .value, values: [2.1, 3.4, 2.8, 5.0]),
+                ChartSeries(role: .size, values: [10, 40, 90, 25]),
+            ]
+        )
+        ChartRenderer().render(spec, in: context, rect: CGRect(x: 0, y: 0, width: 320, height: 220))
+    }
+
+    func testBubbleWithoutSizeSeriesFallsBackToFixedDotRenders() {
+        let context = makeContext(width: 320, height: 220)
+        ChartRenderer().render(ChartSpec(kind: .bubble, series: [ChartSeries(role: .value, values: [1, 2, 3])]), in: context, rect: CGRect(x: 0, y: 0, width: 320, height: 220))
+    }
+
+    func testNetRenders() {
+        let context = makeContext(width: 240, height: 240)
+        ChartRenderer().render(twoSeriesSpec(kind: .net), in: context, rect: CGRect(x: 0, y: 0, width: 240, height: 240))
+    }
+
+    private func stockSpec(variant: ChartStockVariant) -> ChartSpec {
+        ChartSpec(
+            kind: .stock(variant: variant),
+            series: [
+                ChartSeries(role: .high, values: [12, 15, 14, 17]),
+                ChartSeries(role: .low, values: [8, 10, 9, 11]),
+                ChartSeries(role: .open, values: [9, 11, 13, 12]),
+                ChartSeries(role: .close, values: [11, 14, 10, 16]),
+            ],
+            title: nil
+        )
+    }
+
+    func testStockHighLowCloseRenders() {
+        let context = makeContext(width: 300, height: 200)
+        ChartRenderer().render(stockSpec(variant: .highLowClose), in: context, rect: CGRect(x: 0, y: 0, width: 300, height: 200))
+    }
+
+    func testStockOpenHighLowCloseRenders() {
+        let context = makeContext(width: 300, height: 200)
+        ChartRenderer().render(stockSpec(variant: .openHighLowClose), in: context, rect: CGRect(x: 0, y: 0, width: 300, height: 200))
+    }
+
+    func testStockVolumeHighLowCloseRenders() {
+        let context = makeContext(width: 300, height: 200)
+        ChartRenderer().render(stockSpec(variant: .volumeHighLowClose), in: context, rect: CGRect(x: 0, y: 0, width: 300, height: 200))
+    }
+
+    func testStockVolumeOpenHighLowCloseRenders() {
+        let context = makeContext(width: 300, height: 200)
+        ChartRenderer().render(stockSpec(variant: .volumeOpenHighLowClose), in: context, rect: CGRect(x: 0, y: 0, width: 300, height: 200))
+    }
+
+    func testStockMissingHighOrLowSeriesDoesNotCrash() {
+        let context = makeContext(width: 200, height: 150)
+        let spec = ChartSpec(kind: .stock(variant: .highLowClose), series: [ChartSeries(role: .close, values: [1, 2, 3])])
+        ChartRenderer().render(spec, in: context, rect: CGRect(x: 0, y: 0, width: 200, height: 150))
+    }
+
+    func testColumnAndLineRenders() {
+        let context = makeContext(width: 320, height: 220)
+        let spec = ChartSpec(
+            kind: .columnAndLine,
+            series: [
+                ChartSeries(name: "Revenue", role: .value, values: [10, 25, 15, 30], categoryLabels: ["Jan", "Feb", "Mar", "Apr"]),
+                ChartSeries(name: "Growth %", role: .value, values: [1.2, 3.4, 0.8, 2.1], usesSecondaryAxis: true),
+            ]
+        )
+        ChartRenderer().render(spec, in: context, rect: CGRect(x: 0, y: 0, width: 320, height: 220))
+    }
+
+    func testColumnAndLineWithOnlyPrimarySeriesRenders() {
+        let context = makeContext(width: 320, height: 220)
+        ChartRenderer().render(twoSeriesSpec(kind: .columnAndLine), in: context, rect: CGRect(x: 0, y: 0, width: 320, height: 220))
+    }
+
+    func testOfPieWithDetailSeriesRenders() {
+        let context = makeContext(width: 320, height: 220)
+        let spec = ChartSpec(
+            kind: .ofPie,
+            series: [
+                ChartSeries(role: .value, values: [40, 30, 30], categoryLabels: ["A", "B", "Other"]),
+                ChartSeries(role: .value, values: [10, 12, 8]),
+            ]
+        )
+        ChartRenderer().render(spec, in: context, rect: CGRect(x: 0, y: 0, width: 320, height: 220))
+    }
+
+    func testOfPieWithoutDetailSeriesFallsBackToPlainPieRenders() {
+        let context = makeContext(width: 220, height: 220)
+        let spec = ChartSpec(kind: .ofPie, series: [ChartSeries(role: .value, values: [40, 30, 30])])
+        ChartRenderer().render(spec, in: context, rect: CGRect(x: 0, y: 0, width: 220, height: 220))
+    }
+
+    func testSparklineRenders() {
+        let context = makeContext(width: 60, height: 20)
+        let spec = ChartSpec(kind: .sparkline, series: [ChartSeries(role: .value, values: [3, 5, 2, 8, 6])], title: "ignored")
+        ChartRenderer().render(spec, in: context, rect: CGRect(x: 0, y: 0, width: 60, height: 20))
+    }
+
+    /// Sparkline's own chrome-suppression contract: a title/legend that
+    /// WOULD show for any other kind must not carve any space out of
+    /// (or paint into) a sparkline's rect.
+    func testSparklineSuppressesTitleAndLegendRegardlessOfSpec() {
+        let context = makeContext(width: 60, height: 20)
+        let spec = ChartSpec(
+            kind: .sparkline,
+            series: [
+                ChartSeries(name: "A", role: .value, values: [1, 2, 3]),
+                ChartSeries(name: "B", role: .value, values: [3, 2, 1]),
+            ],
+            legend: ChartLegend(isVisible: true),
+            title: "Should not appear"
+        )
+        ChartRenderer().render(spec, in: context, rect: CGRect(x: 0, y: 0, width: 60, height: 20))
     }
 
     // MARK: - No-crash: edge inputs
@@ -220,5 +341,73 @@ final class ChartRendererTests: XCTestCase {
         let scale = ChartRenderer.ticks(min: 0, max: 10, targetCount: 0)
         XCTAssertGreaterThan(scale.max, scale.min)
         XCTAssertFalse(scale.tickValues.isEmpty)
+    }
+
+    // MARK: - bubbleRadius(): hand-computed sqrt-area fixtures
+
+    /// value == maxValue -> t = sqrt(1) = 1 -> radius == maxRadius.
+    func testBubbleRadiusFixtureA_ValueEqualsMax() {
+        XCTAssertEqual(ChartRenderer.bubbleRadius(100, maxValue: 100, maxRadius: 20), 20, accuracy: 1e-9)
+    }
+
+    /// value is a quarter of max -> t = sqrt(0.25) = 0.5 -> radius is
+    /// HALF of maxRadius, not a quarter - the sqrt-area rule's whole
+    /// point (diameter/radius is not linear in value; area is).
+    func testBubbleRadiusFixtureB_QuarterValueIsHalfRadius() {
+        XCTAssertEqual(ChartRenderer.bubbleRadius(25, maxValue: 100, maxRadius: 20), 10, accuracy: 1e-9)
+    }
+
+    /// value is a ninth of max -> t = sqrt(1/9) = 1/3 -> radius is a
+    /// THIRD of maxRadius. A third fixture at a non-1/4 fraction rules
+    /// out a linear (non-sqrt) implementation that happens to agree
+    /// with fixture B by coincidence.
+    func testBubbleRadiusFixtureC_NinthValueIsThirdRadius() {
+        XCTAssertEqual(ChartRenderer.bubbleRadius(20, maxValue: 180, maxRadius: 21), 7, accuracy: 1e-9)
+    }
+
+    /// The sqrt-area rule's own claim spelled out numerically: radius
+    /// at 1/4 value is NOT 1/4 of radius at full value (that would be
+    /// the wrong, "radius proportional to value" rule) - it's 1/2.
+    func testBubbleRadiusAreaScalesLinearlyNotDiameter() {
+        let full = ChartRenderer.bubbleRadius(100, maxValue: 100, maxRadius: 20)
+        let quarter = ChartRenderer.bubbleRadius(25, maxValue: 100, maxRadius: 20)
+        XCTAssertEqual(quarter / full, 0.5, accuracy: 1e-9)
+        XCTAssertNotEqual(quarter / full, 0.25, "radius must not scale linearly with value")
+    }
+
+    func testBubbleRadiusIsZeroForNonPositiveValueOrMax() {
+        XCTAssertEqual(ChartRenderer.bubbleRadius(0, maxValue: 100), 0)
+        XCTAssertEqual(ChartRenderer.bubbleRadius(-5, maxValue: 100), 0)
+        XCTAssertEqual(ChartRenderer.bubbleRadius(10, maxValue: 0), 0)
+    }
+
+    // MARK: - netAngle(): hand-computed evenly-spaced-around-circle fixtures
+
+    /// 4 categories -> 90 degrees apart, starting at 12 o'clock (-pi/2)
+    /// and proceeding clockwise: -pi/2, 0, pi/2, pi.
+    func testNetAngleFixtureA_FourCategoriesAreNinetyDegreesApart() {
+        XCTAssertEqual(ChartRenderer.netAngle(index: 0, count: 4), -Double.pi / 2, accuracy: 1e-9)
+        XCTAssertEqual(ChartRenderer.netAngle(index: 1, count: 4), 0, accuracy: 1e-9)
+        XCTAssertEqual(ChartRenderer.netAngle(index: 2, count: 4), Double.pi / 2, accuracy: 1e-9)
+        XCTAssertEqual(ChartRenderer.netAngle(index: 3, count: 4), Double.pi, accuracy: 1e-9)
+    }
+
+    /// 3 categories -> 120 degrees apart; checks the spacing property
+    /// directly rather than absolute angles, so this fixture is
+    /// independent of fixture A's choice of start angle.
+    func testNetAngleFixtureB_ThreeCategoriesAreEvenlySpaced() {
+        let a0 = ChartRenderer.netAngle(index: 0, count: 3)
+        let a1 = ChartRenderer.netAngle(index: 1, count: 3)
+        let a2 = ChartRenderer.netAngle(index: 2, count: 3)
+        XCTAssertEqual(a1 - a0, 2 * Double.pi / 3, accuracy: 1e-9)
+        XCTAssertEqual(a2 - a1, 2 * Double.pi / 3, accuracy: 1e-9)
+    }
+
+    func testNetAngleStartsAtTwelveOClock() {
+        XCTAssertEqual(ChartRenderer.netAngle(index: 0, count: 6), -Double.pi / 2, accuracy: 1e-9)
+    }
+
+    func testNetAngleToleratesNonPositiveCount() {
+        XCTAssertEqual(ChartRenderer.netAngle(index: 0, count: 0), -Double.pi / 2, accuracy: 1e-9)
     }
 }
