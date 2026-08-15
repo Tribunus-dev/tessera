@@ -366,3 +366,37 @@ public struct TrackChange: Identifiable, Hashable {
         return changes.sorted { $0.createdAt < $1.createdAt }
     }
 }
+
+// MARK: - Sheet + Comments
+
+extension Sheet {
+    /// `commentThreads ?? []`, matching `effectiveConditionalFormats`/
+    /// `effectiveValidationRules`'s "nil means none" convention.
+    public var effectiveCommentThreads: [CommentThread] {
+        commentThreads ?? []
+    }
+
+    /// A copy with `thread` appended.
+    public func addingCommentThread(_ thread: CommentThread) -> Sheet {
+        var updated = self
+        updated.commentThreads = effectiveCommentThreads + [thread]
+        return updated
+    }
+}
+
+// MARK: - SlideDeck + Comments
+
+extension SlideDeck {
+    /// `commentThreads ?? []`, matching `effectiveMasterPages`'s "nil
+    /// means none" convention.
+    public var effectiveCommentThreads: [CommentThread] {
+        commentThreads ?? []
+    }
+
+    /// A copy with `thread` appended.
+    public func addingCommentThread(_ thread: CommentThread) -> SlideDeck {
+        var updated = self
+        updated.commentThreads = effectiveCommentThreads + [thread]
+        return updated
+    }
+}
