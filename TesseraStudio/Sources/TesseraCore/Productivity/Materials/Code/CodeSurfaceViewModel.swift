@@ -217,6 +217,13 @@ public final class CodeSurfaceViewModel: ObservableObject {
         }
     }
 
+    /// Open a file by id (looked up via the store). No-op if the id
+    /// does not resolve, e.g. a stale graph node. See ``CodeGraphConnector``.
+    public func open(fileID: UUID) async {
+        guard let file = store.get(id: fileID) else { return }
+        await open(file: file)
+    }
+
     /// Save a body change to the current file. The
     /// mutation is the `replaceCodeBlock` variant;
     /// the receipt chain records the pre/post

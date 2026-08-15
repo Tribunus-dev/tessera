@@ -34,7 +34,9 @@ public actor MacPostgresBootstrap {
         return base.appendingPathComponent("Tessera", isDirectory: true)
     }()
 
-    private static let postgresBundleDir: URL = {
+    // fileprivate, not private: Shell.run (below, same file) reads this to
+    // put the bundled pg_ctl/psql on PATH.
+    fileprivate static let postgresBundleDir: URL = {
         tesseraSupportDir.appendingPathComponent("postgres", isDirectory: true)
     }()
 
@@ -109,10 +111,8 @@ public actor MacPostgresBootstrap {
     private func downloadAndExtractPostgres() async throws {
         // macOS ARM64 Postgres 16 from the official tarball.
         // Check `uname -m` to distinguish arm64 vs x86_64.
-        let machine = await Task.synchronous {
-            let (r, _) = await Shell.run("/usr/bin/uname -m")
-            return r.trimmingCharacters(in: .whitespacesAndNewlines)
-        }()
+        let (unameOutput, _) = try await Shell.run("/usr/bin/uname -m")
+        let machine = unameOutput.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let arch: String
         switch machine {
@@ -379,32 +379,5 @@ private enum Shell {
     private static func readPipe(_ pipe: Pipe) -> String {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         return String(data: data, encoding: .utf8) ?? ""
-    }
-}
-
-// MARK: - Task.synchronous
-
-extension Task where Success == Void, Failure == Never {
-    /// Run a synchronous block on the current actor and wait for it.
-    /// Used for `uname` etc. where we need to hop out of the actor.
-    fileprivate static func synchronous(_ block: @escaping @Sendable () -> Void) async -> Void {
-        await withCheckedContinuation { cont in
-            let work = DispatchWorkItem {
-                block()
-                cont.resume()
-            }
-            DispatchQueue.global().async(execute: work)
-        }
-    }
-
-    /// Run a synchronous block and return its result.
-    fileprivate static func synchronous<T: Sendable>(_ block: @escaping @Sendable () -> T) async -> T {
-        await withCheckedContinuation { cont in
-            let work = DispatchWorkItem {
-                let result = block()
-                cont.resume(returning: result)
-            }
-            DispatchQueue.global().async(execute: work)
-        }
     }
 }

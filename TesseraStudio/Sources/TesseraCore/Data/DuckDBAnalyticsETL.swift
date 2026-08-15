@@ -24,9 +24,11 @@ public actor DuckDBAnalyticsETL {
         public let entityType: String
         public let degree: Int
         public let avgEdgeWeight: Float
-        public let lastUpdated: Date
+        // DuckDB (imported above) also exports a `Date` type; qualify to
+        // pick Foundation's.
+        public let lastUpdated: Foundation.Date
 
-        public init(entityID: UUID, entityType: String, degree: Int, avgEdgeWeight: Float, lastUpdated: Date) {
+        public init(entityID: UUID, entityType: String, degree: Int, avgEdgeWeight: Float, lastUpdated: Foundation.Date) {
             self.entityID = entityID
             self.entityType = entityType
             self.degree = degree
@@ -66,7 +68,7 @@ public actor DuckDBAnalyticsETL {
     public func open() throws {
         guard !isOpen else { return }
         let path = Self.duckDBPath
-        self.db = try Database(store: .file(path: path))
+        self.db = try Database(store: .file(at: URL(fileURLWithPath: path)))
         self.conn = try db?.connect()
         try createSchemaIfNeeded()
         isOpen = true
@@ -157,7 +159,7 @@ public actor DuckDBAnalyticsETL {
             }
         }
 
-        let now = ISO8601DateFormatter().string(from: Date())
+        let now = ISO8601DateFormatter().string(from: Foundation.Date())
 
         var upsertCount = 0
         let upsertSQL = """
@@ -168,7 +170,10 @@ public actor DuckDBAnalyticsETL {
                 avg_edge_weight = EXCLUDED.avg_edge_weight,
                 last_updated = EXCLUDED.last_updated
         """
-        let prepared = try conn.prepare(upsertSQL)
+        // One PreparedStatement, re-bound + re-executed per row (the
+        // documented DuckDB Swift pattern - bind(_:at:) sets the value
+        // used by the next execute()).
+        let prepared = try PreparedStatement(connection: conn, query: upsertSQL)
 
         for (id, deg) in degree {
             let et = entityType[id] ?? "unknown"
@@ -176,13 +181,12 @@ public actor DuckDBAnalyticsETL {
             let wCnt = weightCount[id] ?? 1
             let avgWeight = wSum / Float(wCnt)
 
-            try prepared.execute([
-                id.uuidString,
-                et,
-                String(deg),
-                String(format: "%.6f", avgWeight),
-                now
-            ])
+            try prepared.bind(id.uuidString, at: 1)
+            try prepared.bind(et, at: 2)
+            try prepared.bind(Int32(deg), at: 3)
+            try prepared.bind(avgWeight, at: 4)
+            try prepared.bind(now, at: 5)
+            _ = try prepared.execute()
             upsertCount += 1
         }
 

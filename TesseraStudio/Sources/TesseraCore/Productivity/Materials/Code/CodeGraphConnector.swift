@@ -18,7 +18,7 @@ public enum CodeGraphConnector {
                 previous?(node)
                 return
             }
-            code.openFile(id: node.id)
+            Task { await code.open(fileID: node.id) }
             previous?(node)
         }
     }
