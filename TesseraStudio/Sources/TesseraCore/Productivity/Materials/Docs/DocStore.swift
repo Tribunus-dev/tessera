@@ -169,6 +169,55 @@ public struct DocStore: Sendable {
         return doc
     }
 
+    // MARK: - Revisions
+
+    /// Accept a track-changes revision: every `.trackInsertion`/
+    /// `.trackDeletion` block sharing `revisionID` resolves per
+    /// `RevisionController.accept` (insertions become plain content,
+    /// deletions are removed). Persists the resulting body and
+    /// appends the `doc_revision_accepted` receipt `RevisionResolution`
+    /// already carries - built by `RevisionController`, not
+    /// reconstructed here.
+    ///
+    /// An unknown/already-resolved `revisionID` resolves to an empty
+    /// group (`resolution.isEmpty`, the AST unchanged) - matching
+    /// `FieldController`'s "only emit when something actually
+    /// changed" precedent, this is a no-op through: no upsert, no
+    /// receipt, the loaded doc is returned as-is.
+    public func acceptRevision(_ revisionID: UUID, for docID: UUID) async throws -> Doc {
+        var doc = try await loadOrFail(id: docID)
+        let (ast, resolution) = RevisionController.accept(revisionID: revisionID, in: doc.body)
+        guard !resolution.isEmpty else { return doc }
+        doc.body = ast
+        doc.updatedAt = Date()
+        _ = try await upsert(doc)
+        try await appendReceipt(
+            entityID: docID,
+            receiptType: resolution.receiptType,
+            payload: resolution.payload
+        )
+        return doc
+    }
+
+    /// Reject a track-changes revision: the inverse of
+    /// `acceptRevision` - insertions are removed, deletions become
+    /// plain content (`RevisionController.reject`). See
+    /// `acceptRevision`'s doc comment for the no-op case.
+    public func rejectRevision(_ revisionID: UUID, for docID: UUID) async throws -> Doc {
+        var doc = try await loadOrFail(id: docID)
+        let (ast, resolution) = RevisionController.reject(revisionID: revisionID, in: doc.body)
+        guard !resolution.isEmpty else { return doc }
+        doc.body = ast
+        doc.updatedAt = Date()
+        _ = try await upsert(doc)
+        try await appendReceipt(
+            entityID: docID,
+            receiptType: resolution.receiptType,
+            payload: resolution.payload
+        )
+        return doc
+    }
+
     // MARK: - Archive / Trash / Favorite
 
     public func archive(_ docID: UUID) async throws -> Doc {
