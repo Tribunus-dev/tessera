@@ -103,30 +103,40 @@ the race). Added a `sheetReceipts(_:forSheet:)` helper filtering out the
 `SheetReceiptPayload.receiptType` ("sheet_operation") material receipt,
 used for every before/after snapshot in the file.
 
+## Part 2b — DocStore double-receipt, resolved after review — `de73f6a80`
+
+`DocStoreTests`' 4 raw-delta-count tests (`testAcceptRevisionOfRealTrackInsertionEmitsExactlyOneAcceptedReceipt`,
+`testDefineStyleEmitsExactlyOneDefineStyleReceipt`,
+`testFindAndReplaceWithAMatchEmitsExactlyOneFindReplaceReceipt`,
+`testRefreshFieldsWithADirtyDateFieldEmitsExactlyOneFieldsRefreshedReceipt`)
+were flagged in this report as genuinely ambiguous — reviewed with Julian,
+confirmed as a real source bug, not a test bug. `DocStore.upsert(_:)`
+unconditionally appended its own generic `doc_upsert` receipt on every
+call, including when invoked *internally* by all 16 of `DocStore`'s other
+mutation methods as their persistence step — every one of them produced a
+redundant generic receipt alongside its own specific one (only 4 had a test
+that asserted a raw count and caught it). Split persistence from
+receipting: `upsert(_:)` now delegates to a new private `persist(_:)` that
+does only the data-layer write; all 16 other mutation methods now call
+`persist(_:)` directly, so only their own specific receipt fires. Verified:
+all 4 previously-failing tests pass; default suite unaffected.
+
+**Related, not addressed:** reading `DocStore.swift` for this fix surfaced
+a second, distinct pattern in the same file —
+`archive`/`unarchive`/`trash`/`restore`/`favorite`/`unfavorite` all append
+their receipt *unconditionally, outside the `if` that guards the actual
+mutation* (the exact shape already fixed in `SheetStore`/`DrawingStore`
+earlier this wave). Unlike those two, `DocStoreTests` has an existing,
+currently-passing test —
+`testArchivingAnAlreadyArchivedDocStillEmitsAReceiptWithWasAlreadyArchivedTrue`
+— that explicitly asserts this as the *intended* contract, written that way
+in the prior test-rewrite wave. That's inconsistent with the
+`SheetStore`/`DrawingStore` precedent from this same wave and worth a
+decision, but changing it means rewriting a currently-passing test's
+asserted contract rather than fixing a currently-failing one, so it wasn't
+touched without that decision being made explicitly.
+
 ## Part 3 — known, not fixed this wave
-
-### `DocStoreTests` — 4 tests (`testAcceptRevisionOfRealTrackInsertionEmitsExactlyOneAcceptedReceipt`, `testDefineStyleEmitsExactlyOneDefineStyleReceipt`, `testFindAndReplaceWithAMatchEmitsExactlyOneFindReplaceReceipt`, `testRefreshFieldsWithADirtyDateFieldEmitsExactlyOneFieldsRefreshedReceipt`)
-All 4 assert exactly one *new* receipt via `after.count - before.count == 1`.
-`DocStore.upsert(_:)` unconditionally appends its own `DocReceiptType.upsert`
-receipt on every call — including when called *internally* by these
-methods as their persistence step — so each produces 2 new receipts (a
-generic "upsert" one plus the specific one) against an expectation of 1.
-Genuinely ambiguous which side is wrong:
-- **Test bug** interpretation: these tests should filter by the specific
-  receipt type (the established convention elsewhere, e.g.
-  `CalendarStoreIntegrationTests`'
-  `receipts.filter { $0.receiptType == ...eventCreated.rawValue }.count == 1`),
-  not use a raw unfiltered delta.
-- **Source bug** interpretation: methods that do a narrow, semantic
-  mutation (accept one revision, define one style) arguably shouldn't also
-  fire a redundant generic "document was upserted" receipt right next to
-  the specific one — that's audit-log noise for what's conceptually one
-  user action, and would need a private receipt-less persist primitive
-  distinct from the public `upsert(_:)` API.
-
-Left both the tests and `DocStore.swift` untouched rather than guess at
-which one is "right" — this needs a real design decision, not code applied
-in either direction.
 
 ### `DocumentStoreTests` — 2 tests (`testApplyInsertBlockPersistsAndEmitsExactlyOneReceipt`, `testHistoryReturnsReceiptsOldestFirst`)
 Both fail with `ReceiptSignerError.signingKeyUnavailable` —
@@ -151,10 +161,13 @@ seed-dependent frequency — the real fix would be auditing `Theme`/
 
 ## Gate
 
-- Default suite: 1634 tests / 0 failures / 0 unexpected / 14.5s.
-- `TESSERA_DB_INTEGRATION=1`: 1634 tests / 7 failures / 2 unexpected
-  (down from 128 unexpected at the start of the prior wave's first-ever run,
-  18 unexpected at that wave's end, now 7 — all 7 individually diagnosed
-  above, none silently accepted).
+- Default suite: 1634 tests / 0 failures / 0 unexpected / ~15s.
+- `TESSERA_DB_INTEGRATION=1`: 1634 tests / 2 failures / 2 unexpected, both
+  the `DocumentStoreTests` Keychain-environment gap above (down from 128
+  unexpected at the start of the prior wave's first-ever run, 18 unexpected
+  at that wave's end, 7 after the main bug-fix pass, now 2 after the
+  DocStore review) — the one remaining category is environmental, not a
+  code or test bug. The `ThemeTests` flake did not reproduce on this run
+  (consistent with "rare").
 - soffice: satisfied by the default suite itself (installed, genuinely
   exercised, not skipped) — unchanged from the prior wave's gate.
