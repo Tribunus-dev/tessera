@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstring>
 #include <numeric>
+#include <stdexcept>
 
 // ladder ordered low -> high precision
 static const char * TS_L5_LADDER[] = {

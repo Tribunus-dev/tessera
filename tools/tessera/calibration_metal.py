@@ -241,26 +241,33 @@ def _has_mkl_compiler() -> bool:
     return False
 
 
-def _mkl_link_args() -> list[str]:
-    """Link args for the MKL / BLAS bridge.
+def _mkl_link_args() -> list[list[str]]:
+    """Candidate link-arg sets for the MKL / BLAS bridge, priority order.
 
-    Prefers pkg-config when available, otherwise falls back to
-    -lcblas / -lopenblas / -lmkl_rt probing at compile time.
+    Prefers pkg-config (OpenBLAS / MKL / FlexiBLAS); the caller tries each
+    set until one compiles, so hosts that only ship FlexiBLAS (Fedora's BLAS
+    dispatcher, the AMD-Linux stand-in for Accelerate) still get the cblas
+    fast path. If no pkg-config record matches, common -l names are probed.
     """
-    # Try pkg-config for openblas/mkl
-    for pkg in ("openblas", "openblas64", "mkl-sdl", "mkl-dynamic-lp64-seq", "blas"):
+    candidates: list[list[str]] = []
+    # Try pkg-config for openblas/mkl/flexiblas
+    for pkg in ("openblas", "openblas64", "mkl-sdl", "mkl-dynamic-lp64-seq", "blas", "flexiblas"):
         try:
             proc = subprocess.run(
                 ["pkg-config", "--libs", pkg],
                 check=True, capture_output=True, text=True,
             )
             libs = proc.stdout.strip().split()
-            if libs:
-                return libs
+            if libs and libs not in candidates:
+                candidates.append(libs)
         except (FileNotFoundError, subprocess.CalledProcessError):
             continue
-    # Fallback: try common libs; compiler will error if missing and we fallback to numpy
-    return ["-lcblas"]
+    # Fallback: probe common libs; the compiler errors on a missing one and
+    # the caller moves to the next candidate (numpy if none link).
+    for extra in (["-lflexiblas"], ["-lopenblas"], ["-lcblas"]):
+        if extra not in candidates:
+            candidates.append(extra)
+    return candidates
 
 
 def _build_mkl_library(output: Path) -> Optional[Path]:
@@ -286,18 +293,18 @@ def _build_mkl_library(output: Path) -> Optional[Path]:
             continue
     if compiler is None:
         return None
-    libs = _mkl_link_args()
-    try:
-        proc = subprocess.run(
-            [compiler, "-std=c++17", "-O3", "-shared", "-fPIC",
-             str(_MKL_SOURCE), "-o", str(output)] + libs,
-            check=True, capture_output=True, text=True,
-        )
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return None
-    if proc.returncode != 0:
-        return None
-    return output
+    for libs in _mkl_link_args():
+        try:
+            proc = subprocess.run(
+                [compiler, "-std=c++17", "-O3", "-shared", "-fPIC",
+                 str(_MKL_SOURCE), "-o", str(output)] + libs,
+                check=True, capture_output=True, text=True,
+            )
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            continue
+        if proc.returncode == 0:
+            return output
+    return None
 
 
 def _load_mkl_backend(library: Path) -> Optional[ctypes.CDLL]:
@@ -431,6 +438,12 @@ def _detect_sycl_devices() -> list[str]:
                     devices.append(tok)
         if devices:
             return devices
+    # SYCL needs an Intel oneAPI compiler; without one the "SYCL" bridge
+    # degrades to a scalar stub slower than OpenBLAS. On non-Intel hosts the
+    # /dev/dri probe below would otherwise trip on an AMD render node and
+    # shadow the BLAS fast path, so require a compiler before auto-detecting.
+    if not _has_sycl_compiler():
+        return []
     # Try sycl-ls (oneAPI)
     try:
         proc = subprocess.run(

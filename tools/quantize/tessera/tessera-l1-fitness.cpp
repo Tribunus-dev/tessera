@@ -7,6 +7,7 @@
 #include "tessera-l1-fitness.h"
 #include "tessera-sidecar-v3.h"
 
+#include <cmath>
 #include <cstring>
 #include <string>
 

@@ -8,6 +8,14 @@ import sys
 from pathlib import Path
 
 
+# The sibling calibration tools live in-repo; resolve them relative to this
+# file instead of a hardcoded checkout so the orchestrator runs on any host
+# (the previous /Users/... and /Volumes/... defaults were macOS-specific).
+_HERE = os.path.dirname(os.path.abspath(__file__))            # .../tools/tile640
+_TESSERA_TOOLS = os.path.normpath(os.path.join(_HERE, "..", "tessera"))
+_REPO_ROOT = os.path.normpath(os.path.join(_HERE, "..", ".."))
+
+
 def run(command: list[str]) -> None:
     print("+", " ".join(str(arg) for arg in command), file=sys.stderr)
     subprocess.run(command, check=True)
@@ -134,8 +142,8 @@ def main() -> None:
             "geometric-mean for now (sqrt(a*b*c*...) per tensor)."
         ),
     )
-    parser.add_argument("--llama-imatrix", default="/Volumes/Julian T7/llama-cpp-build/bin/llama-imatrix")
-    parser.add_argument("--quantizer", default=str(Path(__file__).with_name("tile640_quantize_v3.py")))
+    parser.add_argument("--llama-imatrix", default="./build/bin/llama-imatrix")
+    parser.add_argument("--quantizer", default=str(Path(__file__).with_name("quantize_v3.py")))
     parser.add_argument(
         "--draft-telemetry",
         "--dflash-telemetry",
@@ -245,7 +253,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--policy-generator",
-        default="/Users/user/Developer/GitHub/llama.cpp/tools/ane-mtp/dflash-calibration-policy.py",
+        default=os.path.join(_REPO_ROOT, "tools", "ane-mtp", "dflash-calibration-policy.py"),
     )
     parser.add_argument(
         "--evolution-layers",
@@ -265,7 +273,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--bundle-exporter",
-        default="/Users/user/Developer/GitHub/llama.cpp/tools/tessera/make-awq-layer-bundles.py",
+        default=os.path.join(_TESSERA_TOOLS, "make-awq-layer-bundles.py"),
     )
     parser.add_argument(
         "--evolution-output",
@@ -279,7 +287,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--evolver",
-        default="/Users/user/Developer/GitHub/llama.cpp/tools/tessera/awq-evolve.py",
+        default=os.path.join(_TESSERA_TOOLS, "awq-evolve.py"),
     )
     parser.add_argument(
         "--shadow-calibration",
@@ -289,7 +297,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--shadow-tool",
-        default="/Users/user/Developer/GitHub/llama.cpp/tools/tessera/shadow-calibrate.py",
+        default=os.path.join(_TESSERA_TOOLS, "shadow-calibrate.py"),
     )
     parser.add_argument("--shadow-top-fraction", type=float, default=0.12)
     parser.add_argument("--shadow-max-overrides", type=int, default=24)
@@ -305,7 +313,7 @@ def main() -> None:
     parser.add_argument("--prior-family", default=None, help="Architecture-family label recorded with --calibration-prior")
     parser.add_argument(
         "--prior-tool",
-        default="/Users/user/Developer/GitHub/llama.cpp/tools/tessera/policy-prior.py",
+        default=os.path.join(_TESSERA_TOOLS, "policy-prior.py"),
     )
     parser.add_argument(
         "--evidence-store",
@@ -315,7 +323,7 @@ def main() -> None:
     parser.add_argument("--evidence-run-id", default=None)
     parser.add_argument(
         "--evidence-tool",
-        default="/Users/user/Developer/GitHub/llama.cpp/tools/tessera/evidence-store.py",
+        default=os.path.join(_TESSERA_TOOLS, "evidence-store.py"),
     )
     parser.add_argument(
         "--hf-evidence-repo",
@@ -338,7 +346,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--hf-evidence-tool",
-        default="/Users/user/Developer/GitHub/llama.cpp/tools/tessera/hf-evidence.py",
+        default=os.path.join(_TESSERA_TOOLS, "hf-evidence.py"),
     )
     parser.add_argument(
         "--unsloth-policy",
@@ -353,7 +361,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--unsloth-tool",
-        default="/Users/user/Developer/GitHub/llama.cpp/tools/tessera/unsloth-policy.py",
+        default=os.path.join(_TESSERA_TOOLS, "unsloth-policy.py"),
     )
     parser.add_argument(
         "--unsloth-skip-mode",
@@ -364,7 +372,7 @@ def main() -> None:
     parser.add_argument("--unsloth-evidence-top-fraction", type=float, default=0.05)
     parser.add_argument(
         "--gguf-py",
-        default="/Users/user/Developer/GitHub/llama.cpp/gguf-py",
+        default=os.path.join(_REPO_ROOT, "gguf-py"),
         help="Path to llama.cpp/gguf-py",
     )
     parser.add_argument("--ctx-size", type=int, default=512)

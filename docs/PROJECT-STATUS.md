@@ -214,6 +214,7 @@ integration work is bringing Tessera's commits onto current master:
 | Per-tensor quant policy loading | ready | `tile640_quantize_v3.py --calibration-policy` |
 | Kernel-direct GA fitness (L6) | ready | `kernel-fitness --enabled --dir --blend` |
 | ANE MTP prefill | compiles, untested runtime | `common/ane-mtp.{h,mm}` |
+| XDNA NPU runtime (AMD Ryzen AI) | M1 device foundation (heap BO, identity, SHMEM+DEV BO alloc/sync, xclbin parse); context create best-effort on AIE 1.1 + amdxdna v7.1.y | `common/xdna-runtime.{h,cpp}` |
 | `dft.` observer prefix | applied | `src/llama-graph.cpp` |
 | `--no-embedded-mtp` flag | ready | `common/arg.cpp` |
 | Production tests (dflash, dspark, telemetry, server-MTP, patcher, policy) | landed in `tessera/tests` branch | `tests/` |
