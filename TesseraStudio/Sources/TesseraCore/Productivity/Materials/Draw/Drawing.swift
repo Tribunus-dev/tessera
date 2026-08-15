@@ -36,10 +36,17 @@ public struct CanvasSize: Codable, Sendable, Hashable {
 /// change to add this material. Read through ``shapes``, not `body`
 /// directly, for the flat view every P0 mutation operates on.
 ///
-/// Grouping (`.shapeGroup`, nested shapes) and layers (`LayerStore`)
-/// are P1 (`docs/agent-tools-surface.md`'s `drawing_group`/
-/// `drawing_set_layer` are both marked P1 there) - `shapes` only walks
-/// top-level `.shape` blocks in `body.rootChildren`.
+/// Grouping (`.shapeGroup`, nested shapes) is P1
+/// (`docs/agent-tools-surface.md`'s `drawing_group` is marked P1
+/// there) - `shapes` only walks top-level `.shape` blocks in
+/// `body.rootChildren`.
+///
+/// Layers: `layers` below plus `LayerStore`'s pure paint-order/
+/// render-list logic exist; `DrawingStore`-side layer CRUD (add/
+/// delete/hide/lock/reorder, each its own receipt -
+/// `docs/agent-tools-surface.md`'s `drawing_set_layer` tool) is still
+/// P1. `shapes` itself stays layer-unaware, in `body.rootChildren`
+/// order - exactly the raw input `LayerStore.paintOrder` expects.
 ///
 /// Drawings ride the same constitutional-receipt backbone as every
 /// other material: every mutation produces a signed receipt.
@@ -52,6 +59,14 @@ public struct Drawing: Codable, Sendable, Identifiable, Hashable {
     /// `nil` = no background fill (the renderer's own default, e.g.
     /// white or transparent).
     public var canvasBackground: ShapeFill?
+    /// Ordered named paint bands - array position is a shape's "band"
+    /// in `LayerStore.paintOrder`; paint order = layer order, not just
+    /// z-order (`LayerStore.swift`'s header explains why this is
+    /// deliberately stronger than LibreOffice's model). Empty (the
+    /// default) is every P0 drawing's implicit single layer: every
+    /// shape has `layerID == nil` and paints in plain `zIndex` order,
+    /// unchanged from before this field existed.
+    public var layers: [DrawLayer]
     public var gridEnabled: Bool
     public var isArchived: Bool
     public var isTrashed: Bool
@@ -67,6 +82,7 @@ public struct Drawing: Codable, Sendable, Identifiable, Hashable {
         body: DocumentAST = .empty,
         canvasSize: CanvasSize = .default,
         canvasBackground: ShapeFill? = nil,
+        layers: [DrawLayer] = [],
         gridEnabled: Bool = false,
         isArchived: Bool = false,
         isTrashed: Bool = false,
@@ -81,6 +97,7 @@ public struct Drawing: Codable, Sendable, Identifiable, Hashable {
         self.body = body
         self.canvasSize = canvasSize
         self.canvasBackground = canvasBackground
+        self.layers = layers
         self.gridEnabled = gridEnabled
         self.isArchived = isArchived
         self.isTrashed = isTrashed
@@ -89,6 +106,56 @@ public struct Drawing: Codable, Sendable, Identifiable, Hashable {
         self.linkedEntityIDs = linkedEntityIDs
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+
+    // MARK: - Codable
+
+    /// Custom, not synthesized: `layers` was added after this type
+    /// shipped, so decoding must tolerate its absence in JSON written
+    /// before it existed - `decodeIfPresent` falls back to `[]`, the
+    /// same implicit-single-layer default the memberwise `init` above
+    /// uses. Mirrors `DocumentAST`'s handling of its own later-added
+    /// `meta` field. Every other field decodes/encodes exactly as the
+    /// synthesized conformance did before this type needed a custom one.
+    private enum CodingKeys: String, CodingKey {
+        case id, title, body, canvasSize, canvasBackground, layers, gridEnabled
+        case isArchived, isTrashed, isFavorite, tags, linkedEntityIDs, createdAt, updatedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        body = try container.decode(DocumentAST.self, forKey: .body)
+        canvasSize = try container.decode(CanvasSize.self, forKey: .canvasSize)
+        canvasBackground = try container.decodeIfPresent(ShapeFill.self, forKey: .canvasBackground)
+        layers = try container.decodeIfPresent([DrawLayer].self, forKey: .layers) ?? []
+        gridEnabled = try container.decode(Bool.self, forKey: .gridEnabled)
+        isArchived = try container.decode(Bool.self, forKey: .isArchived)
+        isTrashed = try container.decode(Bool.self, forKey: .isTrashed)
+        isFavorite = try container.decode(Bool.self, forKey: .isFavorite)
+        tags = try container.decode([String].self, forKey: .tags)
+        linkedEntityIDs = try container.decode([UUID].self, forKey: .linkedEntityIDs)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encode(body, forKey: .body)
+        try container.encode(canvasSize, forKey: .canvasSize)
+        try container.encodeIfPresent(canvasBackground, forKey: .canvasBackground)
+        try container.encode(layers, forKey: .layers)
+        try container.encode(gridEnabled, forKey: .gridEnabled)
+        try container.encode(isArchived, forKey: .isArchived)
+        try container.encode(isTrashed, forKey: .isTrashed)
+        try container.encode(isFavorite, forKey: .isFavorite)
+        try container.encode(tags, forKey: .tags)
+        try container.encode(linkedEntityIDs, forKey: .linkedEntityIDs)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(updatedAt, forKey: .updatedAt)
     }
 
     // MARK: - Constants

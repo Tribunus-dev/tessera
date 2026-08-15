@@ -158,6 +158,12 @@ public struct Shape: Codable, Sendable, Identifiable, Hashable {
     /// whether a shape can host children is a P1 concern; P0 leaves
     /// every shape's `parentGroupID` nil).
     public var parentGroupID: UUID?
+    /// Non-nil when this shape belongs to a named layer in the owning
+    /// `Drawing.layers` (see `LayerStore`). `nil` means the shape is
+    /// on the implicit default layer - every P0 shape, since layers
+    /// didn't exist yet. Membership only: doesn't affect this shape's
+    /// `zIndex`, which stays dense per layer, not globally.
+    public var layerID: UUID?
 
     public init(
         id: UUID = UUID(),
@@ -167,7 +173,8 @@ public struct Shape: Codable, Sendable, Identifiable, Hashable {
         stroke: ShapeStroke? = nil,
         text: ShapeText? = nil,
         zIndex: Int = 0,
-        parentGroupID: UUID? = nil
+        parentGroupID: UUID? = nil,
+        layerID: UUID? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -177,5 +184,6 @@ public struct Shape: Codable, Sendable, Identifiable, Hashable {
         self.text = text
         self.zIndex = zIndex
         self.parentGroupID = parentGroupID
+        self.layerID = layerID
     }
 }
