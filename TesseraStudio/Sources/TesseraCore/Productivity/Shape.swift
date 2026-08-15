@@ -55,6 +55,14 @@ public struct ShapeGeometry: Codable, Sendable, Hashable {
     /// the pivot the shape happened to have at creation time.
     public var anchorX: Double?
     public var anchorY: Double?
+    /// Mirroring, applied in the shape's own unrotated local frame
+    /// BEFORE rotation - matches OOXML `a:xfrm`'s flip-then-rotate
+    /// order and ODF's equivalent, so a round-tripped file keeps the
+    /// same visual result. `TransformController` sets these when a
+    /// resize handle is dragged past its opposite handle, instead of
+    /// ever writing a negative `width`/`height`.
+    public var flipH: Bool
+    public var flipV: Bool
 
     public init(
         x: Double,
@@ -63,7 +71,9 @@ public struct ShapeGeometry: Codable, Sendable, Hashable {
         height: Double,
         rotation: Double = 0,
         anchorX: Double? = nil,
-        anchorY: Double? = nil
+        anchorY: Double? = nil,
+        flipH: Bool = false,
+        flipV: Bool = false
     ) {
         self.x = x
         self.y = y
@@ -72,6 +82,48 @@ public struct ShapeGeometry: Codable, Sendable, Hashable {
         self.rotation = rotation
         self.anchorX = anchorX
         self.anchorY = anchorY
+        self.flipH = flipH
+        self.flipV = flipV
+    }
+
+    // MARK: - Codable
+
+    /// Custom, not synthesized: `flipH`/`flipV` were added after this
+    /// type shipped, so decoding must tolerate their absence in JSON
+    /// written before they existed - `decodeIfPresent` falls back to
+    /// `false` (no mirroring), the same default the memberwise `init`
+    /// above uses. Mirrors `Drawing`'s handling of its own later-added
+    /// `layers` field. Every other field decodes/encodes exactly as
+    /// the synthesized conformance did before this type needed a
+    /// custom one.
+    private enum CodingKeys: String, CodingKey {
+        case x, y, width, height, rotation, anchorX, anchorY, flipH, flipV
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        x = try container.decode(Double.self, forKey: .x)
+        y = try container.decode(Double.self, forKey: .y)
+        width = try container.decode(Double.self, forKey: .width)
+        height = try container.decode(Double.self, forKey: .height)
+        rotation = try container.decode(Double.self, forKey: .rotation)
+        anchorX = try container.decodeIfPresent(Double.self, forKey: .anchorX)
+        anchorY = try container.decodeIfPresent(Double.self, forKey: .anchorY)
+        flipH = try container.decodeIfPresent(Bool.self, forKey: .flipH) ?? false
+        flipV = try container.decodeIfPresent(Bool.self, forKey: .flipV) ?? false
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(x, forKey: .x)
+        try container.encode(y, forKey: .y)
+        try container.encode(width, forKey: .width)
+        try container.encode(height, forKey: .height)
+        try container.encode(rotation, forKey: .rotation)
+        try container.encodeIfPresent(anchorX, forKey: .anchorX)
+        try container.encodeIfPresent(anchorY, forKey: .anchorY)
+        try container.encode(flipH, forKey: .flipH)
+        try container.encode(flipV, forKey: .flipV)
     }
 
     public var frame: CGRect {
