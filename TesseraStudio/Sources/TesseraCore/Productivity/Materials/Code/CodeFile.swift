@@ -164,6 +164,7 @@ public struct CodeFile: Codable, Sendable, Identifiable, Hashable {
     /// last path component; falls back to the whole path
     /// for inputs that aren't valid URLs.
     public static func filenameFromPath(_ path: String) -> String {
+        guard !path.isEmpty else { return path }
         let url = URL(fileURLWithPath: path)
         return url.lastPathComponent.isEmpty ? path : url.lastPathComponent
     }

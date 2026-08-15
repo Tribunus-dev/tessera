@@ -235,8 +235,19 @@ public enum CommentStore {
             }
         }
 
+        // Reply blocks are any .comment block that appears as a CHILD of another .comment
+        // block - they surface inside their parent's thread (below), not as their own thread root.
+        var replyBlockIDs: Set<UUID> = []
+        for (_, block) in document.blocks where block.type == .comment {
+            for childID in block.children {
+                if document.blocks[childID]?.type == .comment {
+                    replyBlockIDs.insert(childID)
+                }
+            }
+        }
+
         // Second pass: build threads.
-        for (id, block) in document.blocks where block.type == .comment {
+        for (id, block) in document.blocks where block.type == .comment && !replyBlockIDs.contains(id) {
             let resolved = block.attributes["resolved"]?.boolValue ?? false
             if !includeResolved && resolved { continue }
 

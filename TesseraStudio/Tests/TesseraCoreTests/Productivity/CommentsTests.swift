@@ -134,9 +134,7 @@ final class CommentsTests: DoctrineTestCase {
         // second, separate thread root in addition to folding it into
         // the actual root's messages array, producing 2 threads instead
         // of 1 - see findings.
-        XCTExpectFailure("SUSPECTED CODE BUG: CommentStore.threads(from:) has no reply-block guard in its build-threads loop, so a reply (parentID pointing at another .comment block) is double-counted as its own separate thread root as well as being folded into its parent's messages - see findings") {
-            XCTAssertEqual(threads.count, 1)
-        }
+        XCTAssertEqual(threads.count, 1)
         // Find the actual root thread (2 messages) regardless of the
         // bug above, so the remaining assertions - which are still
         // contract-true and currently passing - aren't corrupted by an

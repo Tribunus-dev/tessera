@@ -56,9 +56,7 @@ final class CodeFileTests: DoctrineTestCase {
 
     func testFilenameFromPathFallsBackToWholeStringForEmptyLastComponent() {
         let result = CodeFile.filenameFromPath("")
-        XCTExpectFailure("SUSPECTED CODE BUG: filenameFromPath('')'s own fallback ternary (url.lastPathComponent.isEmpty ? path : url.lastPathComponent) is clearly written to handle a degenerate empty path by returning the original path - but URL(fileURLWithPath: \"\") resolves relative to the PROCESS'S CURRENT WORKING DIRECTORY rather than producing an empty URL, so lastPathComponent is never actually empty for this input; it returns the CWD's own directory name instead, making the function's result depend on the working directory it happens to run in - see findings") {
-            XCTAssertEqual(result, "", "an empty path must fall back to the empty string, not whatever directory the process happens to be running in")
-        }
+        XCTAssertEqual(result, "", "an empty path must fall back to the empty string, not whatever directory the process happens to be running in")
     }
 
     // MARK: - Language detection (independent oracle: the exact extension
