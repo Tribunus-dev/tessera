@@ -564,6 +564,66 @@ public struct SheetStore: Sendable {
         return sheet
     }
 
+    // MARK: - Comments
+
+    /// Attach a new comment thread to `sheetID`, anchored at `anchor`,
+    /// with a single root message holding `text`. Mirrors the grid
+    /// mutations above (loadOrFail -> mutate -> upsert -> receipt), but
+    /// deliberately skips bounds-checking a `.cell` anchor's row/col
+    /// against the sheet's live grid dimensions - a comment can
+    /// reasonably anchor to content that doesn't exist yet (e.g. a
+    /// template comment left for a row not yet filled in).
+    public func addComment(
+        anchor: CommentAnchor,
+        author: String,
+        text: String,
+        for sheetID: UUID
+    ) async throws -> Sheet {
+        var sheet = try await loadOrFail(id: sheetID)
+        let thread = CommentThread(
+            id: UUID(),
+            anchor: anchor,
+            author: author,
+            createdAt: Date(),
+            messages: [CommentMessage(author: author, text: text)],
+            isResolved: false
+        )
+        sheet = sheet.addingCommentThread(thread)
+        sheet.updatedAt = Date()
+        _ = try await upsert(sheet)
+        try await appendReceipt(
+            entityID: sheetID,
+            receiptType: SheetReceiptType.addComment.rawValue,
+            payload: [
+                "commentID": .string(thread.id.uuidString),
+                "anchor": .object(Self.anchorPayload(anchor)),
+            ]
+        )
+        return sheet
+    }
+
+    /// Structural summary of `anchor` for the `addComment` receipt
+    /// payload - not `CommentAnchor`'s full `Codable` encoding (that's
+    /// what persists the thread itself); just enough for an auditor
+    /// reading the receipt chain to see where the comment landed.
+    private static func anchorPayload(_ anchor: CommentAnchor) -> [String: JSONValue] {
+        switch anchor {
+        case let .cell(_, row, col):
+            return ["kind": .string("cell"), "row": .number(Double(row)), "col": .number(Double(col))]
+        case let .textRange(blockID, start, end):
+            return [
+                "kind": .string("textRange"),
+                "blockID": .string(blockID.uuidString),
+                "start": .number(Double(start)),
+                "end": .number(Double(end)),
+            ]
+        case let .block(blockID):
+            return ["kind": .string("block"), "blockID": .string(blockID.uuidString)]
+        case let .slide(slideID):
+            return ["kind": .string("slide"), "slideID": .string(slideID.uuidString)]
+        }
+    }
+
     // MARK: - Archive / Trash / Favorite
 
     public func archive(_ sheetID: UUID) async throws -> Sheet {

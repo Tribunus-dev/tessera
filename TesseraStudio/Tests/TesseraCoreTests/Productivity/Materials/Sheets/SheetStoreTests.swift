@@ -163,6 +163,65 @@ final class SheetStoreTests: XCTestCase {
         XCTAssertEqual(outcome.payload["unhiddenRowCount"]?.numberValue, 2)
     }
 
+    // MARK: - Comments
+
+    /// Pins `SheetStore.addComment`'s exact construction (a
+    /// `CommentThread` holding the given anchor/author as a single
+    /// root `CommentMessage`, unresolved) and that it survives the
+    /// same JSON encode/decode round trip `SheetStore.upsert`/`.get`
+    /// perform under the hood - the live-DB write needs a data layer
+    /// to exercise end-to-end (see this item's openQuestions, same
+    /// caveat as `testRowPermutationAlgorithmReordersFixtureRowsBySortedValue`
+    /// above), so this pins the persistence shape at the `Sheet` <->
+    /// JSON boundary instead.
+    func testAddCommentThreadSurvivesJSONRoundTrip() throws {
+        var sheet = Sheet.makeBlank(title: "Fixture", rows: 2, cols: 2)
+        let anchor = CommentAnchor.cell(sheetID: sheet.id, row: 0, col: 1)
+        let thread = CommentThread(
+            id: UUID(),
+            anchor: anchor,
+            author: "author-1",
+            createdAt: Date(),
+            messages: [CommentMessage(author: "author-1", text: "needs review")],
+            isResolved: false
+        )
+        sheet = sheet.addingCommentThread(thread)
+        XCTAssertEqual(sheet.effectiveCommentThreads.map(\.id), [thread.id])
+
+        let body = try sheet.jsonDataString()
+        let reloaded = try Sheet.from(jsonDataString: body)
+
+        let reloadedThread = try XCTUnwrap(reloaded.effectiveCommentThreads.first { $0.id == thread.id })
+        XCTAssertEqual(reloadedThread.anchor, anchor)
+        XCTAssertEqual(reloadedThread.author, "author-1")
+        XCTAssertEqual(reloadedThread.messages.map(\.text), ["needs review"])
+        XCTAssertFalse(reloadedThread.isResolved)
+    }
+
+    /// `addComment` appends to any existing threads rather than
+    /// replacing them - `Sheet.addingCommentThread` is additive, not
+    /// a setter.
+    func testAddCommentThreadIsAdditive() {
+        var sheet = Sheet.makeBlank(title: "Fixture", rows: 1, cols: 1)
+        let first = CommentThread(
+            id: UUID(),
+            anchor: .cell(sheetID: sheet.id, row: 0, col: 0),
+            author: "author-1",
+            createdAt: Date(),
+            messages: [CommentMessage(author: "author-1", text: "first")]
+        )
+        let second = CommentThread(
+            id: UUID(),
+            anchor: .cell(sheetID: sheet.id, row: 0, col: 0),
+            author: "author-2",
+            createdAt: Date(),
+            messages: [CommentMessage(author: "author-2", text: "second")]
+        )
+        sheet = sheet.addingCommentThread(first)
+        sheet = sheet.addingCommentThread(second)
+        XCTAssertEqual(sheet.effectiveCommentThreads.map(\.id), [first.id, second.id])
+    }
+
     // MARK: - JSON helpers
 
     func testSheetJSONStringRoundTrip() throws {
