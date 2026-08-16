@@ -309,6 +309,13 @@ else()
                                "(set GPU_TARGETS to override)")
             endif()
         endif()
+        # ${TARGET} pulls in HIP device object code via TARGET_OBJECTS below
+        # (tessera-metal-hip, tessera-rocblas), which triggers a HIP device
+        # link step on ${TARGET} itself. ${TARGET} was add_library()'d before
+        # HIP was enabled in this scope, so it never got a HIP_ARCHITECTURES
+        # default - set it explicitly or the device link has nothing to
+        # build for.
+        set_target_properties(${TARGET} PROPERTIES HIP_ARCHITECTURES "${CMAKE_HIP_ARCHITECTURES}")
         # The HIP kernels compile in their own OBJECT library (same pattern
         # as duckdb-amalgamation above). Two things make mixing them into the
         # CXX quantize-impl library unsafe, and this split avoids both:
