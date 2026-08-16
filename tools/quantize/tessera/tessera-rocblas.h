@@ -12,6 +12,11 @@
 // serialize through the same pool mutex. The L1-L6 dispatch loops are
 // single-threaded per candidate, so a single shared handle is sufficient.
 //
+// Runtime controls (read once, lazily, at first use): TS_RBLAS_DISABLE=1
+// forces every ts_rblas_buf_get to the failure sentinel (permanent CPU
+// fallback for the process). TS_RBLAS_STATS=1 dumps per-role dispatch /
+// fallback / high-water-bytes counters to stderr at process exit.
+//
 // Hosting notes: rocBLAS sgemm / dgemm expect device-pointer inputs that the
 // GPU can dereference. On APUs without XNACK on the ISA (gfx1103 in the Ryzen
 // 7040 series, gfx1100/1101/1102, all RDNA-2/3/4 consumer parts) the device

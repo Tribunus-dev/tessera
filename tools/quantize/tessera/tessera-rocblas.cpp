@@ -22,8 +22,11 @@
 #include "tessera-rocblas.h"
 
 #include <atomic>
+#include <cassert>
 #include <cstdio>
+#include <cstdlib>
 #include <mutex>
+#include <thread>
 
 namespace {
 
@@ -40,6 +43,29 @@ std::mutex        g_init_mutex;
 rocblas_handle    g_handle       = nullptr;
 hipStream_t       g_rblas_stream = nullptr;
 std::atomic<int>  g_initialized{0};
+std::atomic<bool> g_init_failed{false};
+
+// Runtime kill switch (TS_RBLAS_DISABLE=1) + per-role observability
+// (TS_RBLAS_STATS=1 dumps this at exit - see ts_rocblas_shutdown). The pool
+// is grow-only, so g_pool[i].bytes already is the high-water mark per role.
+std::atomic<bool>     g_disabled_checked{false};
+std::atomic<bool>     g_disabled{false};
+std::atomic<bool>     g_alloc_fail_logged{false};
+std::atomic<uint64_t> g_dispatch_count[6] = {};
+std::atomic<uint64_t> g_fallback_count[6] = {};
+std::atomic<uint64_t> g_dispatch_thread{0};  // debug-only single-thread guard, W1-D2
+
+bool ts_rblas_disabled() {
+    if (!g_disabled_checked.exchange(true, std::memory_order_acq_rel)) {
+        bool v = std::getenv("TS_RBLAS_DISABLE") != nullptr;
+        g_disabled.store(v, std::memory_order_release);
+        if (v) {
+            std::fprintf(stderr, "ts_rblas: TS_RBLAS_DISABLE=1 - rocBLAS lane disabled, "
+                                  "CPU fallback for the process\n");
+        }
+    }
+    return g_disabled.load(std::memory_order_acquire);
+}
 
 } // anonymous namespace
 
@@ -52,6 +78,9 @@ hipStream_t ts_rblas_stream() {
 }
 
 rocblas_handle ts_rocblas_handle() {
+    if (ts_rblas_disabled() || g_init_failed.load(std::memory_order_acquire)) {
+        return nullptr;
+    }
     if (g_initialized.load(std::memory_order_acquire)) {
         return g_handle;
     }
@@ -63,19 +92,21 @@ rocblas_handle ts_rocblas_handle() {
     // Create the shim's own HIP stream first so rocBLAS can bind to it.
     hipError_t serr = hipStreamCreateWithFlags(&g_rblas_stream, hipStreamNonBlocking);
     if (serr != hipSuccess || g_rblas_stream == nullptr) {
-        std::fprintf(stderr, "ts_rocblas_handle: hipStreamCreateWithFlags failed (%d)\n",
-                     (int) serr);
+        std::fprintf(stderr, "ts_rocblas_handle: hipStreamCreateWithFlags failed (%d) - "
+                              "permanent CPU fallback for this process\n", (int) serr);
         g_rblas_stream = nullptr;
+        g_init_failed.store(true, std::memory_order_release);
         return nullptr;
     }
 
     rocblas_handle h = nullptr;
     rocblas_status status = rocblas_create_handle(&h);
     if (status != rocblas_status_success || h == nullptr) {
-        std::fprintf(stderr, "ts_rocblas_handle: rocblas_create_handle failed (%d)\n",
-                     (int) status);
+        std::fprintf(stderr, "ts_rocblas_handle: rocblas_create_handle failed (%d) - "
+                              "permanent CPU fallback for this process\n", (int) status);
         // leave g_rblas_stream alive for ts_rblas_stream() callers; the pool
         // is empty so nothing will try to dispatch.
+        g_init_failed.store(true, std::memory_order_release);
         return nullptr;
     }
     rocblas_set_stream(h, g_rblas_stream);
@@ -89,8 +120,22 @@ ts_rblas_buf ts_rblas_buf_get(int role, size_t bytes) {
     if (role < 0 || role >= 6 || bytes == 0) {
         return {nullptr, 0};
     }
+#ifndef NDEBUG
+    // W1-D2: the L1-L6 dispatch loops are single-threaded per candidate, so
+    // one process-global pool is sufficient. Catch a second dispatching
+    // thread here rather than silently racing the pool.
+    {
+        uint64_t tid = std::hash<std::thread::id>{}(std::this_thread::get_id());
+        uint64_t expected = 0;
+        if (!g_dispatch_thread.compare_exchange_strong(expected, tid, std::memory_order_acq_rel)) {
+            assert(expected == tid &&
+                   "ts_rblas_buf_get called from a second thread - pool is process-global (W1-D2)");
+        }
+    }
+#endif
     if (ts_rocblas_handle() == nullptr) {
         // No usable handle - leave the slot alone, return the failure sentinel.
+        g_fallback_count[role].fetch_add(1, std::memory_order_relaxed);
         return {nullptr, 0};
     }
 
@@ -98,6 +143,7 @@ ts_rblas_buf ts_rblas_buf_get(int role, size_t bytes) {
     ts_rblas_slot & slot = g_pool[role];
     if (slot.dev != nullptr && slot.bytes >= bytes && !slot.in_use) {
         slot.in_use = true;
+        g_dispatch_count[role].fetch_add(1, std::memory_order_relaxed);
         return {slot.dev, slot.bytes};
     }
     // Grow (or initial alloc). Free the old buffer if it was too small.
@@ -109,15 +155,19 @@ ts_rblas_buf ts_rblas_buf_get(int role, size_t bytes) {
     void * dev = nullptr;
     hipError_t err = hipMalloc(&dev, bytes);
     if (err != hipSuccess || dev == nullptr) {
-        std::fprintf(stderr, "ts_rblas_buf_get: hipMalloc(%zu) failed (%d)\n",
-                     bytes, (int) err);
+        if (!g_alloc_fail_logged.exchange(true, std::memory_order_acq_rel)) {
+            std::fprintf(stderr, "ts_rblas_buf_get: hipMalloc(%zu) failed (%d)\n",
+                         bytes, (int) err);
+        }
         slot.dev = nullptr;
         slot.bytes = 0;
+        g_fallback_count[role].fetch_add(1, std::memory_order_relaxed);
         return {nullptr, 0};
     }
     slot.dev = dev;
     slot.bytes = bytes;
     slot.in_use = true;
+    g_dispatch_count[role].fetch_add(1, std::memory_order_relaxed);
     return {slot.dev, slot.bytes};
 }
 
@@ -141,6 +191,15 @@ namespace {
 
 __attribute__((destructor))
 static void ts_rocblas_shutdown() {
+    if (std::getenv("TS_RBLAS_STATS") != nullptr) {
+        std::fprintf(stderr, "ts_rblas: per-role stats (dispatch / fallback / high-water bytes)\n");
+        for (int i = 0; i < 6; i++) {
+            std::fprintf(stderr, "  role %d: %llu / %llu / %zu\n", i,
+                         (unsigned long long) g_dispatch_count[i].load(std::memory_order_relaxed),
+                         (unsigned long long) g_fallback_count[i].load(std::memory_order_relaxed),
+                         g_pool[i].bytes);
+        }
+    }
     if (g_handle != nullptr) {
         rocblas_destroy_handle(g_handle);
         g_handle = nullptr;
