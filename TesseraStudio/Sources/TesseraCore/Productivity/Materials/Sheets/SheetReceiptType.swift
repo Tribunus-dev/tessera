@@ -78,4 +78,29 @@ public enum SheetReceiptType: String, Codable, Sendable, CaseIterable {
     /// Autofilter criteria were cleared (QueryEngine.clearFilter).
     /// Matches QueryEngine.ReceiptType.filterCleared verbatim.
     case filterCleared = "sheet_filter_cleared"
+    /// A pivot table definition was created or replaced (P2-A 2.2a).
+    case definePivot = "sheet_pivot_defined"
+    /// A pivot table's output grid was recomputed and rewritten
+    /// (P2-A 2.2a). Identical-grid refresh is a no-op - zero receipts.
+    case updatePivot = "sheet_pivot_updated"
+    /// A pivot table definition was removed (P2-A 2.2a).
+    case removePivot = "sheet_pivot_removed"
+    /// A pivot table was explicitly refreshed on demand, distinct from
+    /// the implicit recompute `updatePivot` covers (P2-A 2.2a).
+    case refreshPivot = "sheet_pivot_refreshed"
+    /// SUBTOTAL rows were inserted for a range per a
+    /// `SubtotalDescriptor` (P2-A 2.7).
+    case applySubtotals = "sheet_subtotals_applied"
+    /// A previously-applied subtotal structure was removed, restoring
+    /// the range's original contentHash (P2-A 2.7).
+    case removeSubtotals = "sheet_subtotals_removed"
+    /// An outline group's collapsed/expanded state was toggled - a
+    /// hidden-row mutation, not a structural change (P2-A 2.7).
+    case toggleOutline = "sheet_outline_toggled"
+    /// A goal-seek solve was applied, writing the resolved variable
+    /// value (P2-A 2.6).
+    case applyGoalSeek = "sheet_goal_seek_applied"
+    /// A solver run was applied, writing the resolved variable values
+    /// for a feasible model (P2-A 2.6).
+    case applySolverRun = "sheet_solver_applied"
 }
