@@ -444,6 +444,156 @@ public struct SlideStore: Sendable {
         return deck
     }
 
+    // MARK: - SMIL animation tree (P2 item 2.1)
+
+    /// Replaces the slide's SMIL animation tree wholesale, reusing the
+    /// SAME ``SlideReceiptType/setAnimationEffects`` receipt
+    /// ``setAnimations(_:forSlideAt:for:)`` already uses - decision 7
+    /// (no versioned implementations): the tree and the flat list are
+    /// one field pair (``SlideMeta/animations`` /
+    /// ``SlideMeta/animationTree``), not two independent mutation
+    /// vocabularies, so they share one receipt type. Setting `tree`
+    /// also updates the flat ``SlideMeta/animations`` projection to
+    /// `tree.flattened()` in the same write - the same invariant
+    /// `SlideMeta`'s custom `Codable` enforces on encode/decode,
+    /// enforced here too so an in-memory mutation via the store never
+    /// drifts the two fields apart pre-persist. Identical-value set
+    /// (comparing against ``SlideMeta/effectiveAnimationTree``, so
+    /// resubmitting the tree already implied by a pre-P2 flat-only
+    /// slide is ALSO a no-op, not just an exact-field match against a
+    /// possibly-nil stored `animationTree`) is a no-op: zero receipts,
+    /// zero persistence (receipts law).
+    @discardableResult
+    public func setAnimationTree(
+        _ tree: SMILAnimationTree, forSlideAt index: Int, for deckID: UUID
+    ) async throws -> SlideDeck {
+        var deck = try await loadOrFail(id: deckID)
+        guard index >= 0, index < deck.slideCount else {
+            throw SlideStoreError.slideOutOfBounds(index: index, count: deck.slideCount)
+        }
+        let key = deck.body.rootChildren[index].uuidString
+        var meta = deck.slideMeta[key] ?? .default
+        guard meta.effectiveAnimationTree != tree else { return deck }
+        meta.animationTree = tree
+        meta.animations = tree.flattened()
+        deck.slideMeta[key] = meta
+        deck.updatedAt = Date()
+        _ = try await upsert(deck)
+        try await appendReceipt(
+            entityID: deckID,
+            receiptType: SlideReceiptType.setAnimationEffects.rawValue,
+            payload: [
+                "index": .number(Double(index)),
+                "effectCount": .number(Double(tree.flattened().count)),
+            ]
+        )
+        return deck
+    }
+
+    /// Clears the slide's SMIL animation tree (and its flat
+    /// projection) entirely, reusing the EXISTING
+    /// ``SlideReceiptType/removeAnimationEffect`` receipt (P2-0)
+    /// rather than adding a fresh vocabulary for "remove every
+    /// effect". A slide with no animation tree at all (whether never
+    /// set, or only ever touched by the pre-P2 flat-list API) is a
+    /// no-op: zero receipts, zero persistence, matching
+    /// ``removeAnimationEffect(at:forSlideAt:for:)``'s own no-op shape.
+    @discardableResult
+    public func clearAnimationTree(forSlideAt index: Int, for deckID: UUID) async throws -> SlideDeck {
+        var deck = try await loadOrFail(id: deckID)
+        guard index >= 0, index < deck.slideCount else {
+            throw SlideStoreError.slideOutOfBounds(index: index, count: deck.slideCount)
+        }
+        let key = deck.body.rootChildren[index].uuidString
+        guard var meta = deck.slideMeta[key], meta.effectiveAnimationTree != nil else { return deck }
+        meta.animationTree = nil
+        meta.animations = nil
+        deck.slideMeta[key] = meta
+        deck.updatedAt = Date()
+        _ = try await upsert(deck)
+        try await appendReceipt(
+            entityID: deckID,
+            receiptType: SlideReceiptType.removeAnimationEffect.rawValue,
+            payload: ["index": .number(Double(index))]
+        )
+        return deck
+    }
+
+    // MARK: - Custom shows (P2 item 2.10, data only - no UI this wave)
+
+    /// Creates a new custom show. `slideIDs` are NOT validated against
+    /// `deck.body.rootChildren` at write time - a show naming a
+    /// currently-nonexistent (or since-deleted) slide id is legal to
+    /// store; ``SlideDeck/effectiveCustomShows`` is the read-through
+    /// view that prunes those, the STORED list stays exactly what the
+    /// caller asked for (see that property's own doc comment for why).
+    @discardableResult
+    public func defineCustomShow(name: String, slideIDs: [UUID], for deckID: UUID) async throws -> SlideDeck {
+        var deck = try await loadOrFail(id: deckID)
+        let show = CustomShow(name: name, slideIDs: slideIDs)
+        deck = deck.addingCustomShow(show)
+        deck.updatedAt = Date()
+        _ = try await upsert(deck)
+        try await appendReceipt(
+            entityID: deckID,
+            receiptType: SlideReceiptType.defineCustomShow.rawValue,
+            payload: [
+                "showID": .string(show.id.uuidString),
+                "name": .string(name),
+                "slideCount": .number(Double(slideIDs.count)),
+            ]
+        )
+        return deck
+    }
+
+    /// Replaces an existing custom show's name and/or slide list
+    /// wholesale. Unknown `showID` is a no-op: zero receipts, zero
+    /// persistence. Identical name + slideIDs (compared against the
+    /// STORED list, not the pruned ``SlideDeck/effectiveCustomShows``
+    /// view - resubmitting a show whose stored list still names a
+    /// since-deleted slide, unchanged, is not itself a new edit) is
+    /// ALSO a no-op.
+    @discardableResult
+    public func updateCustomShow(
+        _ showID: UUID, name: String, slideIDs: [UUID], for deckID: UUID
+    ) async throws -> SlideDeck {
+        var deck = try await loadOrFail(id: deckID)
+        guard let existing = (deck.customShows ?? []).first(where: { $0.id == showID }) else {
+            return deck
+        }
+        guard existing.name != name || existing.slideIDs != slideIDs else { return deck }
+        deck = deck.replacingCustomShow(CustomShow(id: showID, name: name, slideIDs: slideIDs))
+        deck.updatedAt = Date()
+        _ = try await upsert(deck)
+        try await appendReceipt(
+            entityID: deckID,
+            receiptType: SlideReceiptType.updateCustomShow.rawValue,
+            payload: [
+                "showID": .string(showID.uuidString),
+                "name": .string(name),
+                "slideCount": .number(Double(slideIDs.count)),
+            ]
+        )
+        return deck
+    }
+
+    /// Deletes a custom show entirely. Unknown `showID` is a no-op:
+    /// zero receipts, zero persistence.
+    @discardableResult
+    public func removeCustomShow(_ showID: UUID, for deckID: UUID) async throws -> SlideDeck {
+        var deck = try await loadOrFail(id: deckID)
+        guard (deck.customShows ?? []).contains(where: { $0.id == showID }) else { return deck }
+        deck = deck.removingCustomShow(id: showID)
+        deck.updatedAt = Date()
+        _ = try await upsert(deck)
+        try await appendReceipt(
+            entityID: deckID,
+            receiptType: SlideReceiptType.removeCustomShow.rawValue,
+            payload: ["showID": .string(showID.uuidString)]
+        )
+        return deck
+    }
+
     // MARK: - Media (P1 1.4 write path, wired P2-0)
 
     /// Attaches a `MediaBlock` to a slide as a new `.media` block,

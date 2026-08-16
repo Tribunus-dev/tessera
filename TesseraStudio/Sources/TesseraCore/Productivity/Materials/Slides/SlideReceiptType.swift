@@ -82,4 +82,10 @@ public enum SlideReceiptType: String, Codable, Sendable, CaseIterable {
     case attachMedia = "slide_media_attached"
     /// A media block was removed from a slide (P2-0).
     case removeMedia = "slide_media_removed"
+    /// A custom show was created (P2 item 2.10).
+    case defineCustomShow = "slide_custom_show_defined"
+    /// A custom show's name or slide list was replaced (P2 item 2.10).
+    case updateCustomShow = "slide_custom_show_updated"
+    /// A custom show was deleted (P2 item 2.10).
+    case removeCustomShow = "slide_custom_show_removed"
 }

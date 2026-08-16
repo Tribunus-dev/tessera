@@ -110,27 +110,29 @@ final class AnimationEffectListP1FixtureTests: DoctrineTestCase {
         XCTAssertEqual(decoded, effect)
     }
 
-    // MARK: - Test 2 (written at P1, asserting the P2 name) - DISABLED
-    //
-    // `SMILAnimationTree` and its `flat:` initializer do not exist yet
-    // (P2, item 2.1). Per the dispatch brief this must be a
-    // compile-time-inert stub, not a real call to a symbol that doesn't
-    // exist yet - so this test skips itself immediately rather than
-    // attempting the call. The exact call it will make once P2 lands is
-    // preserved below as a comment, matching the design doc's own words:
-    // "SMILAnimationTree(flat: decoded).flattened() == decoded".
-    //
-    // When P2 ships `SMILAnimationTree`, this test becomes:
-    //
-    //     func testSMILAnimationTreeFlatInitializerWillExist() throws {
-    //         let decoded = try JSONDecoder().decode(AnimationEffectList.self, from: try fixtureData())
-    //         let tree = SMILAnimationTree(flat: decoded)
-    //         XCTAssertEqual(tree.flattened(), decoded)
-    //     }
-    //
-    // The fixture file itself must never be edited when P2 turns this on
-    // (load-compat is the contract) - see the file header.
+    // MARK: - Test 2 (written at P1, asserting the P2 name) - ENABLED
+    // at P2 (item 2.1 landed: SMILAnimationTree.swift). Fixture stays
+    // untouched (load-compat is the contract - see the file header);
+    // this is the SAME test the P1-era comment above pinned, now doing
+    // the real call instead of skipping. Also stands in for design
+    // contract test (1) ("pinned fixture decodes, lifts, re-flattens,
+    // re-encodes byte-identical") - the byte-identical re-encode half
+    // is asserted here too, reusing the exact canonical-encoder
+    // settings `testFixtureDecodesAndCanonicalReencodeIsByteIdentical`
+    // (Test 1) already established, so a lift-then-reflatten that
+    // silently dropped or reordered data would fail this test even if
+    // `flattened() == decoded` structural equality somehow still held.
     func testSMILAnimationTreeFlatInitializerWillExist() throws {
-        throw XCTSkip("P2 item 2.1 (SMILAnimationTree) has not landed yet - see the comment above for the exact call this test will make once it does.")
+        let original = try fixtureData()
+        let decoded = try JSONDecoder().decode(AnimationEffectList.self, from: original)
+
+        let tree = SMILAnimationTree(flat: decoded)
+        let reflattened = tree.flattened()
+        XCTAssertEqual(reflattened, decoded, "SMILAnimationTree(flat: decoded).flattened() == decoded on the pinned P1 fixture (a legal flat list)")
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let reencoded = try encoder.encode(reflattened)
+        XCTAssertEqual(reencoded, original, "decode -> lift -> flatten -> canonical re-encode must reproduce the pinned fixture's bytes exactly")
     }
 }

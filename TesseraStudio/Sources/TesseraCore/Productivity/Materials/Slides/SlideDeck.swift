@@ -116,6 +116,13 @@ public struct SlideDeck: Codable, Sendable, Identifiable, Hashable {
     /// so slide comments live in this flat list instead, each
     /// anchored via `CommentAnchor.slide`.
     public var commentThreads: [CommentThread]?
+    /// Nil (the implicit default) means no custom shows defined (P2
+    /// item 2.10, data only - no UI this wave). Read through
+    /// ``effectiveCustomShows``, not this field directly: deleting a
+    /// slide does NOT touch this stored list (a custom show naming a
+    /// since-deleted slide is not itself an edit to the show), only
+    /// the read-through view prunes the dangling id.
+    public var customShows: [CustomShow]?
     public var isArchived: Bool
     public var isTrashed: Bool
     public var isFavorite: Bool
@@ -222,6 +229,51 @@ public struct SlideDeck: Codable, Sendable, Identifiable, Hashable {
     public func slide(id: UUID) -> Slide? {
         guard let idx = body.rootChildren.firstIndex(of: id) else { return nil }
         return slide(at: idx)
+    }
+
+    // MARK: - Custom shows (P2 item 2.10)
+
+    /// `customShows ?? []`, matching `effectiveCommentThreads`/
+    /// `effectiveMasterPages`'s "nil means none" convention, PLUS
+    /// pruning: every ``CustomShow/slideIDs`` entry that no longer
+    /// names a live slide (`body.rootChildren`) is dropped from the
+    /// returned view. The STORED `customShows` list is never touched
+    /// by this - a slide deletion is a mutation of `body`/`slideMeta`
+    /// only (see ``SlideStore/deleteSlide(at:for:)``), never of
+    /// `customShows`, so the show's membership/name/order survive a
+    /// delete-then-undo (or a delete of an unrelated slide) intact;
+    /// only THIS read-through view ever reflects the pruned state.
+    public var effectiveCustomShows: [CustomShow] {
+        guard let shows = customShows else { return [] }
+        let liveIDs = Set(body.rootChildren)
+        return shows.map { show in
+            var pruned = show
+            pruned.slideIDs = show.slideIDs.filter { liveIDs.contains($0) }
+            return pruned
+        }
+    }
+
+    /// A copy with `show` appended.
+    public func addingCustomShow(_ show: CustomShow) -> SlideDeck {
+        var updated = self
+        updated.customShows = (customShows ?? []) + [show]
+        return updated
+    }
+
+    /// A copy with the show matching `show.id` replaced. No-op (same
+    /// array) if no show with that id exists.
+    public func replacingCustomShow(_ show: CustomShow) -> SlideDeck {
+        var updated = self
+        updated.customShows = (customShows ?? []).map { $0.id == show.id ? show : $0 }
+        return updated
+    }
+
+    /// A copy with the show matching `id` removed. No-op (same array)
+    /// if no show with that id exists.
+    public func removingCustomShow(id: UUID) -> SlideDeck {
+        var updated = self
+        updated.customShows = (customShows ?? []).filter { $0.id != id }
+        return updated
     }
 
     // MARK: - Slide factory
@@ -436,22 +488,34 @@ public struct SlideMeta: Codable, Sendable, Hashable {
     /// defined, the same "nil means none" convention every other
     /// optional field in this struct uses - read through
     /// ``effectiveAnimations``, not this field directly.
-    /// ``SMILAnimationTree`` (P2) evolves this in place; it never
-    /// gains a parallel field.
+    ///
+    /// ``SMILAnimationTree`` (P2 item 2.1) evolves this IN PLACE per
+    /// decision 7 (no versioned implementations): this field stays,
+    /// it does not get replaced by ``animationTree``. Custom
+    /// `Codable` below (not the synthesized one) keeps the two in
+    /// sync on every encode/decode - see that code's own comments.
     public var animations: AnimationEffectList?
+    /// The P2 SMIL timing tree ``animations`` is the flattened
+    /// projection of. `nil` means the slide has never been touched by
+    /// P2 animation code (either no animations at all, or only ever
+    /// written by pre-P2 code that only knows the flat field) - read
+    /// through ``effectiveAnimationTree``, not this field directly.
+    public var animationTree: SMILAnimationTree?
 
     public init(
         layout: SlideLayout = .titleAndContent,
         notes: String = "",
         masterPageID: UUID? = nil,
         transitionID: String? = nil,
-        animations: AnimationEffectList? = nil
+        animations: AnimationEffectList? = nil,
+        animationTree: SMILAnimationTree? = nil
     ) {
         self.layout = layout
         self.notes = notes
         self.masterPageID = masterPageID
         self.transitionID = transitionID
         self.animations = animations
+        self.animationTree = animationTree
     }
 
     public static let `default` = SlideMeta(layout: .titleAndContent, notes: "")
@@ -460,7 +524,8 @@ public struct SlideMeta: Codable, Sendable, Hashable {
     public func copyWith(notes newNotes: String) -> SlideMeta {
         SlideMeta(
             layout: self.layout, notes: newNotes, masterPageID: self.masterPageID,
-            transitionID: self.transitionID, animations: self.animations)
+            transitionID: self.transitionID, animations: self.animations,
+            animationTree: self.animationTree)
     }
 
     /// `animations ?? []` - the "nil means none" read-through every
@@ -469,6 +534,94 @@ public struct SlideMeta: Codable, Sendable, Hashable {
     /// .effectiveMasterPages`).
     public var effectiveAnimations: AnimationEffectList {
         animations ?? []
+    }
+
+    /// `animationTree`, or - when absent but the flat field carries
+    /// something - `SMILAnimationTree(flat: effectiveAnimations)`
+    /// lifted on demand. `nil` only when the slide truly has no
+    /// animations at all. Every read site that wants the tree
+    /// (as opposed to the flat projection `effectiveAnimations`
+    /// already serves the agent-context callers) should go through
+    /// this, not `animationTree` directly, for the same reason every
+    /// other `effective*` accessor in this codebase exists.
+    public var effectiveAnimationTree: SMILAnimationTree? {
+        if let animationTree { return animationTree }
+        guard let animations else { return nil }
+        return SMILAnimationTree(flat: animations)
+    }
+
+    // MARK: - Codable (custom: keeps `animations`/`animationTree` in
+    // sync per decision 7 - encode ALWAYS writes both the tree and
+    // its flattened projection when a tree is present; decode PREFERS
+    // the tree when the wire data has one, else lifts it from the
+    // flat field via `SMILAnimationTree(flat:)` - so `animationTree`
+    // is never silently stale relative to `animations` after a decode,
+    // no matter which fields a hand-built fixture or a pre-P2 writer
+    // actually populated.)
+
+    private enum CodingKeys: String, CodingKey {
+        case layout, notes, masterPageID, transitionID, animations, animationTree
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        layout = try container.decodeIfPresent(SlideLayout.self, forKey: .layout) ?? .titleAndContent
+        notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        masterPageID = try container.decodeIfPresent(UUID.self, forKey: .masterPageID)
+        transitionID = try container.decodeIfPresent(String.self, forKey: .transitionID)
+        let decodedFlat = try container.decodeIfPresent(AnimationEffectList.self, forKey: .animations)
+        if let tree = try container.decodeIfPresent(SMILAnimationTree.self, forKey: .animationTree) {
+            animationTree = tree
+            animations = tree.flattened()
+        } else if let decodedFlat {
+            animationTree = SMILAnimationTree(flat: decodedFlat)
+            animations = decodedFlat
+        } else {
+            animationTree = nil
+            animations = nil
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(layout, forKey: .layout)
+        try container.encode(notes, forKey: .notes)
+        try container.encodeIfPresent(masterPageID, forKey: .masterPageID)
+        try container.encodeIfPresent(transitionID, forKey: .transitionID)
+        if let animationTree {
+            try container.encode(animationTree, forKey: .animationTree)
+            try container.encode(animationTree.flattened(), forKey: .animations)
+        } else {
+            try container.encodeIfPresent(animations, forKey: .animations)
+        }
+    }
+}
+
+// MARK: - CustomShow
+
+/// One named custom show (P2 item 2.10, data only - no UI this wave):
+/// an ordered, possibly-non-contiguous, possibly-repeating subset of
+/// the deck's slides that plays as its own presentation sequence.
+/// OOXML `p:custShowLst > p:custShow@name,@id > p:sldLst` of `r:id`
+/// refs; ODF `presentation:show{name, pages}` (a comma list of page
+/// NAMES) inside `presentation:settings` - see `LOBridgeDeckIO`'s
+/// fodp import/export for the mapping. Exactly the 3 fields the
+/// design contract names; no UI-only fields (color, icon, ...) since
+/// this item is explicitly data-only.
+public struct CustomShow: Codable, Sendable, Identifiable, Hashable {
+    public var id: UUID
+    public var name: String
+    /// Slide root-block ids, in play order for this show. May repeat
+    /// an id (LO/PowerPoint both allow a slide to appear more than
+    /// once in one custom show) and need not be contiguous or in deck
+    /// order. Read through `SlideDeck.effectiveCustomShows`, not this
+    /// property directly, to see the live (dangling-id-pruned) view.
+    public var slideIDs: [UUID]
+
+    public init(id: UUID = UUID(), name: String, slideIDs: [UUID] = []) {
+        self.id = id
+        self.name = name
+        self.slideIDs = slideIDs
     }
 }
 
