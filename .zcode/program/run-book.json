@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "last_updated": "2026-08-11T07:45:00Z",
+  "last_updated": "2026-08-16T02:54:15Z",
   "objective": "Reduce inference memory (peak RSS) on Apple Silicon without sacrificing correctness, via low-bit KV paged-attention and calibrated per-tensor quantization.",
   "phases": [
     {
@@ -140,6 +140,38 @@
       "status": "pending",
       "summary": "W3 alphaevolve: post-pipeline optimization only. Throughput (tok/s on Metal), memory (KV residency, batch-size scaling), latency (p95 TTFT for mixed-modality). NOT for correctness, architecture, or procurement decisions. alphaevolve reserved exclusively for this phase per architect directive.",
       "artifact": "TBD (branch from p19 champion)"
+    },
+    {
+      "id": "p21",
+      "capability": "alphaevolve",
+      "status": "in_progress",
+      "summary": "Starting W1: configure build-linux-amd/ with -DGGML_HIP=ON -DAMDGPU_TARGETS=gfx1103;gfx1151, run cmake build, verify rocBLAS linkage + AWQ GA speedup + parity vs cblas baseline.",
+      "last_updated": "2026-08-15T23:05:07Z",
+      "artifact": ".zcode/xdna-research/host-amd-pipeline-master-plan.md"
+    },
+    {
+      "id": "p22",
+      "capability": "alphaevolve",
+      "status": "pending",
+      "summary": "W2: native-precision GPU acceleration on gfx1103. Three moves: DARTQuant dgemm->sgemm (~10x), mixed-precision sgemm->bf16-compute (~2x), AWQ GA bf16-direct. Shim helpers ts_rblas_sgemm_bf16acc + ts_rblas_dgemm_to_sgemm + ts_rblas_gemm_bf16_mixed. Plan: master plan (W2). Verifier gate before main.",
+      "last_updated": "2026-08-15T23:01:13Z",
+      "artifact": ".zcode/xdna-research/host-amd-pipeline-master-plan.md"
+    },
+    {
+      "id": "p23",
+      "capability": "alphaevolve",
+      "status": "pending",
+      "summary": "W3: host-optimized GGUF + Wave C (Tile-RDNA3) tile kernel on gfx1103. ts_detect_amd_arch() + --quant=host-amd + amd.tile.* GGUF metadata. Rewrite ggml-amd/tile/tile_amd_matmul.cpp stub to spec lineage (TESSERA_T_RDNA3=63 / QK_AMD=16 / WMMA 16x16x16) via CK DeviceGemm::Wmma. CPU scalar ref for parity. validate-host-amd.sh driver. Plan: master plan (W3). Verifier gate before main.",
+      "last_updated": "2026-08-15T23:01:13Z",
+      "artifact": ".zcode/xdna-research/host-amd-pipeline-master-plan.md"
+    },
+    {
+      "id": "p24",
+      "capability": "alphaevolve",
+      "status": "pending",
+      "summary": "W4: ternary-transport KV cache (user's thesis capstone). GGML_TYPE_TESSERA_T_KCACHE=64 + TESSERA_T_VCACHE=65; dequant kernels; cache write re-route; ggml_compute_forward_attn_tessera_t_flash + _ref; --imatrix-kv-window=N; new tessera-cache-quant.cpp. Capstone acceptance: cosine >= 0.999 per window across calibration corpus with --cache-type-k tessera_t_kcache --cache-type-v tessera_t_vcache. Plan: master plan (W4). Verifier gate before main.",
+      "last_updated": "2026-08-15T23:01:13Z",
+      "artifact": ".zcode/xdna-research/host-amd-pipeline-master-plan.md"
     }
   ],
   "open_questions": [
@@ -207,6 +239,26 @@
     {
       "ts": "2026-08-11T06:15:59Z",
       "decision": "data-card v2: locked 7 sign-off items per deep-research proposal (license vocab=OTDI, PII=layered, GG thresholds=per-dim \u03c4=0.5, bias probe=200/500/1000 tiered, deletion SLA=30/60 verified-receipt + backup carve-out, DP \u03b5=8/4 tiered, generator=tessera-data-card.py + Croissant 1.1 JSON-LD). Health/Gov SKU defaults tightened per section.",
+      "capability": ""
+    },
+    {
+      "ts": "2026-08-15T23:00:58Z",
+      "decision": "Consolidated four plans (rocblas-in-pipeline, native-precision-gpu-acceleration, host-optimized-gguf-validation, ternary-transport-kv-cache) into a single 4-wave master plan at .zcode/xdna-research/host-amd-pipeline-master-plan.md. W1->W2->W3->W4 linear ship-order, each gated by verifier review. Capstone acceptance test is W4 cosine >= 0.999 per window via validate-host-amd.sh.",
+      "capability": ""
+    },
+    {
+      "ts": "2026-08-16T02:26:30Z",
+      "decision": "Master plan corrected after verification review (code+host+spec+sources): CK not vendored (now W3 task 0), detection via gcnArchName (GcnArch attr removed in ROCm 7), cache enums 64/65 -> 47/48 (spec reserves 60-68), gfx1103 tagged RDNA35 parent RDNA3 per spec 2/3.6, gates re-pinned to source values (W2 parity 1e-6, W2 gate 2x, W4 capstone + frobenius), page_size 16 -> 256, W4 attention = GPU dequant prepass v1 (D-W4-6 proposed). New companion: .zcode/xdna-research/host-amd-implementation-plan.md (tasks, hardening, kill switches, evidence protocol). 6 decisions awaiting architect ratification listed at its bottom.",
+      "capability": ""
+    },
+    {
+      "ts": "2026-08-16T02:50:31Z",
+      "decision": "AITER workspace study folded into master + implementation plans: CK vendor source resolved to the workspace submodule at f33252ce (clean upstream, bf16 gfx11 WMMA verified at wmma_gfx11.hpp:81, no rocPRIM dep); toolchain traps recorded (clang-18 system hipcc broken vs gcc16, -Wno-error=invalid-constexpr for CK, no -amdgpu-coerce-illegal-types, never PATH hipcc); gfx11 C-permute + interleave-corruption + packed-dot-regression lessons attached to Wave C kernel task; real-shape test legs made mandatory; TurboQuant per-row norm correction recorded as W4 criterion-30 first fallback lever; prepass kernels stateless per turboquant API pattern. Ratification item 6 now has a concrete proposal.",
+      "capability": ""
+    },
+    {
+      "ts": "2026-08-16T02:54:15Z",
+      "decision": "Architect RATIFIED all six review decisions as proposed (2026-08-15): D-W3-6 gfx1103=RDNA35+parent routing per spec; D-W4-6 W4 attention v1=GPU dequant prepass (fused=v2); OQ-R1 ULP fallback parity gate pre-approved (cosine >= 1-1e-6 AND identical quant-grid decisions, evidence-recorded); OQ-R2 cache row-format design approved (spec amendment text = W4 task 0); OQ-R4 v1 refusal set approved (iswa/dsa/dsv4, session save/load, defrag); CK vendor pin = AITER workspace submodule f33252cebe5a52362ec1ee12c124dde7800dda3a. No open decision gates ahead of W1 (p21).",
       "capability": ""
     }
   ]
