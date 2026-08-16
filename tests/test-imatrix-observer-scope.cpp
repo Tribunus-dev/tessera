@@ -41,14 +41,42 @@ namespace {
 // cross-feeding is a hard reject.
 int g_markers[LLAMA_OBSERVER_SCOPE_TALKER + 1];
 
-bool accept_own_only(const char * /*tensor_name*/, void * user_data) {
-    for (int s = LLAMA_OBSERVER_SCOPE_VERIFIER; s <= LLAMA_OBSERVER_SCOPE_TALKER; ++s) {
-        if (user_data == &g_markers[s]) {
-            return true;
-        }
-    }
-    return false;
+// llama_imatrix_observer_filter is a plain C function pointer
+// (bool(*)(const char*, void*)) - it cannot capture per-instance state the
+// way a lambda closure could. A single shared function has no way to know
+// "which scope slot am I installed as"; it can only inspect user_data at
+// call time. To genuinely test that each scope slot rejects every other
+// scope's data, each scope needs its own function, hardcoded to compare
+// against exactly its own marker - not a loop over the whole marker set.
+bool accept_scope_verifier(const char * /*tensor_name*/, void * user_data) {
+    return user_data == &g_markers[LLAMA_OBSERVER_SCOPE_VERIFIER];
 }
+
+bool accept_scope_mtp(const char * /*tensor_name*/, void * user_data) {
+    return user_data == &g_markers[LLAMA_OBSERVER_SCOPE_MTP];
+}
+
+bool accept_scope_dflash(const char * /*tensor_name*/, void * user_data) {
+    return user_data == &g_markers[LLAMA_OBSERVER_SCOPE_DFLASH];
+}
+
+bool accept_scope_dspark(const char * /*tensor_name*/, void * user_data) {
+    return user_data == &g_markers[LLAMA_OBSERVER_SCOPE_DSPARK];
+}
+
+bool accept_scope_talker(const char * /*tensor_name*/, void * user_data) {
+    return user_data == &g_markers[LLAMA_OBSERVER_SCOPE_TALKER];
+}
+
+// Indexed by scope, so `accept_own_only[s]` is the function hardcoded to
+// accept only &g_markers[s] and reject every other scope's marker.
+llama_imatrix_observer_filter accept_own_only[LLAMA_OBSERVER_SCOPE_TALKER + 1] = {
+    accept_scope_verifier,
+    accept_scope_mtp,
+    accept_scope_dflash,
+    accept_scope_dspark,
+    accept_scope_talker,
+};
 
 } // namespace
 
@@ -71,13 +99,13 @@ int main() {
         llama_cparams cparams{};
         for (int s = LLAMA_OBSERVER_SCOPE_VERIFIER; s <= LLAMA_OBSERVER_SCOPE_TALKER; ++s) {
             cparams.imatrix_observer_scope             = (enum llama_observer_scope) s;
-            cparams.imatrix_observer_filter[s]         = accept_own_only;
+            cparams.imatrix_observer_filter[s]         = accept_own_only[s];
             cparams.imatrix_observer_filter_data[s]    = &g_markers[s];
             cparams.imatrix_observer_epoch[s]          = s + 1;
         }
         // Every slot reflects its own write and nothing else.
         for (int s = LLAMA_OBSERVER_SCOPE_VERIFIER; s <= LLAMA_OBSERVER_SCOPE_TALKER; ++s) {
-            assert(cparams.imatrix_observer_filter[s]      == accept_own_only);
+            assert(cparams.imatrix_observer_filter[s]      == accept_own_only[s]);
             assert(cparams.imatrix_observer_filter_data[s] == &g_markers[s]);
             assert(cparams.imatrix_observer_epoch[s]       == (uint64_t)(s + 1));
         }
@@ -90,7 +118,7 @@ int main() {
     {
         llama_cparams cparams{};
         for (int s = LLAMA_OBSERVER_SCOPE_VERIFIER; s <= LLAMA_OBSERVER_SCOPE_TALKER; ++s) {
-            cparams.imatrix_observer_filter[s]      = accept_own_only;
+            cparams.imatrix_observer_filter[s]      = accept_own_only[s];
             cparams.imatrix_observer_filter_data[s] = &g_markers[s];
         }
         for (int s = LLAMA_OBSERVER_SCOPE_VERIFIER; s <= LLAMA_OBSERVER_SCOPE_TALKER; ++s) {

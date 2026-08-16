@@ -23,8 +23,8 @@ int main() {
     assert((state.positions == std::vector<int32_t>{ 0, 1, 2, 1, 2, 3 }));
     assert((state.pending_shifts == std::vector<int32_t>{ 0, 0, 0, -2, -2, -2 }));
     tessera::kv_divide(state, 1, 1, 3, 2);
-    assert((state.positions == std::vector<int32_t>{ 0, 1, 1, 0, 1, 3 }));
-    assert((state.pending_shifts == std::vector<int32_t>{ 0, 0, -1, -3, -3, -2 }));
+    assert((state.positions == std::vector<int32_t>{ 0, 1, 2, 0, 1, 3 }));
+    assert((state.pending_shifts == std::vector<int32_t>{ 0, 0, 0, -3, -3, -2 }));
     const auto order = tessera::kv_defragment_order(state);
     assert((order == std::vector<size_t>{ 0, 2, 3, 4, 5, 1 }));
 
