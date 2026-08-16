@@ -1,6 +1,10 @@
 import Foundation
+import SwiftMath
 #if canImport(AppKit)
 import AppKit
+#endif
+#if canImport(UIKit)
+import UIKit
 #endif
 #if canImport(WebKit)
 import WebKit
@@ -16,8 +20,10 @@ import WebKit
 /// ordered/unordered/task lists, tables, block quotes, code blocks,
 /// horizontal rules, and inline links.
 ///
-/// **PDF** — rendered via AppKit's `NSAttributedString` + `NSPrintOperation`.
-/// Requires macOS; falls back to plain-text on other platforms.
+/// **PDF** — converted from HTML via `soffice --convert-to pdf`
+/// (`LibreOfficeConverter`), the same CLI conversion mechanism used
+/// elsewhere in this pipeline (`PDFExportBridge`) — `textutil` has no
+/// `pdf` conversion target, so it cannot serve this format.
 ///
 /// **ODT** — converted from HTML via `textutil -convert odt`.
 /// Less faithful than DOCX for complex formatting; a native ODF
@@ -81,7 +87,11 @@ public final class DocumentExporter: Sendable {
         }
     }
 
-    public init() {}
+    private let converter: LibreOfficeConverter
+
+    public init(converter: LibreOfficeConverter = LibreOfficeConverter()) {
+        self.converter = converter
+    }
 
     // MARK: - Public API
 
@@ -285,7 +295,7 @@ public final class DocumentExporter: Sendable {
 
         case .equation:
             let latex = block.attributes["latex"]?.stringValue ?? ""
-            return "<p><code>$\(escapeHTML(latex))$</code></p>"
+            return renderEquationHTML(latex)
 
         case .comment, .trackInsertion, .trackDeletion:
             // Review-only / collaboration blocks; not rendered to export HTML.
@@ -500,11 +510,23 @@ public final class DocumentExporter: Sendable {
 
     // MARK: - PDF rendering
 
-    /// Render an HTML file to PDF using `textutil -convert pdf`.
-    /// textutil uses macOS's WebKit HTML renderer internally, producing
-    /// high-quality output matching what Safari would print.
+    /// Render an HTML file to PDF via `soffice --convert-to pdf`
+    /// (`LibreOfficeConverter`, the same CLI-conversion mechanism
+    /// `PDFExportBridge`/`LibreOfficeConverter`'s other callers already
+    /// use elsewhere in this pipeline). `textutil`'s own `-convert`
+    /// target list has no `pdf` entry (verified against `textutil
+    /// -help` - it converts between txt/rtf/rtfd/doc/docx/odt/webarchive,
+    /// never pdf), so `convertWithTextutil` above cannot serve this
+    /// format - `soffice` is the one already-proven-working converter
+    /// in this codebase that actually supports HTML -> PDF.
     private func renderPDF(from htmlFile: URL, destination: URL) async throws -> URL {
-        try await convertWithTextutil(from: htmlFile, to: .pdf, destination: destination)
+        let htmlData = try Data(contentsOf: htmlFile)
+        let pdfData = try await converter.convert(data: htmlData, sourceExtension: "html", targetExtension: "pdf")
+        let outputDir = destination.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+        try? FileManager.default.removeItem(at: destination)
+        try pdfData.write(to: destination)
+        return destination
     }
 
     // MARK: - Helpers
@@ -517,6 +539,49 @@ public final class DocumentExporter: Sendable {
             .replacingOccurrences(of: "\"", with: "&quot;")
             .replacingOccurrences(of: "'", with: "&#39;")
     }
+
+    /// Renders a `.equation` block's LaTeX to a self-contained
+    /// `<img>` (a base64-embedded PNG), via the SAME SwiftMath path
+    /// `BlockRenderer.renderLaTeX` uses (`MTMathImage.asImage()` - see
+    /// that file for the shared rendering contract). Item 2.14's own
+    /// design contract: `textutil`'s HTML->DOCX/ODT conversion (this
+    /// file's own pipeline - see the header) has no MathML support, so
+    /// an embedded raster image is the actual export target that
+    /// survives that pipeline - not MathML, which `textutil` would
+    /// just strip. This mirrors `.image` blocks above (`<img
+    /// src="...">`), the one existing block type this file already
+    /// exports as a raster image.
+    ///
+    /// Empty/whitespace-only LaTeX and any SwiftMath parse failure
+    /// both degrade to the OLD literal `$latex$` placeholder text
+    /// (never throws) - a visible, honest "this didn't render" marker,
+    /// matching `BlockRenderer.renderLaTeX`'s own malformed-data
+    /// contract for the same input.
+    private func renderEquationHTML(_ latex: String) -> String {
+        let trimmed = latex.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "<p><code>[Empty equation]</code></p>" }
+        #if canImport(AppKit) || canImport(UIKit)
+        let mathImage = MTMathImage(latex: latex, fontSize: 20, textColor: .black, labelMode: .display, textAlignment: .center)
+        let (error, image) = mathImage.asImage()
+        if error == nil, let image, image.size.width > 0, image.size.height > 0,
+           let png = pngData(from: image) {
+            let base64 = png.base64EncodedString()
+            return "<p><img src=\"data:image/png;base64,\(base64)\" alt=\"\(escapeHTML(latex))\" width=\"\(Int(image.size.width))\" height=\"\(Int(image.size.height))\"></p>"
+        }
+        #endif
+        return "<p><code>$\(escapeHTML(latex))$</code></p>"
+    }
+
+    #if canImport(AppKit)
+    private func pngData(from image: NSImage) -> Data? {
+        guard let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff) else { return nil }
+        return rep.representation(using: .png, properties: [:])
+    }
+    #elseif canImport(UIKit)
+    private func pngData(from image: UIImage) -> Data? {
+        image.pngData()
+    }
+    #endif
 
     /// No `Theme` is reachable in this exporter's scope (it works from
     /// a plain `Shape`, not a themed deck) - a `.theme` ref falls back

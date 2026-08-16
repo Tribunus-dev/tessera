@@ -105,6 +105,14 @@ let package = Package(
         // surface. We subclass it (TesseraSTTextView) to inject our custom
         // TesseraTextContentManager; see TesseraEditorView.swift §TesseraSTTextView.
         .package(url: "https://github.com/krzyzanowskim/STTextView.git", from: "2.0.0"),
+        // SwiftMath (mgriebling): maintained Swift port of the iosMath
+        // lineage (kostub/iosMath), MIT license. Typesets LaTeX math mode
+        // into a raster image via `MTMathImage.asImage()` (a headless,
+        // view-free API - no window/NSView required, so it renders the
+        // same way in a unit test as in the app). Item 2.14 StarMathEditor:
+        // `equation.latex` stays canonical; SwiftMath is display-only. See
+        // `BlockRenderer.renderLaTeX` for the shared rendering path.
+        .package(url: "https://github.com/mgriebling/SwiftMath.git", from: "1.7.0"),
     ],
     targets: [
         .target(
@@ -143,6 +151,15 @@ let package = Package(
                 // Productivity/Graph viewmodel and view import these.
                 .product(name: "Grape", package: "Grape"),
                 .product(name: "ForceSimulation", package: "Grape"),
+                // Equation rendering (item 2.14). Lives on TesseraCore, not
+                // a UI-layer target: `BlockRenderer`/`DocumentExporter` are
+                // both TesseraCore files shared by the macOS AND iOS app
+                // surfaces (this target's own header comment), and both
+                // need to rasterize a `.equation` block's LaTeX, so the
+                // dependency has to be reachable from here, not scoped to
+                // TesseraStudioMac the way STTextView (a macOS-only editing
+                // widget) is above.
+                .product(name: "SwiftMath", package: "SwiftMath"),
             ],
             path: "Sources/TesseraCore",
             // Exclude agent work-in-progress files (disabled agent implementations).

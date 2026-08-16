@@ -1,14 +1,17 @@
 import Foundation
+import SwiftMath
 #if canImport(AppKit)
 import AppKit
 public typealias PlatformFont = NSFont
 public typealias PlatformColor = NSColor
+public typealias PlatformImage = NSImage
 public typealias PlatformAttributedString = NSAttributedString
 public typealias PlatformMutableAttributedString = NSMutableAttributedString
 #elseif canImport(UIKit)
 import UIKit
 public typealias PlatformFont = UIFont
 public typealias PlatformColor = UIColor
+public typealias PlatformImage = UIImage
 public typealias PlatformAttributedString = NSAttributedString
 public typealias PlatformMutableAttributedString = NSMutableAttributedString
 #endif
@@ -61,6 +64,14 @@ public struct BlockRenderer: Sendable {
     /// attributed string with a single empty run (so the
     /// text view shows a caret and the user can type into it).
     public func render(_ block: Block, in mode: EditorMode) -> NSAttributedString {
+        // A generated ToC entry paragraph (`Block.tocEntry` is not
+        // gated to `.toc` - see `TocController.swift`) needs its own
+        // leader/page-number layout, dispatched ahead of the type
+        // switch since the entry's own `block.type` is plain
+        // `.paragraph`.
+        if let entry = block.tocEntry {
+            return renderTocEntry(block, entry: entry, mode: mode)
+        }
         switch block.type {
         case .heading:
             return renderHeading(block, mode: mode)
@@ -279,21 +290,59 @@ public struct BlockRenderer: Sendable {
         )
     }
 
-    /// Placeholder (item 2.5, TocController's own render path to fill
-    /// in): a real TOC renders each entry child (attributes["tocEntry"])
-    /// as a leader-dotted line to its cached pageText, not this label -
-    /// matching every other Phase-3-deferred surface's placeholder shape
-    /// in this file (renderTablePlaceholder above).
+    /// The `.toc` container's own heading line. The real content is
+    /// each entry CHILD's own render call (`renderTocEntry` below,
+    /// dispatched via `Block.tocEntry` in `render(_:in:)`) - this is
+    /// just the container's label, matching every navigation-container
+    /// block's own "the children carry the content" posture in this
+    /// file (`renderListContainer` above).
     private func renderTocPlaceholder(_ block: Block, mode: EditorMode) -> NSAttributedString {
         let entryCount = block.children.count
-        let label = entryCount == 0 ? "[Table of Contents]" : "[Table of Contents — \(entryCount) entries]"
+        let label = entryCount == 0 ? "[Table of Contents]" : "Table of Contents"
         return NSAttributedString(
             string: label,
             attributes: [
-                .font: fontResolver.font(from: theme.bodyFont),
-                .foregroundColor: PlatformColor.secondaryLabelColor,
+                .font: fontResolver.font(from: theme.headingFonts[2] ?? theme.bodyFont),
+                .foregroundColor: PlatformColor.fromHex(theme.textColorHex) ?? .labelColor,
             ]
         )
+    }
+
+    /// One generated ToC entry paragraph (`Block.tocEntry` - see
+    /// `TocController.swift`'s file header). `block.content` is the
+    /// entry's own cached display text; `entry.pageText` renders
+    /// right-aligned via a single `NSTextTab`, or an em dash while
+    /// `entry.pageDirty` (no paginator context exists yet at P1/P2 -
+    /// see `TocEntry.pageDirty`'s own doc comment).
+    ///
+    /// This renderer is per-block (see `renderListItem`'s own comment
+    /// for the same limitation) and so has no access to the parent
+    /// `.toc` block's `TocSpec` - `tabLeader`/`hyperlink` are NOT read
+    /// here (`TocSpec.tabLeader`'s own doc comment already documents
+    /// it as "a rendering/export concern this controller stores but
+    /// never itself reads"). The right-tab position uses
+    /// `DocumentPageLayout`'s own A4 default content width (595 - 72
+    /// left - 72 right = 451pt) rather than the document's real page
+    /// layout, for the same reason.
+    private func renderTocEntry(_ block: Block, entry: TocEntry, mode: EditorMode) -> NSAttributedString {
+        let font = fontResolver.font(from: theme.bodyFont)
+        let color = PlatformColor.fromHex(theme.textColorHex) ?? .labelColor
+        let indent = CGFloat(max(0, entry.level - 1)) * 16
+        let defaultContentWidth: CGFloat = 451
+
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.firstLineHeadIndent = indent
+        paragraphStyle.headIndent = indent
+        paragraphStyle.tabStops = [NSTextTab(textAlignment: .right, location: max(indent + 40, defaultContentWidth), options: [:])]
+
+        let labelText = block.content.map(\.text).joined()
+        let pageText = entry.pageDirty ? "—" : entry.pageText
+        let out = NSMutableAttributedString(string: labelText + "\t" + pageText, attributes: [
+            .font: font,
+            .foregroundColor: color,
+            .paragraphStyle: paragraphStyle,
+        ])
+        return out
     }
 
     private func renderSectionMarker(_ block: Block, mode: EditorMode) -> NSAttributedString {
@@ -426,16 +475,87 @@ public struct BlockRenderer: Sendable {
         return out
     }
 
+    /// `.equation`'s own `render*` entry point. `attributes["latex"]`
+    /// IS the canonical source (item 2.14's design contract - LaTeX
+    /// stays canonical, never StarMath/OMML internally; see
+    /// `EquationImportMapping.swift` for how those import to it). The
+    /// actual SwiftMath call lives in `renderLaTeX` below, factored out
+    /// so `StarMathEditor`'s live preview renders through the EXACT
+    /// same path, not a second copy of this integration.
     private func renderEquation(_ block: Block, mode: EditorMode) -> NSAttributedString {
-        let latex = block.attributes["latex"]?.stringValue ?? ""
-        // Equations are a Phase 3 surface (LaTeX rendering via
-        // MathJax or `iosMath`). For now, render as inline code
-        // so the AST round-trips visually.
-        return NSAttributedString(
-            string: "$\(latex)$",
+        renderLaTeX(block.attributes["latex"]?.stringValue ?? "")
+    }
+
+    /// Renders a raw LaTeX string via SwiftMath (`MTMathImage.asImage()`
+    /// - a headless, view-free rasterizer, not a live `MTMathUILabel`;
+    /// see the `Package.swift` dependency comment) into the same
+    /// `NSAttributedString` shape every other `render*` method in this
+    /// file returns: a single `NSTextAttachment` run, matching
+    /// `renderImage`'s own convention for graphical block content.
+    ///
+    /// Malformed/unparseable LaTeX degrades to a visible error
+    /// indicator (never throws or crashes) - this file's established
+    /// "malformed data doesn't crash the renderer" contract
+    /// (`ShapeRenderer`/`ConnectorRouter`'s doc comments state the same
+    /// rule for Draw; equations differ only in degrading to a VISIBLE
+    /// marker rather than "nothing drawn", per item 2.14's own
+    /// contract, since a silently blank equation is worse UX than a
+    /// silently blank connector). Empty/whitespace-only LaTeX (a
+    /// freshly-inserted equation block) is its own case, not an error -
+    /// see `renderEquationPlaceholder` below.
+    ///
+    /// Public (not `private`) so `StarMathEditor`'s live preview can
+    /// call it directly on the same `BlockRenderer` instance it renders
+    /// with - see that file's header for "the same SwiftMath path as
+    /// item 2".
+    public func renderLaTeX(_ latex: String) -> NSAttributedString {
+        let trimmed = latex.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return renderEquationPlaceholder("[Empty equation]")
+        }
+        // Slightly larger than body text - a display equation reads as
+        // a visually distinct element, not run-in prose (matches the
+        // old placeholder's own `.codeForegroundColorHex`/monospace
+        // "distinct block" treatment it replaces).
+        let fontSize = theme.bodyFont.size * 1.3
+        let color = PlatformColor.fromHex(theme.textColorHex) ?? .labelColor
+        let mathImage = MTMathImage(latex: latex, fontSize: fontSize, textColor: color, labelMode: .display, textAlignment: .center)
+        let (error, image) = mathImage.asImage()
+        guard error == nil, let image, image.size.width > 0, image.size.height > 0 else {
+            let reason = error?.localizedDescription ?? "unrenderable formula"
+            return renderEquationError(reason)
+        }
+        let attachment = NSTextAttachment()
+        attachment.image = image
+        return NSAttributedString(attachment: attachment)
+    }
+
+    /// A neutral (non-error) bracketed placeholder, matching this
+    /// file's existing convention for deferred/empty content
+    /// (`renderTablePlaceholder`, `renderMediaPlaceholder`).
+    private func renderEquationPlaceholder(_ label: String) -> NSAttributedString {
+        NSAttributedString(
+            string: label,
             attributes: [
                 .font: fontResolver.font(from: theme.monospaceFont),
-                .foregroundColor: PlatformColor.fromHex(theme.codeForegroundColorHex) ?? .labelColor,
+                .foregroundColor: PlatformColor.secondaryLabelColor,
+                .backgroundColor: PlatformColor.fromHex(theme.codeBackgroundColorHex) ?? .controlBackgroundColor,
+            ]
+        )
+    }
+
+    /// The malformed-LaTeX visible error indicator - see `renderLaTeX`'s
+    /// doc comment. Red foreground is this file's existing "something
+    /// is wrong here" signal (`renderTrackDeletion` uses the same
+    /// `.systemRed`), on the same code-block background the old
+    /// `$latex$` placeholder used, so the shape reads as "an equation
+    /// that failed to render," not a generic error banner.
+    private func renderEquationError(_ reason: String) -> NSAttributedString {
+        NSAttributedString(
+            string: "[Equation error: \(reason)]",
+            attributes: [
+                .font: fontResolver.font(from: theme.monospaceFont),
+                .foregroundColor: PlatformColor.systemRed,
                 .backgroundColor: PlatformColor.fromHex(theme.codeBackgroundColorHex) ?? .controlBackgroundColor,
             ]
         )
@@ -711,6 +831,25 @@ extension PlatformColor {
         #else
         return nil
         #endif
+    }
+}
+
+// MARK: - NSAttributedString + equation image access
+
+extension NSAttributedString {
+    /// The image a single `NSTextAttachment` run carries - the exact
+    /// shape `BlockRenderer.renderLaTeX`'s success path produces (one
+    /// run, one attachment; see `renderImage`'s identical convention
+    /// for `.image` blocks). `nil` for any other shape, including
+    /// `renderLaTeX`'s own error/empty-placeholder path (plain text,
+    /// no attachment) - `StarMathEditor`'s preview pane uses `nil` as
+    /// the signal to show the placeholder/error text instead of an
+    /// image.
+    public var soleAttachmentImage: PlatformImage? {
+        guard length > 0,
+              let attachment = attribute(.attachment, at: 0, effectiveRange: nil) as? NSTextAttachment
+        else { return nil }
+        return attachment.image
     }
 }
 
