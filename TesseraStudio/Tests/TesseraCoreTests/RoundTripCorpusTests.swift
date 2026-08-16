@@ -107,7 +107,23 @@ final class RoundTripCorpusTests: DoctrineTestCase {
 
     // MARK: - The one probe test: score the whole corpus, write the scoreboard
 
+    /// Explicit opt-in gate (mirrors `TESSERA_DB_INTEGRATION`'s pattern),
+    /// added after P2-A: this test alone grew from ~200s to ~400s across
+    /// this session (real `soffice --convert-to` wall-clock time under
+    /// sustained system load, not a hang - each retry attempt is itself
+    /// genuine work, see `scoringOnceRetryingTimeout`'s own doc comment),
+    /// which on its own blew the doctrine's 5-minute default-suite budget
+    /// (rule 13) once P2-A's ~130 new tests were added alongside it. The
+    /// harness is unconditionally correct and still the wave gate's
+    /// primary-metric source (§6f) - it just needs to be an explicit,
+    /// separately-timed pass (`TESSERA_CORPUS_HARNESS=1 swift test
+    /// --filter RoundTripCorpusTests`) rather than tax on every plain
+    /// `swift test`, the same reasoning `TESSERA_DB_INTEGRATION` already
+    /// established for Postgres-dependent tests.
     func testRoundTripCorpusScoresEveryFixtureAndWritesScoreboard() async throws {
+        guard ProcessInfo.processInfo.environment["TESSERA_CORPUS_HARNESS"] == "1" else {
+            throw XCTSkip("gated: set TESSERA_CORPUS_HARNESS=1 to run the real-soffice round-trip corpus and regenerate the scoreboard - run as its own timed pass at a wave gate, not part of the default suite (doctrine rule 13)")
+        }
         var results: [RoundTripFixtureResult] = []
 
         results.append(try await scoringOnceRetryingTimeout { try await scoreCalcFixture("basic-cells.ods") })
