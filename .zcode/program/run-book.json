@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "last_updated": "2026-08-16T02:54:15Z",
+  "last_updated": "2026-08-16T04:06:39Z",
   "objective": "Reduce inference memory (peak RSS) on Apple Silicon without sacrificing correctness, via low-bit KV paged-attention and calibrated per-tensor quantization.",
   "phases": [
     {
@@ -259,6 +259,11 @@
     {
       "ts": "2026-08-16T02:54:15Z",
       "decision": "Architect RATIFIED all six review decisions as proposed (2026-08-15): D-W3-6 gfx1103=RDNA35+parent routing per spec; D-W4-6 W4 attention v1=GPU dequant prepass (fused=v2); OQ-R1 ULP fallback parity gate pre-approved (cosine >= 1-1e-6 AND identical quant-grid decisions, evidence-recorded); OQ-R2 cache row-format design approved (spec amendment text = W4 task 0); OQ-R4 v1 refusal set approved (iswa/dsa/dsv4, session save/load, defrag); CK vendor pin = AITER workspace submodule f33252cebe5a52362ec1ee12c124dde7800dda3a. No open decision gates ahead of W1 (p21).",
+      "capability": ""
+    },
+    {
+      "ts": "2026-08-16T04:06:39Z",
+      "decision": "W1 paused after tasks 1.1-1.4 (build reconfigure, HIP_ARCHITECTURES fix, observability patch, cblas baseline capture all landed cleanly). Stopping before task 1.5 (rocBLAS run) per the GPU-hang-containment rule: journalctl shows 6 amdgpu GPU reset cycles (MES REMOVE_QUEUE failure -> MODE2 reset -> auto-recover, ~1s each) correlated with ordinary llama-tessera/llama-imatrix process exit, including plain --help/--version with no kernel dispatch - not caused by new code, reproduces on unmodified invocations. Each reset auto-recovered and subsequent commands worked correctly, but the rule treats any reset as BLOCKING regardless. Logged as INCIDENT-w1-1 in the gap ledger. Awaiting architect guidance before any further GPU-touching run.",
       "capability": ""
     }
   ]
