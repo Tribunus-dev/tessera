@@ -1074,7 +1074,38 @@ int ts_quantize_2d_ternary(const float * weights, const float * act_scales,
     // strategy, not AWQ plus SEPTQ combined.
     if (params->use_septq) {
         ts_septq_params sp;
-        sp.septq_ratio         = 1.0f;
+
+        // septq_ratio: SEPTQ's importance mask directly determines which
+        // positions get ternarized vs kept as exact-value outliers
+        // (tessera-septq.cpp:657, outlier = !mask_flat) - hardcoding 1.0
+        // (100% masked/ternarized) meant SEPTQ produced ZERO outliers,
+        // ever, while AWQ gets a fully uncapped, threshold-driven outlier
+        // budget (ts_select_repair_residuals below). Confirmed via a live
+        // true-reconstruction measurement: SEPTQ's t2 was ~10-15x worse
+        // than AWQ's on every tensor once outlier correction was properly
+        // accounted for - not a real algorithmic gap, an unfair budget.
+        // Derive an equivalent outlier budget instead of a fixed fraction:
+        // ternarize `weights` directly (SEPTQ's own convention - no AWQ
+        // column pre-scaling) with the same global threshold, run the
+        // SAME outlier selector AWQ uses with the SAME outlier_thresh, and
+        // convert the resulting count into a ratio - both algorithms then
+        // respect the same threshold semantics instead of SEPTQ getting an
+        // arbitrary (and here, degenerate) fixed split.
+        {
+            std::vector<float>  ws_tmp((size_t) n), core_tmp((size_t) n);
+            std::vector<int8_t> ternary_tmp((size_t) n);
+            std::vector<float>  wscale_identity((size_t) in_dim, 1.0f);
+            const float gamp_tmp = ts_scale_clip_ternarize_fused(
+                weights, wscale_identity.data(), params->clip,
+                ws_tmp.data(), core_tmp.data(), ternary_tmp.data(), out_dim, in_dim);
+            const std::vector<int32_t> outliers_tmp = ts_select_repair_residuals(
+                ws_tmp.data(), ternary_tmp.data(), gamp_tmp, out_dim, in_dim,
+                n, params->outlier_thresh);
+            const int64_t n_outliers = (int64_t) outliers_tmp.size();
+            sp.septq_ratio = (n > 0)
+                ? std::max(0.5f, 1.0f - (float) n_outliers / (float) n)
+                : 1.0f;
+        }
         sp.septq_iterations    = 1;
         sp.ternary_threshold   = 1.0f;
         sp.hessian_bandwidth   = 0;
