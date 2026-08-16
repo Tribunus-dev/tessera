@@ -819,3 +819,113 @@ public enum QueryEngine {
         return (.empty, outcome)
     }
 }
+
+// MARK: - SubtotalAggregationFunction
+
+/// The 11 SUBTOTAL aggregation kinds - Excel/LO's `function_num` 1-11
+/// (the FormulaEngine-layer `SubtotalAggregator`, Functions/
+/// SubtotalFunctions.swift, separately accepts the 101-111 band a
+/// hand-typed formula can opt into for "also exclude manually-hidden
+/// rows" - see that type's doc comment for the full law). `rawValue`
+/// IS the function_num, so a descriptor's chosen function writes
+/// straight into a generated `=SUBTOTAL(n,...)` formula string with no
+/// translation table.
+///
+/// Deliberately its OWN vocabulary, not a reuse of
+/// `SheetPivotAggregation` (SheetPivotDefinition.swift, a different
+/// P2-A track's file this wave): SUBTOTAL's law needs all 11 Excel
+/// functions (countA, stdDevP, varianceP included) and the pivot
+/// engine's simplified 9-case set is missing exactly those three.
+/// Reaching into a parallel track's file to add them would cross this
+/// wave's file-ownership lane (see this file's header for the
+/// no-collision constraint every P2-A track works under).
+public enum SubtotalAggregationFunction: Int, Codable, Sendable, Hashable, CaseIterable {
+    case average = 1
+    case count = 2
+    /// COUNTA - counts non-empty cells, not just numeric ones (`.count`
+    /// above is the numeric-only COUNT).
+    case countA = 3
+    case max = 4
+    case min = 5
+    case product = 6
+    /// Sample standard deviation (divides by n-1).
+    case stdDev = 7
+    /// Population standard deviation (divides by n).
+    case stdDevP = 8
+    case sum = 9
+    /// Sample variance (divides by n-1).
+    case variance = 10
+    /// Population variance (divides by n).
+    case varianceP = 11
+
+    /// The function_num this case writes into a generated formula
+    /// string. Always the 1-11 band (includes manually-hidden rows) -
+    /// matching what Excel/LO's own Subtotal dialog generates;
+    /// `SubtotalAggregator` separately understands the 101-111 band for
+    /// a hand-typed formula, but this engine never generates that band
+    /// itself (`SubtotalDescriptor` has no field for it - see that
+    /// type's doc comment).
+    public var functionNum: Int { rawValue }
+}
+
+// MARK: - SubtotalColumnFunction
+
+/// One `SubtotalDescriptor.perColumnFunctions` entry: which column gets
+/// a `=SUBTOTAL(...)` formula in every group's summary row, and which
+/// of the 11 functions it uses. A struct rather than a bare tuple -
+/// tuples are neither `Codable` nor `Hashable`-as-a-collection-element -
+/// matching `SheetFilterColumn`'s own columnIndex+criteria wrapper
+/// earlier in this file.
+public struct SubtotalColumnFunction: Codable, Sendable, Hashable {
+    public var columnIndex: Int
+    public var function: SubtotalAggregationFunction
+
+    public init(columnIndex: Int, function: SubtotalAggregationFunction) {
+        self.columnIndex = columnIndex
+        self.function = function
+    }
+}
+
+// MARK: - SubtotalDescriptor
+
+/// The user-facing intent behind one "Data > Subtotal" application:
+/// group `groupByColumn`'s rows by display-text equality (the grid
+/// must already be sorted on this column for the resulting groups to
+/// be contiguous runs - matching Excel/LO, which both require the same
+/// pre-sort and do not do it for you), and insert a
+/// `=SUBTOTAL(fn, range)` summary row per group for every entry in
+/// `perColumnFunctions`.
+///
+/// Pure intent only - `SubtotalEngine.plan(for:descriptor:)`
+/// (SubtotalEngine.swift) is what turns this into actual row
+/// insertions and outline levels; this type does no computation and
+/// has no engine dependency, matching every other intent/model type in
+/// this file (`SheetFilterColumn`, `SheetSortCondition`).
+public struct SubtotalDescriptor: Codable, Sendable, Hashable {
+    public var groupByColumn: Int
+    public var perColumnFunctions: [SubtotalColumnFunction]
+    /// True removes any subtotal structure already on the sheet before
+    /// this one applies (the Subtotal dialog's "Replace current
+    /// subtotals" checkbox); false layers a NEW nesting level on top of
+    /// whatever subtotal rows already exist. `SubtotalEngine.plan`
+    /// itself does not read this field - it always plans against
+    /// whatever `Sheet` it is given, so replace-vs-layer is entirely a
+    /// wiring-layer decision (call `removeSubtotals` first, or don't)
+    /// made before `plan` is ever called.
+    public var replaceExisting: Bool
+    /// True places each group's summary row AFTER its detail rows
+    /// (Excel/LO's default); false places it BEFORE.
+    public var summaryBelow: Bool
+
+    public init(
+        groupByColumn: Int,
+        perColumnFunctions: [SubtotalColumnFunction],
+        replaceExisting: Bool = true,
+        summaryBelow: Bool = true
+    ) {
+        self.groupByColumn = groupByColumn
+        self.perColumnFunctions = perColumnFunctions
+        self.replaceExisting = replaceExisting
+        self.summaryBelow = summaryBelow
+    }
+}

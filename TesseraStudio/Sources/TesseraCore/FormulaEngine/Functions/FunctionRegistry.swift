@@ -117,6 +117,7 @@ public final class FunctionRegistry: Sendable {
         registerCriteria()
         registerDateExtended()
         registerStatistics()
+        registerSubtotal()
     }
 
     // MARK: - Aggregate Functions
