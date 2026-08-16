@@ -429,6 +429,81 @@ public struct DocStore: Sendable {
         )
     }
 
+    // MARK: - Macros
+
+    /// Translate one or more VBA module outlines to stored playbook
+    /// artifacts (2.13) via `MacroCompatLayer.translate`, merging into
+    /// `doc.macroPlaybooks` by `sourceModuleName` (replacing any prior
+    /// entry for the same module, leaving every other module's entry
+    /// untouched) rather than replacing the whole array - so a partial
+    /// re-translate of one module doesn't discard another module's
+    /// already-translated result. No "did anything change" guard: like
+    /// `recordMailMerge`, this method's contract is "the run happened"
+    /// - a translate call always appends exactly one receipt, even if
+    /// its output happens to equal a prior translation byte-for-byte.
+    public func translateMacro(for docID: UUID, outlines: [VBAModuleOutline]) async throws -> Doc {
+        var doc = try await loadOrFail(id: docID)
+        let translated = MacroCompatLayer.translate(outlines)
+        var byName = Dictionary(uniqueKeysWithValues: doc.macroPlaybooks.map { ($0.sourceModuleName, $0) })
+        for playbook in translated {
+            byName[playbook.sourceModuleName] = playbook
+        }
+        doc.macroPlaybooks = doc.macroPlaybooks.map { byName[$0.sourceModuleName] ?? $0 }
+        for playbook in translated where !doc.macroPlaybooks.contains(where: { $0.sourceModuleName == playbook.sourceModuleName }) {
+            doc.macroPlaybooks.append(playbook)
+        }
+        doc.updatedAt = Date()
+        _ = try await persist(doc)
+        try await appendReceipt(
+            entityID: docID,
+            receiptType: DocReceiptType.translateMacro.rawValue,
+            payload: [
+                "moduleNames": .array(translated.map { .string($0.sourceModuleName) }),
+                "moduleCount": .number(Double(translated.count)),
+            ]
+        )
+        return doc
+    }
+
+    // MARK: - Forms
+
+    /// Fill a content-control form field (2.15) via `FormController.fill`.
+    /// A no-op (no persist, no receipt) when the target block has no
+    /// content control, is locked, or `value` fails the control's own
+    /// per-kind validation (e.g. a `dropDownList` value not present in
+    /// `listItems`) - `FormController.fill` returns the block unchanged
+    /// in every one of those cases, so a plain `!=` check catches them
+    /// all, matching `refreshFields`/`regenerateToc`'s "only emit when
+    /// something actually changed" precedent in this store. Stays
+    /// tier1 even on a protected fill-in-only document per the
+    /// architect's ratified default - the protection check itself
+    /// (gating every OTHER write) is future-wave scope, not added here.
+    public func fillForm(blockID: UUID, value: String, for docID: UUID) async throws -> Doc {
+        var doc = try await loadOrFail(id: docID)
+        guard let block = doc.body.blocks[blockID] else {
+            throw DocStoreError.blockNotFound(id: blockID)
+        }
+        let before = block.contentControl.map { FormController.resolvedValue(for: $0, hostBlock: block) ?? "" } ?? ""
+        let filled = FormController.fill(block, in: doc.body, value: value)
+        guard filled != block else { return doc }
+        doc.body.blocks[blockID] = filled
+        doc.updatedAt = Date()
+        _ = try await persist(doc)
+        let control = filled.contentControl!
+        let after = FormController.resolvedValue(for: control, hostBlock: filled) ?? ""
+        try await appendReceipt(
+            entityID: docID,
+            receiptType: DocReceiptType.fillForm.rawValue,
+            payload: [
+                "blockID": .string(blockID.uuidString),
+                "tag": .string(control.tag),
+                "before": .string(before),
+                "after": .string(after),
+            ]
+        )
+        return doc
+    }
+
     // MARK: - Footnotes / Endnotes (P2-0 item 1: insert/delete lifecycle)
 
     /// Insert a new footnote/endnote body block anchored at a UTF-16 text
@@ -1070,4 +1145,7 @@ public struct DocStore: Sendable {
 public enum DocStoreError: Error, Sendable, Equatable {
     case docNotFound(id: UUID)
     case invalidBody(reason: String)
+    /// A block id passed to a block-scoped mutation (e.g. `fillForm`)
+    /// doesn't exist in the target doc's current body.
+    case blockNotFound(id: UUID)
 }

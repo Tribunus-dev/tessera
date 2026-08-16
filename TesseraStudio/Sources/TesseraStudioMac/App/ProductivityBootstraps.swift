@@ -52,6 +52,23 @@ final class DocsSurfaceBootstrap: ObservableObject {
         // "which sheet is open" concept to wait for - see
         // MailMergeToolContext's own doc comment.
         MailMergeToolContext.shared.install(MailMergeCoordinator(dataLayer: dl))
+        // macro_list/macro_read/macro_translate (P2-D 2.13) resolve
+        // their Doc access/persistence through this closure seam rather
+        // than a constructor argument, mirroring MacroToolContext's own
+        // "DocStore withheld this wave" doc comment.
+        MacroToolContext.shared.install(
+            loader: { docID in try await store.get(id: docID) },
+            translator: { docID, outlines in try await store.translateMacro(for: docID, outlines: outlines) }
+        )
+        // doc_form_fields_list/doc_form_fill (P2-D 2.15) - same
+        // closure-seam shape as MacroToolContext above.
+        DocToolContext.shared.install(
+            loader: { docID in try await store.get(id: docID) },
+            filler: { blockID, value, docID in try await store.fillForm(blockID: blockID, value: value, for: docID) }
+        )
+        // doc_accessibility_check (P2-D 2.20) - a plain DocStore
+        // reference, no closure seam needed (read-only, no mutation).
+        DocAccessibilityToolContext.shared.install(store)
     }
 
     func installIfNeeded() {
@@ -74,6 +91,12 @@ final class SheetsSurfaceBootstrap: ObservableObject {
         self.dataLayer = dl
         self.store = store
         self.viewModel = SheetsViewModel(store: store, dataLayer: dl)
+        // db_attach/db_schema/db_query/db_import_range/db_detach
+        // (P2-D 2.16) - a self-contained actor, no TesseraDataLayer
+        // needed; sheetStore is only used by db_import_range's
+        // materialization path. Installed eagerly, same posture as
+        // MailMergeToolContext above.
+        DatabaseToolContext.shared.install(DatabaseConnector(), sheetStore: store)
     }
 
     func installIfNeeded() {

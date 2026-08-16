@@ -89,6 +89,32 @@ public final class TesseraToolRegistry: Sendable {
         // then, same posture as the Sheets tools above before a
         // workbook is selected.
         MailMergeRunTool(),
+        // Macros (P2-D 2.13): parse + preserve + agent-assisted rewrite -
+        // never execute. macro_list/macro_read are tier0; macro_translate
+        // is tier1. Resolve through MacroToolContext.shared, installed by
+        // DocsSurfaceBootstrap - inert until then.
+        MacroListTool(),
+        MacroReadTool(),
+        MacroTranslateTool(),
+        // Forms / ContentControl (P2-D 2.15): doc_form_fields_list is
+        // tier0, doc_form_fill is tier1. Resolve through
+        // DocToolContext.shared, installed by DocsSurfaceBootstrap.
+        DocFormFieldsListTool(),
+        DocFormFillTool(),
+        // Database connector (P2-D 2.16): local-file-engines-only
+        // (GRDB for .sqlite/.db, DuckDB for CSV/Parquet/JSON), no
+        // network, no credential storage. Resolve through
+        // DatabaseToolContext.shared, installed by SheetsSurfaceBootstrap.
+        DatabaseAttachTool(),
+        DatabaseSchemaTool(),
+        DatabaseQueryTool(),
+        DatabaseImportRangeTool(),
+        DatabaseDetachTool(),
+        // Tagged PDF / accessibility (P2-D 2.20): doc_accessibility_check
+        // is tier0, read-only, no receipt. Resolve through
+        // DocAccessibilityToolContext.shared, installed by
+        // DocsSurfaceBootstrap.
+        DocAccessibilityCheckTool(),
         // General-agent harness: cited web research. Keyless DuckDuckGo search
         // by default, SearXNG/Tavily opt-in (docs/tessera-studio-design.md 5.4).
         // Egresses the query to a search engine, so it runs at approval .prompt.

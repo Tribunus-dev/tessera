@@ -84,6 +84,14 @@ public struct Doc: Codable, Sendable, Identifiable, Hashable {
     /// parts existed in the source package). See `PreservedParts`.
     public var preservedParts: PreservedParts?
 
+    /// Macro modules translated to stored playbook artifacts (2.13).
+    /// Keyed implicitly by each entry's own `sourceModuleName` -
+    /// `DocStore.translateMacro` merges by that name rather than
+    /// replacing the whole array, so a partial re-translate doesn't
+    /// discard other modules' prior results. Empty is the common case
+    /// (no macros, or none translated yet).
+    public var macroPlaybooks: [TranslatedMacroPlaybook]
+
     public init(
         id: UUID = UUID(),
         title: String = "",
@@ -98,7 +106,8 @@ public struct Doc: Codable, Sendable, Identifiable, Hashable {
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         masterDocSpec: MasterDocSpec? = nil,
-        preservedParts: PreservedParts? = nil
+        preservedParts: PreservedParts? = nil,
+        macroPlaybooks: [TranslatedMacroPlaybook] = []
     ) {
         self.id = id
         self.title = title
@@ -114,6 +123,7 @@ public struct Doc: Codable, Sendable, Identifiable, Hashable {
         self.updatedAt = updatedAt
         self.masterDocSpec = masterDocSpec
         self.preservedParts = preservedParts
+        self.macroPlaybooks = macroPlaybooks
     }
 
     // MARK: - Constants
