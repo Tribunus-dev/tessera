@@ -112,12 +112,18 @@ static void ts_matmul_atb(const float * A, const float * B, float * C,
                 (int)n, (int)k, (int)m,
                 1.0f, A, (int)n, B, (int)k, 0.0f, C, (int)k);
 #elif defined(TS_USE_ROCBLAS)
-    // Col-major view: C^T(k,n) = B^T(k,m) * A(m,n).
+    // Row-major C(n x k) = A(m x n)^T @ B(m x k) via C^T = B^T @ A: the
+    // as-stored buffers, reinterpreted column-major, already ARE B^T/A^T,
+    // so this needs NO transpose on the B-derived operand and Transpose
+    // on the A-derived operand - (transpose, none) has this backwards.
+    // Same bug, same fix, as tessera-dartquant.cpp's ts_dq_matmul_atb -
+    // verified against the same standalone rocBLAS-linked ground-truth
+    // test before fixing (see gap ledger).
     {
     const float alpha = 1.0f;
     const float beta  = 0.0f;
     rocblas_status st = ts_rblas_sgemm_bf16acc(
-        rocblas_operation_transpose, rocblas_operation_none,
+        rocblas_operation_none, rocblas_operation_transpose,
         (int)k, (int)n, (int)m,
         &alpha,
         B, (int)k, (size_t)m * k,
@@ -330,7 +336,10 @@ void ts_linalg_svd_topk(const float * A, float * U, float * S, float * V,
     ts_rblas_buf c = ts_rblas_buf_get(TS_RBLAS_OUT_F32, (size_t)n * n * sizeof(float));
     if (a.dev && c.dev) {
         hipStream_t st = ts_rblas_stream();
-        hipMemcpyAsync(a.dev, A, a.bytes, hipMemcpyHostToDevice, st);
+        // a.bytes/c.bytes are the pool slot's allocated (grow-only,
+        // high-water-mark) size, not this call's own m*n/n*n - see the
+        // identical fix + rationale in ts_vec_dotpr (tessera-vec.cpp).
+        hipMemcpyAsync(a.dev, A, (size_t)m * n * sizeof(float), hipMemcpyHostToDevice, st);
         const float alpha = 1.0f;
         const float beta  = 0.0f;
         rocblas_ssyrk(ts_rocblas_handle(),
@@ -339,7 +348,7 @@ void ts_linalg_svd_topk(const float * A, float * U, float * S, float * V,
                       (int)n, (int)m,
                       &alpha, (float*)a.dev, (int)n,
                       &beta,  (float*)c.dev, (int)n);
-        hipMemcpyAsync(AtA.data(), c.dev, c.bytes, hipMemcpyDeviceToHost, st);
+        hipMemcpyAsync(AtA.data(), c.dev, (size_t)n * n * sizeof(float), hipMemcpyDeviceToHost, st);
         hipStreamSynchronize(st);
         for (int64_t i = 0; i < n; i++)
             for (int64_t j = i + 1; j < n; j++)

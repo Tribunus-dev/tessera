@@ -137,8 +137,16 @@ float ts_vec_dotpr(const float * a, const float * b, int64_t n) {
     float r = 0.0f;
     if (ax.dev && ay.dev && rs.dev) {
         hipStream_t s = ts_rblas_stream();
-        hipMemcpyAsync(ax.dev, a, ax.bytes, hipMemcpyHostToDevice, s);
-        hipMemcpyAsync(ay.dev, b, ay.bytes, hipMemcpyHostToDevice, s);
+        // ax.bytes/ay.bytes are the POOL SLOT's allocated size (grow-only,
+        // shared across every TS_RBLAS_IN_F32_A/_B caller process-wide -
+        // can be far larger than this call's own `n` if an earlier, bigger
+        // GEMM grew the slot). Copying that many bytes from `a`/`b` (each
+        // only n*sizeof(float) valid) reads past their end into whatever
+        // host memory follows - the exact host-side SDMA page-fault
+        // signature this was root-caused from. Must use the size actually
+        // requested just above, not the slot's high-water mark.
+        hipMemcpyAsync(ax.dev, a, (size_t)n * sizeof(float), hipMemcpyHostToDevice, s);
+        hipMemcpyAsync(ay.dev, b, (size_t)n * sizeof(float), hipMemcpyHostToDevice, s);
         rocblas_sdot(ts_rocblas_handle(), (int)n,
                      (float*)ax.dev, 1, (float*)ay.dev, 1, (float*)rs.dev);
         hipMemcpyAsync(&r, rs.dev, sizeof(float), hipMemcpyDeviceToHost, s);

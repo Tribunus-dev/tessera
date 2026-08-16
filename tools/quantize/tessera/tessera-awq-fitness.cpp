@@ -377,8 +377,11 @@ static void ts_fitness_matmul_at_host(const float * A, const float * B,
     ts_rblas_buf c = ts_rblas_buf_get(TS_RBLAS_OUT_F32, (size_t)M * N * sizeof(float));
     if (a.dev && b.dev && c.dev) {
         hipStream_t st = ts_rblas_stream();
-        hipMemcpyAsync(a.dev, A, a.bytes, hipMemcpyHostToDevice, st);
-        hipMemcpyAsync(b.dev, B, b.bytes, hipMemcpyHostToDevice, st);
+        // a.bytes/b.bytes/c.bytes are the pool slot's allocated (grow-only,
+        // high-water-mark) size, not this call's own M*K/K*N/M*N - see the
+        // identical fix + rationale in ts_vec_dotpr (tessera-vec.cpp).
+        hipMemcpyAsync(a.dev, A, (size_t)M * K * sizeof(float), hipMemcpyHostToDevice, st);
+        hipMemcpyAsync(b.dev, B, (size_t)K * N * sizeof(float), hipMemcpyHostToDevice, st);
         const float alpha = 1.0f;
         const float beta  = 0.0f;
         // W2 move 3 (ts_rblas_gemm_bf16_mixed): no cache context at this
@@ -394,7 +397,7 @@ static void ts_fitness_matmul_at_host(const float * A, const float * B,
                       (int)N, (int)M, (int)K,
                       &alpha, nullptr, (float*)b.dev, (int)K, (float*)a.dev, (int)K,
                       &beta,  (float*)c.dev, (int)N);
-        hipMemcpyAsync(C, c.dev, c.bytes, hipMemcpyDeviceToHost, st);
+        hipMemcpyAsync(C, c.dev, (size_t)M * N * sizeof(float), hipMemcpyDeviceToHost, st);
         hipStreamSynchronize(st);
     } else {
         for (int64_t t = 0; t < M; t++) {
