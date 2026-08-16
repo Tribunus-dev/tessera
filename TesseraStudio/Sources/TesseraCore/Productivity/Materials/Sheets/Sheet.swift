@@ -116,6 +116,41 @@ public struct Sheet: Codable, Sendable, Identifiable, Hashable {
     /// flat list instead, each anchored via `CommentAnchor.cell`.
     public var commentThreads: [CommentThread]?
 
+    /// Nil (the implicit default, like the fields above) means no
+    /// outline/grouping structure - read through
+    /// `effectiveRowOutlineLevels` (SubtotalEngine.swift), not this
+    /// field directly. Keyed by row index; a row absent from the dict
+    /// is level 0 ("not part of any group"), matching how `hiddenRows`
+    /// is a sparse set rather than one entry per row (P2-A 2.7).
+    public var rowOutlineLevels: [Int: Int]?
+
+    /// Nil (the implicit default, like the fields above) means the
+    /// LO/Excel default - a group's summary row sits BELOW its detail
+    /// rows. Read through `effectiveOutlineSummaryBelow`
+    /// (SubtotalEngine.swift), not this field directly (P2-A 2.7).
+    public var outlineSummaryBelow: Bool?
+
+    /// Nil (the implicit default, like the fields above) means no
+    /// subtotal rows are currently on the sheet - read through
+    /// `effectiveSubtotalRowIndices`, not this field directly. Keyed by
+    /// physical row index (post-insertion); this is the SheetStore
+    /// wiring layer's own bookkeeping for which rows
+    /// `SheetStore.applySubtotals` inserted, so `removeSubtotals` can
+    /// delete exactly those rows rather than re-deriving them from
+    /// `rowOutlineLevels` (P2-A 2.7 wiring pass - no owning pure-engine
+    /// file, unlike `rowOutlineLevels`/`outlineSummaryBelow` above, so
+    /// the read-through lives here rather than in SubtotalEngine.swift).
+    public var subtotalRowIndices: Set<Int>?
+
+    /// Nil (the implicit default, like the fields above) means no row is
+    /// manually hidden - read through `effectiveManuallyHiddenRows`, not
+    /// this field directly. Distinct from `SheetFilterState.hiddenRows`,
+    /// which is reserved for autofilter only per that type's own
+    /// contract - this field is `SheetStore.toggleOutline`'s own
+    /// collapsed/expanded state for outline groups (P2-A 2.7 wiring
+    /// pass).
+    public var manuallyHiddenRows: Set<Int>?
+
     public init(
         id: UUID = UUID(),
         title: String = "",
@@ -335,6 +370,19 @@ public struct Sheet: Codable, Sendable, Identifiable, Hashable {
             }
         }
         return updated
+    }
+
+    // MARK: - Subtotal / outline row tracking (P2-A 2.7 wiring)
+
+    /// `subtotalRowIndices ?? []`, matching `effectiveValidationRules`/
+    /// `effectivePivotDefinitions`'s "nil means none" convention.
+    public var effectiveSubtotalRowIndices: Set<Int> {
+        subtotalRowIndices ?? []
+    }
+
+    /// `manuallyHiddenRows ?? Set()`, matching that same convention.
+    public var effectiveManuallyHiddenRows: Set<Int> {
+        manuallyHiddenRows ?? Set()
     }
 
     private func cellID(row: Int, col: Int) -> UUID? {

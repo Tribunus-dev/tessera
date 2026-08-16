@@ -32,6 +32,8 @@ public final class SheetToolContext: @unchecked Sendable {
     private let lock = NSLock()
     private var _workbook: SheetEngine?
     private var _writer: CellWriter?
+    private var _sheetStore: SheetStore?
+    private var _sheetID: UUID?
 
     public init() {}
 
@@ -48,11 +50,37 @@ public final class SheetToolContext: @unchecked Sendable {
         set { lock.lock(); defer { lock.unlock() }; _writer = newValue }
     }
 
+    /// The receipted persistence seam for tools whose apply path is a
+    /// multi-cell/typed mutation `writer`'s single-cell-text closure
+    /// can't shape correctly (`sheet_goal_seek`/`sheet_solver_run`'s
+    /// `SheetStore.applyGoalSeek`/`.applySolverRun` calls - P2-A
+    /// centralized wiring pass). Nil when no surface is wired, in which
+    /// case those tools' apply path fails closed exactly like `writer`
+    /// being nil leaves `sheet_write` falling back to an unpersisted
+    /// write.
+    public var sheetStore: SheetStore? {
+        get { lock.lock(); defer { lock.unlock() }; return _sheetStore }
+        set { lock.lock(); defer { lock.unlock() }; _sheetStore = newValue }
+    }
+
+    /// The currently-open sheet's id, paired with `sheetStore` above.
+    public var sheetID: UUID? {
+        get { lock.lock(); defer { lock.unlock() }; return _sheetID }
+        set { lock.lock(); defer { lock.unlock() }; _sheetID = newValue }
+    }
+
     /// Install the open workbook and its persistence path. Called by the
     /// Sheets surface on selection, and with nils when it closes.
-    public func install(_ engine: SheetEngine?, writer: CellWriter? = nil) {
+    /// `sheetStore`/`sheetID` are optional so every existing call site
+    /// (`install(engine)`, `install(nil)`) keeps compiling unchanged;
+    /// omitting them on a reinstall clears any previously-installed
+    /// store/id rather than leaving a stale pairing from a prior
+    /// selection.
+    public func install(_ engine: SheetEngine?, writer: CellWriter? = nil, sheetStore: SheetStore? = nil, sheetID: UUID? = nil) {
         workbook = engine
         self.writer = writer
+        self.sheetStore = sheetStore
+        self.sheetID = sheetID
     }
 }
 

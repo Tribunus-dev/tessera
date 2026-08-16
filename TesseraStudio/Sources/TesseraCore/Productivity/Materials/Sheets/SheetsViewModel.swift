@@ -118,9 +118,14 @@ public final class SheetsViewModel: ObservableObject {
             // this they have no workbook and report as much. The writer
             // routes a tool edit through the same persistence path as a
             // typed one, so it lands in the document with a receipt.
-            SheetToolContext.shared.install(editorVM.workbook.engine) { [weak self] row, col, text in
-                await self?.applyAgentEdit(text: text, row: row, col: col)
-            }
+            SheetToolContext.shared.install(
+                editorVM.workbook.engine,
+                writer: { [weak self] row, col, text in
+                    await self?.applyAgentEdit(text: text, row: row, col: col)
+                },
+                sheetStore: store,
+                sheetID: sheetID
+            )
         } else {
             editor = nil
             SheetToolContext.shared.install(nil)

@@ -589,4 +589,354 @@ final class SheetStoreTests: DoctrineTestCase {
         let receipts = try await sheetReceipts(store, forSheet: sheet.id)
         XCTAssertEqual(receiptTypes(receipts).filter { $0 == SheetReceiptType.tagAdded.rawValue }.count, 1)
     }
+
+    // MARK: - P2-A centralized wiring pass: pivot / subtotals / solver
+    //
+    // Contract source: this wave's own "Task 4" instruction (SheetStore-
+    // level coverage for all 8 new methods, per testing-doctrine.md's
+    // "Store mutation: receipt + persistence + no-op zero-receipt +
+    // error path" shape) plus the specific named invariants it flags:
+    // definePivot identical-vs-changed-redefine, removePivot byte-
+    // identity, refreshPivot identical-grid no-op, apply-then-remove
+    // subtotals content-hash restoration, toggleOutline's controlled
+    // range, and converged/optimal-only solver applies.
+
+    // MARK: - definePivot / removePivot / refreshPivot fixtures
+
+    /// 8 rows x 6 cols: source data lands in cols 0-1 rows 0-4 ("A"/"B"
+    /// per `Sheet.makeBlank`'s column-letter labels), leaving room for
+    /// the sample pivot's 3-col x 4-row output starting at (row 0,
+    /// col 3) - `definePivot`'s own output-location fallback ("two
+    /// columns past `bottomRightCol`").
+    private func pivotSourceSheet(_ store: SheetStore) async throws -> Sheet {
+        var sheet = try await store.upsert(freshSheet(rows: 8, cols: 6))
+        // Category ("A") / Amount ("B"): X=10, Y=20, X=30, Y=40, X=5.
+        let rows: [(String, String)] = [("X", "10"), ("Y", "20"), ("X", "30"), ("Y", "40"), ("X", "5")]
+        for (i, pair) in rows.enumerated() {
+            sheet = try await store.setCell(row: i, col: 0, value: pair.0, for: sheet.id)
+            sheet = try await store.setCell(row: i, col: 1, value: pair.1, for: sheet.id)
+        }
+        return sheet
+    }
+
+    private func samplePivotDefinition() -> SheetPivotDefinition {
+        SheetPivotDefinition(
+            name: "Test Pivot",
+            topLeftCol: 0, topLeftRow: 0, bottomRightCol: 1, bottomRightRow: 4,
+            fields: [
+                SheetPivotField(fieldName: "A", orientation: .row),
+                SheetPivotField(fieldName: "B", orientation: .data, function: .sum),
+            ]
+        )
+    }
+
+    // MARK: - definePivot
+
+    func testDefinePivotFreshEmitsExactlyOneDefinePivotReceiptAndWritesTheGrid() async throws {
+        let store = try await makeConnectedStore()
+        let sheet = try await pivotSourceSheet(store)
+        let definition = samplePivotDefinition()
+
+        let updated = try await store.definePivot(definition, for: sheet.id)
+
+        XCTAssertEqual(updated.effectivePivotDefinitions.map(\.id), [definition.id])
+        // Output grid: header row at (0,3); body rows X=45, Y=60,
+        // Grand=105 (sum of Amount per Category) at rows 1-3.
+        XCTAssertEqual(updated.cellText(row: 1, col: 3), "X")
+        XCTAssertEqual(updated.cellValue(row: 1, col: 4), .number(45))
+        XCTAssertEqual(updated.cellText(row: 2, col: 3), "Y")
+        XCTAssertEqual(updated.cellValue(row: 2, col: 4), .number(60))
+        let receipts = try await sheetReceipts(store, forSheet: sheet.id)
+        XCTAssertEqual(receiptTypes(receipts).filter { $0 == SheetReceiptType.definePivot.rawValue }.count, 1)
+    }
+
+    func testRedefiningPivotWithAnIdenticalDefinitionEmitsNoReceipt() async throws {
+        let store = try await makeConnectedStore()
+        let sheet = try await pivotSourceSheet(store)
+        let definition = samplePivotDefinition()
+        _ = try await store.definePivot(definition, for: sheet.id)
+        let receiptsBefore = try await sheetReceipts(store, forSheet: sheet.id)
+
+        _ = try await store.definePivot(definition, for: sheet.id)
+
+        let receiptsAfter = try await sheetReceipts(store, forSheet: sheet.id)
+        XCTAssertEqual(receiptsAfter.count, receiptsBefore.count, "redefining with an Equatable-identical definition must not emit a receipt")
+    }
+
+    func testRedefiningPivotWithAChangedDefinitionEmitsOneMoreDefinePivotReceipt() async throws {
+        let store = try await makeConnectedStore()
+        let sheet = try await pivotSourceSheet(store)
+        var definition = samplePivotDefinition()
+        _ = try await store.definePivot(definition, for: sheet.id)
+
+        definition.columnGrand = false // same id, a real field change
+        _ = try await store.definePivot(definition, for: sheet.id)
+
+        let receipts = try await sheetReceipts(store, forSheet: sheet.id)
+        XCTAssertEqual(receiptTypes(receipts).filter { $0 == SheetReceiptType.definePivot.rawValue }.count, 2,
+                        "a changed definition sharing the same id replaces it - still .definePivot, not .updatePivot")
+    }
+
+    // MARK: - removePivot
+
+    func testRemovePivotOfAnExistingIDEmitsOneReceiptAndItIsGoneFromEffectivePivotDefinitions() async throws {
+        let store = try await makeConnectedStore()
+        let sheet = try await pivotSourceSheet(store)
+        let definition = samplePivotDefinition()
+        _ = try await store.definePivot(definition, for: sheet.id)
+
+        let updated = try await store.removePivot(definition.id, for: sheet.id)
+
+        XCTAssertTrue(updated.effectivePivotDefinitions.isEmpty)
+        let receipts = try await sheetReceipts(store, forSheet: sheet.id)
+        XCTAssertEqual(receiptTypes(receipts).filter { $0 == SheetReceiptType.removePivot.rawValue }.count, 1)
+    }
+
+    func testRemovePivotOfAnUnknownIDIsANoOpAndTheSheetIsByteIdentical() async throws {
+        let store = try await makeConnectedStore()
+        let sheet = try await store.upsert(freshSheet())
+        let before = try await store.get(id: sheet.id)
+        let receiptsBefore = try await sheetReceipts(store, forSheet: sheet.id)
+
+        let result = try await store.removePivot(UUID(), for: sheet.id)
+
+        // Both sides loaded through the SAME DB round trip (not the
+        // in-memory pre-persist value), so a Date-encoding precision
+        // artifact can never masquerade as a real difference.
+        XCTAssertEqual(try result.jsonData(), try before?.jsonData())
+        let receiptsAfter = try await sheetReceipts(store, forSheet: sheet.id)
+        XCTAssertEqual(receiptsAfter.count, receiptsBefore.count)
+    }
+
+    // MARK: - refreshPivot
+
+    func testRefreshPivotOfAnUnchangedSourceEmitsNoReceipt() async throws {
+        let store = try await makeConnectedStore()
+        let sheet = try await pivotSourceSheet(store)
+        let definition = samplePivotDefinition()
+        _ = try await store.definePivot(definition, for: sheet.id)
+        let receiptsBefore = try await sheetReceipts(store, forSheet: sheet.id)
+
+        _ = try await store.refreshPivot(id: definition.id, for: sheet.id)
+
+        let receiptsAfter = try await sheetReceipts(store, forSheet: sheet.id)
+        XCTAssertEqual(receiptsAfter.count, receiptsBefore.count, "identical-grid refresh = no-op")
+    }
+
+    func testRefreshPivotAfterASourceEditEmitsOneReceiptWithTheNewValueVisibleInTheOutputRange() async throws {
+        let store = try await makeConnectedStore()
+        var sheet = try await pivotSourceSheet(store)
+        let definition = samplePivotDefinition()
+        sheet = try await store.definePivot(definition, for: sheet.id)
+
+        // row0's Amount 10 -> 100 bumps X's sum from 45 to 135.
+        sheet = try await store.setCell(row: 0, col: 1, value: "100", for: sheet.id)
+
+        let refreshed = try await store.refreshPivot(id: definition.id, for: sheet.id)
+
+        XCTAssertEqual(refreshed.cellValue(row: 1, col: 4), .number(135))
+        let receipts = try await sheetReceipts(store, forSheet: sheet.id)
+        XCTAssertEqual(receiptTypes(receipts).filter { $0 == SheetReceiptType.refreshPivot.rawValue }.count, 1)
+    }
+
+    func testRefreshPivotOfAnUnknownIDThrowsPivotNotFound() async throws {
+        let store = try await makeConnectedStore()
+        let sheet = try await store.upsert(freshSheet())
+        let unknownID = UUID()
+
+        do {
+            _ = try await store.refreshPivot(id: unknownID, for: sheet.id)
+            XCTFail("expected SheetStoreError.pivotNotFound")
+        } catch SheetStoreError.pivotNotFound(let id) {
+            XCTAssertEqual(id, unknownID)
+        }
+    }
+
+    // MARK: - applySubtotals / removeSubtotals
+
+    private func subtotalSourceSheet(_ store: SheetStore) async throws -> Sheet {
+        var sheet = try await store.upsert(freshSheet(rows: 4, cols: 2))
+        let rows: [(String, String)] = [("X", "10"), ("X", "20"), ("Y", "30"), ("Y", "40")]
+        for (i, pair) in rows.enumerated() {
+            sheet = try await store.setCell(row: i, col: 0, value: pair.0, for: sheet.id)
+            sheet = try await store.setCell(row: i, col: 1, value: pair.1, for: sheet.id)
+        }
+        return sheet
+    }
+
+    private func sampleSubtotalDescriptor() -> SubtotalDescriptor {
+        SubtotalDescriptor(groupByColumn: 0, perColumnFunctions: [SubtotalColumnFunction(columnIndex: 1, function: .sum)])
+    }
+
+    func testApplySubtotalsEmitsExactlyOneReceiptAndInsertsTheSummaryRows() async throws {
+        let store = try await makeConnectedStore()
+        let sheet = try await subtotalSourceSheet(store)
+
+        let updated = try await store.applySubtotals(sampleSubtotalDescriptor(), for: sheet.id)
+
+        XCTAssertEqual(updated.rowCount, 7, "2 groups + grand total = 3 new rows over the original 4")
+        XCTAssertEqual(updated.cellText(row: 2, col: 0), "X Total")
+        XCTAssertEqual(updated.cellText(row: 2, col: 1), "=SUBTOTAL(9,B1:B2)")
+        XCTAssertEqual(updated.cellText(row: 5, col: 0), "Y Total")
+        XCTAssertEqual(updated.cellText(row: 6, col: 0), "Grand Total")
+        XCTAssertEqual(updated.effectiveSubtotalRowIndices, [2, 5, 6])
+        let receipts = try await sheetReceipts(store, forSheet: sheet.id)
+        XCTAssertEqual(receiptTypes(receipts).filter { $0 == SheetReceiptType.applySubtotals.rawValue }.count, 1)
+    }
+
+    /// No-op zero-receipt path: a descriptor with nothing to group
+    /// (`perColumnFunctions` empty) produces an empty `SubtotalPlan`.
+    func testApplySubtotalsWithNoColumnFunctionsIsANoOp() async throws {
+        let store = try await makeConnectedStore()
+        let sheet = try await subtotalSourceSheet(store)
+        let receiptsBefore = try await sheetReceipts(store, forSheet: sheet.id)
+
+        let result = try await store.applySubtotals(SubtotalDescriptor(groupByColumn: 0, perColumnFunctions: []), for: sheet.id)
+
+        XCTAssertEqual(result.rowCount, 4)
+        let receiptsAfter = try await sheetReceipts(store, forSheet: sheet.id)
+        XCTAssertEqual(receiptsAfter.count, receiptsBefore.count)
+    }
+
+    /// No-op zero-receipt path: nothing to remove.
+    func testRemoveSubtotalsWhenNoneAreAppliedIsANoOp() async throws {
+        let store = try await makeConnectedStore()
+        let sheet = try await subtotalSourceSheet(store)
+        let receiptsBefore = try await sheetReceipts(store, forSheet: sheet.id)
+
+        let result = try await store.removeSubtotals(for: sheet.id)
+
+        XCTAssertEqual(result.rowCount, 4)
+        let receiptsAfter = try await sheetReceipts(store, forSheet: sheet.id)
+        XCTAssertEqual(receiptsAfter.count, receiptsBefore.count)
+    }
+
+    /// The design contract's own named invariant: apply-then-remove
+    /// restores the sheet's original contentHash/byte-equality.
+    func testApplySubtotalsThenRemoveSubtotalsRestoresTheOriginalContentHash() async throws {
+        let store = try await makeConnectedStore()
+        let sheet = try await subtotalSourceSheet(store)
+        let original = try await store.get(id: sheet.id)
+        let originalHash = try original?.body.contentHash()
+
+        _ = try await store.applySubtotals(sampleSubtotalDescriptor(), for: sheet.id)
+        let restored = try await store.removeSubtotals(for: sheet.id)
+
+        XCTAssertEqual(try restored.body.contentHash(), originalHash)
+        XCTAssertTrue(restored.effectiveSubtotalRowIndices.isEmpty)
+        XCTAssertTrue(restored.effectiveRowOutlineLevels.isEmpty)
+    }
+
+    // MARK: - toggleOutline
+    //
+    // Hand-built `rowOutlineLevels`/`outlineSummaryBelow` (bypassing a
+    // real two-pass `applySubtotals` chain, which is the only way this
+    // engine's own rules produce a genuinely toggleable, non-level-0
+    // summary row - see `SubtotalPlan`'s "classic 3-tier shape" doc
+    // comment): `toggleOutline` only ever reads those two fields, not
+    // how they got there, so this isolates its own contract precisely.
+
+    func testToggleOutlineCollapsesThenExpandsExactlyTheControlledRowRange() async throws {
+        let store = try await makeConnectedStore()
+        var sheet = freshSheet(rows: 4, cols: 1)
+        // Row 2 is a level-1 summary row; rows 0-1 are its own detail
+        // rows (level 2, exactly one deeper); row 3 is an unrelated
+        // level-0 row that must stay untouched.
+        sheet.rowOutlineLevels = [0: 2, 1: 2, 2: 1, 3: 0]
+        sheet.outlineSummaryBelow = true
+        sheet = try await store.upsert(sheet)
+
+        let collapsed = try await store.toggleOutline(summaryRowIndex: 2, for: sheet.id)
+        XCTAssertEqual(collapsed.effectiveManuallyHiddenRows, [0, 1])
+
+        let expanded = try await store.toggleOutline(summaryRowIndex: 2, for: sheet.id)
+        XCTAssertTrue(expanded.effectiveManuallyHiddenRows.isEmpty)
+
+        let receipts = try await sheetReceipts(store, forSheet: sheet.id)
+        let toggles = receipts.filter { $0.receiptType == SheetReceiptType.toggleOutline.rawValue }
+        XCTAssertEqual(toggles.count, 2)
+        XCTAssertEqual(toggles.first?.payload["collapsed"], .bool(true))
+        XCTAssertEqual(toggles.last?.payload["collapsed"], .bool(false))
+    }
+
+    func testToggleOutlineOfAnUnknownOrLevelZeroRowIsANoOp() async throws {
+        let store = try await makeConnectedStore()
+        var sheet = freshSheet(rows: 4, cols: 1)
+        sheet.rowOutlineLevels = [0: 1, 1: 0]
+        sheet.outlineSummaryBelow = true
+        sheet = try await store.upsert(sheet)
+        let receiptsBefore = try await sheetReceipts(store, forSheet: sheet.id)
+
+        _ = try await store.toggleOutline(summaryRowIndex: 99, for: sheet.id) // not a key at all
+        _ = try await store.toggleOutline(summaryRowIndex: 1, for: sheet.id)  // a key, but level 0
+
+        let receiptsAfter = try await sheetReceipts(store, forSheet: sheet.id)
+        XCTAssertEqual(receiptsAfter.count, receiptsBefore.count)
+    }
+
+    // MARK: - applyGoalSeek / applySolverRun
+    //
+    // Defense in depth (testing-doctrine.md): the tool layer already
+    // refuses to call these for a non-converged/non-optimal result, but
+    // the store must not trust the caller alone.
+
+    func testApplyGoalSeekOnAConvergedResultWritesTheResolvedValueAndEmitsOneReceipt() async throws {
+        let store = try await makeConnectedStore()
+        let sheet = try await store.upsert(freshSheet(rows: 2, cols: 2))
+        let request = GoalSeekRequest(formulaCell: CellAddr(col: 1, row: 0), targetValue: 16, variableCell: CellAddr(col: 0, row: 0))
+        let result = GoalSeekResult(status: .converged, resolvedValue: 4.0, achievedValue: 16.0, iterations: 5)
+
+        let updated = try await store.applyGoalSeek(request, result: result, for: sheet.id)
+
+        XCTAssertEqual(updated.cellValue(row: 0, col: 0), .number(4.0))
+        let receipts = try await sheetReceipts(store, forSheet: sheet.id)
+        let goalSeekReceipts = receipts.filter { $0.receiptType == SheetReceiptType.applyGoalSeek.rawValue }
+        XCTAssertEqual(goalSeekReceipts.count, 1)
+        XCTAssertEqual(goalSeekReceipts.first?.payload["resolvedValue"], .number(4.0))
+    }
+
+    func testApplyGoalSeekOnANonConvergedResultIsANoOp() async throws {
+        let store = try await makeConnectedStore()
+        let sheet = try await store.upsert(freshSheet(rows: 2, cols: 2))
+        let receiptsBefore = try await sheetReceipts(store, forSheet: sheet.id)
+        let request = GoalSeekRequest(formulaCell: CellAddr(col: 1, row: 0), targetValue: 16, variableCell: CellAddr(col: 0, row: 0))
+        let result = GoalSeekResult(status: .notConverged, resolvedValue: 4.0, achievedValue: 15.0, iterations: 100)
+
+        let updated = try await store.applyGoalSeek(request, result: result, for: sheet.id)
+
+        XCTAssertEqual(updated.cellValue(row: 0, col: 0), .empty, "a non-converged result must not write anything")
+        let receiptsAfter = try await sheetReceipts(store, forSheet: sheet.id)
+        XCTAssertEqual(receiptsAfter.count, receiptsBefore.count)
+    }
+
+    func testApplySolverRunOnAnOptimalResultWritesEveryVariableUnderOneUpsertAndEmitsOneReceipt() async throws {
+        let store = try await makeConnectedStore()
+        let sheet = try await store.upsert(freshSheet(rows: 2, cols: 2))
+        let a1 = CellAddr(col: 0, row: 0)
+        let b1 = CellAddr(col: 1, row: 0)
+        let model = SolverModel(objectiveCell: CellAddr(col: 0, row: 1), direction: .maximize, variableCells: [a1, b1], constraints: [])
+        let result = SolverResult(status: .optimal, objectiveValue: 36, variableValues: [a1: 2, b1: 6], iterations: 3)
+
+        let updated = try await store.applySolverRun(model, result: result, for: sheet.id)
+
+        XCTAssertEqual(updated.cellValue(row: 0, col: 0), .number(2))
+        XCTAssertEqual(updated.cellValue(row: 0, col: 1), .number(6))
+        let receipts = try await sheetReceipts(store, forSheet: sheet.id)
+        XCTAssertEqual(receiptTypes(receipts).filter { $0 == SheetReceiptType.applySolverRun.rawValue }.count, 1)
+    }
+
+    func testApplySolverRunOnANonOptimalResultIsANoOp() async throws {
+        let store = try await makeConnectedStore()
+        let sheet = try await store.upsert(freshSheet(rows: 2, cols: 2))
+        let receiptsBefore = try await sheetReceipts(store, forSheet: sheet.id)
+        let a1 = CellAddr(col: 0, row: 0)
+        let model = SolverModel(objectiveCell: CellAddr(col: 0, row: 1), direction: .maximize, variableCells: [a1], constraints: [])
+        let result = SolverResult(status: .infeasible, objectiveValue: 0, variableValues: [:], iterations: 0)
+
+        let updated = try await store.applySolverRun(model, result: result, for: sheet.id)
+
+        XCTAssertEqual(updated.cellValue(row: 0, col: 0), .empty)
+        let receiptsAfter = try await sheetReceipts(store, forSheet: sheet.id)
+        XCTAssertEqual(receiptsAfter.count, receiptsBefore.count)
+    }
 }

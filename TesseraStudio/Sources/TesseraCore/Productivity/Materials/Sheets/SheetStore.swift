@@ -482,6 +482,490 @@ public struct SheetStore: Sendable {
         return sheet
     }
 
+    // MARK: - Cell-write mechanics shared by the mutations below
+    //
+    // (P2-A centralized wiring pass, item 2.2a/2.7/2.6.) `setCell` itself
+    // stays the public, single-cell, single-receipt entry point; the
+    // helpers below extract its value-classification write so pivot
+    // output, subtotal summary rows, and goal-seek/solver applies can
+    // batch several writes under ONE upsert + ONE receipt without
+    // double-emitting through the public wrapper.
+
+    /// A `.tableCell` block for `text`, classified through
+    /// `CellValue.classify` exactly as `setCell` classifies a written
+    /// value (e.g. a `=SUBTOTAL(...)` string classifies to `.formula`,
+    /// not `.text`). Used by the row-insertion primitive below to
+    /// pre-populate a brand-new row's cells (no existing block to look
+    /// up by id yet - see `writingCellValue` for the existing-cell case).
+    private func classifiedCellBlock(text: String, columnType: SheetColumnType) -> Block {
+        var block = Block(type: .tableCell, content: text.isEmpty ? [] : [InlineRun(text: text)])
+        let classified = CellValue.classify(text, columnType: columnType)
+        if !classified.isEmpty {
+            block.attributes[CellValue.attributeKey] = classified.json
+        }
+        return block
+    }
+
+    /// Writes `text` into the EXISTING cell at (row, col), using the same
+    /// classification `setCell` uses, throwing the same `SheetStoreError`
+    /// `setCell` would for a missing table / out-of-bounds coordinate /
+    /// missing cell block. Goal seek's and the solver's applies share
+    /// this rather than calling the public, individually-receipted
+    /// `setCell`.
+    private func writingCellValue(_ text: String, row: Int, col: Int, in sheet: inout Sheet) throws {
+        guard let tableDims = tableDimensions(of: sheet.body) else {
+            throw SheetStoreError.noTable(sheetID: sheet.id)
+        }
+        guard row >= 0, row < tableDims.rows, col >= 0, col < tableDims.cols else {
+            throw SheetStoreError.cellOutOfBounds(row: row, col: col, rows: tableDims.rows, cols: tableDims.cols)
+        }
+        let cid = try cellID(row: row, col: col, dims: tableDims, body: sheet.body)
+        guard var cell = sheet.body.blocks[cid] else {
+            throw SheetStoreError.cellNotFound(row: row, col: col)
+        }
+        cell.content = text.isEmpty ? [] : [InlineRun(text: text)]
+        let columnType = col < sheet.columns.count ? sheet.columns[col].type : .text
+        let classified = CellValue.classify(text, columnType: columnType)
+        if classified.isEmpty {
+            cell.attributes.removeValue(forKey: CellValue.attributeKey)
+        } else {
+            cell.attributes[CellValue.attributeKey] = classified.json
+        }
+        sheet.body.blocks[cid] = cell
+    }
+
+    // MARK: - Pivot tables (P2-A 2.2a)
+
+    /// Plain text for an already-typed `CellValue`, e.g. for a pivot
+    /// grid cell that is computed directly (a `.number` aggregate, a
+    /// `.text` header) rather than typed by a user. Mirrors
+    /// `PivotTableStore`'s own private `displayText(_:)` convention
+    /// (each pure engine owns its own copy rather than sharing one - see
+    /// that file's header for the no-cross-track-file-reach rule this
+    /// wave's tracks worked under).
+    private func plainText(for value: CellValue) -> String {
+        switch value {
+        case .empty: return ""
+        case .text(let s): return s
+        case .number(let n):
+            if n == n.rounded(), abs(n) < 1e15 { return String(Int64(n)) }
+            return String(n)
+        case .date(let d): return ISO8601DateFormatter().string(from: d)
+        case .checkbox(let b): return b ? "TRUE" : "FALSE"
+        case .formula(let s): return s
+        case .error(let s): return s
+        }
+    }
+
+    /// Writes a rectangular `[[CellValue]]` (a computed pivot grid) into
+    /// the sheet starting at (topLeftRow, topLeftCol), one cell per
+    /// entry, using the already-typed `CellValue` directly (no
+    /// text-classification round-trip - the grid's cells are already
+    /// exactly the values they should be). A position outside the
+    /// sheet's CURRENT physical extent is silently skipped, matching
+    /// `Sheet.settingCellValue`'s own "coordinate outside the grid
+    /// leaves the sheet unchanged" contract - growing the grid to fit an
+    /// output range that runs past the current table bounds is out of
+    /// P2a scope (`PivotTableStore`'s own "P2a: tabular layout + grand
+    /// totals only" framing). Returns the RangeRef the write TARGETED
+    /// (not clipped to what was actually in-bounds), for the receipt
+    /// payload's `outputRange` description.
+    @discardableResult
+    private func writingGrid(_ rows: [[CellValue]], into sheet: inout Sheet, topLeftRow: Int, topLeftCol: Int) -> RangeRef {
+        if let tableDims = tableDimensions(of: sheet.body) {
+            for (rOffset, rowValues) in rows.enumerated() {
+                let row = topLeftRow + rOffset
+                guard row >= 0, row < tableDims.rows else { continue }
+                for (cOffset, value) in rowValues.enumerated() {
+                    let col = topLeftCol + cOffset
+                    guard col >= 0, col < tableDims.cols,
+                          let cid = try? cellID(row: row, col: col, dims: tableDims, body: sheet.body),
+                          var cell = sheet.body.blocks[cid] else { continue }
+                    let text = plainText(for: value)
+                    cell.content = text.isEmpty ? [] : [InlineRun(text: text)]
+                    if value.isEmpty {
+                        cell.attributes.removeValue(forKey: CellValue.attributeKey)
+                    } else {
+                        cell.attributes[CellValue.attributeKey] = value.json
+                    }
+                    sheet.body.blocks[cid] = cell
+                }
+            }
+        }
+        let bottomRow = topLeftRow + max(rows.count - 1, 0)
+        let bottomCol = topLeftCol + max((rows.first?.count ?? 1) - 1, 0)
+        return RangeRef(
+            topLeft: CellAddr(col: max(0, topLeftCol), row: max(0, topLeftRow)),
+            bottomRight: CellAddr(col: max(0, bottomCol), row: max(0, bottomRow))
+        )
+    }
+
+    /// Where a pivot's output grid lands absent an explicit
+    /// `outputTopLeftRow`/`outputTopLeftCol`: the same row as the source
+    /// range's own top-left, two columns past the source range's right
+    /// edge.
+    private func outputOrigin(for definition: SheetPivotDefinition) -> (row: Int, col: Int) {
+        let row = definition.outputTopLeftRow ?? definition.topLeftRow
+        let col = definition.outputTopLeftCol ?? (definition.bottomRightCol + 2)
+        return (row, col)
+    }
+
+    /// Define (or replace) a pivot table definition and (re)compute its
+    /// output grid via `PivotTableStore.build`. A no-op (zero receipts,
+    /// zero persistence) when an EQUATABLE-identical definition (same
+    /// id, every field equal) already exists - a caller re-submitting
+    /// the unchanged definition (e.g. a UI re-save with no edits) must
+    /// not spam the receipt chain. A definition sharing an id with an
+    /// existing one but differing in some field REPLACES it (still
+    /// `.definePivot`, not `.updatePivot` - there is no automatic-
+    /// recompute trigger yet that `.updatePivot` would distinguish from
+    /// this explicit define/redefine call).
+    public func definePivot(_ definition: SheetPivotDefinition, for sheetID: UUID) async throws -> Sheet {
+        var sheet = try await loadOrFail(id: sheetID)
+        try guardUnlocked(sheet)
+        if let existing = sheet.effectivePivotDefinitions.first(where: { $0.id == definition.id }),
+           existing == definition {
+            return sheet
+        }
+        if sheet.effectivePivotDefinitions.contains(where: { $0.id == definition.id }) {
+            sheet = sheet.removingPivotDefinition(definition.id)
+        }
+        sheet = sheet.addingPivotDefinition(definition)
+
+        let grid = try PivotTableStore.build(sheet: sheet, definition: definition)
+        let origin = outputOrigin(for: definition)
+        let outputRange = writingGrid(grid.rows, into: &sheet, topLeftRow: origin.row, topLeftCol: origin.col)
+
+        sheet.updatedAt = Date()
+        _ = try await upsert(sheet)
+        try await appendReceipt(
+            entityID: sheetID,
+            receiptType: SheetReceiptType.definePivot.rawValue,
+            payload: [
+                "id": .string(definition.id.uuidString),
+                "sourceHash": .string(definition.sourceRangeRef?.description ?? ""),
+                "outputRange": .string(outputRange.description),
+                "rowCount": .number(Double(grid.rowCount)),
+                "columnCount": .number(Double(grid.columnCount)),
+            ]
+        )
+        return sheet
+    }
+
+    /// Remove a pivot table definition. A no-op (zero receipts) when
+    /// `id` doesn't name a definition on this sheet. Leaves any
+    /// previously-written output-range cells as-is (clearing them is out
+    /// of P2a scope).
+    public func removePivot(_ id: UUID, for sheetID: UUID) async throws -> Sheet {
+        var sheet = try await loadOrFail(id: sheetID)
+        try guardUnlocked(sheet)
+        guard sheet.effectivePivotDefinitions.contains(where: { $0.id == id }) else { return sheet }
+        sheet = sheet.removingPivotDefinition(id)
+        sheet.updatedAt = Date()
+        _ = try await upsert(sheet)
+        try await appendReceipt(
+            entityID: sheetID,
+            receiptType: SheetReceiptType.removePivot.rawValue,
+            payload: ["id": .string(id.uuidString)]
+        )
+        return sheet
+    }
+
+    /// Explicitly refresh a pivot's output grid against the sheet's
+    /// current data. Throws `SheetStoreError.pivotNotFound` when `id`
+    /// doesn't name a definition on this sheet (an explicit user action
+    /// against a specific pivot, unlike `definePivot`'s create-or-
+    /// replace). A no-op (zero receipts) when the newly-computed grid is
+    /// cell-for-cell identical to what is currently written at the
+    /// output range - "identical-grid refresh = no-op" per the design
+    /// contract.
+    public func refreshPivot(id: UUID, for sheetID: UUID) async throws -> Sheet {
+        var sheet = try await loadOrFail(id: sheetID)
+        try guardUnlocked(sheet)
+        guard let definition = sheet.effectivePivotDefinitions.first(where: { $0.id == id }) else {
+            throw SheetStoreError.pivotNotFound(id: id)
+        }
+        let grid = try PivotTableStore.build(sheet: sheet, definition: definition)
+        let origin = outputOrigin(for: definition)
+
+        let unchanged = grid.rows.enumerated().allSatisfy { rOffset, rowValues in
+            rowValues.enumerated().allSatisfy { cOffset, value in
+                sheet.cellValue(row: origin.row + rOffset, col: origin.col + cOffset) == value
+            }
+        }
+        guard !unchanged else { return sheet }
+
+        writingGrid(grid.rows, into: &sheet, topLeftRow: origin.row, topLeftCol: origin.col)
+        sheet.updatedAt = Date()
+        _ = try await upsert(sheet)
+        try await appendReceipt(
+            entityID: sheetID,
+            receiptType: SheetReceiptType.refreshPivot.rawValue,
+            payload: [
+                "id": .string(id.uuidString),
+                "rowCount": .number(Double(grid.rowCount)),
+                "columnCount": .number(Double(grid.columnCount)),
+            ]
+        )
+        return sheet
+    }
+
+    // MARK: - Subtotals (P2-A 2.7)
+    //
+    // Row-insertion/deletion primitives that mirror `insertRow`/
+    // `deleteRow`'s own grid-mutation block exactly, but perform NO
+    // upsert and append NO receipt of their own - `applySubtotals`/
+    // `removeSubtotals` apply potentially many of these under ONE
+    // upsert + ONE receipt, which the public `insertRow`/`deleteRow`
+    // (each individually receipted) cannot do.
+
+    /// Inserts one new row at `index`, pre-populated per-column from
+    /// `cellTexts` (a subtotal summary row is not blank - see
+    /// `SubtotalRowInsertion.cellTexts`'s own doc comment).
+    private func insertingRowInPlace(in sheet: inout Sheet, at index: Int, cellTexts: [Int: String] = [:]) throws {
+        guard let tableID = primaryTableID(of: sheet.body),
+              var table = sheet.body.blocks[tableID] else {
+            throw SheetStoreError.noTable(sheetID: sheet.id)
+        }
+        let rows = Int(table.attributes["rows"]?.numberValue ?? 0)
+        let cols = Int(table.attributes["cols"]?.numberValue ?? 0)
+        guard index >= 0, index <= rows else {
+            throw SheetStoreError.rowOutOfBounds(index: index, rows: rows)
+        }
+        let newCellIDs: [UUID] = (0..<cols).map { _ in UUID() }
+        for (col, id) in newCellIDs.enumerated() {
+            let columnType = col < sheet.columns.count ? sheet.columns[col].type : .text
+            sheet.body.blocks[id] = classifiedCellBlock(text: cellTexts[col] ?? "", columnType: columnType)
+        }
+        let insertAt = index * cols
+        table.children.insert(contentsOf: newCellIDs, at: insertAt)
+        table.attributes["rows"] = .number(Double(rows + 1))
+        sheet.body.blocks[tableID] = table
+    }
+
+    /// Deletes the row at `index`. Mirrors `deleteRow`'s own
+    /// grid-mutation block; see `insertingRowInPlace` above.
+    private func deletingRowInPlace(in sheet: inout Sheet, at index: Int) throws {
+        guard let tableID = primaryTableID(of: sheet.body),
+              var table = sheet.body.blocks[tableID] else {
+            throw SheetStoreError.noTable(sheetID: sheet.id)
+        }
+        let rows = Int(table.attributes["rows"]?.numberValue ?? 0)
+        let cols = Int(table.attributes["cols"]?.numberValue ?? 0)
+        guard index >= 0, index < rows else {
+            throw SheetStoreError.rowOutOfBounds(index: index, rows: rows)
+        }
+        let start = index * cols
+        let toRemove = Array(table.children[start..<(start + cols)])
+        table.children.removeSubrange(start..<(start + cols))
+        table.attributes["rows"] = .number(Double(rows - 1))
+        sheet.body.blocks[tableID] = table
+        for id in toRemove { sheet.body.blocks.removeValue(forKey: id) }
+    }
+
+    /// Removes every row currently tracked in
+    /// `sheet.effectiveSubtotalRowIndices` (descending order, so earlier
+    /// deletions never invalidate a later target index) and clears the
+    /// three subtotal-related fields. No upsert, no receipt - shared by
+    /// `applySubtotals` (when `descriptor.replaceExisting`) and
+    /// `removeSubtotals`, each of which persists + receipts once.
+    private func strippingSubtotals(from sheet: Sheet) throws -> Sheet {
+        var updated = sheet
+        for index in updated.effectiveSubtotalRowIndices.sorted(by: >) {
+            try deletingRowInPlace(in: &updated, at: index)
+            updated = adjustFormulas(in: updated, for: .deleteRows(at: index, count: 1))
+        }
+        updated.rowOutlineLevels = nil
+        updated.outlineSummaryBelow = nil
+        updated.subtotalRowIndices = nil
+        return updated
+    }
+
+    /// Group `sheet` by `descriptor.groupByColumn` and insert a
+    /// `=SUBTOTAL(...)` summary row per group (plus a grand total) via
+    /// `SubtotalEngine.plan`. When `descriptor.replaceExisting`, any
+    /// subtotal structure already on the sheet is stripped first (NOT
+    /// separately receipted - see `strippingSubtotals`). A no-op (zero
+    /// receipts, zero persistence) when the resulting plan has nothing
+    /// to insert (e.g. an empty sheet, or an empty
+    /// `perColumnFunctions`).
+    public func applySubtotals(_ descriptor: SubtotalDescriptor, for sheetID: UUID) async throws -> Sheet {
+        var sheet = try await loadOrFail(id: sheetID)
+        try guardUnlocked(sheet)
+        if descriptor.replaceExisting {
+            sheet = try strippingSubtotals(from: sheet)
+        }
+        let plan = SubtotalEngine.plan(for: sheet, descriptor: descriptor)
+        guard !plan.insertions.isEmpty else { return sheet }
+
+        // Apply DESCENDING (`SubtotalRowInsertion.beforeOriginalRow`'s
+        // own documented contract): every insertion's `beforeOriginalRow`
+        // is always the correct raw row index to insert at, regardless
+        // of what already happened earlier in this loop, precisely
+        // because only LARGER-or-equal targets have been applied so far.
+        for insertion in plan.insertions.reversed() {
+            try insertingRowInPlace(in: &sheet, at: insertion.beforeOriginalRow, cellTexts: insertion.cellTexts)
+            sheet = adjustFormulas(in: sheet, for: .insertRows(at: insertion.beforeOriginalRow, count: 1))
+        }
+
+        // Re-key existing rows to their post-insertion index: every
+        // original row shifts down by however many insertions targeted
+        // a position at or before its own original index.
+        var newOutlineLevels: [Int: Int] = [:]
+        for (originalRow, level) in plan.existingRowLevels {
+            let shift = plan.insertions.filter { $0.beforeOriginalRow <= originalRow }.count
+            newOutlineLevels[originalRow + shift] = level
+        }
+        // Each insertion's own final index: `plan.insertions` is sorted
+        // ascending by `beforeOriginalRow` (its own documented
+        // contract), so the i-th insertion in that ascending order lands
+        // `i` positions past its own original target - see this
+        // method's wiring notes for the worked derivation.
+        var newSubtotalRowIndices: Set<Int> = []
+        for (i, insertion) in plan.insertions.enumerated() {
+            let finalIndex = insertion.beforeOriginalRow + i
+            newOutlineLevels[finalIndex] = insertion.outlineLevel
+            newSubtotalRowIndices.insert(finalIndex)
+        }
+
+        sheet.rowOutlineLevels = newOutlineLevels
+        sheet.outlineSummaryBelow = descriptor.summaryBelow
+        sheet.subtotalRowIndices = newSubtotalRowIndices
+        sheet.updatedAt = Date()
+        _ = try await upsert(sheet)
+        try await appendReceipt(
+            entityID: sheetID,
+            receiptType: SheetReceiptType.applySubtotals.rawValue,
+            payload: [
+                "groupByColumn": .number(Double(descriptor.groupByColumn)),
+                "groupCount": .number(Double(plan.groupCount)),
+                "insertedRowCount": .number(Double(plan.insertions.count)),
+                "columnFunctionCount": .number(Double(descriptor.perColumnFunctions.count)),
+                "summaryBelow": .bool(descriptor.summaryBelow),
+            ]
+        )
+        return sheet
+    }
+
+    /// Remove a previously-applied subtotal structure, restoring the
+    /// sheet to its pre-subtotal contents. A no-op (zero receipts) when
+    /// `sheet.effectiveSubtotalRowIndices` is empty.
+    public func removeSubtotals(for sheetID: UUID) async throws -> Sheet {
+        var sheet = try await loadOrFail(id: sheetID)
+        try guardUnlocked(sheet)
+        guard !sheet.effectiveSubtotalRowIndices.isEmpty else { return sheet }
+        let removedRowCount = sheet.effectiveSubtotalRowIndices.count
+        sheet = try strippingSubtotals(from: sheet)
+        sheet.updatedAt = Date()
+        _ = try await upsert(sheet)
+        try await appendReceipt(
+            entityID: sheetID,
+            receiptType: SheetReceiptType.removeSubtotals.rawValue,
+            payload: ["removedRowCount": .number(Double(removedRowCount))]
+        )
+        return sheet
+    }
+
+    /// Toggle an outline group's collapsed/expanded state.
+    /// `summaryRowIndex` must currently be a level > 0 key in
+    /// `sheet.effectiveRowOutlineLevels` (a no-op otherwise). The rows
+    /// toggled are the contiguous run immediately preceding (when
+    /// `sheet.effectiveOutlineSummaryBelow`) or following (otherwise)
+    /// `summaryRowIndex` whose own outline level is exactly one deeper -
+    /// a no-op when that run is empty. "Toggle" flips the WHOLE run
+    /// together: if every row in the run is already hidden, this reveals
+    /// all of them (`collapsed` reports `false`); otherwise it hides all
+    /// of them (`collapsed` reports `true`) - a single well-defined new
+    /// state for the group, not an independent per-row flip.
+    public func toggleOutline(summaryRowIndex: Int, for sheetID: UUID) async throws -> Sheet {
+        var sheet = try await loadOrFail(id: sheetID)
+        try guardUnlocked(sheet)
+        guard let summaryLevel = sheet.effectiveRowOutlineLevels[summaryRowIndex], summaryLevel > 0 else {
+            return sheet
+        }
+        let detailLevel = summaryLevel + 1
+        var detailRows: [Int] = []
+        if sheet.effectiveOutlineSummaryBelow {
+            var row = summaryRowIndex - 1
+            while row >= 0, sheet.effectiveRowOutlineLevels[row] == detailLevel {
+                detailRows.append(row)
+                row -= 1
+            }
+        } else {
+            var row = summaryRowIndex + 1
+            let rowCount = sheet.rowCount
+            while row < rowCount, sheet.effectiveRowOutlineLevels[row] == detailLevel {
+                detailRows.append(row)
+                row += 1
+            }
+        }
+        guard !detailRows.isEmpty else { return sheet }
+
+        var hidden = sheet.effectiveManuallyHiddenRows
+        let isCurrentlyCollapsed = detailRows.allSatisfy { hidden.contains($0) }
+        let collapsed = !isCurrentlyCollapsed
+        if collapsed {
+            hidden.formUnion(detailRows)
+        } else {
+            hidden.subtract(detailRows)
+        }
+        sheet.manuallyHiddenRows = hidden
+        sheet.updatedAt = Date()
+        _ = try await upsert(sheet)
+        try await appendReceipt(
+            entityID: sheetID,
+            receiptType: SheetReceiptType.toggleOutline.rawValue,
+            payload: [
+                "summaryRowIndex": .number(Double(summaryRowIndex)),
+                "collapsed": .bool(collapsed),
+                "hiddenRowCount": .number(Double(detailRows.count)),
+            ]
+        )
+        return sheet
+    }
+
+    // MARK: - Solver (P2-A 2.6)
+
+    /// Commit a converged goal-seek result: write the resolved variable
+    /// value into `request.variableCell`. A no-op (zero receipts) when
+    /// `result.status != .converged` - the store does not trust the
+    /// caller alone to have checked this (defense in depth; the tool
+    /// layer already refuses to call this for a non-converged result).
+    public func applyGoalSeek(_ request: GoalSeekRequest, result: GoalSeekResult, for sheetID: UUID) async throws -> Sheet {
+        var sheet = try await loadOrFail(id: sheetID)
+        try guardUnlocked(sheet)
+        guard result.status == .converged else { return sheet }
+        try writingCellValue(
+            String(result.resolvedValue),
+            row: request.variableCell.row, col: request.variableCell.col,
+            in: &sheet
+        )
+        sheet.updatedAt = Date()
+        _ = try await upsert(sheet)
+        let outcome = SolverEngine.goalSeekReceiptPayload(request: request, result: result)
+        try await appendReceipt(entityID: sheetID, receiptType: outcome.receiptType, payload: outcome.payload)
+        return sheet
+    }
+
+    /// Commit an optimal solver run: write every resolved variable
+    /// value into its cell, all under ONE upsert. A no-op (zero
+    /// receipts) when `result.status != .optimal` - same defense-in-
+    /// depth reasoning as `applyGoalSeek`.
+    public func applySolverRun(_ model: SolverModel, result: SolverResult, for sheetID: UUID) async throws -> Sheet {
+        var sheet = try await loadOrFail(id: sheetID)
+        try guardUnlocked(sheet)
+        guard result.status == .optimal else { return sheet }
+        for cell in model.variableCells {
+            let value = result.variableValues[cell] ?? 0
+            try writingCellValue(String(value), row: cell.row, col: cell.col, in: &sheet)
+        }
+        sheet.updatedAt = Date()
+        _ = try await upsert(sheet)
+        let outcome = SolverEngine.solverReceiptPayload(model: model, result: result)
+        try await appendReceipt(entityID: sheetID, receiptType: outcome.receiptType, payload: outcome.payload)
+        return sheet
+    }
+
     // MARK: - Query (sort/filter)
 
     /// Sort the primary table's rows by `conditions` (see
@@ -1071,6 +1555,11 @@ public enum SheetStoreError: Error, Sendable, Equatable {
     case cannotDeleteLastRow
     case cannotDeleteLastColumn
     case sheetProtected(sheetID: UUID, reason: String?)
+    /// `refreshPivot(id:for:)` was called against an id that names no
+    /// pivot definition on the sheet - an explicit user action against a
+    /// specific pivot, unlike `definePivot`'s create-or-replace, so this
+    /// is a real error rather than a no-op (P2-A 2.2a wiring).
+    case pivotNotFound(id: UUID)
 }
 
 // JSONValue accessors are provided by TesseraTool.swift; no local extension.
