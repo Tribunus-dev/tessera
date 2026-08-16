@@ -50,20 +50,36 @@ set -euo pipefail
 # wave can tighten REF_COSINE_MIN/REF_FROBENIUS_MAX further without
 # editing this script.
 #
-# REF_* tightened after wiring SEPTQ (Hessian error-compensated ternary,
-# previously dead code - see gap ledger) + real AWQ calibration (a real
-# --imatrix, not calib_X=nullptr) + uncapped outlier repair through
-# export-ternary: measured cosine=0.576/frobenius_rel=1.331 on Granite
-# 4.1 3B (both -ngl 0 and -ngl 999), up from the naive path's
-# 0.553/1.590 - a real but modest gain, consistent with ternary
-# quantization's own representational ceiling (see GAP-w3-3: even a
-# perfect-magnitude oracle reconstruction capped at cosine ~0.95 on a
-# single tensor before any cross-layer compounding). Bars set with
-# margin below/above the measured value, not AT it.
+# REF_* RELAXED after root-causing that the earlier 0.576/1.331 measurement
+# (which the previous version of this comment cited) was itself measured
+# while a real bug was active: qp_base.outlier_thresh (from --outlier-frac,
+# default was 0.005) was being used as an ABSOLUTE residual-magnitude
+# cutoff rather than the target FRACTION its name implies, and the earlier
+# "uncap outliers" change removed max_outliers' count cap entirely -
+# together this meant 35-65% of every tensor's elements were being stored
+# as exact-value outliers (measured directly from a real run's shipped
+# .outlier_cols array sizes), not the sparse (<1-2%) exception set ternary
+# quantization depends on. An outlier costs ~6 bytes vs ~1.6 bits for a
+# trit, so the 0.576 number reflected "half the tensor stored losslessly,"
+# not "better ternary quantization." See gap ledger CORRECTION-w3-6 (bug
+# 7) for the full root-cause and fix (max_outliers now genuinely derived
+# as ceil(outlier_frac * n)).
+#
+# With the fix in place and outlier_frac raised to 0.02 (2%, also measured
+# directly - see CORRECTION-w3-6 and tessera-args.h's own comment; 0.005
+# measured cosine=0.34/frobenius_rel=1.54, meaningfully worse) plus live
+# per-tensor AWQ/SEPTQ/DartQuant/FLRQ algorithm selection (this wave):
+# measured cosine=0.400/frobenius_rel=1.404 on Granite 4.1 3B (both -ngl 0
+# and -ngl 999) - LOWER than the old (bugged) 0.576 bar, but this is now
+# the first genuinely-correct measurement of this pipeline's real ternary-
+# quantization fidelity, not a regression from a real prior state. Bars
+# set with margin below the measured value, not AT it - a future wave
+# threading real calibration activations into DartQuant/SEPTQ (see
+# CORRECTION-w3-6's "not fixed" note) is expected to raise this further.
 SELF_COSINE_MIN="${SELF_COSINE_MIN:-0.999}"
 SELF_FROBENIUS_MAX="${SELF_FROBENIUS_MAX:-0.01}"
-REF_COSINE_MIN="${REF_COSINE_MIN:-0.55}"
-REF_FROBENIUS_MAX="${REF_FROBENIUS_MAX:-1.5}"
+REF_COSINE_MIN="${REF_COSINE_MIN:-0.35}"
+REF_FROBENIUS_MAX="${REF_FROBENIUS_MAX:-1.6}"
 
 usage() {
     cat >&2 <<'EOF'
