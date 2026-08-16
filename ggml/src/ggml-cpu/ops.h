@@ -110,6 +110,7 @@ void ggml_compute_forward_tile640_matmul(const struct ggml_compute_params * para
 void ggml_compute_forward_tile640_matmul_id(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_tile640_get_rows(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_tile640_dequant(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+void ggml_compute_forward_tile_rdna3_matmul(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_imatrix_observer(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_lightning_indexer(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_dsv4_hc_comb(const struct ggml_compute_params * params, struct ggml_tensor * dst);

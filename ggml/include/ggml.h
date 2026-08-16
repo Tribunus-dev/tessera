@@ -600,6 +600,12 @@ extern "C" {
         GGML_OP_TILE1024_MATMUL_ID,
         GGML_OP_TILE1024_GET_ROWS,
         GGML_OP_TILE1024_DEQUANT,
+        // W3 task 3.7: AMD RDNA3 native-WMMA tile matmul. CPU reference
+        // always runs (ggml_compute_forward_tile_rdna3_matmul); the HIP
+        // backend additionally dispatches to the WMMA kernel when
+        // TS_TILE_GPU != 0 (ggml-cuda/tile-amd-rdna3.cu, mirrors the
+        // TILE640_MATMUL_INTERLEAVED GPU-dispatch pattern).
+        GGML_OP_TILE_RDNA3_MATMUL,
         GGML_OP_IMATRIX_OBSERVER,
 
         GGML_OP_UNARY,
@@ -2814,6 +2820,19 @@ extern "C" {
             int64_t               ne1,
             int64_t               ne2,
             int64_t               ne3);
+
+    // W3 task 3.7: AMD RDNA3 native-WMMA tile matmul. A is a 3-tensor
+    // cluster: A_packed (I8, symmetric linear quant), A_page_scales (F16,
+    // one per 256-element page), A_lane_scales (I8, one per 8-element
+    // lane, [1,127]) - see docs/amd-tile-format-spec.md 3.4. No outlier
+    // correction (unlike Tile640/Tile1024). B is activations, [in_dim,
+    // n_tokens, ...]. Output: F32, [out_dim, n_tokens, ...].
+    GGML_API struct ggml_tensor * ggml_tile_rdna3_matmul(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * A_packed,
+            struct ggml_tensor  * A_page_scales,
+            struct ggml_tensor  * A_lane_scales,
+            struct ggml_tensor  * B);
 
     // Graph-resident importance-matrix observer. The output is F32
     // [4*channels + 1, experts], where each expert row contains per-channel

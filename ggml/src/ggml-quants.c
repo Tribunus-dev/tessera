@@ -878,6 +878,89 @@ void dequantize_row_tessera_t1024_with_meta(const void * GGML_RESTRICT packed, c
     }
 }
 
+// W3 task 3.7 (amd-tile-format-spec.md 3.4): AMD RDNA3 tile. Same 2-level
+// page/lane hierarchical scale as Tile1024 above, but the packed element
+// is a real signed int8 magnitude value (symmetric linear quant, range
+// [-127,127]) rather than a 2-bit ternary trit - matches criterion 19's
+// amd.tile.quant="i8". Buffer layout: [i8 packed][f16 page_scales]
+// [i8 lane_scales].
+void quantize_row_tessera_t_rdna3_ref(const float * GGML_RESTRICT x, void * GGML_RESTRICT y, int64_t k) {
+    assert(k >= 0);
+    const int pages = (int)((k + TILE_AMD_RDNA3_PAGE_SIZE - 1) / TILE_AMD_RDNA3_PAGE_SIZE);
+
+    int8_t   * packed      = (int8_t *) y;
+    uint16_t * page_scales = (uint16_t *) (packed + (size_t) pages * TILE_AMD_RDNA3_PAGE_SIZE);
+    int8_t   * lane_scales = (int8_t *) (page_scales + pages);
+
+    for (int p = 0; p < pages; p++) {
+        const int base     = p * TILE_AMD_RDNA3_PAGE_SIZE;
+        const int page_len = (base + TILE_AMD_RDNA3_PAGE_SIZE <= k) ? TILE_AMD_RDNA3_PAGE_SIZE : (int) (k - base);
+
+        float page_max = 0.0f;
+        for (int j = 0; j < page_len; j++) {
+            const float a = fabsf(x[base + j]);
+            if (a > page_max) page_max = a;
+        }
+        page_scales[p] = GGML_FP32_TO_FP16(page_max);
+
+        for (int l = 0; l < TILE_AMD_RDNA3_LANES_PER_PAGE; l++) {
+            const int col0    = base + l * TILE_AMD_RDNA3_LANE_SIZE;
+            const int lane_len = (col0 + TILE_AMD_RDNA3_LANE_SIZE <= k) ? TILE_AMD_RDNA3_LANE_SIZE
+                                : (col0 < k ? (int) (k - col0) : 0);
+
+            float lane_max = 0.0f;
+            for (int j = 0; j < lane_len; j++) {
+                const float a = fabsf(x[col0 + j]);
+                if (a > lane_max) lane_max = a;
+            }
+
+            int8_t ls = 0;
+            if (page_max > 0.0f && lane_max > 0.0f) {
+                ls = (int8_t) roundf(127.0f * lane_max / page_max);
+                if (ls > 127) ls = 127;
+                if (ls < 1)   ls = 1; // nonzero lane must not round down to a zero scale
+            }
+            lane_scales[p * TILE_AMD_RDNA3_LANES_PER_PAGE + l] = ls;
+
+            const float scale = (ls > 0) ? (page_max * (ls * (1.0f / 127.0f))) : 0.0f;
+            for (int j = 0; j < TILE_AMD_RDNA3_LANE_SIZE; j++) {
+                const int col = col0 + j;
+                int8_t q = 0;
+                if (col < k && scale > 0.0f) {
+                    float v = x[col] / scale;
+                    if (v > 127.0f)  v = 127.0f;
+                    if (v < -127.0f) v = -127.0f;
+                    q = (int8_t) roundf(v);
+                }
+                packed[base + l * TILE_AMD_RDNA3_LANE_SIZE + j] = q;
+            }
+        }
+    }
+}
+
+void dequantize_row_tessera_t_rdna3(const void * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k) {
+    assert(k >= 0);
+    const int pages = (int) ((k + TILE_AMD_RDNA3_PAGE_SIZE - 1) / TILE_AMD_RDNA3_PAGE_SIZE);
+
+    const int8_t   * packed      = (const int8_t *) x;
+    const uint16_t * page_scales = (const uint16_t *) (packed + (size_t) pages * TILE_AMD_RDNA3_PAGE_SIZE);
+    const int8_t   * lane_scales = (const int8_t *) (page_scales + pages);
+
+    for (int p = 0; p < pages; p++) {
+        const float page_max = GGML_FP16_TO_FP32(page_scales[p]);
+        for (int l = 0; l < TILE_AMD_RDNA3_LANES_PER_PAGE; l++) {
+            const float scale = page_max * (lane_scales[p * TILE_AMD_RDNA3_LANES_PER_PAGE + l] * (1.0f / 127.0f));
+            const int   base  = p * TILE_AMD_RDNA3_PAGE_SIZE;
+            const int   col0  = base + l * TILE_AMD_RDNA3_LANE_SIZE;
+            for (int j = 0; j < TILE_AMD_RDNA3_LANE_SIZE; j++) {
+                const int col = col0 + j;
+                if (col >= k) break;
+                y[col] = packed[base + l * TILE_AMD_RDNA3_LANE_SIZE + j] * scale;
+            }
+        }
+    }
+}
+
 void quantize_row_q2_0_ref(const float * GGML_RESTRICT x, block_q2_0 * GGML_RESTRICT y, int64_t k) {
     static const int qk = QK2_0;
 

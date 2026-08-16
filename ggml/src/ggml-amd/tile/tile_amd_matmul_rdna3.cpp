@@ -31,55 +31,10 @@
 // is verified bit-for-bit against the CPU reference at M=N=K=16 in task
 // 3.7 (master-plan criterion 20), not trusted on documentation alone.
 
-#include <hip/hip_runtime.h>
-#include <hip/hip_bf16.h>
+#include "tile_amd_matmul_rdna3.cuh"
 
-#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-
-typedef short __attribute__((ext_vector_type(16))) ts_wmma_short16;
-typedef float __attribute__((ext_vector_type(8)))  ts_wmma_float8;
-
-// One wave (32 threads) computes one 16x16 output tile, looping over the
-// K dimension in 16-wide sub-tiles and accumulating in registers.
-__global__ void ts_tile_amd_matmul_rdna3_kernel(
-        const __hip_bfloat16 * __restrict__ A, // (M, K) row-major
-        const __hip_bfloat16 * __restrict__ B, // (K, N) row-major
-        float * __restrict__ C,                // (M, N) row-major
-        int M, int N, int K) {
-    (void) M; // M is only needed by the launch grid, not the tile body
-    const int tile_row = blockIdx.y; // which 16-row block of the M dim
-    const int tile_col = blockIdx.x; // which 16-col block of the N dim
-    const int lane = threadIdx.x & 15;
-    const int half = threadIdx.x >> 4;
-
-    ts_wmma_float8 acc = {0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
-
-    const int num_k_tiles = K >> 4; // K/16, guaranteed exact by the launch guard
-    for (int kt = 0; kt < num_k_tiles; ++kt) {
-        ts_wmma_short16 a_frag;
-        ts_wmma_short16 b_frag;
-        const int a_row = tile_row * 16 + lane;
-        const int b_col = tile_col * 16 + lane;
-#pragma unroll
-        for (int ele = 0; ele < 16; ++ele) {
-            const int a_col = kt * 16 + ele;
-            const int b_row = kt * 16 + ele;
-            a_frag[ele] = *reinterpret_cast<const short *>(&A[(int64_t) a_row * K + a_col]);
-            b_frag[ele] = *reinterpret_cast<const short *>(&B[(int64_t) b_row * N + b_col]);
-        }
-        acc = __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32(a_frag, b_frag, acc);
-    }
-
-#pragma unroll
-    for (int ele = 0; ele < 8; ++ele) {
-        const int row = ele * 2 + half;
-        const int g_row = tile_row * 16 + row;
-        const int g_col = tile_col * 16 + lane;
-        C[(int64_t) g_row * N + g_col] = acc[ele];
-    }
-}
 
 // TS_TILE_GPU=0 forces the CPU scalar-reference fallback (checked once,
 // cached - env vars don't change mid-process). Never aborts: any launch

@@ -2116,6 +2116,10 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
             {
                 ggml_compute_forward_tile640_dequant(params, tensor);
             } break;
+        case GGML_OP_TILE_RDNA3_MATMUL:
+            {
+                ggml_compute_forward_tile_rdna3_matmul(params, tensor);
+            } break;
         case GGML_OP_IMATRIX_OBSERVER:
             {
                 ggml_compute_forward_imatrix_observer(params, tensor);
@@ -2321,6 +2325,7 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
         case GGML_OP_TILE640_MATMUL_ID:
         case GGML_OP_TILE640_GET_ROWS:
         case GGML_OP_TILE640_DEQUANT:
+        case GGML_OP_TILE_RDNA3_MATMUL:
         case GGML_OP_IMATRIX_OBSERVER:
         case GGML_OP_DSV4_HC_COMB:
         case GGML_OP_DSV4_HC_PRE:

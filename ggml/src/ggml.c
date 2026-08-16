@@ -999,18 +999,15 @@ static const struct ggml_type_traits type_traits[GGML_TYPE_COUNT] = {
     [60] = { .type_name = "TYPE_RESERVED_60", .blck_size = 0, .type_size = 0, .is_quantized = false },
     [61] = { .type_name = "TYPE_RESERVED_61", .blck_size = 0, .type_size = 0, .is_quantized = false },
     [62] = { .type_name = "TYPE_RESERVED_62", .blck_size = 0, .type_size = 0, .is_quantized = false },
-    // GGML_TYPE_TESSERA_T_RDNA3 = 63: enum landed here (W3 task 3.3), but
-    // kept gap-safe (blck_size=0, no to_float) until task 3.7 lands the CPU
-    // reference dequant row function - wiring blck_size to a real nonzero
-    // value before to_float exists would let a tensor of this type pass
-    // gguf.cpp's loader gate and then null-deref on first dequant attempt,
-    // which is strictly worse than the current "loader refuses it" gap
-    // behavior. Task 3.7 turns this into a real entry in one edit.
+    // GGML_TYPE_TESSERA_T_RDNA3 = 63: gap-safe placeholder promoted to a
+    // real entry now that task 3.7 lands dequantize_row_tessera_t_rdna3.
     [GGML_TYPE_TESSERA_T_RDNA3] = {
         .type_name                = "tessera_t_rdna3",
-        .blck_size                = 0,
-        .type_size                = 0,
-        .is_quantized             = false,
+        .blck_size                = TILE_AMD_RDNA3_PAGE_SIZE,
+        .type_size                = sizeof(int32_t), // logical; the pack is a 3-tensor cluster
+        .is_quantized             = true,
+        .to_float                 = (ggml_to_float_t) dequantize_row_tessera_t_rdna3,
+        .from_float_ref           = (ggml_from_float_t) quantize_row_tessera_t_rdna3_ref,
     },
 };
 
@@ -1155,6 +1152,7 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "DSV4_HC_PRE",
     "DSV4_HC_POST",
     "TILE640_MATMUL",
+    "TILE640_MATMUL_INTERLEAVED",
     "TILE640_MATMUL_ID",
     "TILE640_GET_ROWS",
     "TILE640_DEQUANT",
@@ -1166,6 +1164,7 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "TILE1024_MATMUL_ID",
     "TILE1024_GET_ROWS",
     "TILE1024_DEQUANT",
+    "TILE_RDNA3_MATMUL",
     "IMATRIX_OBSERVER",
 
     "UNARY",
@@ -1184,7 +1183,7 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "GLU",
 };
 
-static_assert(GGML_OP_COUNT == 116, "GGML_OP_COUNT != 116");
+static_assert(GGML_OP_COUNT == 117, "GGML_OP_COUNT != 117");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -1283,9 +1282,20 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "dsv4_hc_pre(x, weights)",
     "dsv4_hc_post(x, residual, post, comb)",
     "tile640_matmul(A, scales, outliers, B)",
+    "tile640_matmul_interleaved(A, scales, outliers, B)",
     "tile640_matmul_id(A, scales, outliers, B, ids)",
     "tile640_get_rows(A, scales, outliers, ids)",
     "tile640_dequant(A, scales, outliers)",
+    "tile512_matmul(A, scales, outliers, B)",
+    "tile512_matmul_id(A, scales, outliers, B, ids)",
+    "tile512_get_rows(A, scales, outliers, ids)",
+    "tile512_dequant(A, scales, outliers)",
+    "tile1024_matmul(A, scales, outliers, B)",
+    "tile1024_matmul_id(A, scales, outliers, B, ids)",
+    "tile1024_get_rows(A, scales, outliers, ids)",
+    "tile1024_dequant(A, scales, outliers)",
+    "tile_rdna3_matmul(A_packed, page_scales, lane_scales, B)",
+    "imatrix_observer(activations, ids, weight_anchor)",
 
     "unary(x)",
 
@@ -1303,7 +1313,7 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "glu(x)",
 };
 
-static_assert(GGML_OP_COUNT == 116, "GGML_OP_COUNT != 116");
+static_assert(GGML_OP_COUNT == 117, "GGML_OP_COUNT != 117");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -7005,6 +7015,57 @@ struct ggml_tensor * ggml_tile1024_dequant(
     result->src[4] = A_outlier_cols;
     result->src[5] = A_outlier_vals;
     ggml_set_op_params_i32(result, 0, (int32_t) ggml_nelements(result));
+    return result;
+}
+
+// W3 task 3.7 (amd-tile-format-spec.md 3.4): AMD RDNA3 native-WMMA tile
+// matmul. A is a 3-tensor cluster (packed i8 + page_scales f16 +
+// lane_scales i8 - no outlier correction, unlike Tile640/Tile1024's
+// sparse-outlier design; the spec's RDNA3 cluster layout doesn't include
+// one). CPU forward always dequantizes A and does a scalar reference
+// matmul (ggml_compute_forward_tile_rdna3_matmul); the HIP backend
+// additionally dispatches to the WMMA kernel when TS_TILE_GPU != 0
+// (ggml-cuda/tile-amd-rdna3.cu).
+struct ggml_tensor * ggml_tile_rdna3_matmul(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * A_packed,
+        struct ggml_tensor  * A_page_scales,
+        struct ggml_tensor  * A_lane_scales,
+        struct ggml_tensor  * B) {
+    GGML_ASSERT(A_packed->type      == GGML_TYPE_I8);
+    GGML_ASSERT(A_page_scales->type == GGML_TYPE_F16);
+    GGML_ASSERT(A_lane_scales->type == GGML_TYPE_I8);
+    GGML_ASSERT(B->type == GGML_TYPE_F16 || B->type == GGML_TYPE_F32);
+
+    GGML_ASSERT(ggml_is_contiguous(A_packed));
+    GGML_ASSERT(ggml_is_contiguous(A_page_scales));
+    GGML_ASSERT(ggml_is_contiguous(A_lane_scales));
+    GGML_ASSERT(ggml_is_contiguous(B));
+
+    const int64_t in_dim  = B->ne[0];
+    const int64_t pages_per_row = (in_dim + TILE_AMD_RDNA3_PAGE_SIZE - 1) / TILE_AMD_RDNA3_PAGE_SIZE;
+    GGML_ASSERT(A_page_scales->ne[0] % pages_per_row == 0);
+    const int64_t out_dim = A_page_scales->ne[0] / pages_per_row;
+    GGML_ASSERT(A_packed->ne[0] == out_dim * pages_per_row * TILE_AMD_RDNA3_PAGE_SIZE);
+    GGML_ASSERT(A_lane_scales->ne[0] == out_dim * pages_per_row * TILE_AMD_RDNA3_LANES_PER_PAGE);
+
+    const int64_t n_tokens = B->ne[1];
+    const int64_t n_batch  = B->ne[2];
+    const int64_t n_seqs   = B->ne[3];
+
+    const int64_t ne[4] = { out_dim, n_tokens, n_batch, n_seqs };
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, 4, ne);
+
+    result->op     = GGML_OP_TILE_RDNA3_MATMUL;
+    result->src[0] = A_packed;
+    result->src[1] = A_page_scales;
+    result->src[2] = A_lane_scales;
+    result->src[3] = B;
+
+    // op_params: out_dim (i32) - consumed by the forward kernel, same
+    // convention as ggml_tile640_matmul.
+    ggml_set_op_params_i32(result, 0, (int32_t) out_dim);
+
     return result;
 }
 

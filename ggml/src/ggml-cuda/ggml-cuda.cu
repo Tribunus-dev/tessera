@@ -69,6 +69,7 @@
 #include "ggml-cuda/fill.cuh"
 #include "ggml-cuda/lightning-indexer.cuh"
 #include "ggml-cuda/tile640-interleaved.cuh"
+#include "ggml-cuda/tile-amd-rdna3.cuh"
 #include "ggml.h"
 
 #include <algorithm>
@@ -2347,6 +2348,9 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
             // the graph wire-up passes non-null drafter / KV pointers in
             // src[7..]. See tile640-interleaved.cu.
             ggml_cuda_op_tile640_matmul_interleaved(ctx, dst->src[0], dst->src[6], dst);
+            break;
+        case GGML_OP_TILE_RDNA3_MATMUL:
+            ggml_cuda_op_tile_rdna3_matmul(ctx, dst->src[0], dst->src[3], dst);
             break;
         case GGML_OP_RWKV_WKV7:
             ggml_cuda_op_rwkv_wkv7(ctx, dst);
@@ -5173,6 +5177,10 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
             return true;
         case GGML_OP_LIGHTNING_INDEXER:
             return ggml_cuda_lightning_indexer_supported(dev_ctx->device, op);
+        case GGML_OP_TILE_RDNA3_MATMUL:
+            return op->src[0]->type == GGML_TYPE_I8 &&
+                (op->src[3]->type == GGML_TYPE_F16 || op->src[3]->type == GGML_TYPE_F32) &&
+                op->type == GGML_TYPE_F32;
 
         default:
             return false;

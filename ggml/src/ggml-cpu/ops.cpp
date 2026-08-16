@@ -11354,6 +11354,118 @@ void ggml_compute_forward_tile640_matmul(
     ggml_compute_forward_tile640_matmul_f32(params, dst);
 }
 
+// ggml_compute_forward_tile_rdna3_matmul
+//
+// W3 task 3.7 (amd-tile-format-spec.md 3.4; master-plan criterion 20).
+// CPU reference for the AMD RDNA3 tile: dequantize_row_tessera_t_rdna3's
+// 2-level page/lane scale, applied per-element inline (no outlier
+// correction cluster - unlike Tile640, the RDNA3 layout has none), scalar
+// float accumulate. This is the ground truth the GPU WMMA kernel
+// (ggml-amd/tile/tile_amd_matmul_rdna3.cpp, ggml-cuda/tile-amd-rdna3.cu)
+// is checked against; it does not call the GPU path itself.
+static void ggml_compute_forward_tile_rdna3_matmul_f32(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+    const ggml_tensor * A_packed      = dst->src[0];
+    const ggml_tensor * A_page_scales = dst->src[1];
+    const ggml_tensor * A_lane_scales = dst->src[2];
+    const ggml_tensor * B             = dst->src[3];
+
+    GGML_ASSERT(ggml_is_contiguous(A_packed));
+    GGML_ASSERT(ggml_is_contiguous(A_page_scales));
+    GGML_ASSERT(ggml_is_contiguous(A_lane_scales));
+    GGML_ASSERT(ggml_is_contiguous(B));
+
+    const int32_t out_dim = ggml_get_op_params_i32(dst, 0);
+    const int64_t in_dim  = B->ne[0];
+
+    constexpr int64_t PAGE_SIZE       = TILE_AMD_RDNA3_PAGE_SIZE;
+    constexpr int64_t LANE_SIZE       = TILE_AMD_RDNA3_LANE_SIZE;
+    constexpr int64_t LANES_PER_PAGE  = TILE_AMD_RDNA3_LANES_PER_PAGE;
+    const int64_t pages_per_row = (in_dim + PAGE_SIZE - 1) / PAGE_SIZE;
+
+    const int64_t n_tokens = B->ne[1];
+    const int64_t n_batch  = B->ne[2];
+    const int64_t n_seqs   = B->ne[3];
+
+    const int8_t *      packed      = (const int8_t *)      A_packed->data;
+    const ggml_fp16_t * page_scales = (const ggml_fp16_t *) A_page_scales->data;
+    const int8_t *      lane_scales = (const int8_t *)      A_lane_scales->data;
+    const char * B_data = (const char *) B->data;
+    const size_t B_element_size = ggml_element_size(B);
+    const auto load_activation = [B](const char * value) {
+        return B->type == GGML_TYPE_F32
+            ? *(const float *) value
+            : ggml_fp16_to_fp32(*(const ggml_fp16_t *) value);
+    };
+
+    const int64_t words_per_row   = pages_per_row * PAGE_SIZE;
+    const int64_t n_lanes_per_row = pages_per_row * LANES_PER_PAGE;
+
+    GGML_ASSERT((int64_t) A_packed->ne[0]      == (int64_t) out_dim * words_per_row);
+    GGML_ASSERT((int64_t) A_page_scales->ne[0] == (int64_t) out_dim * pages_per_row);
+    GGML_ASSERT((int64_t) A_lane_scales->ne[0] == (int64_t) out_dim * n_lanes_per_row);
+
+    // Output layout: [out_dim, n_tokens, n_batch, n_seqs], same convention
+    // as ggml_compute_forward_tile640_matmul_f32 above.
+    const int64_t dst_row_stride   = out_dim;
+    const int64_t dst_batch_stride = (int64_t) n_tokens * out_dim;
+    const int64_t dst_seq_stride   = (int64_t) n_batch  * n_tokens * out_dim;
+
+    const int64_t n_rows_total  = (int64_t) out_dim * n_batch * n_seqs;
+    const int64_t n_per_thread  = (n_rows_total + params->nth - 1) / params->nth;
+    const int64_t ith           = params->ith;
+    const int64_t row_start     = ith * n_per_thread;
+    const int64_t row_end       = MIN(row_start + n_per_thread, n_rows_total);
+
+    float * dst_data = (float *) dst->data;
+
+    for (int64_t idx = row_start; idx < row_end; ++idx) {
+        const int64_t i = idx % out_dim;
+        const int64_t b = (idx / out_dim) % n_batch;
+        const int64_t s = idx / (out_dim * n_batch);
+
+        const int8_t *      A_row  = packed + (int64_t) i * words_per_row;
+        const ggml_fp16_t * ps_row = page_scales + (int64_t) i * pages_per_row;
+        const int8_t *      ls_row = lane_scales + (int64_t) i * n_lanes_per_row;
+
+        const char * B_slab = B_data +
+            (int64_t) (s * n_batch + b) * n_tokens * in_dim * B_element_size;
+
+        for (int64_t j = 0; j < n_tokens; ++j) {
+            const char * B_col = B_slab + (int64_t) j * in_dim * B_element_size;
+
+            float acc = 0.0f;
+
+            for (int64_t p = 0; p < pages_per_row; ++p) {
+                const float page_max = ggml_fp16_to_fp32(ps_row[p]);
+                for (int64_t l = 0; l < LANES_PER_PAGE; ++l) {
+                    const float scale = page_max * ((float) ls_row[p * LANES_PER_PAGE + l] * (1.0f / 127.0f));
+                    const int64_t col0    = p * PAGE_SIZE + l * LANE_SIZE;
+                    const int64_t col_end = (col0 + LANE_SIZE < in_dim) ? (col0 + LANE_SIZE) : in_dim;
+
+                    for (int64_t col = col0; col < col_end; ++col) {
+                        const int8_t q = A_row[p * PAGE_SIZE + l * LANE_SIZE + (col - col0)];
+                        if (q == 0) continue;
+                        acc += ((float) q * scale) * load_activation(B_col + col * B_element_size);
+                    }
+                }
+            }
+
+            const int64_t dst_idx = s * dst_seq_stride + b * dst_batch_stride + j * dst_row_stride + i;
+            dst_data[dst_idx] = acc;
+        }
+    }
+}
+
+void ggml_compute_forward_tile_rdna3_matmul(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+    const ggml_tensor * B = dst->src[3];
+    GGML_ASSERT(B->type == GGML_TYPE_F16 || B->type == GGML_TYPE_F32);
+    ggml_compute_forward_tile_rdna3_matmul_f32(params, dst);
+}
+
 
 // ggml_compute_forward_tile640_matmul_id
 //
