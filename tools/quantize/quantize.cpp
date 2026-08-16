@@ -47,6 +47,7 @@
 #include <fstream>
 #include <filesystem>
 #include <atomic>
+#include <mutex>
 #include <thread>
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -1377,6 +1378,16 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
                     qp.use_septq     = (best.expert == TS_EXPERT_SEPTQ);
                     qp.use_flrq      = (best.expert == TS_EXPERT_FLRQ);
                     qp.use_dartquant = (best.expert == TS_EXPERT_DARTQUANT);
+
+                    static const char * expert_name[] = {"AWQ", "LRQ", "DARTQUANT", "FLRQ", "CHAMPQ", "SEPTQ"};
+                    static std::mutex log_mutex;
+                    std::lock_guard<std::mutex> lg(log_mutex);
+                    fprintf(stderr, "export-ternary: %-40s winner=%-10s t2=%.4g  (",
+                            tname.c_str(), expert_name[best.expert], best.t2);
+                    for (size_t i = 0; i < cands.size(); i++) {
+                        fprintf(stderr, "%s%s=%.4g", i ? " " : "", expert_name[cands[i].expert], cands[i].t2);
+                    }
+                    fprintf(stderr, ")\n");
                 }
             }
 
