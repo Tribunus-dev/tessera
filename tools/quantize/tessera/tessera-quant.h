@@ -77,6 +77,22 @@ void ts_pack_tile(const int8_t * ternary, const ts_tile_config * config,
                   int8_t * lane_scales_placeholder,
                   int64_t out_dim, int64_t in_dim);
 
+// W3 task 3.5 (host-amd-implementation-plan.md; master-plan criteria
+// 18-19): resolves `pack --quant=host-amd` to a `--tile` string by probing
+// this host's AMD GPU arch (ts_detect_amd_arch). Only meant to be called
+// when the user passed --quant but not an explicit --tile - "explicit
+// --tile wins" is the caller's responsibility (quantize.cpp's ts_cli_pack),
+// not this function's.
+//
+// Returns "tile-amd-rdna35" on a detected RDNA 3.5 iGPU (gfx1103/1150/
+// 1151), "tile-amd-rdna3" on a detected discrete RDNA3 card, or "t640" as
+// the safe fallback on any other host (GCN/RDNA1/RDNA2/RDNA4/CDNA*/unknown
+// - matches the existing ts_detect_tile_config() Apple/Intel probe's "safe
+// T640 default" convention). Prints exactly one stderr diagnostic line
+// either way; never aborts - detection failure must not brick
+// quantization.
+std::string ts_resolve_host_amd_quant_tile();
+
 // Compute page and lane scales from weights and ternary encoding.
 // Writes into page_scales and lane_scales (pre-allocated).
 void ts_compute_scales(const float * weights, const int8_t * ternary_flat,

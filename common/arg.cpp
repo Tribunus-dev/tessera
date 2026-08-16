@@ -4799,9 +4799,22 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         {"--tile"}, "{t640|t512|t1024|auto}",
         "Tessera (pack): target tile geometry (default: t640). \"auto\"\n"
         "probes the Metal device family and maps Apple Silicon to T640,\n"
-        "Intel to T512, unknown to T640.",
+        "Intel to T512, unknown to T640. Wins over --quant when both are\n"
+        "given.",
         [](common_params &, const std::string & value) {
             tessera_params.pack_tile = value;
+            tessera_params.pack_tile_explicit = true;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_PACK}));
+    add_opt(common_arg(
+        {"--quant"}, "{host-amd}",
+        "Tessera (pack): host-aware quant mode. \"host-amd\" probes this\n"
+        "host's AMD GPU arch and resolves to the matching tile-amd-*\n"
+        "config (RDNA3/RDNA3.5 only this wave), falling back to t640 with\n"
+        "a stderr warning on any other host. Ignored if --tile is also\n"
+        "given.",
+        [](common_params &, const std::string & value) {
+            tessera_params.pack_quant = value;
         }
     ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_PACK}));
 

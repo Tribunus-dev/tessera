@@ -243,7 +243,14 @@ struct ts_unified_budget_event {
     std::string action;          // "relaxed" | "enforced"
     std::string role;            // the constrained role
     std::string other_role;      // protected role (relaxed) / "" (enforced)
-    int         qtype = 45;      // resolved qtype (45 == GGML_TYPE_COUNT)
+    // Default value is never actually observed: both construction sites
+    // (tessera-unified-writer.cpp ~1104/1111) immediately overwrite qtype
+    // before the event is stored. Kept as a plain literal (not
+    // TS_UNIFIED_QTYPE_NONE, which is declared later in this file) rather
+    // than reordering declarations for a value nothing reads; corrected
+    // from the previous "45" (already stale before W3 task 3.3 - true
+    // GGML_TYPE_COUNT was 47, now 64) so the comment stops being wrong.
+    int         qtype = 64;      // resolved qtype (64 == GGML_TYPE_COUNT, "no verdict")
     std::string reason;          // evidence line
 };
 
@@ -387,8 +394,11 @@ bool ts_unified_writer_roles_reconcile(const std::string & a,
 
 // Sentinel for "no qtype verdict" that matches GGML_TYPE_COUNT without
 // dragging ggml.h into this header (the writer's .cpp static_asserts
-// the two agree).
-static const int TS_UNIFIED_QTYPE_NONE = 47;
+// the two agree). W3 task 3.3 grew GGML_TYPE_COUNT 47 -> 64
+// (GGML_TYPE_TESSERA_T_RDNA3 = 63); this sentinel must track it exactly,
+// not just be "large enough" - it also has to keep matching after any
+// future enum growth, hence the static_assert in the .cpp catching drift.
+static const int TS_UNIFIED_QTYPE_NONE = 64;
 
 // --- Phase 16.8: budget-aware cross-role reconciliation --------------
 //

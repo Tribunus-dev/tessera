@@ -1327,6 +1327,18 @@ static int ts_cli_pack(const common_tessera_params & tp) {
     if (tile.empty()) {
         tile = "auto";
     }
+    // W3 task 3.5 (criterion 18): --quant=host-amd overrides the tile
+    // string UNLESS the user also passed an explicit --tile ("explicit
+    // --tile wins" - pack_tile_explicit is only set by --tile's own CLI
+    // callback, never by the "t640" struct default).
+    if (!tp.pack_quant.empty() && !tp.pack_tile_explicit) {
+        if (tp.pack_quant != "host-amd") {
+            fprintf(stderr, "error: pack: --quant must be 'host-amd', got '%s'\n",
+                    tp.pack_quant.c_str());
+            return 1;
+        }
+        tile = ts_resolve_host_amd_quant_tile();
+    }
     struct ts_tile_config config;
     bool auto_detect = false;
     if (tile == "t640") {
@@ -1338,15 +1350,24 @@ static int ts_cli_pack(const common_tessera_params & tp) {
     } else if (tile == "auto") {
         config = ts_detect_tile_config();
         auto_detect = true;
+    } else if (tile == "tile-amd-rdna35" || tile == "tile-amd-rdna3") {
+        // RDNA 3.5 iGPUs (gfx1103/1150/1151) alias the RDNA3 wire format -
+        // no separate ts_tile_config (docs/amd-tile-format-spec.md 3.6).
+        config = ts_tile_config_amd_rdna3();
     } else {
-        fprintf(stderr, "error: pack: --tile must be one of t640|t512|t1024|auto, got '%s'\n",
+        fprintf(stderr, "error: pack: --tile must be one of "
+                "t640|t512|t1024|auto|tile-amd-rdna35|tile-amd-rdna3, got '%s'\n",
                 tile.c_str());
         return 1;
     }
+    const char * packing_label =
+        (config.packing == TS_PACK_RADIX243) ? "radix-243" :
+        (config.packing == TS_PACK_2BIT)     ? "2-bit"     :
+        /* TS_PACK_AMD_RDNA3 */                "amd-wmma";
     printf("pack: tile geometry = %s (%dx%d, %s)\n",
            auto_detect ? "auto" : tile.c_str(),
            config.page_size, config.lane_size,
-           config.packing == TS_PACK_RADIX243 ? "radix-243" : "2-bit");
+           packing_label);
 
     // open the safetensors directory for streaming
     ts_ttt_tensor_stream stream;
@@ -1367,6 +1388,24 @@ static int ts_cli_pack(const common_tessera_params & tp) {
     gguf_set_val_u32(out_ctx, "tessera.version", 1);
     gguf_set_val_str(out_ctx, "tessera.tile.geometry",
                      tile == "auto" ? "auto" : tile.c_str());
+    // W3 task 3.5 (master-plan criterion 19): the 8 amd.tile.* metadata
+    // keys, written only for the AMD tile-amd-* geometries. RDNA 3.5
+    // iGPUs get "parent" (aliasing to RDNA3's wire format, spec 3.6); a
+    // plain discrete RDNA3 card has no parent to alias, so that key is
+    // omitted rather than self-referencing.
+    if (tile == "tile-amd-rdna35" || tile == "tile-amd-rdna3") {
+        const bool is_rdna35 = (tile == "tile-amd-rdna35");
+        gguf_set_val_str (out_ctx, "amd.tile.arch", is_rdna35 ? "RDNA35" : "RDNA3");
+        if (is_rdna35) {
+            gguf_set_val_str(out_ctx, "amd.tile.parent", "RDNA3");
+        }
+        gguf_set_val_bool(out_ctx, "amd.tile.igpu", is_rdna35);
+        gguf_set_val_u32 (out_ctx, "amd.tile.block", QK_AMD_RDNA3);
+        gguf_set_val_str (out_ctx, "amd.tile.wmma.shape", "16x16x16");
+        gguf_set_val_str (out_ctx, "amd.tile.quant", "i8");
+        gguf_set_val_u32 (out_ctx, "amd.tile.version", 2);
+        gguf_set_val_str (out_ctx, "amd.tile.lane_map", "rdna3-wmma-16x16x16");
+    }
     {
         ts_gguf_writer_params wparams{};
         wparams.alpha = 0.0f;   // already-searched; the ternary carries best_alpha

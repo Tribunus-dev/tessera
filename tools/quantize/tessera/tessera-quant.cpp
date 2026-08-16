@@ -11,11 +11,13 @@
 #include "tessera-vec.h"
 #include "tessera-metal.h"
 #include "tessera-septq.h"
+#include "tile-detect.h"
 
 #include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <numeric>
@@ -500,6 +502,22 @@ void ts_pack_tile(const int8_t * ternary, const ts_tile_config * config,
         // geometry requires it.
         assert(false && "ts_pack_tile: TS_PACK_2BIT path not implemented");
     }
+}
+
+std::string ts_resolve_host_amd_quant_tile() {
+    const enum ts_arch_target arch = ts_detect_amd_arch();
+    if (arch == TS_ARCH_AMD_RDNA35) {
+        fprintf(stderr, "pack: --quant=host-amd resolved to tile-amd-rdna35 "
+                        "(parent rdna3) on this host\n");
+        return "tile-amd-rdna35";
+    }
+    if (arch == TS_ARCH_AMD_RDNA3) {
+        fprintf(stderr, "pack: --quant=host-amd resolved to tile-amd-rdna3 on this host\n");
+        return "tile-amd-rdna3";
+    }
+    fprintf(stderr, "pack: --quant=host-amd: no AMD RDNA3-family GPU detected "
+                    "on this host, falling back to t640\n");
+    return "t640";
 }
 
 void ts_pack_tile640(const int8_t * ternary_flat,

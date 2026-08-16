@@ -348,6 +348,16 @@ target_include_directories(test-tessera-tile-detect-amd PRIVATE
 # check exercises the actual type_traits[] table, not a stub.
 llama_build(test-tessera-type-gap-audit.cpp)
 llama_test(test-tessera-type-gap-audit)
+# W3 task 3.5: `pack --quant=host-amd` resolution + amd.tile.* GGUF
+# metadata keys. ts_resolve_host_amd_quant_tile lives in tessera-quant.cpp,
+# part of llama-quantize-impl (not llama-common) - link that library
+# directly rather than pulling in its transitive tessera-vec/tessera-metal/
+# tessera-septq dependency graph as extra sources.
+llama_build(test-tessera-quant-host-amd.cpp)
+llama_test(test-tessera-quant-host-amd)
+target_include_directories(test-tessera-quant-host-amd PRIVATE
+    ${PROJECT_SOURCE_DIR}/tools/quantize/tessera)
+target_link_libraries(test-tessera-quant-host-amd PRIVATE llama-quantize-impl)
 llama_build(test-dflash-loader.cpp)
 llama_test(test-dflash-loader)
 target_include_directories(test-dflash-loader PRIVATE ${PROJECT_SOURCE_DIR}/src)

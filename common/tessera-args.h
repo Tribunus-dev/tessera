@@ -162,6 +162,19 @@ struct common_tessera_params {
     std::string pack_in;
     std::string pack_out;
     std::string pack_tile = "t640";
+    // true iff --tile was explicitly passed on the command line (not just
+    // left at its "t640" default) - lets --quant=host-amd's auto-resolution
+    // know when an explicit --tile must win instead (W3 task 3.5,
+    // criterion 18: "Explicit --tile wins").
+    bool        pack_tile_explicit = false;
+    // pack subcommand: --quant selects a higher-level, host-aware quant
+    // mode instead of naming a tile geometry directly. Currently only
+    // "host-amd" is recognized: probes this host's AMD GPU arch
+    // (ts_detect_amd_arch) and resolves to the matching tile-amd-* config,
+    // falling back to t640 with a stderr warning on a non-AMD-RDNA3-family
+    // host. Empty means "no --quant mode requested" (unchanged pack_tile
+    // resolution).
+    std::string pack_quant;
     // Structured progress reporting for the quantize pipeline. When
     // progress_file is non-empty, the dispatch writes one NDJSON event per
     // tick to that path for the Studio UI to tail.
