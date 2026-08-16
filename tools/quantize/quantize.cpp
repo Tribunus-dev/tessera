@@ -1220,6 +1220,18 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
     qp_base.use_imatrix    = have_imatrix;
     qp_base.use_septq      = have_imatrix;
     qp_base.awq_grid       = 20;
+    // seed=0 is ts_dartquant_qr_orth's documented "start at identity"
+    // testing mode (tessera-dartquant.h), not a generic default - at R=I
+    // the whip-loss gradient (W^T @ diag(diff) @ W) is symmetric by
+    // construction, and the Stiefel tangent-space projection correctly
+    // zeros a symmetric input (it isn't a valid tangent direction), so
+    // every optimization step is a null move forever. Root-caused via a
+    // standalone diagnostic against a real tensor (||R-I||=0 after 30
+    // iterations with seed=0; ||R-I||=1.42 with a nonzero seed) after
+    // DartQuant won 0 of 280 tensors in a live export-ternary run with
+    // suspiciously AWQ-identical t2 scores. A nonzero seed starts from a
+    // Haar-uniform random rotation instead, avoiding the degeneracy.
+    qp_base.seed           = 42;
 
     int64_t n_exported = 0;
     int64_t n_skipped  = 0;
