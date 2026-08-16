@@ -104,13 +104,17 @@ int common_tessera_flag_kind(const char * flag) {
             }
         }
         if (!match) continue;
-        // tessera-scoped flags are the tessera-owned ones; an empty tessera_sc
-        // means the flag is generally visible (not tessera-exclusive), so it
-        // is not "owned" by the tessera parser and the legacy loop should
-        // still handle it.
-        if (opt.tessera_sc.empty()) {
-            return 0;
-        }
+        // Any flag registered for LLAMA_EXAMPLE_TESSERA - whether it is a
+        // top-level flag (empty tessera_sc, visible under every subcommand:
+        // --tessera-imatrix, --progress-file, --tessera-db, ...) or scoped
+        // to the active subcommand - was already consumed by
+        // common_tessera_params_parse via common_params_parse. The legacy
+        // loop must skip it either way; it has no business re-parsing a
+        // value already landed in params/tessera_params. (An earlier
+        // version special-cased empty tessera_sc to return 0 here, which
+        // meant every top-level tessera flag fell through to the legacy
+        // loop's "unrecognized argument" error - confirmed broken for
+        // --tessera-imatrix and --progress-file both.)
         if (opt.handler_void || opt.handler_bool) {
             return 1;
         }
