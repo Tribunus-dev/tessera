@@ -439,6 +439,26 @@ static ts_awq_score ts_dispatch_awq_eval(const ts_awq_candidate * cand,
     return score;
 }
 
+// tessera-rocblas.cpp's device-scratch pool is explicitly single-thread
+// (comment tag W1-D2: "the L1-L6 dispatch loops are single-threaded per
+// candidate, so one process-global pool is sufficient" - ts_rblas_buf_get
+// only catches a second concurrent thread via a debug-only assert,
+// compiled out under -DNDEBUG). Both ts_dispatch_forced_t2 and
+// ts_dispatch_tier2_t2 reach that pool (via ts_vec_dotpr and the
+// rocBLAS-accelerated DartQuant/FLRQ trainers). The acceptance gate's own
+// worker pool (up to 8 threads) and export-ternary's live per-tensor
+// selection (up to hardware_concurrency threads) both call these
+// concurrently - a real, previously-untriggered race where one thread's
+// hipFree of a "grow" reallocation frees a buffer another thread is still
+// actively writing into, producing a GPU page fault (observed directly:
+// a core dump with multiple threads inside ts_rblas_buf_get, one mid
+// hipFree->SyncAllStreams). Serializing entry here enforces the pool's own
+// documented single-dispatcher invariant for real instead of just
+// asserting it - harmless for throughput since a single GPU serializes
+// actual device work regardless of caller count anyway; the CPU-side
+// thread pools still parallelize everything outside this call.
+static std::mutex g_rblas_dispatch_mutex;
+
 // Quantize a tensor with a forced expert profile and return relative
 // Frobenius t_l^2 = ||W_hat - W||_F^2 / ||W||_F^2.
 float ts_dispatch_forced_t2(const float * weights, const float * act_scales,
@@ -446,6 +466,7 @@ float ts_dispatch_forced_t2(const float * weights, const float * act_scales,
                                    ts_expert_id expert, float base_alpha,
                                    float base_clip, float outlier_thresh,
                                    uint32_t seed) {
+    std::lock_guard<std::mutex> rblas_lock(g_rblas_dispatch_mutex);
     ts_expert_profile prof = ts_expert_default_profile(expert);
 
     float resolved_alpha = base_alpha * prof.alpha_scale;
@@ -541,6 +562,7 @@ float ts_dispatch_tier2_t2(ts_expert_id expert, const float * w,
                                   const float * act_scales,
                                   int64_t out_dim, int64_t in_dim,
                                   float alpha, float clip, uint32_t seed) {
+    std::lock_guard<std::mutex> rblas_lock(g_rblas_dispatch_mutex);
     const int64_t n = out_dim * in_dim;
     if (w == nullptr || n <= 0) return -1.0f;
     const float frob2 = ts_vec_dotpr(w, w, n);

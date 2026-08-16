@@ -40,7 +40,12 @@ struct ts_rblas_slot {
     bool    in_use  = false;
 };
 
-std::mutex        g_pool_mutex;
+// Recursive: ts_rblas_buf_get is called multiple times in a row from the
+// same thread before any ts_rblas_buf_release (staging A/B/C operands for
+// one GEMM, e.g. ts_rblas_sgemm_bf16acc below) - a plain std::mutex would
+// deadlock on the second call now that the lock is held across the whole
+// checkout (see ts_rblas_buf_get's own comment).
+std::recursive_mutex g_pool_mutex;
 ts_rblas_slot     g_pool[TS_RBLAS_ROLE_COUNT] = {};
 
 std::mutex        g_init_mutex;
@@ -57,7 +62,6 @@ std::atomic<bool>     g_disabled{false};
 std::atomic<bool>     g_alloc_fail_logged{false};
 std::atomic<uint64_t> g_dispatch_count[TS_RBLAS_ROLE_COUNT] = {};
 std::atomic<uint64_t> g_fallback_count[TS_RBLAS_ROLE_COUNT] = {};
-std::atomic<uint64_t> g_dispatch_thread{0};  // debug-only single-thread guard, W1-D2
 
 bool ts_rblas_disabled() {
     if (!g_disabled_checked.exchange(true, std::memory_order_acq_rel)) {
@@ -201,26 +205,31 @@ ts_rblas_buf ts_rblas_buf_get(int role, size_t bytes) {
     if (role < 0 || role >= TS_RBLAS_ROLE_COUNT || bytes == 0) {
         return {nullptr, 0};
     }
-#ifndef NDEBUG
-    // W1-D2: the L1-L6 dispatch loops are single-threaded per candidate, so
-    // one process-global pool is sufficient. Catch a second dispatching
-    // thread here rather than silently racing the pool.
-    {
-        uint64_t tid = std::hash<std::thread::id>{}(std::this_thread::get_id());
-        uint64_t expected = 0;
-        if (!g_dispatch_thread.compare_exchange_strong(expected, tid, std::memory_order_acq_rel)) {
-            assert(expected == tid &&
-                   "ts_rblas_buf_get called from a second thread - pool is process-global (W1-D2)");
-        }
-    }
-#endif
     if (ts_rocblas_handle() == nullptr) {
         // No usable handle - leave the slot alone, return the failure sentinel.
         g_fallback_count[role].fetch_add(1, std::memory_order_relaxed);
         return {nullptr, 0};
     }
 
-    std::lock_guard<std::mutex> lock(g_pool_mutex);
+    // W1-D2: the pool is process-global (one slot per role, grow-only) and
+    // was designed for a single dispatching thread - the comment used to
+    // say so and a debug-only assert used to catch a violation, but that
+    // assert compiled out under -DNDEBUG (this pipeline's actual build),
+    // so nothing ever enforced it. A second thread calling this while a
+    // first thread's buffer for the same role was still in_use fell
+    // through to the "grow" path below and hipFree'd a buffer the first
+    // thread was still actively writing into via an in-flight GEMM -
+    // observed directly as a GPU page fault with multiple threads inside
+    // this function, one mid hipFree->SyncAllStreams. g_pool_mutex now
+    // stays LOCKED across the whole checkout - ts_rblas_buf_release
+    // unlocks it - so a second thread genuinely blocks and waits instead
+    // of racing. Harmless for throughput: a single GPU serializes actual
+    // device work regardless of caller count, and every rocBLAS dispatch
+    // in this codebase is already a self-contained get-use-release
+    // sequence within one function call (this file's own header comment),
+    // so no caller can accidentally hold this across unrelated work.
+    g_pool_mutex.lock();
+
     ts_rblas_slot & slot = g_pool[role];
     if (slot.dev != nullptr && slot.bytes >= bytes && !slot.in_use) {
         slot.in_use = true;
@@ -228,6 +237,9 @@ ts_rblas_buf ts_rblas_buf_get(int role, size_t bytes) {
         return {slot.dev, slot.bytes};
     }
     // Grow (or initial alloc). Free the old buffer if it was too small.
+    // Safe now: the lock has been held continuously since this slot was
+    // last handed out, so `slot.in_use` here can only be false (idle) or
+    // "too small" for a role whose one prior caller already released it.
     if (slot.dev != nullptr) {
         (void)hipFree(slot.dev);
         slot.dev = nullptr;
@@ -243,6 +255,7 @@ ts_rblas_buf ts_rblas_buf_get(int role, size_t bytes) {
         slot.dev = nullptr;
         slot.bytes = 0;
         g_fallback_count[role].fetch_add(1, std::memory_order_relaxed);
+        g_pool_mutex.unlock();
         return {nullptr, 0};
     }
     slot.dev = dev;
@@ -256,16 +269,19 @@ void ts_rblas_buf_release(ts_rblas_buf b) {
     if (b.dev == nullptr) {
         return;
     }
-    std::lock_guard<std::mutex> lock(g_pool_mutex);
     for (int i = 0; i < TS_RBLAS_ROLE_COUNT; i++) {
         if (g_pool[i].dev == b.dev) {
             g_pool[i].in_use = false;
+            g_pool_mutex.unlock();
             return;
         }
     }
     // Slot not found - shouldn't happen if the buffer came from this shim,
-    // but be defensive: free the device memory rather than leak.
+    // but be defensive: free the device memory rather than leak. The lock
+    // is still held (ts_rblas_buf_get only ever returns a non-null buffer
+    // while holding it) - unlock before returning.
     (void)hipFree(b.dev);
+    g_pool_mutex.unlock();
 }
 
 // ---------------------------------------------------------------------------
@@ -461,7 +477,7 @@ static void ts_rocblas_shutdown() {
         rocblas_destroy_handle(g_handle);
         g_handle = nullptr;
     }
-    std::lock_guard<std::mutex> lock(g_pool_mutex);
+    std::lock_guard<std::recursive_mutex> lock(g_pool_mutex);
     for (int i = 0; i < TS_RBLAS_ROLE_COUNT; i++) {
         if (g_pool[i].dev != nullptr) {
             (void)hipFree(g_pool[i].dev);
