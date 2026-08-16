@@ -208,15 +208,22 @@ The research landed three BINDING corrections on this design:
    in-validated-scope status is unverified). All crypto in these paths
    routes through CryptoKit/Security.framework - no bundled third-party
    crypto. EgressGrant/receipt hashing stays SHA-256 (approved).
-3. **Managed retention overrides the privacy features.** The posture
-   matrix row for purge/overwrite/Plead-the-Fifth is upgraded from
-   "DISABLED or retention-policy-governed" to a full mechanism:
-   schedule-gated disposition, legal-hold flags freezing receipts +
-   content, and the government-SKU rename to "Certified Disposition"
-   (deletion attestations become defensible-disposal evidence). Sky in
-   government postures is BYO-endpoint only (customer-supplied
-   authorized endpoint; per-grant provider/model/ZDR flag already in
-   the receipt payload covers the disclosure need).
+3. **Managed retention overrides the privacy features - by removal
+   plus transplant, not rename.** In managed government postures the
+   shipped Plead-the-Fifth feature (PleadTheFifthExecutor's
+   no-confirmation hotkey, CovertTriggerMonitor's text-input phrase,
+   user-discretionary invocation, WipeReportStore's unsigned deletable
+   JSON) is provably absent: no invocable path, enforced by the
+   posture guard tests. "Certified Disposition" is a SEPARATE managed
+   feature reusing only the crypto-shred implementation and step-report
+   structure: schedule-triggered, org-authorized, legal-hold-frozen,
+   reported as a signed receipt in the chain. (Personal mode keeps
+   Plead-the-Fifth unchanged; consider upgrading its wipe report to a
+   signed receipt regardless - the current deletable-JSON report
+   undersells even the personal audit-trail story.) Sky in government
+   postures is BYO-endpoint only (customer-supplied authorized
+   endpoint; per-grant provider/model/ZDR flag already in the receipt
+   payload covers the disclosure need).
 
 Test additions: `testDirectFederationPostureNeverContactsWorkOSEndpoints`
 (spy transport), `testManagedModeReceiptSignaturesUseTheFIPSSuite`,

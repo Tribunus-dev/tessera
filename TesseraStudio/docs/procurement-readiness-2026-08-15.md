@@ -51,14 +51,22 @@ not certifications).
    the receipt signature suite becomes pluggable with ECDSA P-256
    (Secure Enclave) as the managed-mode default. No bundled third-party
    crypto anywhere; ChaCha20-Poly1305 is not approved.
-3. **Records law inverts the privacy features in managed mode.**
-   Receipts and briefing hashes at an agency are plausibly federal/state
-   records and FOIA-responsive. Managed mode must schedule-gate or
-   disable purge/secure-overwrite/Plead-the-Fifth, add legal-hold flags
-   that freeze receipts + content, and rebrand deletion attestations as
-   "Certified Disposition" - which, INSIDE a retention schedule, is a
-   genuine compliance asset (defensible disposal evidence better than
-   most agencies produce today).
+3. **Records law inverts the privacy features in managed mode - and
+   the distinction is surgical, not a rename.** Receipts and briefing
+   hashes at an agency are plausibly federal/state records and
+   FOIA-responsive. Plead-the-Fifth AS SHIPPED (no-confirmation hotkey,
+   covert text-input trigger, user-discretionary crypto-shred, unsigned
+   deletable wipe report) is an unauthorized-disposition engine and
+   must be PROVABLY ABSENT in managed government postures - no
+   invocable path, guard-tested. What transplants into "Certified
+   Disposition" is the shred implementation and the step-report
+   pattern, under an inverted control structure: triggered by the
+   retention schedule, authorized by the org, frozen by legal holds,
+   and reported as a SIGNED receipt in the chain (not deletable JSON).
+   Inside that structure it is a genuine compliance asset - defensible
+   disposal evidence supporting 36 CFR 1230 accountability and
+   "no responsive records" FOIA answers. Same shredder, opposite
+   governance.
 
 ## 3. Segment matrix
 
