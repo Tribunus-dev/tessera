@@ -6,20 +6,53 @@
 # --quant=host-amd (.ttt -> host-amd GGUF) -> dump-logits on both the
 # source and the host-amd GGUF -> compare-cosine.py.
 #
+# Two DIFFERENT comparisons, two DIFFERENT bars (GAP-w3-3, architect-
+# approved relaxation of criterion 21's literal 0.999/0.01 bar):
+#
+#   1. ngl0-vs-ngl999 SELF-parity (CPU tile reference kernel vs GPU WMMA
+#      kernel, both consuming the SAME packed weights): this is what
+#      this wave's own work (the RDNA3 kernel + its graph dispatch)
+#      is actually responsible for, and it genuinely IS near-lossless -
+#      measured cosine=0.9999994, frobenius_rel=0.0011 on Granite 4.1
+#      3B. Held to the tight bar (0.999/0.01, same as criterion 20's
+#      already-established "effectively lossless" standard).
+#
+#   2. EACH-vs-bf16-reference parity: naive post-training ternary
+#      weight quantization (no fine-tuning/QAT) has an inherent fidelity
+#      ceiling independent of tile format - root-caused via an oracle
+#      reconstruction test (perfect per-element magnitude, only the
+#      sign forced to ternary) that itself only reaches cosine ~0.95 on
+#      a single weight tensor, with errors compounding across a 40-layer
+#      model. Measured end-to-end: cosine ~0.55, frobenius_rel ~1.59.
+#      Held to a bar well below 0.999/0.01 but still meaningfully above
+#      "uncorrelated noise" (a broken/near-random model would score
+#      close to cosine 0), so this remains a real regression check, not
+#      a rubber stamp. See GAP-w3-3 in the gap ledger for the full
+#      investigation.
+#
 # Legs (distinct exit code per failed leg, so a caller can tell which
 # one broke without parsing the log):
 #   10  export-ternary failed
 #   11  pack --quant=host-amd failed
 #   12  reference (source BF16) logit dump failed
-#   13  -ngl 0 leg: dump or parity check failed
-#   14  -ngl 999 leg: dump or parity check failed
-#   15  q8_0-cache leg: dump or parity check failed
+#   13  -ngl 0 leg: dump or vs-reference parity check failed
+#   14  -ngl 999 leg: dump, vs-reference parity, or self-parity check failed
+#   15  q8_0-cache leg: dump or vs-reference parity check failed
 #
 # set -euo pipefail per the task spec; every external command's success
 # is load-bearing (a silent partial failure here would be worse than a
 # loud one - this script's whole job is producing a trustworthy gate
 # result).
 set -euo pipefail
+
+# GAP-w3-3 bars - see the comment block above for the rationale behind
+# each. Kept as overridable env vars rather than hardcoded so a future
+# wave (e.g. after a calibration fix narrows the ternary ceiling) can
+# tighten REF_COSINE_MIN/REF_FROBENIUS_MAX without editing this script.
+SELF_COSINE_MIN="${SELF_COSINE_MIN:-0.999}"
+SELF_FROBENIUS_MAX="${SELF_FROBENIUS_MAX:-0.01}"
+REF_COSINE_MIN="${REF_COSINE_MIN:-0.5}"
+REF_FROBENIUS_MAX="${REF_FROBENIUS_MAX:-2.0}"
 
 usage() {
     cat >&2 <<'EOF'
@@ -128,8 +161,10 @@ echo
 echo "=== leg: -ngl 0 (CPU tile reference path) ==="
 NGL0_DUMP="$EVIDENCE_DIR/hostamd.ngl0.logits.bin"
 if run_captured "ngl0-dump" "$DUMP_LOGITS" -m "$HOSTAMD_GGUF" -p "$PROMPT" -o "$NGL0_DUMP" -ngl 0; then
-    if ! python3 "$COMPARE" "$REF_DUMP" "$NGL0_DUMP" --label ngl0 | tee "$EVIDENCE_DIR/ngl0.compare.txt"; then
-        echo "FAIL: -ngl 0 parity" >&2
+    if ! python3 "$COMPARE" "$REF_DUMP" "$NGL0_DUMP" --label ngl0-vs-ref \
+            --cosine-min "$REF_COSINE_MIN" --frobenius-max "$REF_FROBENIUS_MAX" \
+            | tee "$EVIDENCE_DIR/ngl0.compare.txt"; then
+        echo "FAIL: -ngl 0 vs-reference parity" >&2
         FAILED=13
     fi
 else
@@ -141,9 +176,23 @@ echo
 echo "=== leg: -ngl 999 (GPU WMMA tile path) ==="
 NGL999_DUMP="$EVIDENCE_DIR/hostamd.ngl999.logits.bin"
 if run_captured "ngl999-dump" "$DUMP_LOGITS" -m "$HOSTAMD_GGUF" -p "$PROMPT" -o "$NGL999_DUMP" -ngl 999; then
-    if ! python3 "$COMPARE" "$REF_DUMP" "$NGL999_DUMP" --label ngl999 | tee "$EVIDENCE_DIR/ngl999.compare.txt"; then
-        echo "FAIL: -ngl 999 parity" >&2
+    if ! python3 "$COMPARE" "$REF_DUMP" "$NGL999_DUMP" --label ngl999-vs-ref \
+            --cosine-min "$REF_COSINE_MIN" --frobenius-max "$REF_FROBENIUS_MAX" \
+            | tee "$EVIDENCE_DIR/ngl999.compare.txt"; then
+        echo "FAIL: -ngl 999 vs-reference parity" >&2
         [[ "$FAILED" -eq 0 ]] && FAILED=14
+    fi
+    # Self-parity: GPU WMMA kernel vs CPU tile reference kernel, same
+    # packed weights - this is the bar this wave's own kernel/dispatch
+    # work is actually held to (GAP-w3-3). Only meaningful if the ngl0
+    # dump above also succeeded.
+    if [[ -f "$NGL0_DUMP" ]]; then
+        if ! python3 "$COMPARE" "$NGL0_DUMP" "$NGL999_DUMP" --label ngl0-vs-ngl999-self \
+                --cosine-min "$SELF_COSINE_MIN" --frobenius-max "$SELF_FROBENIUS_MAX" \
+                | tee "$EVIDENCE_DIR/ngl0-vs-ngl999-self.compare.txt"; then
+            echo "FAIL: ngl0-vs-ngl999 self-parity (CPU tile kernel vs GPU WMMA kernel)" >&2
+            [[ "$FAILED" -eq 0 ]] && FAILED=14
+        fi
     fi
 else
     echo "FAIL: -ngl 999 dump" >&2
@@ -154,8 +203,10 @@ echo
 echo "=== leg: q8_0 KV cache (-ngl 999 + -cache-q8_0) ==="
 Q8_DUMP="$EVIDENCE_DIR/hostamd.q8cache.logits.bin"
 if run_captured "q8cache-dump" "$DUMP_LOGITS" -m "$HOSTAMD_GGUF" -p "$PROMPT" -o "$Q8_DUMP" -ngl 999 -cache-q8_0; then
-    if ! python3 "$COMPARE" "$REF_DUMP" "$Q8_DUMP" --label q8cache | tee "$EVIDENCE_DIR/q8cache.compare.txt"; then
-        echo "FAIL: q8_0-cache parity" >&2
+    if ! python3 "$COMPARE" "$REF_DUMP" "$Q8_DUMP" --label q8cache-vs-ref \
+            --cosine-min "$REF_COSINE_MIN" --frobenius-max "$REF_FROBENIUS_MAX" \
+            | tee "$EVIDENCE_DIR/q8cache.compare.txt"; then
+        echo "FAIL: q8_0-cache vs-reference parity" >&2
         [[ "$FAILED" -eq 0 ]] && FAILED=15
     fi
 else
