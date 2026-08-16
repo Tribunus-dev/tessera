@@ -208,8 +208,15 @@ ggml_tensor * llama_model_granite::graph::build_attention_layer(
     const int64_t                 n_embd_head,
     const int                     il) {
 
+    // W3 task 3.9/3.10: AMD RDNA3 tile-cluster lookups, reused below for wo
+    // too - build_qkv/build_attn dispatch to build_tile_rdna3_lora_mm
+    // internally when the corresponding *_tile_rdna3 pointer is non-null.
+    const LLM_TN gtn(model.arch);
     auto [Qcur, Kcur, Vcur] = build_qkv(model.layers[il], cur,
-            n_embd_head, hparams.n_head(il), hparams.n_head_kv(il), il);
+            n_embd_head, hparams.n_head(il), hparams.n_head_kv(il), il,
+            model.get_tile_rdna3_tensor(gtn(LLM_TENSOR_ATTN_Q, "weight", il).str()),
+            model.get_tile_rdna3_tensor(gtn(LLM_TENSOR_ATTN_K, "weight", il).str()),
+            model.get_tile_rdna3_tensor(gtn(LLM_TENSOR_ATTN_V, "weight", il).str()));
 
     const bool use_rope = hparams.rope_finetuned;
     if (use_rope) {
@@ -239,7 +246,6 @@ ggml_tensor * llama_model_granite::graph::build_attention_layer(
     // skips the projection when wo is null - the same convention
     // gemma4-assistant.cpp's Tile640 wiring relies on), then apply the
     // tile matmul explicitly.
-    const LLM_TN gtn(model.arch);
     const auto * wo_rdna3 = model.get_tile_rdna3_tensor(gtn(LLM_TENSOR_ATTN_OUT, "weight", il).str());
     cur = build_attn(inp_attn,
             wo_rdna3 ? nullptr : model.layers[il].wo, model.layers[il].wo_b, model.layers[il].wo_s,

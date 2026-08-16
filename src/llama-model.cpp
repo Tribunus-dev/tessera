@@ -3391,10 +3391,24 @@ void llama_model_base::create_tensor_qkv(llama_layer & layer, int bid,
         const std::string q_packed_name = tn(LLM_TENSOR_ATTN_Q, "weight_packed", bid).str();
         const std::string k_packed_name = tn(LLM_TENSOR_ATTN_K, "weight_packed", bid).str();
         const std::string v_packed_name = tn(LLM_TENSOR_ATTN_V, "weight_packed", bid).str();
-        const bool q_tile640 = ml->get_tensor_meta(q_packed_name.c_str()) != nullptr;
-        const bool k_tile640 = ml->get_tensor_meta(k_packed_name.c_str()) != nullptr;
-        const bool v_tile640 = ml->get_tensor_meta(v_packed_name.c_str()) != nullptr;
-        if (!q_tile640) {
+        const ggml_tensor * q_packed_meta = ml->get_tensor_meta(q_packed_name.c_str());
+        const ggml_tensor * k_packed_meta = ml->get_tensor_meta(k_packed_name.c_str());
+        const ggml_tensor * v_packed_meta = ml->get_tensor_meta(v_packed_name.c_str());
+        // W3 task 3.9/3.10: an AMD RDNA3-packed "*_packed" sibling is I8
+        // (WMMA-native, docs/amd-tile-format-spec.md 3.4); a T640-packed
+        // one is I32 (radix-243 words). Disambiguate by dtype so an
+        // RDNA3-packed GGUF doesn't fall into the T640 branch below and
+        // get sized with T640's PAGE_SIZE/WORDS_PER_PAGE (wrong element
+        // count and wrong element type both).
+        const bool q_rdna3   = q_packed_meta && q_packed_meta->type == GGML_TYPE_I8;
+        const bool k_rdna3   = k_packed_meta && k_packed_meta->type == GGML_TYPE_I8;
+        const bool v_rdna3   = v_packed_meta && v_packed_meta->type == GGML_TYPE_I8;
+        const bool q_tile640 = q_packed_meta && !q_rdna3;
+        const bool k_tile640 = k_packed_meta && !k_rdna3;
+        const bool v_tile640 = v_packed_meta && !v_rdna3;
+        if (q_rdna3) {
+            create_tensor_or_tile_rdna3(tn(LLM_TENSOR_ATTN_Q, "weight", bid), {n_embd_, n_embd_q_}, flags);
+        } else if (!q_tile640) {
             layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q, "weight", bid), {n_embd_, n_embd_q_}, flags);
         } else {
             constexpr int64_t PAGE_SIZE = 640, LANES_PER_PAGE = 32, WORDS_PER_PAGE = 32;
@@ -3408,7 +3422,9 @@ void llama_model_base::create_tensor_qkv(llama_layer & layer, int bid,
             layer.wq_outlier_vals = create_tensor(tn(LLM_TENSOR_ATTN_Q, "weight_outlier_vals", bid), {outlier_meta->ne[0]}, TENSOR_NOT_REQUIRED);
             layer.wq_act_scale = create_tensor(tn(LLM_TENSOR_ATTN_Q, "weight_act_scale", bid), {n_embd_}, TENSOR_NOT_REQUIRED);
         }
-        if (!k_tile640) {
+        if (k_rdna3) {
+            create_tensor_or_tile_rdna3(tn(LLM_TENSOR_ATTN_K, "weight", bid), {n_embd_, n_embd_k_}, flags);
+        } else if (!k_tile640) {
             layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K, "weight", bid), {n_embd_, n_embd_k_}, flags);
         } else {
             constexpr int64_t PAGE_SIZE = 640, LANES_PER_PAGE = 32, WORDS_PER_PAGE = 32;
@@ -3422,7 +3438,9 @@ void llama_model_base::create_tensor_qkv(llama_layer & layer, int bid,
             layer.wk_outlier_vals = create_tensor(tn(LLM_TENSOR_ATTN_K, "weight_outlier_vals", bid), {outlier_meta->ne[0]}, TENSOR_NOT_REQUIRED);
             layer.wk_act_scale = create_tensor(tn(LLM_TENSOR_ATTN_K, "weight_act_scale", bid), {n_embd_}, TENSOR_NOT_REQUIRED);
         }
-        if (!v_tile640) {
+        if (v_rdna3) {
+            create_tensor_or_tile_rdna3(tn(LLM_TENSOR_ATTN_V, "weight", bid), {n_embd_, n_embd_v_}, flags);
+        } else if (!v_tile640) {
             layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V, "weight", bid), {n_embd_, n_embd_v_}, flags);
         } else {
             constexpr int64_t PAGE_SIZE = 640, LANES_PER_PAGE = 32, WORDS_PER_PAGE = 32;

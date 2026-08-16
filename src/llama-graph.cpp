@@ -1773,7 +1773,10 @@ llm_graph_qkv llm_graph_context::build_qkv(
                   int64_t   n_embd_head,
                   int64_t   n_head,
                   int64_t   n_head_kv,
-                      int   il) const {
+                      int   il,
+        const llama_tile_rdna3_tensor * wq_tile_rdna3,
+        const llama_tile_rdna3_tensor * wk_tile_rdna3,
+        const llama_tile_rdna3_tensor * wv_tile_rdna3) const {
     const int64_t n_embd_q  = n_embd_head * n_head;
     const int64_t n_embd_kv = n_embd_head * n_head_kv;
 
@@ -1800,8 +1803,17 @@ llm_graph_qkv llm_graph_context::build_qkv(
             ggml_row_size(qkv->type, n_embd_head), qkv->nb[1],
             ggml_row_size(qkv->type, n_embd_q + n_embd_kv));
     } else {
-        // separate Q/K/V path
-        Qcur = build_lora_mm(layer.wq, cur, layer.wq_s);
+        // separate Q/K/V path. Check the RDNA3 cluster pointer first (not
+        // layer.wq) - layer.wq is also null for the pre-existing T640
+        // tile640 path (create_tensor_qkv's own tile640 branch, which
+        // build_qkv has never actually consumed), and wq_tile_rdna3 would
+        // be null there too; falling through to the unchanged
+        // build_lora_mm(layer.wq, ...) expression preserves that
+        // pre-existing (already broken, out of scope here) behavior
+        // exactly rather than dereferencing a null wq_tile_rdna3.
+        Qcur = wq_tile_rdna3 ? build_tile_rdna3_lora_mm(wq_tile_rdna3->packed, wq_tile_rdna3->page_scales,
+                                                        wq_tile_rdna3->lane_scales, cur)
+                             : build_lora_mm(layer.wq, cur, layer.wq_s);
         cb(Qcur, "Qcur", il);
         if (layer.wq_b) {
             Qcur = ggml_add(ctx0, Qcur, layer.wq_b);
@@ -1811,7 +1823,9 @@ llm_graph_qkv llm_graph_context::build_qkv(
             Qcur = ggml_clamp(ctx0, Qcur, -hparams.f_clamp_kqv, hparams.f_clamp_kqv);
             cb(Qcur, "Qcur_clamped", il);
         }
-        Kcur = build_lora_mm(layer.wk, cur, layer.wk_s);
+        Kcur = wk_tile_rdna3 ? build_tile_rdna3_lora_mm(wk_tile_rdna3->packed, wk_tile_rdna3->page_scales,
+                                                        wk_tile_rdna3->lane_scales, cur)
+                             : build_lora_mm(layer.wk, cur, layer.wk_s);
         cb(Kcur, "Kcur", il);
         if (layer.wk_b) {
             Kcur = ggml_add(ctx0, Kcur, layer.wk_b);
@@ -1821,7 +1835,9 @@ llm_graph_qkv llm_graph_context::build_qkv(
             Kcur = ggml_clamp(ctx0, Kcur, -hparams.f_clamp_kqv, hparams.f_clamp_kqv);
             cb(Kcur, "Kcur_clamped", il);
         }
-        Vcur = build_lora_mm(layer.wv, cur, layer.wv_s);
+        Vcur = wv_tile_rdna3 ? build_tile_rdna3_lora_mm(wv_tile_rdna3->packed, wv_tile_rdna3->page_scales,
+                                                        wv_tile_rdna3->lane_scales, cur)
+                             : build_lora_mm(layer.wv, cur, layer.wv_s);
         cb(Vcur, "Vcur", il);
         if (layer.wv_b) {
             Vcur = ggml_add(ctx0, Vcur, layer.wv_b);

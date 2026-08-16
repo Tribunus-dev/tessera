@@ -1072,7 +1072,14 @@ struct llm_graph_context {
                   int64_t   n_embd_head,
                   int64_t   n_head,
                   int64_t   n_head_kv,
-                      int   il) const;
+                      int   il,
+        // W3 task 3.9/3.10: AMD RDNA3 tile-packed alternative to
+        // layer.wq/wk/wv - see build_ffn's *_tile_rdna3 params for the
+        // same convention (null tensor + non-null cluster => dispatch
+        // through build_tile_rdna3_lora_mm). Purely additive.
+        const llama_tile_rdna3_tensor * wq_tile_rdna3 = nullptr,
+        const llama_tile_rdna3_tensor * wk_tile_rdna3 = nullptr,
+        const llama_tile_rdna3_tensor * wv_tile_rdna3 = nullptr) const;
 
     ggml_tensor * build_ffn(
              ggml_tensor * cur,
