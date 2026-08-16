@@ -974,6 +974,44 @@ static const struct ggml_type_traits type_traits[GGML_TYPE_COUNT] = {
         .to_float                 = (ggml_to_float_t) dequantize_row_tessera_t1024,
         .from_float_ref           = (ggml_from_float_t) quantize_row_tessera_t1024_ref,
     },
+    // W3 task 3.3 gap audit (amd-tile-format-spec.md 9(v)/9(vii)): 47-62 are
+    // reserved for the AMD tile family this wave does not implement plus
+    // W4's KCACHE/VCACHE. Explicit placeholder entries, not implicit
+    // zero-init: blck_size=0 makes gguf.cpp's tensor-type loader gate
+    // (`blck_size == 0` -> reject, gguf.cpp ~line 715) refuse any tensor
+    // claiming one of these types, and a non-null type_name means that
+    // rejection's log line (which formats type_name via %s) never passes a
+    // null pointer to printf - same convention as the removed
+    // Q4_0_4_4-family slots above.
+    [47] = { .type_name = "TYPE_RESERVED_47", .blck_size = 0, .type_size = 0, .is_quantized = false },
+    [48] = { .type_name = "TYPE_RESERVED_48", .blck_size = 0, .type_size = 0, .is_quantized = false },
+    [49] = { .type_name = "TYPE_RESERVED_49", .blck_size = 0, .type_size = 0, .is_quantized = false },
+    [50] = { .type_name = "TYPE_RESERVED_50", .blck_size = 0, .type_size = 0, .is_quantized = false },
+    [51] = { .type_name = "TYPE_RESERVED_51", .blck_size = 0, .type_size = 0, .is_quantized = false },
+    [52] = { .type_name = "TYPE_RESERVED_52", .blck_size = 0, .type_size = 0, .is_quantized = false },
+    [53] = { .type_name = "TYPE_RESERVED_53", .blck_size = 0, .type_size = 0, .is_quantized = false },
+    [54] = { .type_name = "TYPE_RESERVED_54", .blck_size = 0, .type_size = 0, .is_quantized = false },
+    [55] = { .type_name = "TYPE_RESERVED_55", .blck_size = 0, .type_size = 0, .is_quantized = false },
+    [56] = { .type_name = "TYPE_RESERVED_56", .blck_size = 0, .type_size = 0, .is_quantized = false },
+    [57] = { .type_name = "TYPE_RESERVED_57", .blck_size = 0, .type_size = 0, .is_quantized = false },
+    [58] = { .type_name = "TYPE_RESERVED_58", .blck_size = 0, .type_size = 0, .is_quantized = false },
+    [59] = { .type_name = "TYPE_RESERVED_59", .blck_size = 0, .type_size = 0, .is_quantized = false },
+    [60] = { .type_name = "TYPE_RESERVED_60", .blck_size = 0, .type_size = 0, .is_quantized = false },
+    [61] = { .type_name = "TYPE_RESERVED_61", .blck_size = 0, .type_size = 0, .is_quantized = false },
+    [62] = { .type_name = "TYPE_RESERVED_62", .blck_size = 0, .type_size = 0, .is_quantized = false },
+    // GGML_TYPE_TESSERA_T_RDNA3 = 63: enum landed here (W3 task 3.3), but
+    // kept gap-safe (blck_size=0, no to_float) until task 3.7 lands the CPU
+    // reference dequant row function - wiring blck_size to a real nonzero
+    // value before to_float exists would let a tensor of this type pass
+    // gguf.cpp's loader gate and then null-deref on first dequant attempt,
+    // which is strictly worse than the current "loader refuses it" gap
+    // behavior. Task 3.7 turns this into a real entry in one edit.
+    [GGML_TYPE_TESSERA_T_RDNA3] = {
+        .type_name                = "tessera_t_rdna3",
+        .blck_size                = 0,
+        .type_size                = 0,
+        .is_quantized             = false,
+    },
 };
 
 const struct ggml_type_traits * ggml_get_type_traits(enum ggml_type type) {

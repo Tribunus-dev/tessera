@@ -434,7 +434,15 @@ extern "C" {
         GGML_TYPE_TESSERA_T640_3D = 44, // 3D expert bank marker; same physical encoding as T640
         GGML_TYPE_TESSERA_T512    = 45, // 2D Tile512 Intel-native 16×32 ternary (first-class Linux export)
         GGML_TYPE_TESSERA_T1024   = 46, // 2D Tile1024 Intel-native 32×32 ternary (first-class Linux export)
-        GGML_TYPE_COUNT   = 47,
+        // 47-62 reserved (amd-tile-format-spec.md 9(v)/9(vii)): gap slots for
+        // the AMD tile family this wave does not implement (GCN/RDNA1/RDNA2/
+        // RDNA4/CDNA1-4) plus W4's KCACHE/VCACHE. type_traits[47..62] carry
+        // explicit placeholder entries (blck_size=0, type_size=0) so any
+        // accidental use is rejected the same way the codebase already
+        // rejects the removed Q4_0_4_4-family types above, not left to
+        // silently zero-initialize.
+        GGML_TYPE_TESSERA_T_RDNA3 = 63, // AMD RDNA3 native WMMA [16,16,16] tile; see docs/amd-tile-format-spec.md 3.4
+        GGML_TYPE_COUNT   = 64,
     };
 
     // precision

@@ -15,8 +15,15 @@
 
 #include "tile-detect.h"
 
-#include <cassert>
 #include <cstdio>
+
+// This project's default CMake build is Release (-DNDEBUG), which compiles
+// a plain assert() to nothing - the checks below would silently never run.
+// Force live assertions the same way tests/test-tessera-config.cpp does:
+// undef NDEBUG and re-include <cassert> so its macro re-expands to the
+// checking form regardless of the command-line -DNDEBUG.
+#undef NDEBUG
+#include <cassert>
 
 static void test_rdna35(void) {
     printf("test-tessera-tile-detect-amd: RDNA 3.5 iGPU family\n");

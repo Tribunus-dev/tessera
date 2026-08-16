@@ -343,6 +343,11 @@ llama_test(test-tessera-tile-detect-amd)
 target_include_directories(test-tessera-tile-detect-amd PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/quantize/tessera
     ${PROJECT_SOURCE_DIR}/ggml/src)
+# W3 task 3.3: gap-safety audit for the GGML_TYPE_COUNT 47->64 enum landing
+# (GGML_TYPE_TESSERA_T_RDNA3 = 63). Links the real ggml library so the
+# check exercises the actual type_traits[] table, not a stub.
+llama_build(test-tessera-type-gap-audit.cpp)
+llama_test(test-tessera-type-gap-audit)
 llama_build(test-dflash-loader.cpp)
 llama_test(test-dflash-loader)
 target_include_directories(test-dflash-loader PRIVATE ${PROJECT_SOURCE_DIR}/src)
