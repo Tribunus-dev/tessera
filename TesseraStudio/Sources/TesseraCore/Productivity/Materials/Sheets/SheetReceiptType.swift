@@ -103,4 +103,10 @@ public enum SheetReceiptType: String, Codable, Sendable, CaseIterable {
     /// A solver run was applied, writing the resolved variable values
     /// for a feasible model (P2-A 2.6).
     case applySolverRun = "sheet_solver_applied"
+    /// A SELECT query result was materialized into a sheet range via
+    /// the local database connector (P2-D 2.16, db_import_range).
+    /// Payload carries source-file path + content hash + SQL text +
+    /// row count - db_query itself (before materialization) never
+    /// emits a receipt, per the "no receipt without a mutation" rule.
+    case importFromDatabase = "sheet_database_import"
 }

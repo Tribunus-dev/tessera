@@ -53,6 +53,8 @@ final class DocReceiptTypeTests: DoctrineTestCase {
         (.regenerateToc, "doc_toc_regenerated"),
         (.changeMasterParts, "doc_master_parts_changed"),
         (.runMailMerge, "doc_mail_merge_run"),
+        (.translateMacro, "doc_macro_translated"),
+        (.fillForm, "doc_form_filled"),
     ]
 
     func testEveryCaseHasItsDocumentedRawValue() {

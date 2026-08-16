@@ -77,6 +77,13 @@ public struct Doc: Codable, Sendable, Identifiable, Hashable {
     /// is mirrored into `linkedEntityIDs`; see `MasterDocController`.
     public var masterDocSpec: MasterDocSpec?
 
+    /// Package parts this doc's import couldn't represent natively -
+    /// a VBA project binary (2.13 macros), custom XML data-binding
+    /// sources (2.15 forms) - preserved byte-for-byte and re-emitted
+    /// verbatim on export. `nil`/empty is the common case (no such
+    /// parts existed in the source package). See `PreservedParts`.
+    public var preservedParts: PreservedParts?
+
     public init(
         id: UUID = UUID(),
         title: String = "",
@@ -90,7 +97,8 @@ public struct Doc: Codable, Sendable, Identifiable, Hashable {
         linkedEntityIDs: [UUID] = [],
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
-        masterDocSpec: MasterDocSpec? = nil
+        masterDocSpec: MasterDocSpec? = nil,
+        preservedParts: PreservedParts? = nil
     ) {
         self.id = id
         self.title = title
@@ -105,6 +113,7 @@ public struct Doc: Codable, Sendable, Identifiable, Hashable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.masterDocSpec = masterDocSpec
+        self.preservedParts = preservedParts
     }
 
     // MARK: - Constants

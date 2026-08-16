@@ -84,4 +84,12 @@ public enum DocReceiptType: String, Codable, Sendable, CaseIterable {
     /// per-output documents get their own ordinary doc_upsert receipts,
     /// this one is the merge OPERATION's own audit entry.
     case runMailMerge = "doc_mail_merge_run"
+    /// A macro (VBA project module) was translated to a stored
+    /// playbook artifact (P2-D 2.13). Never fires for execution -
+    /// MacroCompatLayer parses and translates, it never runs a macro.
+    case translateMacro = "doc_macro_translated"
+    /// A content-control form field was filled (P2-D 2.15). Stays
+    /// tier1 even on a protected fill-in-only document - every OTHER
+    /// write on such a document is `.denied` by TesseraSafetyDecision.
+    case fillForm = "doc_form_filled"
 }

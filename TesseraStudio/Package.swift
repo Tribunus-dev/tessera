@@ -73,10 +73,14 @@ let package = Package(
         .library(name: "TesseraStudioiOS", targets: ["TesseraStudioiOS"]),
     ],
     dependencies: [
-        // DuckDB: columnar analytical database for graph analytics ETL.
-        // The analytics layer (degree centrality, future PageRank) runs against
-        // DuckDB; Postgres remains the source of truth. See
-        // docs/linux-data-contracts.md §DuckDB.
+        // DuckDB: columnar analytical database. Originally added for graph
+        // analytics ETL (degree centrality, future PageRank - Postgres
+        // remains the source of truth there, see docs/linux-data-contracts.md
+        // §DuckDB); item 2.16 DatabaseConnector (P2-D) reuses this same
+        // dependency for its own, separate purpose - querying user-picked
+        // local CSV/Parquet/JSON files read-only, in-process, no network.
+        // The two uses open entirely different files; nothing is shared
+        // beyond the SPM package itself.
         .package(url: "https://github.com/duckdb/duckdb-swift.git", from: "1.0.0"),
         // Pure-Swift HTML parser used by the keyless web-search providers
         // (DuckDuckGo HTML endpoint). No WebKit, works headless in tests.
