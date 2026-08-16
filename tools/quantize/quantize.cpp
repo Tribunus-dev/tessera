@@ -1963,7 +1963,15 @@ int llama_quantize(int argc, char ** argv) {
 
     // parse command line arguments
     const std::string fname_inp = !model_input.empty() ? model_input : argv[arg_idx];
-    arg_idx++;
+    // Only advance arg_idx past a positional input path when one was
+    // actually consumed here. When --model already supplied fname_inp,
+    // argv[arg_idx] is the caller's NEXT positional (the output path, or
+    // the ftype if output is being auto-derived) - incrementing
+    // unconditionally silently discards it and shifts every subsequent
+    // positional (ftype, nthreads) left by one slot.
+    if (model_input.empty()) {
+        arg_idx++;
+    }
     std::string fname_out;
 
     std::string ftype_str;
