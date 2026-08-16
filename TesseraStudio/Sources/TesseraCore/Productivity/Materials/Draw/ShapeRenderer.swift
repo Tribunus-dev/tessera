@@ -82,6 +82,24 @@ public struct ShapeRenderer: Sendable {
     /// nothing useful, so callers that set `fill` on one anyway (a
     /// data error, not a crash) simply see it ignored rather than
     /// drawing a degenerate zero-area fill.
+    ///
+    /// `.bezier` DELIBERATELY stays fillable at the KIND level
+    /// regardless of any individual subpath's own `closed` flag (item
+    /// 2.3's own review point - reconsidered here, not changed): SVG's
+    /// painting model fills an OPEN subpath by treating it as implicitly
+    /// closed FOR THE FILL COMPUTATION ONLY, never for stroking -
+    /// exactly what `context.fillPath()` already does to any open
+    /// subpath in the `CGPath` `bezierPath(_:origin:)` below builds
+    /// (CoreGraphics' fill operator auto-closes every subpath, the same
+    /// PDF/PostScript imaging-model convention SVG's own spec follows),
+    /// while `context.strokePath()` correctly does NOT draw that
+    /// implicit closing edge, since `bezierPath` only calls
+    /// `.closeSubpath()` when `subpath.closed` is actually `true`. So
+    /// the SVG/ODF-correct "open subpaths still fill, but don't grow a
+    /// phantom stroke edge" behavior falls out of the existing
+    /// fill/stroke split for free - per-subpath openness need not (and
+    /// should not) gate fillability at the whole-shape level the way
+    /// `kindIsFillable` operates.
     private func kindIsFillable(_ kind: ShapeKind) -> Bool {
         switch kind {
         case .line, .arrow, .connector: return false
@@ -199,7 +217,15 @@ public struct ShapeRenderer: Sendable {
 
     // MARK: - Paths
 
-    private func path(for shape: Shape, allShapes: [Shape] = []) -> CGPath {
+    /// Widened from `private` to module-internal (P2-B item 2.17,
+    /// ShapeExtrusionRenderer) so the SceneKit extrusion renderer can
+    /// build an `SCNShape` from the SAME 2D outline this renderer draws,
+    /// instead of duplicating the per-`ShapeKind` path construction - the
+    /// design contract's own instruction ("reuse ShapeRenderer's existing
+    /// path(for:) construction, don't duplicate it"). No behavior change;
+    /// still file-private to `render(_:in:allShapes:)`'s own call site in
+    /// spirit, just reachable from elsewhere in `TesseraCore`.
+    func path(for shape: Shape, allShapes: [Shape] = []) -> CGPath {
         switch shape.kind {
         case .rect:      return rectPath(shape.geometry)
         case .ellipse:   return CGPath(ellipseIn: shape.geometry.frame, transform: nil)
@@ -214,15 +240,79 @@ public struct ShapeRenderer: Sendable {
             // freeform outline exists.
             return rectPath(shape.geometry)
         case .bezier:
-            // Placeholder (item 2.3, BezierPathController's own render
-            // path to fill in): real construction from
-            // shape.path.subpaths' move/line/quad/cubic segments via
-            // CGMutablePath. Bounding rect for now, matching .freeform's
-            // own honest-placeholder precedent above.
-            return rectPath(shape.geometry)
+            // Item 2.3's own render path. `shape.path` is nil only for
+            // malformed data (a `.bezier` shape that was never actually
+            // given geometry) - the bounding rect is the same honest
+            // placeholder `.freeform` uses above, not a crash.
+            guard let shapePath = shape.path else { return rectPath(shape.geometry) }
+            return bezierPath(shapePath, origin: CGPoint(x: shape.geometry.x, y: shape.geometry.y))
         case .connector:
             return connectorPath(shape, allShapes: allShapes)
         }
+    }
+
+    /// Builds the real `CGPath` for a `.bezier` shape by walking
+    /// `shapePath.subpaths`' segments.
+    ///
+    /// COORDINATE SPACE (a design call this item's own contract left
+    /// open - recorded here and in the P2-B findings file for architect
+    /// ratification): `ShapePath`'s points are the shape's own LOCAL
+    /// coordinates (0...`geometry.width`, 0...`geometry.height`) -
+    /// matching `ShapeGeometry.anchorPoint`'s own documented convention
+    /// ("in the shape's own UNROTATED local coordinates... not canvas
+    /// coordinates"), which `ShapePath.swift`'s header comment
+    /// explicitly cross-references. `origin` (the shape's `geometry.x`/
+    /// `.y`) is added back here, exactly the way `regularStarPath`/
+    /// `polygonPath` above compute `center = g.x + g.width / 2` rather
+    /// than drawing at a local (width/2, height/2) origin - NEITHER
+    /// `render(_:in:allShapes:)` nor any sibling `*Path` function in
+    /// this file establishes a "shape-local" CTM translate, so every
+    /// path this type hands to `context.addPath` must already be in the
+    /// same canvas-absolute, unrotated space `g.frame` itself is; local
+    /// `ShapePath` points otherwise would silently render at the wrong
+    /// canvas position. This also matches ODF/SVG's own `draw:path`
+    /// convention directly (`svg:d`'s coordinates are relative to the
+    /// element's own `svg:viewBox`, not the page) - see
+    /// `ODGBridgeFilter`'s `.bezier` export/import, which passes
+    /// `shape.path`'s points straight through with no offset for
+    /// exactly this reason.
+    private func bezierPath(_ shapePath: ShapePath, origin: CGPoint) -> CGPath {
+        let mutablePath = CGMutablePath()
+        func point(_ p: ShapePathPoint) -> CGPoint {
+            CGPoint(x: origin.x + CGFloat(p.x), y: origin.y + CGFloat(p.y))
+        }
+        for subpath in shapePath.subpaths {
+            guard !subpath.segments.isEmpty else { continue }
+            for (index, segment) in subpath.segments.enumerated() {
+                switch segment {
+                case .move(let p):
+                    mutablePath.move(to: point(p))
+                case .line(let p):
+                    // A `.line`/`.quad`/`.cubic` at index 0 (malformed -
+                    // `ShapePathSegment`'s own doc comment says a
+                    // subpath's first segment "may only legally" be
+                    // `.move`) degrades to an implicit move to that
+                    // segment's own endpoint, so one malformed subpath
+                    // never corrupts every subpath after it in the same
+                    // `CGMutablePath`.
+                    if index == 0 { mutablePath.move(to: point(p)) } else { mutablePath.addLine(to: point(p)) }
+                case .quad(let control, let end):
+                    if index == 0 {
+                        mutablePath.move(to: point(end))
+                    } else {
+                        mutablePath.addQuadCurve(to: point(end), control: point(control))
+                    }
+                case .cubic(let control1, let control2, let end):
+                    if index == 0 {
+                        mutablePath.move(to: point(end))
+                    } else {
+                        mutablePath.addCurve(to: point(end), control1: point(control1), control2: point(control2))
+                    }
+                }
+            }
+            if subpath.closed { mutablePath.closeSubpath() }
+        }
+        return mutablePath
     }
 
     /// Resolved via `ConnectorRouter`, using `allShapes` to look up any

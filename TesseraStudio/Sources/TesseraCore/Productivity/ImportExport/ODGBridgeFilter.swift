@@ -149,10 +149,14 @@ public actor ODGBridgeFilter {
                 continue
             }
 
-            shapes.append(Shape(
+            var shape = Shape(
                 id: shapeID, kind: kind, geometry: geometry(for: element, kind: kind),
                 zIndex: shapes.count, layerID: layerID
-            ))
+            )
+            if kind == .bezier {
+                shape.path = Self.shapePath(for: element, boxGeometry: shape.geometry)
+            }
+            shapes.append(shape)
         }
 
         for (index, element) in connectorIndices {
@@ -245,13 +249,24 @@ public actor ODGBridgeFilter {
         }
 
         switch shape.kind {
-        case .rect, .freeform, .ellipse, .bezier:
-            // .bezier placeholder (item 2.3's real I/O work): maps onto
-            // the bounding-box element for now, same honest-placeholder
-            // shape as .freeform above - a real draw:path element
-            // carrying shape.path's subpaths is BezierPathController's
-            // own job to add here.
+        case .rect, .freeform, .ellipse:
             attributes.merge(boxAttributes(shape.geometry)) { _, new in new }
+        case .bezier:
+            // Item 2.3's real I/O work - a real draw:path element,
+            // empirically probed against soffice 26.2.5.2 (2026-08-15,
+            // see ODGBezierPathWireFormatProbeTests.swift). svg:viewBox
+            // spans the SAME numeric range as this shape's own local
+            // path-point space (0...width, 0...height, matching
+            // ShapePath's own local-coordinate convention - see
+            // ShapePath.swift's header and ShapeRenderer's .bezier
+            // case), so svg:d's numbers are shape.path's own points
+            // written through verbatim - no rescale needed on export;
+            // drawing(fromFodgData:) rescales on the way back in, since
+            // a REAL soffice round trip rewrites svg:viewBox to its own
+            // internal unit (confirmed empirically).
+            attributes.merge(boxAttributes(shape.geometry)) { _, new in new }
+            attributes["svg:viewBox"] = "0 0 \(formatUnitless(max(shape.geometry.width, 0))) \(formatUnitless(max(shape.geometry.height, 0)))"
+            attributes["svg:d"] = (shape.path ?? ShapePath()).pathData
         case .line, .arrow:
             attributes.merge(lineAttributes(shape.geometry)) { _, new in new }
         case .polygon, .star:
@@ -270,7 +285,8 @@ public actor ODGBridgeFilter {
     /// `ShapeKind` on the way back in.
     private static func elementName(for kind: ShapeKind) -> String {
         switch kind {
-        case .rect, .freeform, .bezier: return "draw:rect"
+        case .rect, .freeform: return "draw:rect"
+        case .bezier: return "draw:path"
         case .ellipse: return "draw:ellipse"
         case .line, .arrow: return "draw:line"
         case .polygon, .star: return "draw:polygon"
@@ -413,6 +429,7 @@ public actor ODGBridgeFilter {
         case "draw:ellipse", "draw:circle": return .ellipse
         case "draw:line": return .line
         case "draw:polygon": return .polygon
+        case "draw:path": return .bezier
         case "draw:connector": return .connector
         default:
             // draw:frame (images), draw:g (groups - Drawing's own
@@ -571,5 +588,75 @@ public actor ODGBridgeFilter {
     /// `FlatODFReaderTests`' fixtures.
     private static func formatLength(_ points: Double) -> String {
         String(format: "%.4fcm", points * 2.54 / 72.0)
+    }
+
+    /// A bare (unitless) number for `svg:viewBox` - unlike `svg:x`/
+    /// `svg:width`/etc, ODF's `svg:viewBox` is explicitly a unitless
+    /// coordinate-space extent (confirmed by every observed real
+    /// `svg:viewBox` value in this file and its probes: "0 0 1000
+    /// 1000", "0 0 4001 3001" - never a "4001cm"-style suffix), so this
+    /// deliberately does NOT go through `formatLength`'s cm conversion.
+    private static func formatUnitless(_ value: Double) -> String {
+        String(value)
+    }
+
+    // MARK: - Path data (item 2.3, .bezier shapes)
+
+    /// Recovers a `.bezier` shape's `ShapePath` from its element -
+    /// either a real `draw:path` (`svg:d` present), or the
+    /// curve-free-closed-shape DEMOTION soffice's own re-export applies
+    /// (confirmed empirically, 2026-08-15 against LibreOffice 26.2.5.2 -
+    /// see `ODGBezierPathWireFormatProbeTests.swift`): a `.bezier` whose
+    /// every subpath is closed AND built only from straight segments
+    /// round-trips through a real `soffice --convert-to` as a plain
+    /// `draw:polygon` instead, since soffice's own internal PolyPolygon
+    /// model simplifies a curve-free closed shape on export. `draw:name`
+    /// still carries this bridge's own `"ts-kind:bezier"` marker
+    /// regardless of which of the two elements the shape actually landed
+    /// on (`shapeKind(for:)` already resolves the marker before this
+    /// runs), so this function reads whichever ELEMENT the marker turned
+    /// out to be attached to rather than assuming `draw:path`.
+    private static func shapePath(for element: FlatODFElement, boxGeometry: ShapeGeometry) -> ShapePath {
+        let target = CGRect(x: 0, y: 0, width: max(boxGeometry.width, 0), height: max(boxGeometry.height, 0))
+        let raw: ShapePath
+        if element.name == "draw:polygon" {
+            raw = polygonShapePath(fromDrawPoints: element.attributes["draw:points"])
+        } else {
+            guard let d = element.attributes["svg:d"] else { return ShapePath() }
+            raw = ShapePath.parsingPathData(d)
+        }
+        let viewBox = parsedViewBox(element.attributes["svg:viewBox"]) ?? target
+        return raw.rescaled(from: viewBox, to: target)
+    }
+
+    /// The demoted-to-polygon fallback (see `shapePath(for:boxGeometry:)`'s
+    /// doc comment): `draw:points` is the SAME `"x,y x,y ..."` list
+    /// format `polygonAttributes`/`regularPolygonPoints` above already
+    /// write for `.polygon`/`.star`, reconstructed here as one CLOSED
+    /// subpath of straight `.line` segments (a demoted `.bezier` is, by
+    /// construction, exactly that: every subpath was already closed and
+    /// curve-free, or soffice would not have simplified it this way).
+    private static func polygonShapePath(fromDrawPoints raw: String?) -> ShapePath {
+        guard let raw, !raw.isEmpty else { return ShapePath() }
+        let points: [ShapePathPoint] = raw.split(separator: " ").compactMap { token in
+            let parts = token.split(separator: ",")
+            guard parts.count == 2, let x = Double(parts[0]), let y = Double(parts[1]) else { return nil }
+            return ShapePathPoint(x: x, y: y)
+        }
+        guard let first = points.first else { return ShapePath() }
+        var segments: [ShapePathSegment] = [.move(first)]
+        segments.append(contentsOf: points.dropFirst().map { .line($0) })
+        return ShapePath(subpaths: [ShapeSubpath(segments: segments, closed: true)])
+    }
+
+    /// Parses `"minX minY width height"` (ODF/SVG's own `svg:viewBox`
+    /// syntax) - `nil` (not a degenerate `CGRect`) for anything
+    /// malformed or absent, so callers can tell "no viewBox" apart from
+    /// "a zero-size one" and choose their own fallback.
+    private static func parsedViewBox(_ raw: String?) -> CGRect? {
+        guard let raw else { return nil }
+        let parts = raw.split(separator: " ").compactMap { Double($0) }
+        guard parts.count == 4 else { return nil }
+        return CGRect(x: parts[0], y: parts[1], width: parts[2], height: parts[3])
     }
 }
