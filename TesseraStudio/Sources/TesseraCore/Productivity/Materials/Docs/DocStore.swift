@@ -359,6 +359,76 @@ public struct DocStore: Sendable {
         return (doc, changedCount)
     }
 
+    // MARK: - Table of Contents
+
+    /// Regenerate a `.toc` block's entry children via
+    /// `TocController.regenerate` - see that file's header for the full
+    /// collection algorithm. A no-op (no persist, no receipt) when
+    /// `tocBlockID` isn't a `.toc` block with a `TocSpec`, or when
+    /// regeneration finds nothing changed - matching `refreshFields`/
+    /// `deleteStyle`'s "only emit when something actually changed"
+    /// precedent in this store.
+    public func regenerateToc(for docID: UUID, tocBlockID: UUID) async throws -> Doc {
+        var doc = try await loadOrFail(id: docID)
+        let (ast, result) = TocController.regenerate(tocBlockID, in: doc.body)
+        guard result.changed else { return doc }
+        doc.body = ast
+        doc.updatedAt = Date()
+        _ = try await persist(doc)
+        try await appendReceipt(
+            entityID: docID,
+            receiptType: result.receiptType,
+            payload: result.payload
+        )
+        return doc
+    }
+
+    // MARK: - Master Documents
+
+    /// Apply a new `MasterDocSpec` (2.11) to a master document,
+    /// mirroring `spec.parts` into `linkedEntityIDs` - see
+    /// `MasterDocController` for the full design. A no-op (no persist,
+    /// no receipt) when `spec` is identical to what was already stored,
+    /// matching `refreshFields`/`deleteStyle`'s "only emit when
+    /// something actually changed" precedent in this store.
+    public func setMasterDocSpec(_ spec: MasterDocSpec, for docID: UUID) async throws -> Doc {
+        var doc = try await loadOrFail(id: docID)
+        let result = MasterDocController.applyingSpec(spec, over: doc.masterDocSpec, docID: docID)
+        guard result.changed else { return doc }
+        let previousParts = doc.masterDocSpec?.parts ?? []
+        doc.masterDocSpec = spec
+        doc.linkedEntityIDs = MasterDocController.mirroringParts(spec.parts, previousParts: previousParts, into: doc.linkedEntityIDs)
+        doc.updatedAt = Date()
+        _ = try await persist(doc)
+        try await appendReceipt(
+            entityID: docID,
+            receiptType: result.receiptType,
+            payload: result.payload
+        )
+        return doc
+    }
+
+    // MARK: - Mail Merge
+
+    /// Record that a mail-merge run completed (2.4) - the merge
+    /// OPERATION's own audit entry, distinct from each output
+    /// document's own `doc_upsert` receipt (already emitted by the
+    /// ordinary `upsert` path when `MailMergeCoordinator` persists each
+    /// merged doc). Unlike every other mutation in this store, this
+    /// method has no "did anything change" guard: the contract here is
+    /// "the run happened", not "some stored state changed" - it always
+    /// appends exactly one receipt for a completed run.
+    public func recordMailMerge(sourceHash: String, recordCount: Int, for templateDocID: UUID) async throws {
+        try await appendReceipt(
+            entityID: templateDocID,
+            receiptType: DocReceiptType.runMailMerge.rawValue,
+            payload: [
+                "sourceHash": .string(sourceHash),
+                "recordCount": .number(Double(recordCount)),
+            ]
+        )
+    }
+
     // MARK: - Footnotes / Endnotes (P2-0 item 1: insert/delete lifecycle)
 
     /// Insert a new footnote/endnote body block anchored at a UTF-16 text

@@ -72,6 +72,11 @@ public struct Doc: Codable, Sendable, Identifiable, Hashable {
     public var createdAt: Date
     public var updatedAt: Date
 
+    /// Master-document assembly spec (2.11). `nil` means this doc is
+    /// not a master document — the common case. When present, `parts`
+    /// is mirrored into `linkedEntityIDs`; see `MasterDocController`.
+    public var masterDocSpec: MasterDocSpec?
+
     public init(
         id: UUID = UUID(),
         title: String = "",
@@ -84,7 +89,8 @@ public struct Doc: Codable, Sendable, Identifiable, Hashable {
         tags: [String] = [],
         linkedEntityIDs: [UUID] = [],
         createdAt: Date = Date(),
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        masterDocSpec: MasterDocSpec? = nil
     ) {
         self.id = id
         self.title = title
@@ -98,6 +104,7 @@ public struct Doc: Codable, Sendable, Identifiable, Hashable {
         self.linkedEntityIDs = linkedEntityIDs
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.masterDocSpec = masterDocSpec
     }
 
     // MARK: - Constants

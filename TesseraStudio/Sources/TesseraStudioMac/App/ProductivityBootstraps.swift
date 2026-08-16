@@ -43,6 +43,15 @@ final class DocsSurfaceBootstrap: ObservableObject {
         self.dataLayer = dl
         self.store = store
         self.viewModel = DocsViewModel(store: store, dataLayer: dl)
+        // merge_run / MailMergeWizardView (P2-C 2.4/2.21) both act
+        // through this one coordinator, built off the Docs surface's
+        // own data layer (a SheetStore reading from the SAME Postgres
+        // connection the DocStore above already opened - no second
+        // pool). Installed eagerly, unlike SheetToolContext's
+        // per-selection install, since MailMergeCoordinator has no
+        // "which sheet is open" concept to wait for - see
+        // MailMergeToolContext's own doc comment.
+        MailMergeToolContext.shared.install(MailMergeCoordinator(dataLayer: dl))
     }
 
     func installIfNeeded() {

@@ -82,6 +82,13 @@ public final class TesseraToolRegistry: Sendable {
         SheetStatLargeTool(),
         SheetStatSmallTool(),
         SheetStatCountTool(),
+        // Mail merge (P2-C 2.4): merge_run resolves its coordinator
+        // through MailMergeToolContext.shared, installed eagerly by
+        // DocsSurfaceBootstrap when the Docs surface's data layer
+        // starts - inert (returns a clean "not available" error) until
+        // then, same posture as the Sheets tools above before a
+        // workbook is selected.
+        MailMergeRunTool(),
         // General-agent harness: cited web research. Keyless DuckDuckGo search
         // by default, SearXNG/Tavily opt-in (docs/tessera-studio-design.md 5.4).
         // Egresses the query to a search engine, so it runs at approval .prompt.
