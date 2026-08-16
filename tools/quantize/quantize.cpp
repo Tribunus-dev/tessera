@@ -1209,6 +1209,18 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
     ts_quant_params_2d qp_base{};
     qp_base.alpha          = 0.0f;   // auto-search
     qp_base.clip           = 1.0f;
+    // outlier_thresh holds tp.outlier_frac's value but is used pipeline-wide
+    // as a TARGET FRACTION of elements to keep as exact-value outliers
+    // (max_outliers = ceil(outlier_thresh * n) below), NOT as an absolute
+    // residual-magnitude cutoff - the earlier "uncap outliers" change
+    // (before this session) removed the count cap and left outlier_thresh
+    // as the sole selector, but 0.005 as an ABSOLUTE cutoff turned out to
+    // catch 35-65% of every tensor's elements (weight/residual magnitudes
+    // commonly sit in that same range), not a sparse exception set -
+    // measured directly from a real export-ternary run's shipped
+    // .outlier_cols array sizes. An outlier costs ~6 bytes (f16 value +
+    // i32 column) vs ~1.6 bits for a trit, so that silently defeated
+    // ternary compression for most of the model. See gap ledger.
     qp_base.outlier_thresh = tp.outlier_frac;
     // use_imatrix/use_septq: real calibration data (AWQ act_scales, and
     // SEPTQ's diagonal-Hessian proxy which is built from those same
@@ -1337,16 +1349,19 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
             // ts_select_repair_residuals treats max_outliers<=0 as "no
             // outliers, return immediately" (tessera-quant.cpp), which is
             // what silently disabled outlier repair for every export-
-            // ternary run before this. Uncapped (the tensor's full element
-            // count): outlier_thresh (an absolute residual-magnitude
-            // cutoff, not a fraction - see ts_select_repair_residuals'
-            // `resid >= threshold` test) is the real selectivity
-            // mechanism; a separate count cap was only ever an extra,
-            // unnecessary ceiling on top of it - outliers are stored
-            // exactly, so letting the threshold alone decide is strictly
-            // more faithful.
+            // ternary run before the earlier "uncap outliers" fix. That fix
+            // removed the count cap entirely (max_outliers = per, the full
+            // element count) and relied on qp_base.outlier_thresh's raw
+            // value (0.005) as an absolute residual-magnitude cutoff to be
+            // the sole selector - measured directly against a real run's
+            // shipped .outlier_cols array sizes, this caught 35-65% of
+            // every tensor's elements, not a sparse exception set (see
+            // qp_base.outlier_thresh's own comment above). max_outliers is
+            // now derived as the fraction outlier_thresh actually
+            // represents, restoring a genuine, bounded outlier budget.
             ts_quant_params_2d qp = qp_base;
-            qp.max_outliers = per;
+            qp.max_outliers = std::max<int64_t>(
+                1, (int64_t) std::ceil((double) qp_base.outlier_thresh * (double) per));
 
             // Live per-tensor algorithm selection: measure AWQ/SEPTQ (via
             // ts_measure_true_t2, which runs the REAL dispatch through

@@ -1079,33 +1079,15 @@ int ts_quantize_2d_ternary(const float * weights, const float * act_scales,
         // positions get ternarized vs kept as exact-value outliers
         // (tessera-septq.cpp:657, outlier = !mask_flat) - hardcoding 1.0
         // (100% masked/ternarized) meant SEPTQ produced ZERO outliers,
-        // ever, while AWQ gets a fully uncapped, threshold-driven outlier
-        // budget (ts_select_repair_residuals below). Confirmed via a live
-        // true-reconstruction measurement: SEPTQ's t2 was ~10-15x worse
-        // than AWQ's on every tensor once outlier correction was properly
-        // accounted for - not a real algorithmic gap, an unfair budget.
-        // Derive an equivalent outlier budget instead of a fixed fraction:
-        // ternarize `weights` directly (SEPTQ's own convention - no AWQ
-        // column pre-scaling) with the same global threshold, run the
-        // SAME outlier selector AWQ uses with the SAME outlier_thresh, and
-        // convert the resulting count into a ratio - both algorithms then
-        // respect the same threshold semantics instead of SEPTQ getting an
-        // arbitrary (and here, degenerate) fixed split.
-        {
-            std::vector<float>  ws_tmp((size_t) n), core_tmp((size_t) n);
-            std::vector<int8_t> ternary_tmp((size_t) n);
-            std::vector<float>  wscale_identity((size_t) in_dim, 1.0f);
-            const float gamp_tmp = ts_scale_clip_ternarize_fused(
-                weights, wscale_identity.data(), params->clip,
-                ws_tmp.data(), core_tmp.data(), ternary_tmp.data(), out_dim, in_dim);
-            const std::vector<int32_t> outliers_tmp = ts_select_repair_residuals(
-                ws_tmp.data(), ternary_tmp.data(), gamp_tmp, out_dim, in_dim,
-                n, params->outlier_thresh);
-            const int64_t n_outliers = (int64_t) outliers_tmp.size();
-            sp.septq_ratio = (n > 0)
-                ? std::max(0.5f, 1.0f - (float) n_outliers / (float) n)
-                : 1.0f;
-        }
+        // ever, while AWQ gets its own outlier_thresh-driven budget
+        // (ts_select_repair_residuals below). params->outlier_thresh is
+        // the target FRACTION of elements to keep as outliers (see
+        // quantize.cpp's qp_base.outlier_thresh comment - NOT an absolute
+        // residual-magnitude cutoff), so SEPTQ's own outlier fraction is
+        // directly 1 minus that, giving both algorithms the same budget
+        // instead of SEPTQ getting an arbitrary (and previously,
+        // degenerate) fixed split.
+        sp.septq_ratio = std::min(1.0f, std::max(0.5f, 1.0f - params->outlier_thresh));
         sp.septq_iterations    = 1;
         sp.ternary_threshold   = 1.0f;
         sp.hessian_bandwidth   = 0;
@@ -1576,7 +1558,13 @@ float ts_measure_true_t2(const float * weights, const float * act_scales,
     ts_quant_params_2d qp{};
     qp.alpha          = alpha;
     qp.clip           = clip;
-    qp.max_outliers   = out_dim * in_dim;  // uncapped, matching export-ternary's own convention
+    // outlier_thresh is a target FRACTION of elements (see quantize.cpp's
+    // qp_base.outlier_thresh comment), not an absolute magnitude cutoff -
+    // max_outliers must be derived from it, matching the real production
+    // dispatch exactly, or this measurement wouldn't reflect what actually
+    // gets shipped.
+    const int64_t n = out_dim * in_dim;
+    qp.max_outliers   = std::max<int64_t>(1, (int64_t) std::ceil((double) outlier_thresh * (double) n));
     qp.outlier_thresh = outlier_thresh;
     qp.use_imatrix    = (act_scales != nullptr);
     qp.use_septq      = use_septq;
@@ -1589,7 +1577,6 @@ float ts_measure_true_t2(const float * weights, const float * act_scales,
         return -1.0f;
     }
 
-    const int64_t n = out_dim * in_dim;
     const std::vector<float> synth_mag = ts_ternary_synth_magnitude(tn);
     std::vector<float> recon((size_t) n);
     for (int64_t i = 0; i < n; i++) {
