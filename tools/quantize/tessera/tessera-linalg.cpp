@@ -65,8 +65,8 @@ static void ts_matmul(const float * A, const float * B, float * C,
                 1.0f, A, (int)k, B, (int)n, 0.0f, C, (int)n);
 #elif defined(TS_USE_ROCBLAS)
     // Col-major: C^T(n,m) = B^T(n,k) * A^T(k,m).
-    ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)m * k * sizeof(float));
-    ts_rblas_buf b = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)k * n * sizeof(float));
+    ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32_A, (size_t)m * k * sizeof(float));
+    ts_rblas_buf b = ts_rblas_buf_get(TS_RBLAS_IN_F32_B, (size_t)k * n * sizeof(float));
     ts_rblas_buf c = ts_rblas_buf_get(TS_RBLAS_OUT_F32, (size_t)m * n * sizeof(float));
     if (a.dev && b.dev && c.dev) {
         hipStream_t st = ts_rblas_stream();
@@ -121,8 +121,8 @@ static void ts_matmul_atb(const float * A, const float * B, float * C,
                 1.0f, A, (int)n, B, (int)k, 0.0f, C, (int)k);
 #elif defined(TS_USE_ROCBLAS)
     // Col-major view: C^T(k,n) = B^T(k,m) * A(m,n).
-    ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)m * n * sizeof(float));
-    ts_rblas_buf b = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)m * k * sizeof(float));
+    ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32_A, (size_t)m * n * sizeof(float));
+    ts_rblas_buf b = ts_rblas_buf_get(TS_RBLAS_IN_F32_B, (size_t)m * k * sizeof(float));
     ts_rblas_buf c = ts_rblas_buf_get(TS_RBLAS_OUT_F32, (size_t)n * k * sizeof(float));
     if (a.dev && b.dev && c.dev) {
         hipStream_t st = ts_rblas_stream();
@@ -342,7 +342,7 @@ void ts_linalg_svd_topk(const float * A, float * U, float * S, float * V,
     // rocBLAS is column-major; row-major "Upper + Trans" maps to col-major
     // "Lower + NoTrans". The fill pattern is symmetric so the upper->lower
     // copy below produces the same full matrix as the cblas path.
-    ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)m * n * sizeof(float));
+    ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32_A, (size_t)m * n * sizeof(float));
     ts_rblas_buf c = ts_rblas_buf_get(TS_RBLAS_OUT_F32, (size_t)n * n * sizeof(float));
     if (a.dev && c.dev) {
         hipStream_t st = ts_rblas_stream();

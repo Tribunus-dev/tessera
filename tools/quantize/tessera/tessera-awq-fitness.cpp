@@ -372,8 +372,8 @@ static void ts_fitness_matmul_at_host(const float * A, const float * B,
     // and B on every invocation; the GA-loop-level hoist (keeping A and B
     // device-resident across candidates) is the ts_fitness_matmul_at_dev
     // entry below.
-    ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)M * K * sizeof(float));
-    ts_rblas_buf b = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)K * N * sizeof(float));
+    ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32_A, (size_t)M * K * sizeof(float));
+    ts_rblas_buf b = ts_rblas_buf_get(TS_RBLAS_IN_F32_B, (size_t)K * N * sizeof(float));
     ts_rblas_buf c = ts_rblas_buf_get(TS_RBLAS_OUT_F32, (size_t)M * N * sizeof(float));
     if (a.dev && b.dev && c.dev) {
         hipStream_t st = ts_rblas_stream();
@@ -670,25 +670,25 @@ ts_awq_score ts_awq_eval_with_cache(const ts_awq_candidate * cand,
 #if defined(TS_USE_ROCBLAS)
     if (!cache->acquired) {
         const int64_t n_w = layer->out_dim * layer->in_dim;
-        cache->weights = ts_rblas_buf_get(TS_RBLAS_IN_F32,
+        cache->weights = ts_rblas_buf_get(TS_RBLAS_CACHE_WEIGHTS,
                                           (size_t)n_w * sizeof(float));
         if (layer->train_activations && layer->n_tokens > 0) {
-            cache->train_act = ts_rblas_buf_get(TS_RBLAS_IN_F32,
+            cache->train_act = ts_rblas_buf_get(TS_RBLAS_CACHE_TRAIN_ACT,
                                                 (size_t)layer->n_tokens * layer->in_dim
                                                 * sizeof(float));
         }
         if (layer->heldout_activations && layer->n_tokens_h > 0) {
-            cache->heldout_act = ts_rblas_buf_get(TS_RBLAS_IN_F32,
+            cache->heldout_act = ts_rblas_buf_get(TS_RBLAS_CACHE_HELDOUT_ACT,
                                                   (size_t)layer->n_tokens_h * layer->in_dim
                                                   * sizeof(float));
         }
         if (layer->ref_train_output && layer->n_tokens > 0) {
-            cache->ref_train = ts_rblas_buf_get(TS_RBLAS_IN_F32,
+            cache->ref_train = ts_rblas_buf_get(TS_RBLAS_CACHE_REF_TRAIN,
                                                 (size_t)layer->n_tokens * layer->out_dim
                                                 * sizeof(float));
         }
         if (layer->ref_heldout_output && layer->n_tokens_h > 0) {
-            cache->ref_heldout = ts_rblas_buf_get(TS_RBLAS_IN_F32,
+            cache->ref_heldout = ts_rblas_buf_get(TS_RBLAS_CACHE_REF_HELDOUT,
                                                   (size_t)layer->n_tokens_h * layer->out_dim
                                                   * sizeof(float));
         }

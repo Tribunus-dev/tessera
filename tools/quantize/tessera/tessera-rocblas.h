@@ -47,13 +47,30 @@ typedef struct {
 
 // Buffer roles: input vs output, scalar (single-value) vs array. The pool has
 // one slot per role; callers reuse the slot across calls in a hot loop.
+//
+// A GEMM needs two input operands alive at once, so IN_F32/IN_F64 are split
+// into _A/_B - requesting the same role twice while the first is still
+// in_use frees it out from under the caller (the pool's "grow" path
+// unconditionally hipFrees the existing slot). The AWQ GA eval cache
+// (tessera-awq-fitness.cpp) needs five f32 buffers alive simultaneously for
+// its lifetime (weights + train/heldout activations + train/heldout
+// reference output), so it gets five dedicated roles rather than reusing
+// IN_F32_A/_B, which would hit the exact same collision one level up.
 enum {
-    TS_RBLAS_IN_F32     = 0,  // input scratch, f32 array
-    TS_RBLAS_IN_F64     = 1,  // input scratch, f64 array
-    TS_RBLAS_OUT_F32    = 2,  // output scratch, f32 array
-    TS_RBLAS_OUT_F64    = 3,  // output scratch, f64 array
-    TS_RBLAS_SCALAR_F32 = 4,  // single f32 (sdot result)
-    TS_RBLAS_SCALAR_F64 = 5,  // single f64
+    TS_RBLAS_IN_F32_A          = 0,  // input scratch, f32 array, operand A
+    TS_RBLAS_IN_F32_B          = 1,  // input scratch, f32 array, operand B
+    TS_RBLAS_IN_F64_A          = 2,  // input scratch, f64 array, operand A
+    TS_RBLAS_IN_F64_B          = 3,  // input scratch, f64 array, operand B
+    TS_RBLAS_OUT_F32           = 4,  // output scratch, f32 array
+    TS_RBLAS_OUT_F64           = 5,  // output scratch, f64 array
+    TS_RBLAS_SCALAR_F32        = 6,  // single f32 (sdot result)
+    TS_RBLAS_SCALAR_F64        = 7,  // single f64
+    TS_RBLAS_CACHE_WEIGHTS     = 8,  // AWQ GA eval cache: layer weights
+    TS_RBLAS_CACHE_TRAIN_ACT   = 9,  // AWQ GA eval cache: train activations
+    TS_RBLAS_CACHE_HELDOUT_ACT = 10, // AWQ GA eval cache: heldout activations
+    TS_RBLAS_CACHE_REF_TRAIN   = 11, // AWQ GA eval cache: train reference output
+    TS_RBLAS_CACHE_REF_HELDOUT = 12, // AWQ GA eval cache: heldout reference output
+    TS_RBLAS_ROLE_COUNT        = 13,
 };
 
 // Returns the process-global rocBLAS handle, lazily creating it (along with

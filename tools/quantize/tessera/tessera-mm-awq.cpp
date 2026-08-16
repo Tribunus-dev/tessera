@@ -146,8 +146,8 @@ static float ts_mm_awq_mse(const float * weights, const float * act,
                     1.0f, Wq.data(), (int)in_dim, calib_X, (int)in_dim,
                     0.0f, acc.data(), (int)n_tokens);
 #elif defined(TS_USE_ROCBLAS)
-        ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)out_dim * in_dim * sizeof(float));
-        ts_rblas_buf b = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)n_tokens * in_dim * sizeof(float));
+        ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32_A, (size_t)out_dim * in_dim * sizeof(float));
+        ts_rblas_buf b = ts_rblas_buf_get(TS_RBLAS_IN_F32_B, (size_t)n_tokens * in_dim * sizeof(float));
         ts_rblas_buf c = ts_rblas_buf_get(TS_RBLAS_OUT_F32, (size_t)out_dim * n_tokens * sizeof(float));
         if (a.dev && b.dev && c.dev) {
             hipStream_t st = ts_rblas_stream();

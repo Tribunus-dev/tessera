@@ -8,8 +8,10 @@
 // a ts_rblas_buf, hipMemcpyAsync's its inputs to device on ts_rblas_stream,
 // invokes the BLAS op, hipMemcpyAsync's the output back, then releases.
 //
-// The slot pool is per-role (TS_RBLAS_IN_F32, ..., TS_RBLAS_SCALAR_F64). One
-// slot per role; allocations grow monotonically across the process lifetime
+// The slot pool is per-role (TS_RBLAS_IN_F32_A, ..., TS_RBLAS_CACHE_REF_HELDOUT
+// - see the enum in tessera-rocblas.h for why simultaneously-live buffers of
+// the same conceptual type each get their own role). One slot per role;
+// allocations grow monotonically across the process lifetime
 // (no shrink) so the L6 GA hot loop reuses the same device memory across
 // every candidate without re-allocation. The pool mutex is the only
 // synchronization.
@@ -37,7 +39,7 @@ struct ts_rblas_slot {
 };
 
 std::mutex        g_pool_mutex;
-ts_rblas_slot     g_pool[6] = {};
+ts_rblas_slot     g_pool[TS_RBLAS_ROLE_COUNT] = {};
 
 std::mutex        g_init_mutex;
 rocblas_handle    g_handle       = nullptr;
@@ -51,8 +53,8 @@ std::atomic<bool> g_init_failed{false};
 std::atomic<bool>     g_disabled_checked{false};
 std::atomic<bool>     g_disabled{false};
 std::atomic<bool>     g_alloc_fail_logged{false};
-std::atomic<uint64_t> g_dispatch_count[6] = {};
-std::atomic<uint64_t> g_fallback_count[6] = {};
+std::atomic<uint64_t> g_dispatch_count[TS_RBLAS_ROLE_COUNT] = {};
+std::atomic<uint64_t> g_fallback_count[TS_RBLAS_ROLE_COUNT] = {};
 std::atomic<uint64_t> g_dispatch_thread{0};  // debug-only single-thread guard, W1-D2
 
 bool ts_rblas_disabled() {
@@ -117,7 +119,7 @@ rocblas_handle ts_rocblas_handle() {
 }
 
 ts_rblas_buf ts_rblas_buf_get(int role, size_t bytes) {
-    if (role < 0 || role >= 6 || bytes == 0) {
+    if (role < 0 || role >= TS_RBLAS_ROLE_COUNT || bytes == 0) {
         return {nullptr, 0};
     }
 #ifndef NDEBUG
@@ -176,7 +178,7 @@ void ts_rblas_buf_release(ts_rblas_buf b) {
         return;
     }
     std::lock_guard<std::mutex> lock(g_pool_mutex);
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < TS_RBLAS_ROLE_COUNT; i++) {
         if (g_pool[i].dev == b.dev) {
             g_pool[i].in_use = false;
             return;
@@ -193,7 +195,7 @@ __attribute__((destructor))
 static void ts_rocblas_shutdown() {
     if (std::getenv("TS_RBLAS_STATS") != nullptr) {
         std::fprintf(stderr, "ts_rblas: per-role stats (dispatch / fallback / high-water bytes)\n");
-        for (int i = 0; i < 6; i++) {
+        for (int i = 0; i < TS_RBLAS_ROLE_COUNT; i++) {
             std::fprintf(stderr, "  role %d: %llu / %llu / %zu\n", i,
                          (unsigned long long) g_dispatch_count[i].load(std::memory_order_relaxed),
                          (unsigned long long) g_fallback_count[i].load(std::memory_order_relaxed),
@@ -205,7 +207,7 @@ static void ts_rocblas_shutdown() {
         g_handle = nullptr;
     }
     std::lock_guard<std::mutex> lock(g_pool_mutex);
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < TS_RBLAS_ROLE_COUNT; i++) {
         if (g_pool[i].dev != nullptr) {
             (void)hipFree(g_pool[i].dev);
             g_pool[i].dev = nullptr;

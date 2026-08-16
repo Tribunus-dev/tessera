@@ -131,8 +131,8 @@ float ts_vec_dotpr(const float * a, const float * b, int64_t n) {
     vDSP_dotpr(a, 1, b, 1, &r, (vDSP_Length)n);
     return r;
 #elif defined(TS_USE_ROCBLAS)
-    ts_rblas_buf ax = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)n * sizeof(float));
-    ts_rblas_buf ay = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)n * sizeof(float));
+    ts_rblas_buf ax = ts_rblas_buf_get(TS_RBLAS_IN_F32_A, (size_t)n * sizeof(float));
+    ts_rblas_buf ay = ts_rblas_buf_get(TS_RBLAS_IN_F32_B, (size_t)n * sizeof(float));
     ts_rblas_buf rs = ts_rblas_buf_get(TS_RBLAS_SCALAR_F32, sizeof(float));
     float r = 0.0f;
     if (ax.dev && ay.dev && rs.dev) {
@@ -328,8 +328,8 @@ void ts_mat_mul(const float * A, const float * B, float * C,
     //   C^T(N,M) = B^T(N,K) * A^T(K,M)           (col-major)
     // so we swap operand order; both A and B keep NoTrans because the
     // col-major view sees them transposed already.
-    ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)M * K * sizeof(float));
-    ts_rblas_buf b = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)K * N * sizeof(float));
+    ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32_A, (size_t)M * K * sizeof(float));
+    ts_rblas_buf b = ts_rblas_buf_get(TS_RBLAS_IN_F32_B, (size_t)K * N * sizeof(float));
     ts_rblas_buf c = ts_rblas_buf_get(TS_RBLAS_OUT_F32, (size_t)M * N * sizeof(float));
     if (a.dev && b.dev && c.dev) {
         hipStream_t s = ts_rblas_stream();
@@ -391,8 +391,8 @@ void ts_mat_mul_at(const float * A, const float * B, float * C,
     // B is read transposed (to match its col-major view of the row-major
     // KxN storage); A is read as-is (its col-major view is the KxM transposed
     // form, which is exactly what we want to be A(M,K)).
-    ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)K * M * sizeof(float));
-    ts_rblas_buf b = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)K * N * sizeof(float));
+    ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32_A, (size_t)K * M * sizeof(float));
+    ts_rblas_buf b = ts_rblas_buf_get(TS_RBLAS_IN_F32_B, (size_t)K * N * sizeof(float));
     ts_rblas_buf c = ts_rblas_buf_get(TS_RBLAS_OUT_F32, (size_t)M * N * sizeof(float));
     if (a.dev && b.dev && c.dev) {
         hipStream_t s = ts_rblas_stream();

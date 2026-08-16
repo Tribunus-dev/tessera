@@ -93,8 +93,8 @@ static void ts_dq_matmul(const float * A, const float * B, float * C,
     std::vector<double> Ad((size_t)m * k), Bd((size_t)k * n), Cd((size_t)m * n);
     for (int64_t i = 0; i < m * k; i++) Ad[i] = (double)A[i];
     for (int64_t i = 0; i < k * n; i++) Bd[i] = (double)B[i];
-    ts_rblas_buf ad = ts_rblas_buf_get(TS_RBLAS_IN_F64, (size_t)m * k * sizeof(double));
-    ts_rblas_buf bd = ts_rblas_buf_get(TS_RBLAS_IN_F64, (size_t)k * n * sizeof(double));
+    ts_rblas_buf ad = ts_rblas_buf_get(TS_RBLAS_IN_F64_A, (size_t)m * k * sizeof(double));
+    ts_rblas_buf bd = ts_rblas_buf_get(TS_RBLAS_IN_F64_B, (size_t)k * n * sizeof(double));
     ts_rblas_buf cd = ts_rblas_buf_get(TS_RBLAS_OUT_F64, (size_t)m * n * sizeof(double));
     if (ad.dev && bd.dev && cd.dev) {
         hipStream_t st = ts_rblas_stream();
@@ -154,8 +154,8 @@ static void ts_dq_matmul_atb(const float * A, const float * B, float * C,
     std::vector<double> Ad((size_t)m * n), Bd((size_t)m * k), Cd((size_t)n * k);
     for (int64_t i = 0; i < m * n; i++) Ad[i] = (double)A[i];
     for (int64_t i = 0; i < m * k; i++) Bd[i] = (double)B[i];
-    ts_rblas_buf ad = ts_rblas_buf_get(TS_RBLAS_IN_F64, (size_t)m * n * sizeof(double));
-    ts_rblas_buf bd = ts_rblas_buf_get(TS_RBLAS_IN_F64, (size_t)m * k * sizeof(double));
+    ts_rblas_buf ad = ts_rblas_buf_get(TS_RBLAS_IN_F64_A, (size_t)m * n * sizeof(double));
+    ts_rblas_buf bd = ts_rblas_buf_get(TS_RBLAS_IN_F64_B, (size_t)m * k * sizeof(double));
     ts_rblas_buf cd = ts_rblas_buf_get(TS_RBLAS_OUT_F64, (size_t)n * k * sizeof(double));
     if (ad.dev && bd.dev && cd.dev) {
         hipStream_t st = ts_rblas_stream();
@@ -216,8 +216,8 @@ static void ts_dq_matmul_abt(const float * A, const float * B, float * C,
     std::vector<double> Ad((size_t)m * k), Bd((size_t)n * k), Cd((size_t)m * n);
     for (int64_t i = 0; i < m * k; i++) Ad[i] = (double)A[i];
     for (int64_t i = 0; i < n * k; i++) Bd[i] = (double)B[i];
-    ts_rblas_buf ad = ts_rblas_buf_get(TS_RBLAS_IN_F64, (size_t)m * k * sizeof(double));
-    ts_rblas_buf bd = ts_rblas_buf_get(TS_RBLAS_IN_F64, (size_t)n * k * sizeof(double));
+    ts_rblas_buf ad = ts_rblas_buf_get(TS_RBLAS_IN_F64_A, (size_t)m * k * sizeof(double));
+    ts_rblas_buf bd = ts_rblas_buf_get(TS_RBLAS_IN_F64_B, (size_t)n * k * sizeof(double));
     ts_rblas_buf cd = ts_rblas_buf_get(TS_RBLAS_OUT_F64, (size_t)m * n * sizeof(double));
     if (ad.dev && bd.dev && cd.dev) {
         hipStream_t st = ts_rblas_stream();
@@ -451,8 +451,8 @@ static float ts_output_mse_and_grad(const float * W, const float * R,
         std::vector<double> dL_dWp_d((size_t)out_dim * K);
         for (int64_t i = 0; i < out_dim * X_count; i++) err_d[i] = (double)err[i];
         for (int64_t i = 0; i < X_count * K; i++) X_d[i] = (double)X[i];
-        ts_rblas_buf ed = ts_rblas_buf_get(TS_RBLAS_IN_F64, (size_t)out_dim * X_count * sizeof(double));
-        ts_rblas_buf xd = ts_rblas_buf_get(TS_RBLAS_IN_F64, (size_t)X_count * K * sizeof(double));
+        ts_rblas_buf ed = ts_rblas_buf_get(TS_RBLAS_IN_F64_A, (size_t)out_dim * X_count * sizeof(double));
+        ts_rblas_buf xd = ts_rblas_buf_get(TS_RBLAS_IN_F64_B, (size_t)X_count * K * sizeof(double));
         ts_rblas_buf gd = ts_rblas_buf_get(TS_RBLAS_OUT_F64, (size_t)out_dim * K * sizeof(double));
         if (ed.dev && xd.dev && gd.dev) {
             hipStream_t st = ts_rblas_stream();
@@ -670,8 +670,8 @@ void ts_dartquant_apply(const float * W, const float * R,
                 Wd[i*block_size + k] = (double)W[i*in_dim + col_off + k];
         for (int64_t i = 0; i < block_size * block_size; i++)
             Rd[i] = (double)R[i];
-        ts_rblas_buf wd = ts_rblas_buf_get(TS_RBLAS_IN_F64, (size_t)out_dim * block_size * sizeof(double));
-        ts_rblas_buf rd = ts_rblas_buf_get(TS_RBLAS_IN_F64, (size_t)block_size * block_size * sizeof(double));
+        ts_rblas_buf wd = ts_rblas_buf_get(TS_RBLAS_IN_F64_A, (size_t)out_dim * block_size * sizeof(double));
+        ts_rblas_buf rd = ts_rblas_buf_get(TS_RBLAS_IN_F64_B, (size_t)block_size * block_size * sizeof(double));
         ts_rblas_buf cd = ts_rblas_buf_get(TS_RBLAS_OUT_F64, (size_t)out_dim * block_size * sizeof(double));
         if (wd.dev && rd.dev && cd.dev) {
             hipStream_t st = ts_rblas_stream();

@@ -231,8 +231,8 @@ static float ts_champq_eval(const float * x, float * grad, int64_t n, void * ctx
     // branch never compiled before the D1 macro-precedence fix, since
     // GGML_USE_OPENBLAS previously always won TS_HAS_CBLAS's #if).
     {
-    ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)out_dim * K * sizeof(float));
-    ts_rblas_buf b = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)K * K * sizeof(float));
+    ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32_A, (size_t)out_dim * K * sizeof(float));
+    ts_rblas_buf b = ts_rblas_buf_get(TS_RBLAS_IN_F32_B, (size_t)K * K * sizeof(float));
     ts_rblas_buf co = ts_rblas_buf_get(TS_RBLAS_OUT_F32, (size_t)out_dim * K * sizeof(float));
     if (a.dev && b.dev && co.dev) {
         hipStream_t st = ts_rblas_stream();
@@ -323,8 +323,8 @@ static float ts_champq_eval(const float * x, float * grad, int64_t n, void * ctx
     // Scoped block: see the W_perm rocBLAS block above for why `c` (the
     // outer ts_champq_ctx*) is avoided and each block gets its own scope.
     {
-    ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)out_dim * K * sizeof(float));
-    ts_rblas_buf b = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)out_dim * K * sizeof(float));
+    ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32_A, (size_t)out_dim * K * sizeof(float));
+    ts_rblas_buf b = ts_rblas_buf_get(TS_RBLAS_IN_F32_B, (size_t)out_dim * K * sizeof(float));
     ts_rblas_buf co = ts_rblas_buf_get(TS_RBLAS_OUT_F32, (size_t)K * K * sizeof(float));
     if (a.dev && b.dev && co.dev) {
         hipStream_t st = ts_rblas_stream();
