@@ -1349,28 +1349,33 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
             qp.max_outliers = per;
 
             // Live per-tensor algorithm selection: measure AWQ/SEPTQ (via
-            // ts_dispatch_forced_t2, which genuinely dispatches to those
-            // two algorithms) and DartQuant/FLRQ (via ts_dispatch_tier2_t2,
-            // which actually runs their trainers - forced_t2's own
-            // DARTQUANT/FLRQ cases silently fall back to SEPTQ/AWQ
-            // internally via ts_expert_default_profile, so they are not
-            // used here) against this tensor, then ship whichever yields
-            // the lowest measured t2. This is the same acceptance-gate
-            // measurement tessera-dispatch.cpp already computed for every
-            // tensor without ever using it to pick what got shipped - see
-            // gap ledger. Only meaningful with real calibration signal, so
-            // gated on have_imatrix like use_septq already was above.
+            // ts_measure_true_t2, which runs the REAL dispatch through
+            // ts_quantize_2d_ternary and reconstructs the actual shippable
+            // output - NOT ts_dispatch_forced_t2, which routes both AWQ
+            // and SEPTQ through ts_quantize_mse_streaming, a function with
+            // no use_septq awareness at all; it only varies alpha_scale/
+            // clip_scale, which are identical between AWQ's and SEPTQ's
+            // default profiles, so forced_t2 is structurally incapable of
+            // telling them apart - confirmed empirically: identical t2 for
+            // every tensor in a live run, and since ties break toward
+            // whichever candidate was inserted first, SEPTQ could never
+            // actually be selected. See gap ledger) and DartQuant/FLRQ
+            // (via ts_dispatch_tier2_t2, which actually runs their
+            // trainers) against this tensor, then ship whichever yields
+            // the lowest measured t2. Only meaningful with real
+            // calibration signal, so gated on have_imatrix like use_septq
+            // already was above.
             if (have_imatrix) {
                 struct ts_algo_candidate { ts_expert_id expert; float t2; };
                 std::vector<ts_algo_candidate> cands;
                 float t2;
-                t2 = ts_dispatch_forced_t2(wptr, act_scales, item.out_dim, item.in_dim,
-                                           TS_EXPERT_AWQ, qp_base.alpha, qp_base.clip,
-                                           qp_base.outlier_thresh, qp_base.seed);
+                t2 = ts_measure_true_t2(wptr, act_scales, item.out_dim, item.in_dim,
+                                        /*use_septq=*/false, qp_base.alpha, qp_base.clip,
+                                        qp_base.outlier_thresh, qp_base.seed);
                 if (t2 >= 0.0f) cands.push_back({TS_EXPERT_AWQ, t2});
-                t2 = ts_dispatch_forced_t2(wptr, act_scales, item.out_dim, item.in_dim,
-                                           TS_EXPERT_SEPTQ, qp_base.alpha, qp_base.clip,
-                                           qp_base.outlier_thresh, qp_base.seed);
+                t2 = ts_measure_true_t2(wptr, act_scales, item.out_dim, item.in_dim,
+                                        /*use_septq=*/true, qp_base.alpha, qp_base.clip,
+                                        qp_base.outlier_thresh, qp_base.seed);
                 if (t2 >= 0.0f) cands.push_back({TS_EXPERT_SEPTQ, t2});
                 t2 = ts_dispatch_tier2_t2(TS_EXPERT_DARTQUANT, wptr, act_scales,
                                           item.out_dim, item.in_dim,

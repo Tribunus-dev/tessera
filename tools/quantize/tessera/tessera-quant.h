@@ -135,6 +135,24 @@ std::vector<int32_t> ts_select_repair_residuals(
 void ts_normalized_awq_scale(const float * act_scales, float alpha,
                              float * scale_out, int64_t in_dim);
 
+// Runs the REAL AWQ or SEPTQ path (via ts_quantize_2d_ternary, not a
+// cheap proxy) and returns the true relative Frobenius t2 = ||recon -
+// weights||^2 / ||weights||^2, where recon is reassembled from the
+// resulting trits + row/lane-scale magnitude hints (ts_ternary_synth_
+// magnitude) plus the outlier CSR corrections - the same reconstruction
+// the packer itself uses, so this is the actual shippable fidelity, not
+// an approximation. Exists because ts_dispatch_forced_t2 (tessera-
+// dispatch.cpp) routes both AWQ and SEPTQ through ts_quantize_mse_
+// streaming, which has no use_septq awareness at all - it only reads
+// alpha_scale/clip_scale from the expert profile, both of which are
+// identical between AWQ's and SEPTQ's default profiles, so forced_t2
+// mathematically cannot distinguish the two (verified: identical output
+// for every tensor in a live run). Returns -1.0f on failure.
+float ts_measure_true_t2(const float * weights, const float * act_scales,
+                         int64_t out_dim, int64_t in_dim,
+                         bool use_septq, float alpha, float clip,
+                         float outlier_thresh, uint32_t seed);
+
 // AWQ scale search: grid search over alpha in [0, 1] minimizing
 // layer-output MSE. Returns best alpha.
 float ts_awq_scale_search(const float * weights, const float * act_scales,

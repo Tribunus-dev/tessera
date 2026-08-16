@@ -1535,6 +1535,54 @@ std::vector<float> ts_ternary_synth_magnitude(const ts_ternary_tensor & tn) {
     return mag;
 }
 
+float ts_measure_true_t2(const float * weights, const float * act_scales,
+                         int64_t out_dim, int64_t in_dim,
+                         bool use_septq, float alpha, float clip,
+                         float outlier_thresh, uint32_t seed) {
+    if (weights == nullptr || out_dim <= 0 || in_dim <= 0) {
+        return -1.0f;
+    }
+    ts_quant_params_2d qp{};
+    qp.alpha          = alpha;
+    qp.clip           = clip;
+    qp.max_outliers   = out_dim * in_dim;  // uncapped, matching export-ternary's own convention
+    qp.outlier_thresh = outlier_thresh;
+    qp.use_imatrix    = (act_scales != nullptr);
+    qp.use_septq      = use_septq;
+    qp.awq_grid       = 20;
+    qp.seed           = seed;
+
+    ts_ternary_tensor tn;
+    if (ts_quantize_2d_ternary(weights, act_scales, nullptr, nullptr, nullptr,
+                               out_dim, in_dim, 0, &qp, &tn) != 0) {
+        return -1.0f;
+    }
+
+    const int64_t n = out_dim * in_dim;
+    const std::vector<float> synth_mag = ts_ternary_synth_magnitude(tn);
+    std::vector<float> recon((size_t) n);
+    for (int64_t i = 0; i < n; i++) {
+        const int8_t t = tn.trits[(size_t) i];
+        recon[(size_t) i] = (t == 0) ? 0.0f : ((t > 0) ? synth_mag[(size_t) i] : -synth_mag[(size_t) i]);
+    }
+    // Outlier CSR overrides the trit-based reconstruction exactly (the
+    // packer's own contract - trits are zeroed at outlier positions).
+    for (int64_t row = 0; row < out_dim; row++) {
+        for (int32_t k = tn.outlier_row_offsets[(size_t) row]; k < tn.outlier_row_offsets[(size_t) row + 1]; k++) {
+            const int64_t col = tn.outlier_cols[(size_t) k];
+            recon[(size_t) (row * in_dim + col)] = ts_f16_to_f32(tn.outlier_vals[(size_t) k]);
+        }
+    }
+
+    double diff2 = 0.0, norm2 = 0.0;
+    for (int64_t i = 0; i < n; i++) {
+        const double d = (double) recon[(size_t) i] - (double) weights[i];
+        diff2 += d * d;
+        norm2 += (double) weights[i] * (double) weights[i];
+    }
+    return (norm2 > 0.0) ? (float) (diff2 / norm2) : (float) diff2;
+}
+
 // ---------------------------------------------------------------------------
 // pack_ternary_to_tile: client-side packer
 // ---------------------------------------------------------------------------
