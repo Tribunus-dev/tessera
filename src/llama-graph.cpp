@@ -1604,6 +1604,23 @@ ggml_tensor * llm_graph_context::build_tile640_lora_mm(
             cur);
 }
 
+ggml_tensor * llm_graph_context::build_tile_rdna3_lora_mm(
+          ggml_tensor * w_packed,
+          ggml_tensor * w_page_scales,
+          ggml_tensor * w_lane_scales,
+          ggml_tensor * cur) const {
+    // AMD RDNA3 WMMA-native tile matmul (docs/amd-tile-format-spec.md 3.4).
+    // No outlier correction cluster and no act_scale, unlike
+    // build_tile640_lora_mm above - ggml_tile_rdna3_matmul's kernel accepts
+    // F16 or F32 activations directly (ggml_compute_forward_tile_rdna3_
+    // matmul_f32's load_activation handles both), so no forced cast is
+    // needed unless cur is some other type.
+    if (cur->type != GGML_TYPE_F16 && cur->type != GGML_TYPE_F32) {
+        cur = ggml_cast(ctx0, cur, GGML_TYPE_F32);
+    }
+    return ggml_tile_rdna3_matmul(ctx0, w_packed, w_page_scales, w_lane_scales, cur);
+}
+
 ggml_tensor * llm_graph_context::build_tile640_lora_mm_id(
           ggml_tensor * w_packed,
           ggml_tensor * w_page_scales,
@@ -1841,7 +1858,10 @@ ggml_tensor * llm_graph_context::build_ffn(
          ggml_tensor * act_scales,
      llm_ffn_op_type   type_op,
    llm_ffn_gate_type   type_gate,
-                 int   il) const {
+                 int   il,
+    const llama_tile_rdna3_tensor * up_tile_rdna3,
+    const llama_tile_rdna3_tensor * gate_tile_rdna3,
+    const llama_tile_rdna3_tensor * down_tile_rdna3) const {
     // NVFP4 support is currently restricted to
     // 1) LORA absence (*_s would be applied after LORA residual, which is incorrect)
     // 2) bias absense (*_s would be applied after bias addition, which is incorrect)
@@ -1865,7 +1885,15 @@ ggml_tensor * llm_graph_context::build_ffn(
     GGML_ASSERT(!gate_s || !gate || gate->type != GGML_TYPE_NVFP4 || !has_lora(gate));
     GGML_ASSERT(!down_s || !down || down->type != GGML_TYPE_NVFP4 || !has_lora(down));
 
-    ggml_tensor * tmp = up ? build_lora_mm(up, cur) : cur;
+    ggml_tensor * tmp;
+    if (up) {
+        tmp = build_lora_mm(up, cur);
+    } else if (up_tile_rdna3) {
+        tmp = build_tile_rdna3_lora_mm(up_tile_rdna3->packed, up_tile_rdna3->page_scales,
+                                       up_tile_rdna3->lane_scales, cur);
+    } else {
+        tmp = cur;
+    }
     cb(tmp, "ffn_up", il);
 
     if (up_b) {
@@ -1878,16 +1906,20 @@ ggml_tensor * llm_graph_context::build_ffn(
         cb(tmp, "ffn_up_s", il);
     }
 
-    if (gate) {
+    if (gate || gate_tile_rdna3) {
         switch (type_gate) {
             case LLM_FFN_SEQ:
                 {
-                    cur = build_lora_mm(gate, tmp);
+                    cur = gate ? build_lora_mm(gate, tmp)
+                               : build_tile_rdna3_lora_mm(gate_tile_rdna3->packed, gate_tile_rdna3->page_scales,
+                                                          gate_tile_rdna3->lane_scales, tmp);
                     cb(cur, "ffn_gate", il);
                 } break;
             case LLM_FFN_PAR:
                 {
-                    cur = build_lora_mm(gate, cur);
+                    cur = gate ? build_lora_mm(gate, cur)
+                               : build_tile_rdna3_lora_mm(gate_tile_rdna3->packed, gate_tile_rdna3->page_scales,
+                                                          gate_tile_rdna3->lane_scales, cur);
                     cb(cur, "ffn_gate", il);
                 } break;
         }
@@ -1908,7 +1940,7 @@ ggml_tensor * llm_graph_context::build_ffn(
 
     switch (type_op) {
         case LLM_FFN_SILU:
-            if (gate && type_gate == LLM_FFN_PAR) {
+            if ((gate || gate_tile_rdna3) && type_gate == LLM_FFN_PAR) {
                 if (il >= 0) {
                     const float limit = hparams.swiglu_clamp_shexp[il];
                     constexpr float eps = 1e-6f;
@@ -1941,7 +1973,7 @@ ggml_tensor * llm_graph_context::build_ffn(
                 cb(cur, "ffn_silu", il);
             } break;
         case LLM_FFN_GELU:
-            if (gate && type_gate == LLM_FFN_PAR) {
+            if ((gate || gate_tile_rdna3) && type_gate == LLM_FFN_PAR) {
                 cur = ggml_geglu_split(ctx0, cur, tmp);
                 cb(cur, "ffn_geglu", il);
                 type_gate = LLM_FFN_SEQ;
@@ -1954,7 +1986,7 @@ ggml_tensor * llm_graph_context::build_ffn(
                 }
             } break;
         case LLM_FFN_RELU:
-            if (gate && type_gate == LLM_FFN_PAR) {
+            if ((gate || gate_tile_rdna3) && type_gate == LLM_FFN_PAR) {
                 cur = ggml_reglu_split(ctx0, cur, tmp);
                 cb(cur, "ffn_reglu", il);
                 type_gate = LLM_FFN_SEQ;
@@ -1987,7 +2019,7 @@ ggml_tensor * llm_graph_context::build_ffn(
             } break;
         case LLM_FFN_SITU:
             {
-                GGML_ASSERT(gate && type_gate == LLM_FFN_PAR);
+                GGML_ASSERT((gate || gate_tile_rdna3) && type_gate == LLM_FFN_PAR);
                 ggml_tensor * gate_tanh = ggml_tanh(
                         ctx0, ggml_scale(ctx0, cur, 1.0f / hparams.situ_beta));
                 gate_tanh = ggml_scale(ctx0, gate_tanh, hparams.situ_beta);
@@ -2006,15 +2038,17 @@ ggml_tensor * llm_graph_context::build_ffn(
             GGML_ABORT("fatal error");
     }
 
-    if (gate && type_gate == LLM_FFN_PAR) {
+    if ((gate || gate_tile_rdna3) && type_gate == LLM_FFN_PAR) {
         cur = ggml_mul(ctx0, cur, tmp);
         cb(cur, "ffn_gate_par", il);
     }
 
-    if (down) {
-        cur = build_lora_mm(down, cur);
+    if (down || down_tile_rdna3) {
+        cur = down ? build_lora_mm(down, cur)
+                   : build_tile_rdna3_lora_mm(down_tile_rdna3->packed, down_tile_rdna3->page_scales,
+                                              down_tile_rdna3->lane_scales, cur);
         cb(cur, "ffn_down", il);
-        if (arch == LLM_ARCH_GLM4 || arch == LLM_ARCH_GLM4_MOE || arch == LLM_ARCH_JAIS2) {
+        if (down && (arch == LLM_ARCH_GLM4 || arch == LLM_ARCH_GLM4_MOE || arch == LLM_ARCH_JAIS2)) {
             // GLM4, GLM4_MOE, and JAIS2 seem to have numerical issues with half-precision accumulators
             ggml_mul_mat_set_prec(cur, GGML_PREC_F32);
         }

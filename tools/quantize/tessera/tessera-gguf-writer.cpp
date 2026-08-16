@@ -135,6 +135,45 @@ void ts_gguf_write_tensor_cluster(struct gguf_context * ctx,
     }
 }
 
+#define TS_AMD_RDNA3_PAGE_SIZE      256
+#define TS_AMD_RDNA3_LANES_PER_PAGE 32
+
+void ts_gguf_write_tensor_cluster_amd_rdna3(struct gguf_context * ctx,
+                                            struct ggml_context * gctx,
+                                            const char * base_name,
+                                            const void * result,
+                                            int64_t out_dim, int64_t in_dim) {
+    const auto * res = static_cast<const ts_quant_result_2d *>(result);
+
+    const int64_t pages_per_row = (in_dim + TS_AMD_RDNA3_PAGE_SIZE - 1) / TS_AMD_RDNA3_PAGE_SIZE;
+    const int64_t words_per_row = pages_per_row * TS_AMD_RDNA3_PAGE_SIZE;
+    const int64_t lane_cols     = pages_per_row * TS_AMD_RDNA3_LANES_PER_PAGE;
+
+    char base[GGML_MAX_NAME];
+    ts_cluster_base(base, sizeof(base), base_name);
+
+    struct ggml_tensor * t;
+
+    // weight_packed: i8 [out_dim * pages_per_row * TS_AMD_RDNA3_PAGE_SIZE] -
+    // matches ggml_tile_rdna3_matmul's A_packed size assertion exactly.
+    t = ggml_new_tensor_1d(gctx, GGML_TYPE_I8, out_dim * words_per_row);
+    ggml_format_name(t, "%s.weight_packed", base);
+    t->data = (void *)res->packed_i8.data();
+    gguf_add_tensor(ctx, t);
+
+    // weight_page_scales: f16 [out_dim * pages_per_row]
+    t = ggml_new_tensor_1d(gctx, GGML_TYPE_F16, out_dim * pages_per_row);
+    ggml_format_name(t, "%s.weight_page_scales", base);
+    t->data = (void *)res->page_scales.data();
+    gguf_add_tensor(ctx, t);
+
+    // weight_lane_scales: i8 [out_dim * pages_per_row * TS_AMD_RDNA3_LANES_PER_PAGE]
+    t = ggml_new_tensor_1d(gctx, GGML_TYPE_I8, out_dim * lane_cols);
+    ggml_format_name(t, "%s.weight_lane_scales", base);
+    t->data = (void *)res->lane_scales.data();
+    gguf_add_tensor(ctx, t);
+}
+
 int ts_gguf_repoint_tensor_cluster(struct ggml_context * gctx,
                                    const char * base_name,
                                    const void * result) {

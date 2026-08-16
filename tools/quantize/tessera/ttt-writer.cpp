@@ -272,7 +272,8 @@ json ts_hparam_to_json(const std::string & v) {
 // promote numerics to typed JSON so the file reads as a real model config.
 std::string ts_build_config_json(const std::string & arch,
                                  const std::map<std::string, std::string> & hparams,
-                                 const json & tensors_json) {
+                                 const json & tensors_json,
+                                 const std::map<std::string, std::vector<std::string>> & array_hparams = {}) {
     json cfg = json::object();
 
     // Standard HF model config keys.
@@ -295,6 +296,14 @@ std::string ts_build_config_json(const std::string & arch,
     // pack path's GGUF header is lossless.
     for (const auto & kv : hparams) {
         cfg[kv.first] = ts_hparam_to_json(kv.second);
+    }
+    // String-array GGUF KVs (tokenizer.ggml.tokens, .merges, general.tags,
+    // ...) - nlohmann::json converts a std::vector<std::string> to a native
+    // JSON array directly. Same dotted-key namespace as the scalar hparams
+    // above, so ts_parse_config's reverse pass recovers them by key without
+    // needing a separate marker.
+    for (const auto & kv : array_hparams) {
+        cfg[kv.first] = kv.second;
     }
 
     cfg["ternary_tensors"] = tensors_json;
@@ -723,7 +732,9 @@ int ts_write_ttt_stream(const ts_ttt_tensor_source & source,
                         const std::map<std::string, std::string> & hparams,
                         const std::string & out_dir,
                         const std::string & tokenizer_path,
-                        const std::string & chat_template_path) {
+                        const std::string & chat_template_path,
+                        const std::map<std::string, std::vector<std::string>> & array_hparams,
+                        const ts_ttt_passthrough_source & passthrough_source) {
     if (out_dir.empty()) {
         fprintf(stderr, "ts_write_ttt_stream: empty output directory\n");
         return 1;
@@ -799,6 +810,41 @@ int ts_write_ttt_stream(const ts_ttt_tensor_source & source,
         n_tensors++;
     }
 
+    // Passthrough tensors (architect-directed, see task 3.9 evidence):
+    // tensors deliberately excluded from ternary quantization (embeddings,
+    // norms, output projection - standard practice, matching every real
+    // quantization scheme) still need to travel through the tile-neutral
+    // safetensors directory as plain raw tensors, or the model this
+    // produces can never be a complete, loadable one. One spool_entry per
+    // tensor (no sub-array decomposition, unlike the ternary cluster) -
+    // NOT added to tensors_json, so the reader can tell "quantized" (name
+    // present in ternary_tensors) from "passthrough" (name present in the
+    // safetensors file's own header but absent from ternary_tensors)
+    // without a separate marker.
+    if (ok && passthrough_source) {
+        std::string pt_name;
+        std::string pt_dtype;
+        std::vector<int64_t> pt_shape;
+        std::vector<uint8_t> pt_data;
+        while (ok) {
+            pt_dtype.clear();
+            pt_shape.clear();
+            pt_data.clear();
+            pt_name = passthrough_source(pt_dtype, pt_shape, pt_data);
+            if (pt_name.empty()) break;
+
+            const int64_t begin = (int64_t) entries.size();
+            ts_spool_add_array(spoolf, entries, pt_name, pt_dtype, pt_data, pt_shape, err, ok);
+            const int64_t end = (int64_t) entries.size();
+            if (!ok) break;
+
+            int64_t bytes = 0;
+            for (int64_t k = begin; k < end; k++) bytes += entries[(size_t)k].nbytes;
+            tensor_ranges.push_back({begin, end, bytes});
+            total_size += bytes;
+        }
+    }
+
     if (!ok) {
         fprintf(stderr, "ts_write_ttt_stream: %s\n", err.c_str());
         spoolf.close();
@@ -812,7 +858,7 @@ int ts_write_ttt_stream(const ts_ttt_tensor_source & source,
 
     // config.json (written after the spool pass so the inventory is complete).
     {
-        const std::string cfg = ts_build_config_json(arch, hparams, tensors_json);
+        const std::string cfg = ts_build_config_json(arch, hparams, tensors_json, array_hparams);
         std::ofstream f(cfg_path, std::ios::binary | std::ios::trunc);
         if (!f) {
             fprintf(stderr, "ts_write_ttt_stream: cannot open %s for writing\n", cfg_path.c_str());

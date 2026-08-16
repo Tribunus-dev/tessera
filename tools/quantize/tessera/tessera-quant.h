@@ -139,6 +139,13 @@ float ts_awq_scale_search_layer_output(
 // Returns 0 on success.
 struct ts_quant_result_2d {
     std::vector<uint32_t> packed;
+    // AMD RDNA3 packing only (TS_PACK_AMD_RDNA3): the WMMA-native packed
+    // element is a real signed int8 magnitude (symmetric linear quant), not
+    // a radix-243 word - see quantize_row_tessera_t_rdna3_ref in
+    // ggml-quants.c, the reference this mirrors. `packed` above (T640/
+    // TS_PACK_RADIX243) and `packed_i8` here are mutually exclusive; exactly
+    // one is populated depending on the tile config's packing kind.
+    std::vector<int8_t>   packed_i8;
     std::vector<uint16_t> page_scales;
     std::vector<int8_t>   lane_scales;
     std::vector<int32_t>  outlier_row_offsets;  // size out_dim + 1

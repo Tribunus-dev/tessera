@@ -37,7 +37,9 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <string>
+#include <vector>
 
 #include "tessera-ternary.h"
 
@@ -98,10 +100,34 @@ using ts_ttt_tensor_source = std::function<std::string(ts_ternary_tensor & tenso
 // The spool file holds at most one copy of the model's ternary data on disk
 // during the write; RSS stays bounded by one tensor's arrays.
 //
+// array_hparams carries GGUF KV entries whose value is a string array
+// (tokenizer.ggml.tokens, tokenizer.ggml.merges, general.tags, ...) -
+// scalar-only `hparams` above cannot represent these. Written into
+// config.json as native JSON arrays under the same dotted key, so a
+// standard-layout consumer (ts_parse_config on the read side) recovers
+// them losslessly. Optional (defaults to none) so existing callers that
+// only round-trip scalar hparams are unaffected.
+//
+// Passthrough tensor source: yields tensors deliberately excluded from
+// ternary quantization (embeddings, norms, output projection - standard
+// quantization practice, not something this writer tries to compress) so
+// they still travel through the tile-neutral safetensors directory as
+// plain raw tensors under their original name. Each call fills dtype
+// (e.g. "BF16"/"F16"/"F32"), shape, and data, and returns the tensor
+// name; an empty name signals end-of-stream, matching ts_ttt_tensor_source's
+// own convention. Written to the SAME safetensors file(s) as the ternary
+// clusters, but NOT listed in config.json's ternary_tensors dict - the
+// reader tells passthrough tensors apart by that absence, not a separate
+// marker. Optional (defaults to none, no passthrough tensors written).
+using ts_ttt_passthrough_source = std::function<std::string(
+        std::string & dtype, std::vector<int64_t> & shape, std::vector<uint8_t> & data)>;
+
 // Returns 0 on success, non-zero on error.
 int ts_write_ttt_stream(const ts_ttt_tensor_source & source,
                         const std::string & arch,
                         const std::map<std::string, std::string> & hparams,
                         const std::string & out_dir,
                         const std::string & tokenizer_path = "",
-                        const std::string & chat_template_path = "");
+                        const std::string & chat_template_path = "",
+                        const std::map<std::string, std::vector<std::string>> & array_hparams = {},
+                        const ts_ttt_passthrough_source & passthrough_source = nullptr);

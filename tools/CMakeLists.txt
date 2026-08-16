@@ -21,6 +21,9 @@ else()
     add_subdirectory(completion)
     add_subdirectory(perplexity)
     add_subdirectory(quantize)
+    # W3 task 3.9: single-prompt logit dump for the host-amd validation
+    # script's weight-only parity check (master-plan criterion 21).
+    add_subdirectory(dump-logits)
     if (LLAMA_BUILD_SERVER)
         add_subdirectory(ui)
         add_subdirectory(cli)

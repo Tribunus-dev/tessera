@@ -670,6 +670,20 @@ struct llama_tile640_tensor {
     bool valid() const { return packed != nullptr; }
 };
 
+// W3 task 3.9/3.10: AMD RDNA3 WMMA-native tile cluster (docs/amd-tile-
+// format-spec.md 3.4). Same 2-level page/lane scale hierarchy as
+// llama_tile640_tensor, but only 3 members - no outlier correction cluster
+// and no act_scale, matching ggml_tile_rdna3_matmul's 3-tensor signature
+// (unlike Tile640, this format has no outlier path).
+struct llama_tile_rdna3_tensor {
+    ggml_tensor * packed              = nullptr;
+    ggml_tensor * page_scales         = nullptr;
+    ggml_tensor * lane_scales         = nullptr;
+    std::array<int64_t, 4> ne         = { 1, 1, 1, 1 };
+
+    bool valid() const { return packed != nullptr; }
+};
+
 struct llama_model {
     llm_type type = LLM_TYPE_UNKNOWN;
     llm_arch arch = LLM_ARCH_UNKNOWN;
@@ -746,6 +760,10 @@ struct llama_model {
     // Keys are canonical GGUF tensor names such as token_embd.weight.
     std::unordered_map<std::string, llama_tile640_tensor> tile640_tensors;
 
+    // W3 task 3.9/3.10: AMD RDNA3 WMMA-native tile cluster equivalent of
+    // tile640_tensors above. Keyed the same way (canonical GGUF tensor name).
+    std::unordered_map<std::string, llama_tile_rdna3_tensor> tile_rdna3_tensors;
+
     //Dense linear projections for SentenceTransformers models like embeddinggemma
     // For Sentence Transformers models structure see
     // https://sbert.net/docs/sentence_transformer/usage/custom_models.html#structure-of-sentence-transformer-models
@@ -809,6 +827,7 @@ struct llama_model {
 
     const struct ggml_tensor * get_tensor(const char * name) const;
     const llama_tile640_tensor * get_tile640_tensor(const std::string & name) const;
+    const llama_tile_rdna3_tensor * get_tile_rdna3_tensor(const std::string & name) const;
 
     float get_rope_freq_base (const llama_cparams & cparams, int il) const;
     float get_rope_freq_scale(const llama_cparams & cparams, int il) const;
@@ -861,6 +880,16 @@ struct llama_model_base : public llama_model {
     // convenience overload of create_tensor that doesn't require llama_model_loader
     ggml_tensor * create_tensor(const LLM_TN_IMPL & tn, const std::initializer_list<int64_t> & ne, int flags);
     ggml_tensor * create_tensor_or_tile640(
+            const LLM_TN_IMPL & tn,
+            const std::initializer_list<int64_t> & ne,
+            int flags);
+
+    // W3 task 3.9/3.10: AMD RDNA3 equivalent of create_tensor_or_tile640
+    // above - probes for a "{tn}_packed" sibling written in the WMMA-
+    // native 3-tensor cluster shape (I8 packed, not T640's I32) and
+    // populates tile_rdna3_tensors instead of creating a plain tensor when
+    // found.
+    ggml_tensor * create_tensor_or_tile_rdna3(
             const LLM_TN_IMPL & tn,
             const std::initializer_list<int64_t> & ne,
             int flags);

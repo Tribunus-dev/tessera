@@ -819,8 +819,17 @@ static bool ts_export_is_weight(const char * name, enum ggml_type type, int n_di
     if (n_dims != 2 && n_dims != 3) {
         return false;
     }
+    // ts_regime_infer_family returns the literal string "unknown" (never
+    // "") for a name that matches no family pattern - embeddings, output
+    // projection, and anything else outside attn/ffn/ssm land here. This is
+    // the real exclusion gate: "other" never appears in ts_family_patterns
+    // and so this check used to be dead code, silently letting token_embd.
+    // weight and output.weight fall through to ternary quantization instead
+    // of the passthrough path. Kept alongside "unknown" (rather than
+    // replacing it outright) in case a future family entry is literally
+    // named "other".
     std::string family = ts_regime_infer_family(name);
-    if (family.empty() || family == "other") {
+    if (family.empty() || family == "other" || family == "unknown") {
         return false;
     }
     return true;
@@ -934,9 +943,19 @@ static struct gguf_context * ts_export_open_gguf(const std::string & path,
 // matching gguf_set_val_* type). String KVs keep their value; numerics
 // are stringified via the json dump. Also writes "general.architecture"
 // to *arch when present.
+//
+// array_hparams collects string-array KVs (tokenizer.ggml.tokens, .merges,
+// general.tags, ...) separately, since they cannot be flattened into a
+// single string the way scalars are. Missing this was a real bug (found by
+// running W3 task 3.9's validate-host-amd.sh against a real model
+// end-to-end): every export-ternary output was silently dropping
+// tokenizer.ggml.tokens/.merges, so the packed GGUF failed to load at all
+// ("cannot find tokenizer merges in model file") - this had apparently
+// never been exercised by an actual load-the-final-GGUF test before.
 static void ts_export_collect_hparams(struct gguf_context * ctx,
                                       std::string & arch,
-                                      std::map<std::string, std::string> & hparams) {
+                                      std::map<std::string, std::string> & hparams,
+                                      std::map<std::string, std::vector<std::string>> & array_hparams) {
     const int64_t n_kv = gguf_get_n_kv(ctx);
     for (int64_t i = 0; i < n_kv; i++) {
         const char * key = gguf_get_key(ctx, i);
@@ -958,7 +977,21 @@ static void ts_export_collect_hparams(struct gguf_context * ctx,
             case GGUF_TYPE_FLOAT32: val = std::to_string(gguf_get_val_f32(ctx, i)); break;
             case GGUF_TYPE_FLOAT64: val = std::to_string(gguf_get_val_f64(ctx, i)); break;
             case GGUF_TYPE_BOOL:    val = gguf_get_val_bool(ctx, i) ? "true" : "false"; break;
-            default: continue;  // arrays are not hparams
+            case GGUF_TYPE_ARRAY: {
+                if (gguf_get_arr_type(ctx, i) != GGUF_TYPE_STRING) {
+                    continue; // only string arrays round-trip; see the writer/reader comments
+                }
+                const size_t n = gguf_get_arr_n(ctx, i);
+                std::vector<std::string> arr;
+                arr.reserve(n);
+                for (size_t j = 0; j < n; j++) {
+                    const char * s = gguf_get_arr_str(ctx, i, j);
+                    arr.emplace_back(s ? s : "");
+                }
+                array_hparams[key] = std::move(arr);
+                continue;
+            }
+            default: continue;
         }
         hparams[key] = std::move(val);
         if (std::string(key) == "general.architecture") {
@@ -978,7 +1011,34 @@ static void ts_pack_set_hparam(struct gguf_context * ctx,
         gguf_set_val_bool(ctx, key.c_str(), val == "true");
         return;
     }
-    // integer?
+    // integer? Non-negative values default to u32, not i32: standard
+    // llama.cpp GGUF convention stores essentially every count-style
+    // hyperparameter (context_length, embedding_length, block_count,
+    // head_count, general.file_type, general.quantization_version, ...)
+    // as u32, and llama_model_loader::get_key<uint32_t> reads them
+    // strictly - a value written as i32 is rejected outright ("key ...
+    // has wrong type i32 but expected type u32"), not silently
+    // reinterpreted. Found by running task 3.9's validate-host-amd.sh
+    // against a real model end-to-end: this generic hparam copier applies
+    // to every `pack` output regardless of --tile/--quant choice, so it
+    // was already broken for any source model whose export carried a
+    // plain non-negative integer hparam, not a new regression from the
+    // host-amd path specifically. Only genuinely negative values (rare
+    // for hparams, but not impossible) fall back to signed i32/i64.
+    {
+        char * end = nullptr;
+        errno = 0;
+        unsigned long long uv = std::strtoull(val.c_str(), &end, 10);
+        if (end != val.c_str() && *end == '\0' && errno == 0 && val[0] != '-') {
+            if (uv <= UINT32_MAX) {
+                gguf_set_val_u32(ctx, key.c_str(), (uint32_t) uv);
+            } else {
+                gguf_set_val_u64(ctx, key.c_str(), (uint64_t) uv);
+            }
+            return;
+        }
+    }
+    // integer (negative)?
     {
         char * end = nullptr;
         errno = 0;
@@ -1079,7 +1139,8 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
 
     std::string arch;
     std::map<std::string, std::string> hparams;
-    ts_export_collect_hparams(in_ctx, arch, hparams);
+    std::map<std::string, std::vector<std::string>> array_hparams;
+    ts_export_collect_hparams(in_ctx, arch, hparams, array_hparams);
     if (arch.empty()) {
         arch = "llama";
     }
@@ -1275,8 +1336,60 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
         }
     };
 
+    // Passthrough source (architect-directed, task 3.9 evidence): a second,
+    // independent pass over the source GGUF's tensors, this time yielding
+    // exactly the ones ts_export_is_weight() rejects (embeddings, norms,
+    // output projection - deliberately excluded from ternary quantization,
+    // standard practice) with their raw bytes verbatim, so the tile-neutral
+    // safetensors directory carries a genuinely complete model rather than
+    // silently dropping them. Reads straight from the mmap'd source (no
+    // dequant - passthrough tensors keep their original dtype exactly, no
+    // precision decision to make here).
+    int64_t passthrough_idx = 0;
+    auto passthrough_source = [&](std::string & dtype, std::vector<int64_t> & shape,
+                                  std::vector<uint8_t> & data) -> std::string {
+        while (passthrough_idx < n_tensors) {
+            const int64_t i = passthrough_idx++;
+            const char * name = gguf_get_tensor_name(in_ctx, i);
+            const enum ggml_type type = gguf_get_tensor_type(in_ctx, i);
+            const int64_t * ne = gguf_get_tensor_ne(in_ctx, i);
+            int nd = GGML_MAX_DIMS;
+            while (nd > 1 && ne[nd - 1] == 1) {
+                nd--;
+            }
+            if (ts_export_is_weight(name, type, nd)) {
+                continue; // ternary-quantized elsewhere; not passthrough
+            }
+            struct ggml_tensor * t = ggml_get_tensor(ggml_ctx, name);
+            if (t == nullptr || t->data == nullptr) {
+                continue; // same "not resolvable" cases the main pass already warns about
+            }
+            std::string dtype_str = ts_unified_qtype_to_string((int) type);
+            if (dtype_str.empty()) {
+                continue; // no safetensors dtype for this ggml type; skip rather than corrupt
+            }
+            dtype = dtype_str;
+            // Safetensors shape is HF row-major (slowest-varying first), the
+            // reverse of ggml's ne[] (fastest-varying first, ne[0] = last HF
+            // dim) - same convention as the ternary inventory's {out_dim,
+            // in_dim} (out_dim = ne[1], in_dim = ne[0]).
+            shape.resize((size_t) nd);
+            for (int d = 0; d < nd; d++) {
+                shape[(size_t) d] = ne[nd - 1 - d];
+            }
+            const size_t nbytes = ggml_nbytes(t);
+            data.resize(nbytes);
+            (void) posix_madvise(t->data, nbytes, POSIX_MADV_WILLNEED);
+            std::memcpy(data.data(), t->data, nbytes);
+            (void) posix_madvise(t->data, nbytes, POSIX_MADV_DONTNEED);
+            return std::string(name);
+        }
+        return std::string();
+    };
+
     int rc = ts_write_ttt_stream(source, arch, hparams,
-                                 tp.export_out, tokenizer_path, chat_template_path);
+                                 tp.export_out, tokenizer_path, chat_template_path,
+                                 array_hparams, passthrough_source);
     // Drain the source so the export/skip tallies are accurate even when the
     // writer returns early on error (the source may not have been fully
     // consumed). The writer's spool is already removed by ts_write_ttt_stream
@@ -1382,6 +1495,18 @@ static int ts_cli_pack(const common_tessera_params & tp) {
     for (const auto & kv : stream.hparams()) {
         ts_pack_set_hparam(out_ctx, kv.first, kv.second);
     }
+    // String-array hparams (tokenizer.ggml.tokens, .merges, ...) - without
+    // these the packed GGUF has no vocabulary and fails to load at all
+    // ("cannot find tokenizer merges in model file"). See
+    // ts_export_collect_hparams's comment for how this was found.
+    for (const auto & kv : stream.array_hparams()) {
+        std::vector<const char *> c_strs;
+        c_strs.reserve(kv.second.size());
+        for (const auto & s : kv.second) {
+            c_strs.push_back(s.c_str());
+        }
+        gguf_set_arr_str(out_ctx, kv.first.c_str(), c_strs.data(), c_strs.size());
+    }
 
     // tessera provenance + tile-geometry stamp so the loader knows which
     // packer produced this GGUF.
@@ -1450,8 +1575,13 @@ static int ts_cli_pack(const common_tessera_params & tp) {
             ggml_free(out_ggml_ctx);
             return 1;
         }
-        ts_gguf_write_tensor_cluster(out_ctx, out_ggml_ctx, name.c_str(), &qr,
-                                     tn.out_dim, tn.in_dim);
+        if (config.packing == TS_PACK_AMD_RDNA3) {
+            ts_gguf_write_tensor_cluster_amd_rdna3(out_ctx, out_ggml_ctx, name.c_str(), &qr,
+                                                   tn.out_dim, tn.in_dim);
+        } else {
+            ts_gguf_write_tensor_cluster(out_ctx, out_ggml_ctx, name.c_str(), &qr,
+                                         tn.out_dim, tn.in_dim);
+        }
         // The cluster descriptors are copied by value into out_ctx; the
         // ggml context pool is reset for the next tensor. The result
         // buffer stays alive in the deque for the eventual write.
@@ -1464,10 +1594,69 @@ static int ts_cli_pack(const common_tessera_params & tp) {
         }
         n_packed++;
     }
+
+    // Passthrough tensors (embeddings, norms, output projection -
+    // deliberately excluded from ternary quantization, see
+    // ts_export_is_weight in the export-ternary handler) travel through the
+    // tile-neutral safetensors file as plain single tensors under their
+    // original name/dtype. Copy each into the output GGUF verbatim so the
+    // packed model is genuinely complete rather than missing
+    // token_embd.weight and friends. Must run before stream.close() -
+    // passthrough_tensor_names()/read_passthrough_tensor() need the stream
+    // (and its open config.json/shard handles) still live.
+    std::deque<std::vector<uint8_t>> passthrough_buffers;
+    int64_t n_passthrough = 0;
+    for (const std::string & pname : stream.passthrough_tensor_names()) {
+        std::string p_dtype;
+        std::vector<int64_t> p_shape;
+        std::string p_err;
+        passthrough_buffers.emplace_back();
+        std::vector<uint8_t> & p_data = passthrough_buffers.back();
+        if (stream.read_passthrough_tensor(pname, p_dtype, p_shape, p_data, p_err) != 0) {
+            fprintf(stderr, "error: pack: read_passthrough_tensor failed for '%s': %s\n",
+                    pname.c_str(), p_err.c_str());
+            gguf_free(out_ctx);
+            ggml_free(out_ggml_ctx);
+            return 1;
+        }
+        const int p_type = ts_unified_qtype_from_string(p_dtype);
+        if (p_type == GGML_TYPE_COUNT) {
+            fprintf(stderr, "error: pack: unknown passthrough dtype '%s' for '%s'\n",
+                    p_dtype.c_str(), pname.c_str());
+            gguf_free(out_ctx);
+            ggml_free(out_ggml_ctx);
+            return 1;
+        }
+        // p_shape is HF row-major (slowest-varying first, written that way
+        // by the export-ternary passthrough_source); ggml's ne[] wants
+        // fastest-varying first - reverse back.
+        const int p_nd = (int) p_shape.size();
+        int64_t p_ne[GGML_MAX_DIMS] = {1, 1, 1, 1};
+        for (int d = 0; d < p_nd; d++) {
+            p_ne[d] = p_shape[(size_t)(p_nd - 1 - d)];
+        }
+        struct ggml_tensor * pt = ggml_new_tensor(out_ggml_ctx, (enum ggml_type) p_type, p_nd, p_ne);
+        ggml_set_name(pt, pname.c_str());
+        pt->data = (void *) p_data.data();
+        gguf_add_tensor(out_ctx, pt);
+        // Same reset-per-tensor discipline as the cluster loop above: the
+        // descriptor is copied by value into out_ctx, so the context pool
+        // can be reused; only the p_data buffer needs to outlive the
+        // eventual gguf_write_to_file (kept alive in passthrough_buffers).
+        ggml_free(out_ggml_ctx);
+        out_ggml_ctx = ggml_init(out_init);
+        if (out_ggml_ctx == nullptr) {
+            fprintf(stderr, "error: pack: ggml_init re-init failed (passthrough)\n");
+            gguf_free(out_ctx);
+            return 1;
+        }
+        n_passthrough++;
+    }
+
     stream.close();
 
-    printf("pack: %lld tensors packed -> %s\n",
-           (long long) n_packed, tp.pack_out.c_str());
+    printf("pack: %lld tensors packed, %lld passthrough tensors copied -> %s\n",
+           (long long) n_packed, (long long) n_passthrough, tp.pack_out.c_str());
 
     bool ok = gguf_write_to_file(out_ctx, tp.pack_out.c_str(), false);
     if (!ok) {

@@ -2488,6 +2488,11 @@ const llama_tile640_tensor * llama_model::get_tile640_tensor(const std::string &
     return it == tile640_tensors.end() ? nullptr : &it->second;
 }
 
+const llama_tile_rdna3_tensor * llama_model::get_tile_rdna3_tensor(const std::string & name) const {
+    const auto it = tile_rdna3_tensors.find(name);
+    return it == tile_rdna3_tensors.end() ? nullptr : &it->second;
+}
+
 float llama_model::get_rope_freq_base (const llama_cparams & cparams, int il) const {
     return hparams.is_swa(il) ? hparams.rope_freq_base_train_swa : cparams.rope_freq_base;
 }
@@ -3294,6 +3299,55 @@ ggml_tensor * llama_model_base::create_tensor_or_tile640(
             TENSOR_NOT_REQUIRED | (flags & TENSOR_DUPLICATED));
     }
     tile640_tensors.emplace(logical_name, value);
+    return nullptr;
+}
+
+ggml_tensor * llama_model_base::create_tensor_or_tile_rdna3(
+        const LLM_TN_IMPL & tn,
+        const std::initializer_list<int64_t> & ne,
+        int flags) {
+    GGML_ASSERT(ml != nullptr);
+
+    const std::string logical_name = tn.str();
+    const std::string stem = tn.suffix ? tn.suffix : "weight";
+    const std::string packed_suffix = stem + "_packed";
+    const LLM_TN_IMPL packed_tn(tn.arch, tn.tensor, packed_suffix.c_str(), tn.bid, tn.xid);
+    if (ml->get_tensor_meta(packed_tn.str().c_str()) == nullptr) {
+        return create_tensor(tn, ne, flags);
+    }
+
+    std::array<int64_t, 4> shape = { 1, 1, 1, 1 };
+    size_t rank = 0;
+    for (const int64_t dim : ne) {
+        GGML_ASSERT(rank < shape.size() && dim > 0);
+        shape[rank++] = dim;
+    }
+    // Local geometry constants, same convention create_tensor_or_tile640
+    // above uses (PAGE_SIZE/LANES_PER_PAGE/WORDS_PER_PAGE hardcoded there
+    // too) - these mirror TILE_AMD_RDNA3_PAGE_SIZE/LANES_PER_PAGE from
+    // ggml/src/ggml-common.h, an internal ggml header not reachable from
+    // this file; docs/amd-tile-format-spec.md 3.4 is the source of truth.
+    constexpr int64_t PAGE_SIZE      = 256;
+    constexpr int64_t LANES_PER_PAGE = 32;
+
+    const int64_t row_width = shape[0];
+    const int64_t n_rows = shape[1] * shape[2] * shape[3];
+    const int64_t pages_per_row = (row_width + PAGE_SIZE - 1) / PAGE_SIZE;
+
+    auto component = [&](const char * tail, std::initializer_list<int64_t> dims) {
+        const std::string suffix = stem + tail;
+        return create_tensor(
+            LLM_TN_IMPL(tn.arch, tn.tensor, suffix.c_str(), tn.bid, tn.xid),
+            dims, flags & (TENSOR_NOT_REQUIRED | TENSOR_DUPLICATED));
+    };
+
+    llama_tile_rdna3_tensor value;
+    value.ne = shape;
+    value.packed      = component("_packed",      { n_rows * pages_per_row * PAGE_SIZE });
+    value.page_scales = component("_page_scales", { n_rows * pages_per_row });
+    value.lane_scales = component("_lane_scales", { n_rows * pages_per_row * LANES_PER_PAGE });
+
+    tile_rdna3_tensors.emplace(logical_name, value);
     return nullptr;
 }
 

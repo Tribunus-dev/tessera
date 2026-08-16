@@ -19,7 +19,9 @@
 //
 
 #include <cstdint>
+#include <map>
 #include <string>
+#include <vector>
 
 #include "tessera-ternary.h"
 
@@ -71,6 +73,27 @@ struct ts_ttt_tensor_stream {
     // Accessors for metadata read by open(). arch() is empty before open().
     const std::string & arch() const;
     const std::map<std::string, std::string> & hparams() const;
+    // String-array GGUF KVs (tokenizer.ggml.tokens, .merges, general.tags,
+    // ...) - see ttt-writer.h's array_hparams parameter for the write side.
+    const std::map<std::string, std::vector<std::string>> & array_hparams() const;
+
+    // Passthrough tensors (embeddings, norms, output projection - excluded
+    // from ternary quantization by design, see ttt-writer.h's
+    // ts_ttt_passthrough_source). Names are the tensor's original GGUF
+    // name (e.g. "token_embd.weight"), stored under that bare key in the
+    // safetensors file(s) - distinguished from ternary-cluster sub-arrays
+    // by NOT matching any known cluster suffix. Available after open().
+    std::vector<std::string> passthrough_tensor_names() const;
+
+    // Reads one passthrough tensor's raw bytes by name (from
+    // passthrough_tensor_names()). Returns 0 on success. Random-access
+    // (unlike next()'s forward-only streaming) since passthrough tensors
+    // are read once each by the pack path, not iterated repeatedly.
+    int read_passthrough_tensor(const std::string & name,
+                                std::string & dtype,
+                                std::vector<int64_t> & shape,
+                                std::vector<uint8_t> & data,
+                                std::string & err) const;
 
     ~ts_ttt_tensor_stream();
     ts_ttt_tensor_stream();

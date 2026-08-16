@@ -12,6 +12,7 @@
 #include "tessera-metal.h"
 #include "tessera-septq.h"
 #include "tile-detect.h"
+#include "ggml-quants.h"
 
 #include <algorithm>
 #include <cassert>
@@ -1175,6 +1176,69 @@ int ts_pack_ternary_to_tile(const ts_ternary_tensor & tn,
     const int64_t in_dim  = tn.in_dim;
     if (out_dim <= 0 || in_dim <= 0) {
         return 1;
+    }
+
+    if (config.packing == TS_PACK_AMD_RDNA3) {
+        // WMMA-native i8 packing (docs/amd-tile-format-spec.md 3.4).
+        // quantize_row_tessera_t_rdna3_ref (ggml-quants.c) is the reference
+        // encoder ggml_tile_rdna3_matmul's kernel decodes against - call it
+        // once per row and split its single interleaved [i8 packed][f16
+        // page_scales][i8 lane_scales] buffer into the 3 separate flat
+        // per-tensor arrays the graph op's 3-tensor cluster convention
+        // expects. Row layout and array sizing must match
+        // ggml_compute_forward_tile_rdna3_matmul_f32's own indexing
+        // exactly (ggml-cpu/ops.cpp) - that function is the ground truth
+        // this was checked against.
+        const int64_t pages         = (in_dim + config.page_size - 1) / config.page_size;
+        const int64_t lanes_per_row = pages * config.lanes_per_page;
+
+        result->packed_i8.assign((size_t) out_dim * (size_t) pages * (size_t) config.page_size, 0);
+        result->page_scales.assign((size_t) out_dim * (size_t) pages, 0);
+        result->lane_scales.assign((size_t) out_dim * (size_t) lanes_per_row, 0);
+        result->packed.clear();
+        result->outlier_row_offsets.clear();
+        result->outlier_cols.clear();
+        result->outlier_vals.clear();
+        result->act_scale.clear();
+
+        // Reconstruct per-element float magnitudes the same way the T640
+        // path below does (see ts_compute_scales): tn.core when shipped
+        // (single-step quantize path), else sign(trit) * global_amp (the
+        // tile-neutral safetensors round-trip path - core is not shipped
+        // there, to halve transport size).
+        const bool have_core = !tn.core.empty();
+
+        std::vector<float>   row_f32(in_dim);
+        std::vector<uint8_t> row_buf((size_t) pages * (size_t) config.page_size * sizeof(int8_t) +
+                                     (size_t) pages * sizeof(uint16_t) +
+                                     (size_t) lanes_per_row * sizeof(int8_t));
+
+        for (int64_t o = 0; o < out_dim; o++) {
+            const int8_t * trit_row = tn.trits.data() + o * in_dim;
+            for (int64_t c = 0; c < in_dim; c++) {
+                if (trit_row[c] == 0) {
+                    row_f32[c] = 0.0f;
+                } else {
+                    const float mag = have_core ? std::fabs(ts_f16_to_f32(tn.core[o * in_dim + c])) : tn.global_amp;
+                    row_f32[c] = (trit_row[c] > 0) ? mag : -mag;
+                }
+            }
+
+            quantize_row_tessera_t_rdna3_ref(row_f32.data(), row_buf.data(), in_dim);
+
+            const int8_t   * rb_packed = (const int8_t *) row_buf.data();
+            const uint16_t * rb_page   = (const uint16_t *) (rb_packed + pages * config.page_size);
+            const int8_t    * rb_lane  = (const int8_t *) (rb_page + pages);
+
+            std::memcpy(result->packed_i8.data() + o * pages * config.page_size,
+                       rb_packed, (size_t) pages * (size_t) config.page_size);
+            std::memcpy(result->page_scales.data() + o * pages,
+                       rb_page, (size_t) pages * sizeof(uint16_t));
+            std::memcpy(result->lane_scales.data() + o * lanes_per_row,
+                       rb_lane, (size_t) lanes_per_row);
+        }
+
+        return 0;
     }
 
     const int page_size      = config.page_size;

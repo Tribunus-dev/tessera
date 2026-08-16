@@ -332,7 +332,8 @@ int ts_parse_config(const std::string & cfg_text,
                     std::string & arch,
                     std::map<std::string, std::string> & hparams,
                     std::vector<cfg_tensor> & tensors,
-                    std::string & err) {
+                    std::string & err,
+                    std::map<std::string, std::vector<std::string>> * array_hparams = nullptr) {
     json j;
     try {
         j = json::parse(cfg_text);
@@ -372,8 +373,24 @@ int ts_parse_config(const std::string & cfg_text,
         const auto & skip = ts_structural_keys();
         for (auto it = j.begin(); it != j.end(); ++it) {
             if (skip.count(it.key())) continue;
-            if (!it.value().is_primitive()) continue;
-            hparams[it.key()] = ts_json_to_hparam(it.value());
+            if (it.value().is_primitive()) {
+                hparams[it.key()] = ts_json_to_hparam(it.value());
+            } else if (array_hparams != nullptr && it.value().is_array()) {
+                // Only string arrays round-trip (tokenizer.ggml.tokens,
+                // .merges, general.tags, ...) - see ttt-writer.cpp's
+                // ts_build_config_json for the write side. A non-string
+                // array element means this key isn't one we wrote (or is
+                // a future extension); skip it rather than guess.
+                std::vector<std::string> arr;
+                bool all_strings = true;
+                for (const auto & elem : it.value()) {
+                    if (!elem.is_string()) { all_strings = false; break; }
+                    arr.push_back(elem.get<std::string>());
+                }
+                if (all_strings) {
+                    (*array_hparams)[it.key()] = std::move(arr);
+                }
+            }
         }
     } else if (j.contains("hparams") && j["hparams"].is_object()) {
         // Legacy writer layout (config.json::hparams object of strings).
@@ -646,6 +663,7 @@ struct ts_ttt_tensor_stream::impl {
     std::string dir;
     std::string arch;
     std::map<std::string, std::string> hparams;
+    std::map<std::string, std::vector<std::string>> array_hparams;
     std::vector<cfg_tensor> inventory;
     st_layout layout;
     std::string cur_shard;       // shard file currently open in `file`
@@ -656,15 +674,22 @@ struct ts_ttt_tensor_stream::impl {
     // Open `name`'s owning shard in `file`, parsing its header if needed.
     // Returns the shard header, or nullptr on error.
     const st_header * ensure_shard(const std::string & name, std::string & err) {
-        const std::string key = name + ".trits";
+        return ensure_shard_for_key(name + ".trits", err);
+    }
+
+    // Same as ensure_shard, but takes the exact safetensors array key with
+    // no suffix appended - used for passthrough tensors, which are stored
+    // under their bare original name (see ttt-writer.h's
+    // ts_ttt_passthrough_source contract).
+    const st_header * ensure_shard_for_key(const std::string & key, std::string & err) {
         auto mit = layout.merged.find(key);
         if (mit == layout.merged.end()) {
-            err = "tensor " + name + " not in safetensors";
+            err = "key " + key + " not in safetensors";
             return nullptr;
         }
         const std::string & shard = mit->second.shard;
         if (shard.empty()) {
-            err = "tensor " + name + " has no shard assignment";
+            err = "key " + key + " has no shard assignment";
             return nullptr;
         }
         // Parse header lazily on first touch.
@@ -711,7 +736,7 @@ int ts_ttt_tensor_stream::open(const std::string & dir) {
     }
 
     std::string err;
-    if (ts_parse_config(cfg_text, p_->arch, p_->hparams, p_->inventory, err) != 0) {
+    if (ts_parse_config(cfg_text, p_->arch, p_->hparams, p_->inventory, err, &p_->array_hparams) != 0) {
         fprintf(stderr, "ts_ttt_tensor_stream::open: %s\n", err.c_str());
         return 1;
     }
@@ -791,6 +816,7 @@ void ts_ttt_tensor_stream::close() {
     p_->dir.clear();
     p_->arch.clear();
     p_->hparams.clear();
+    p_->array_hparams.clear();
 }
 
 const std::string & ts_ttt_tensor_stream::arch() const {
@@ -801,4 +827,65 @@ const std::string & ts_ttt_tensor_stream::arch() const {
 const std::map<std::string, std::string> & ts_ttt_tensor_stream::hparams() const {
     static const std::map<std::string, std::string> empty;
     return p_ ? p_->hparams : empty;
+}
+
+const std::map<std::string, std::vector<std::string>> & ts_ttt_tensor_stream::array_hparams() const {
+    static const std::map<std::string, std::vector<std::string>> empty;
+    return p_ ? p_->array_hparams : empty;
+}
+
+// Suffixes a ternary tensor cluster's sub-arrays use (mirrors
+// ts_spool_collect_arrays in ttt-writer.cpp exactly - keep the two in
+// sync). Any safetensors key ending in one of these, for a name present
+// in the inventory, is a cluster sub-array, not a passthrough tensor.
+static const std::vector<std::string> & ts_ternary_cluster_suffixes() {
+    static const std::vector<std::string> s = {
+        ".trits", ".outlier_row_offsets", ".outlier_cols", ".outlier_vals",
+        ".awq_scale", ".awq_input_scale", ".act_scale", ".global_amp", ".best_alpha",
+    };
+    return s;
+}
+
+std::vector<std::string> ts_ttt_tensor_stream::passthrough_tensor_names() const {
+    std::vector<std::string> out;
+    if (!p_) return out;
+
+    std::set<std::string> cluster_keys;
+    for (const auto & c : p_->inventory) {
+        for (const auto & suffix : ts_ternary_cluster_suffixes()) {
+            cluster_keys.insert(c.name + suffix);
+        }
+    }
+    for (const auto & kv : p_->layout.merged) {
+        if (!cluster_keys.count(kv.first)) {
+            out.push_back(kv.first);
+        }
+    }
+    return out;
+}
+
+int ts_ttt_tensor_stream::read_passthrough_tensor(const std::string & name,
+                                                  std::string & dtype,
+                                                  std::vector<int64_t> & shape,
+                                                  std::vector<uint8_t> & data,
+                                                  std::string & err) const {
+    if (!p_ || !p_->open) {
+        err = "stream not open";
+        return 1;
+    }
+    const st_header * hh = p_->ensure_shard_for_key(name, err);
+    if (hh == nullptr) {
+        return 1;
+    }
+    const st_entry * e = ts_find(hh->entries, name);
+    if (e == nullptr) {
+        err = "passthrough tensor " + name + " not found in its shard header";
+        return 1;
+    }
+    dtype = e->dtype;
+    shape = e->shape;
+    if (!ts_read_typed(p_->file, hh->data_section_off, *e, data, err)) {
+        return 1;
+    }
+    return 0;
 }
