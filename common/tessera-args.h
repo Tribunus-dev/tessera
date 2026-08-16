@@ -19,7 +19,20 @@ struct common_tessera_params {
     int         evolve_population = 16;
     bool        evolve_only = false;
     bool        calibrate_only = false;
-    float       outlier_frac = 0.005f;
+    // Target fraction of a tensor's elements to keep as exact-value
+    // outliers (ts_select_repair_residuals, tools/quantize) - NOT an
+    // absolute residual-magnitude cutoff, despite the CLI flag's name;
+    // see quantize.cpp's qp_base.outlier_thresh comment for the fix that
+    // made this interpretation load-bearing (an earlier bug used the raw
+    // value as an absolute cutoff, catching 35-65% of every tensor's
+    // elements instead of a sparse exception set - gap ledger
+    // CORRECTION-w3-6). 0.02 chosen over the original 0.005 spec default
+    // after a direct measurement on Granite 4.1 3B: 2% outliers gave a
+    // real, meaningful end-to-end fidelity recovery (cosine 0.34 -> 0.40,
+    // frobenius_rel 1.54 -> 1.40) for roughly double the outlier-specific
+    // storage overhead (still small relative to the whole ternary
+    // tensor - an outlier costs ~6 bytes vs ~1.6 bits for a trit).
+    float       outlier_frac = 0.02f;
     std::string awq_alpha = "auto";
     float       awq_clip = 1.0f;
     std::string ternary_threshold = "auto";
