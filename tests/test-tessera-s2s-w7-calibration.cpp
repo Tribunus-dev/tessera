@@ -23,6 +23,16 @@
 // CPU-only context (the W5b cpufix established that n_gpu_layers=0
 // alone is not enough; both archs run on CPU).
 
+// This project's default CMake build is Release (-DNDEBUG), which compiles
+// a plain assert() to nothing - the checks below would silently never run.
+// This file has no direct <cassert> include (assert() is pulled in
+// transitively by one of the headers below); undef NDEBUG and include
+// <cassert> explicitly, first, so the live macro wins regardless of which
+// header would otherwise have defined the no-op version. Matches the
+// pattern tests/test-tessera-config.cpp established.
+#undef NDEBUG
+#include <cassert>
+
 #include "ggml-cpp.h"
 #include "ggml.h"
 #include "gguf.h"
