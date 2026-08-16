@@ -1,0 +1,4 @@
+id,name,department,salary,is_active
+1,Ada Lovelace,Engineering,95000.50,true
+2,Grace Hopper,Engineering,102000.00,true
+3,Katherine Johnson,Research,88000.75,false

@@ -1439,6 +1439,70 @@ public struct SheetStore: Sendable {
         )
     }
 
+    // MARK: - Database import (P2-D 2.16, db_import_range)
+
+    /// Materialize a local-database query's result into a rectangular
+    /// range of `sheetID`'s primary table, anchored at `anchor`. Column
+    /// headers are written to the anchor row and the data rows follow it,
+    /// so an `N` x `M` result writes `N+1` rows x `M` cols. Grows the
+    /// table first (columns, then rows, so new rows land at full width)
+    /// when the result does not fit the current grid - see
+    /// `growingTable(rows:cols:in:)`.
+    ///
+    /// One upsert, one `.importFromDatabase` receipt carrying the design
+    /// contract's own "full audit provenance" payload: the source file's
+    /// path + content hash (`sha256:<hex>`, computed by the caller -
+    /// `DatabaseConnector.sourceHash(of:)` - this store never touches the
+    /// filesystem itself), the exact SQL text that produced the result,
+    /// and the row count. `db_query` itself never reaches this method -
+    /// only materialization emits a receipt ("no receipt without a
+    /// mutation" is a standing rule, not new to this item).
+    ///
+    /// A no-op (zero receipts, zero persistence) when `columns` or `rows`
+    /// is empty - nothing to materialize.
+    public func importFromDatabase(
+        columns: [String],
+        rows: [[String]],
+        sourcePath: String,
+        sourceHash: String,
+        sql: String,
+        anchor: CellAddr,
+        for sheetID: UUID
+    ) async throws -> Sheet {
+        var sheet = try await loadOrFail(id: sheetID)
+        try guardUnlocked(sheet)
+        guard !columns.isEmpty, !rows.isEmpty else { return sheet }
+
+        let neededRows = anchor.row + rows.count + 1 // +1 header row
+        let neededCols = anchor.col + columns.count
+        sheet = try growingTable(rows: neededRows, cols: neededCols, in: sheet)
+
+        for (c, name) in columns.enumerated() {
+            try writingCellValue(name, row: anchor.row, col: anchor.col + c, in: &sheet)
+        }
+        for (r, rowValues) in rows.enumerated() {
+            for (c, value) in rowValues.enumerated() where c < columns.count {
+                try writingCellValue(value, row: anchor.row + 1 + r, col: anchor.col + c, in: &sheet)
+            }
+        }
+
+        sheet.updatedAt = Date()
+        _ = try await upsert(sheet)
+        try await appendReceipt(
+            entityID: sheetID,
+            receiptType: SheetReceiptType.importFromDatabase.rawValue,
+            payload: [
+                "sourcePath": .string(sourcePath),
+                "sourceHash": .string(sourceHash),
+                "sql": .string(sql),
+                "rowCount": .number(Double(rows.count)),
+                "columnCount": .number(Double(columns.count)),
+                "anchor": .string(anchor.description),
+            ]
+        )
+        return sheet
+    }
+
     // MARK: - Cell value via display (lightweight setCell alias)
 
     public func setCell(row: Int, col: Int, value: String, sheetID: UUID, emitReceipt: Bool) async throws -> Sheet {
@@ -1539,6 +1603,62 @@ public struct SheetStore: Sendable {
             throw SheetStoreError.cellNotFound(row: row, col: col)
         }
         return table.children[index]
+    }
+
+    /// A copy of `sheet` whose primary table has at least `neededRows` x
+    /// `neededCols` cells, appending blank cells/columns at the tail only
+    /// - existing cell IDs keep their (row, col) position, so nothing
+    /// already on the grid (formulas, styles, values) moves or is
+    /// disturbed. A no-op copy when the table already meets or exceeds
+    /// the requested size. Throws `.noTable` when `sheet` has no primary
+    /// table at all - same no-table contract every other grid mutation in
+    /// this file uses.
+    ///
+    /// Used by `importFromDatabase(...)` (`db_import_range`) to grow the
+    /// grid to fit a materialized query result before writing into it.
+    ///
+    /// `internal`, not `private`, ONLY so
+    /// `SheetStoreImportFromDatabaseLogicShadowTests.swift` can exercise
+    /// this exact logic path via `@testable import` without a real
+    /// `TesseraDataLayer` - doctrine rule 11's "ungated shadow of the
+    /// same logic path", the same requirement `SheetStoreLogicShadowTests.
+    /// swift` satisfies for every other mutation method by calling a
+    /// public pure `Sheet` method. This wave's file-ownership split
+    /// leaves `Sheet.swift` outside this track's file list (see this
+    /// track's findings file), so the shadow test reaches the pure logic
+    /// through this store-internal helper instead of a `Sheet` extension.
+    func growingTable(rows neededRows: Int, cols neededCols: Int, in sheet: Sheet) throws -> Sheet {
+        guard let tableID = primaryTableID(of: sheet.body), var table = sheet.body.blocks[tableID] else {
+            throw SheetStoreError.noTable(sheetID: sheet.id)
+        }
+        let currentRows = Int(table.attributes["rows"]?.numberValue ?? 0)
+        let currentCols = Int(table.attributes["cols"]?.numberValue ?? 0)
+        let newRows = max(currentRows, neededRows)
+        let newCols = max(currentCols, neededCols)
+        guard newRows > currentRows || newCols > currentCols else { return sheet }
+
+        var updated = sheet
+        var newChildren: [UUID] = []
+        newChildren.reserveCapacity(newRows * newCols)
+        for r in 0..<newRows {
+            for c in 0..<newCols {
+                if r < currentRows, c < currentCols {
+                    newChildren.append(table.children[r * currentCols + c])
+                } else {
+                    let newID = UUID()
+                    updated.body.blocks[newID] = Block(type: .tableCell, content: [])
+                    newChildren.append(newID)
+                }
+            }
+        }
+        table.children = newChildren
+        table.attributes["rows"] = .number(Double(newRows))
+        table.attributes["cols"] = .number(Double(newCols))
+        updated.body.blocks[tableID] = table
+        while updated.columns.count < newCols {
+            updated.columns.append(SheetColumn(label: "", type: .text))
+        }
+        return updated
     }
 }
 

@@ -117,6 +117,14 @@ let package = Package(
         // `equation.latex` stays canonical; SwiftMath is display-only. See
         // `BlockRenderer.renderLaTeX` for the shared rendering path.
         .package(url: "https://github.com/mgriebling/SwiftMath.git", from: "1.7.0"),
+        // GRDB: SQLite toolkit (groue), actively maintained. Item 2.16
+        // DatabaseConnector (P2-D) uses it for the `.sqlite`/`.db` half of
+        // the local-file-engines-only design (DuckDB, already a dependency
+        // above, covers CSV/Parquet/JSON): GRDB's `Configuration.readonly`
+        // opens SQLITE_OPEN_READONLY, so a write attempt is rejected by
+        // SQLite itself, not by parsing/allowlisting the caller's SQL. See
+        // DataAccess/DatabaseConnector.swift.
+        .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.11.0"),
     ],
     targets: [
         .target(
@@ -164,6 +172,7 @@ let package = Package(
                 // TesseraStudioMac the way STTextView (a macOS-only editing
                 // widget) is above.
                 .product(name: "SwiftMath", package: "SwiftMath"),
+                .product(name: "GRDB", package: "GRDB.swift"),
             ],
             path: "Sources/TesseraCore",
             // Exclude agent work-in-progress files (disabled agent implementations).
@@ -193,7 +202,16 @@ let package = Package(
         ),
         .testTarget(
             name: "TesseraCoreTests",
-            dependencies: ["TesseraCore"],
+            dependencies: [
+                "TesseraCore",
+                // DatabaseConnectorTests seeds real, on-disk SQLite
+                // fixtures directly via GRDB's own DatabaseQueue (write
+                // mode) before handing them to DatabaseConnector (which
+                // never opens anything read-write) - needs GRDB importable
+                // from the test target itself, not just transitively
+                // through TesseraCore.
+                .product(name: "GRDB", package: "GRDB.swift"),
+            ],
             path: "Tests/TesseraCoreTests",
             // Copied verbatim so the loader's `<name>/SKILL.md` nesting is
             // preserved when the fixtures are read back via Bundle.module.
