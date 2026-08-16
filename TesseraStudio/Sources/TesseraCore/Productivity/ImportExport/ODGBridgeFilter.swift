@@ -249,7 +249,14 @@ public actor ODGBridgeFilter {
         }
 
         switch shape.kind {
-        case .rect, .freeform, .ellipse:
+        case .rect, .freeform, .ellipse, .callout, .table:
+            // .callout/.table (P2-C 2.12) degrade to the same plain box
+            // .freeform already uses: no svg:d leader-line export for a
+            // callout, no table:table-in-draw:frame export for a table
+            // this wave - an accepted, documented loss (see this wave's
+            // p2-c-findings-4.md "FOLLOW-UP NEEDED"). draw:name's kind
+            // marker still recovers the exact ShapeKind on a Tessera
+            // round trip either way.
             attributes.merge(boxAttributes(shape.geometry)) { _, new in new }
         case .bezier:
             // Item 2.3's real I/O work - a real draw:path element,
@@ -285,7 +292,7 @@ public actor ODGBridgeFilter {
     /// `ShapeKind` on the way back in.
     private static func elementName(for kind: ShapeKind) -> String {
         switch kind {
-        case .rect, .freeform: return "draw:rect"
+        case .rect, .freeform, .callout, .table: return "draw:rect"
         case .bezier: return "draw:path"
         case .ellipse: return "draw:ellipse"
         case .line, .arrow: return "draw:line"

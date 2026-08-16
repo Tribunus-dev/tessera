@@ -237,6 +237,131 @@ final class DrawingTests: DoctrineTestCase {
         XCTAssertEqual(updated.shape(id: s1.id)?.zIndex, 1)
     }
 
+    // MARK: - Item 2.12 pure application (UNGATED SHADOW, doctrine rule
+    // 11, of DrawingStoreTests.swift's DB-gated setCalloutAnchor/
+    // setDimensionInfo/setListItems/setTableCell tests) - exercises
+    // DrawingStore.applyingCalloutAnchor/applyingDimensionInfo/
+    // applyingListItems/applyingTableCell directly, no DB dependency,
+    // mirroring applyingGroup/applyingUngroup's own coverage above.
+
+    func testApplyingCalloutAnchorOnKnownShapeReturnsChangedTrue() {
+        let callout = Shape(kind: .callout, geometry: ShapeGeometry(x: 0, y: 0, width: 100, height: 40))
+        let drawing = Drawing.makeBlank().insertingShape(callout)
+
+        let result = DrawingStore.applyingCalloutAnchor(.free(x: 10, y: 10), toShape: callout.id, in: drawing)
+
+        XCTAssertEqual(result?.changed, true)
+        XCTAssertEqual(result?.drawing.shape(id: callout.id)?.calloutAnchor, .free(x: 10, y: 10))
+    }
+
+    func testApplyingCalloutAnchorOfUnchangedValueReturnsChangedFalse() {
+        let callout = Shape(kind: .callout, geometry: ShapeGeometry(x: 0, y: 0, width: 100, height: 40), calloutAnchor: .free(x: 5, y: 5))
+        let drawing = Drawing.makeBlank().insertingShape(callout)
+
+        let result = DrawingStore.applyingCalloutAnchor(.free(x: 5, y: 5), toShape: callout.id, in: drawing)
+
+        XCTAssertEqual(result?.changed, false)
+        XCTAssertEqual(result?.drawing, drawing)
+    }
+
+    func testApplyingCalloutAnchorOfUnknownShapeIDReturnsNil() {
+        let drawing = Drawing.makeBlank()
+        XCTAssertNil(DrawingStore.applyingCalloutAnchor(.free(x: 0, y: 0), toShape: UUID(), in: drawing))
+    }
+
+    func testApplyingDimensionInfoOnKnownShapeReturnsChangedTrue() {
+        let line = Shape(kind: .line, geometry: ShapeGeometry(x: 0, y: 0, width: 100, height: 0))
+        let drawing = Drawing.makeBlank().insertingShape(line)
+
+        let info = ShapeDimensionInfo(units: .inch, precision: 3)
+        let result = DrawingStore.applyingDimensionInfo(info, toShape: line.id, in: drawing)
+
+        XCTAssertEqual(result?.changed, true)
+        XCTAssertEqual(result?.drawing.shape(id: line.id)?.dimensionInfo, info)
+    }
+
+    func testApplyingDimensionInfoOfUnchangedValueReturnsChangedFalse() {
+        let info = ShapeDimensionInfo(units: .point, precision: 1)
+        let line = Shape(kind: .line, geometry: ShapeGeometry(x: 0, y: 0, width: 100, height: 0), dimensionInfo: info)
+        let drawing = Drawing.makeBlank().insertingShape(line)
+
+        let result = DrawingStore.applyingDimensionInfo(info, toShape: line.id, in: drawing)
+        XCTAssertEqual(result?.changed, false)
+    }
+
+    func testApplyingDimensionInfoOfUnknownShapeIDReturnsNil() {
+        XCTAssertNil(DrawingStore.applyingDimensionInfo(ShapeDimensionInfo(), toShape: UUID(), in: Drawing.makeBlank()))
+    }
+
+    func testApplyingListItemsOnKnownShapeWithNoExistingTextCreatesShapeText() {
+        let rect = Shape(kind: .rect, geometry: ShapeGeometry(x: 0, y: 0, width: 10, height: 10))
+        let drawing = Drawing.makeBlank().insertingShape(rect)
+
+        let items = [ShapeTextListItem(runs: [InlineRun(text: "one")])]
+        let result = DrawingStore.applyingListItems(items, style: .ordered, toShape: rect.id, in: drawing)
+
+        XCTAssertEqual(result?.changed, true)
+        XCTAssertEqual(result?.drawing.shape(id: rect.id)?.text?.listItems, items)
+        XCTAssertEqual(result?.drawing.shape(id: rect.id)?.text?.listStyle, .ordered)
+    }
+
+    func testApplyingListItemsPreservesPreExistingRunsField() {
+        var rect = Shape(kind: .rect, geometry: ShapeGeometry(x: 0, y: 0, width: 10, height: 10))
+        rect.text = ShapeText(runs: [InlineRun(text: "kept")])
+        let drawing = Drawing.makeBlank().insertingShape(rect)
+
+        let result = DrawingStore.applyingListItems([ShapeTextListItem()], style: .unordered, toShape: rect.id, in: drawing)
+        XCTAssertEqual(result?.drawing.shape(id: rect.id)?.text?.runs.first?.text, "kept")
+    }
+
+    func testApplyingListItemsOfUnchangedValueReturnsChangedFalse() {
+        var rect = Shape(kind: .rect, geometry: ShapeGeometry(x: 0, y: 0, width: 10, height: 10))
+        let items = [ShapeTextListItem(runs: [InlineRun(text: "one")])]
+        rect.text = ShapeText(listItems: items, listStyle: .task)
+        let drawing = Drawing.makeBlank().insertingShape(rect)
+
+        let result = DrawingStore.applyingListItems(items, style: .task, toShape: rect.id, in: drawing)
+        XCTAssertEqual(result?.changed, false)
+    }
+
+    func testApplyingListItemsOfUnknownShapeIDReturnsNil() {
+        XCTAssertNil(DrawingStore.applyingListItems(nil, style: nil, toShape: UUID(), in: Drawing.makeBlank()))
+    }
+
+    func testApplyingTableCellOnKnownTableShapeReturnsChangedTrue() {
+        let table = DrawTable(rowCount: 2, columnCount: 2)
+        let shape = Shape(kind: .table, geometry: ShapeGeometry(x: 0, y: 0, width: table.totalWidth, height: table.totalHeight), table: table)
+        let drawing = Drawing.makeBlank().insertingShape(shape)
+
+        let cell = DrawTableCell(text: ShapeText(runs: [InlineRun(text: "A1")]))
+        let result = DrawingStore.applyingTableCell(cell, row: 0, column: 0, toShape: shape.id, in: drawing)
+
+        XCTAssertEqual(result?.changed, true)
+        XCTAssertEqual(result?.drawing.shape(id: shape.id)?.table?.cell(row: 0, column: 0)?.text.plainText, "A1")
+    }
+
+    func testApplyingTableCellAtOutOfRangePositionReturnsChangedFalse() {
+        let table = DrawTable(rowCount: 1, columnCount: 1)
+        let shape = Shape(kind: .table, geometry: ShapeGeometry(x: 0, y: 0, width: table.totalWidth, height: table.totalHeight), table: table)
+        let drawing = Drawing.makeBlank().insertingShape(shape)
+
+        let result = DrawingStore.applyingTableCell(DrawTableCell(), row: 9, column: 9, toShape: shape.id, in: drawing)
+        XCTAssertEqual(result?.changed, false)
+        XCTAssertEqual(result?.drawing, drawing)
+    }
+
+    func testApplyingTableCellOnShapeWithNoTableReturnsChangedFalse() {
+        let rect = Shape(kind: .rect, geometry: ShapeGeometry(x: 0, y: 0, width: 10, height: 10))
+        let drawing = Drawing.makeBlank().insertingShape(rect)
+
+        let result = DrawingStore.applyingTableCell(DrawTableCell(), row: 0, column: 0, toShape: rect.id, in: drawing)
+        XCTAssertEqual(result?.changed, false)
+    }
+
+    func testApplyingTableCellOfUnknownShapeIDReturnsNil() {
+        XCTAssertNil(DrawingStore.applyingTableCell(DrawTableCell(), row: 0, column: 0, toShape: UUID(), in: Drawing.makeBlank()))
+    }
+
     // MARK: - displayTitle
 
     func testDisplayTitleFallsBackToUntitledWhenTitleIsBlank() {

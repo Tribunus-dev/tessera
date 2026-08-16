@@ -387,6 +387,138 @@ public struct DrawingStore: Sendable {
         return drawing
     }
 
+    /// Inserts a `.table` shape (item 2.12) - a thin convenience over
+    /// ``insertShape(_:for:)`` (constructs `Shape(kind: .table, ...)`
+    /// and delegates), so table creation reuses the EXISTING
+    /// `insertShape` receipt (`DrawingReceiptType.insertShape`, kind =
+    /// `"table"`) rather than a second receipt vocabulary for "a shape
+    /// was inserted" - a table's own creation is not a distinct kind
+    /// of mutation from any other shape's. `geometry`'s width/height
+    /// should match `table.totalWidth`/`.totalHeight` (the documented
+    /// `ShapeKind.table` bbox-sync contract) - this method does not
+    /// enforce that itself, matching `setPath`'s own "kept in sync by
+    /// whoever mutates it" convention for `.bezier`.
+    @discardableResult
+    public func insertTable(_ table: DrawTable, geometry: ShapeGeometry, zIndex: Int = 0, for drawingID: UUID) async throws -> Drawing {
+        try await insertShape(Shape(kind: .table, geometry: geometry, zIndex: zIndex, table: table), for: drawingID)
+    }
+
+    /// Sets (or clears, via `nil`) a `.callout` shape's leader-line
+    /// anchor (item 2.12). Same no-op-guard shape as `setExtrusion`/
+    /// `setPath` above: an identical `anchor` value (including nil ==
+    /// nil) is a no-op - zero receipts, zero persistence. Delegates to
+    /// ``applyingCalloutAnchor(_:toShape:in:)``, kept internal (not
+    /// private) for the same reason `applyingGroup`/`applyingUngroup`
+    /// are - directly testable without a live `TesseraDataLayer`
+    /// (testing-doctrine.md rule 11's ungated shadow).
+    @discardableResult
+    public func setCalloutAnchor(_ anchor: ConnectorEndpoint?, forShape shapeID: UUID, in drawingID: UUID) async throws -> Drawing {
+        let drawing = try await loadOrFail(id: drawingID)
+        guard let (updated, changed) = Self.applyingCalloutAnchor(anchor, toShape: shapeID, in: drawing) else {
+            throw DrawingStoreError.shapeNotFound(id: shapeID)
+        }
+        guard changed else { return updated }
+        var persisted = updated
+        persisted.updatedAt = Date()
+        _ = try await upsert(persisted)
+        try await appendReceipt(
+            entityID: drawingID,
+            receiptType: DrawingReceiptType.setCalloutAnchor.rawValue,
+            payload: [
+                "shapeID": .string(shapeID.uuidString),
+                "anchorKind": anchor.map { anchorKindLabel($0) } ?? .null,
+            ]
+        )
+        return persisted
+    }
+
+    /// Sets (or clears, via `nil`) a shape's dimension-line info (item
+    /// 2.12). Same no-op-guard shape as `setCalloutAnchor` above.
+    @discardableResult
+    public func setDimensionInfo(_ info: ShapeDimensionInfo?, forShape shapeID: UUID, in drawingID: UUID) async throws -> Drawing {
+        let drawing = try await loadOrFail(id: drawingID)
+        guard let (updated, changed) = Self.applyingDimensionInfo(info, toShape: shapeID, in: drawing) else {
+            throw DrawingStoreError.shapeNotFound(id: shapeID)
+        }
+        guard changed else { return updated }
+        var persisted = updated
+        persisted.updatedAt = Date()
+        _ = try await upsert(persisted)
+        try await appendReceipt(
+            entityID: drawingID,
+            receiptType: DrawingReceiptType.setDimensionInfo.rawValue,
+            payload: [
+                "shapeID": .string(shapeID.uuidString),
+                "hasManualOverride": .bool(!(info?.manualOverrideText ?? "").isEmpty),
+                "units": info.map { .string($0.units.rawValue) } ?? .null,
+            ]
+        )
+        return persisted
+    }
+
+    /// Sets (or clears, via `nil`) a shape's text bulleted-list items
+    /// and style (item 2.12) - creates `shape.text` (`ShapeText()`) if
+    /// it was nil, leaving any existing `runs` untouched (see
+    /// `ShapeText.listItems`'s own doc comment for why `runs` is not
+    /// cleared). Same no-op-guard shape as `setCalloutAnchor` above:
+    /// identical `(listItems, listStyle)` is a no-op.
+    @discardableResult
+    public func setListItems(_ listItems: [ShapeTextListItem]?, style: ShapeTextListStyle?, forShape shapeID: UUID, in drawingID: UUID) async throws -> Drawing {
+        let drawing = try await loadOrFail(id: drawingID)
+        guard let (updated, changed) = Self.applyingListItems(listItems, style: style, toShape: shapeID, in: drawing) else {
+            throw DrawingStoreError.shapeNotFound(id: shapeID)
+        }
+        guard changed else { return updated }
+        var persisted = updated
+        persisted.updatedAt = Date()
+        _ = try await upsert(persisted)
+        try await appendReceipt(
+            entityID: drawingID,
+            receiptType: DrawingReceiptType.setListItems.rawValue,
+            payload: [
+                "shapeID": .string(shapeID.uuidString),
+                "itemCount": .number(Double(listItems?.count ?? 0)),
+            ]
+        )
+        return persisted
+    }
+
+    /// Replaces one cell's content in a `.table` shape's `DrawTable`
+    /// (item 2.12). Throws `DrawingStoreError.shapeNotFound` for an
+    /// unknown `shapeID`; an out-of-range `(row, column)` (or a shape
+    /// with no `table` set at all) is a no-op - zero receipts, zero
+    /// persistence - matching `DrawTable.settingCell`'s own "malformed
+    /// data degrades" contract rather than throwing a second, table-
+    /// specific error case.
+    @discardableResult
+    public func setTableCell(_ cell: DrawTableCell, row: Int, column: Int, forShape shapeID: UUID, in drawingID: UUID) async throws -> Drawing {
+        let drawing = try await loadOrFail(id: drawingID)
+        guard let (updated, changed) = Self.applyingTableCell(cell, row: row, column: column, toShape: shapeID, in: drawing) else {
+            throw DrawingStoreError.shapeNotFound(id: shapeID)
+        }
+        guard changed else { return updated }
+        var persisted = updated
+        persisted.updatedAt = Date()
+        _ = try await upsert(persisted)
+        try await appendReceipt(
+            entityID: drawingID,
+            receiptType: DrawingReceiptType.setTableCell.rawValue,
+            payload: [
+                "shapeID": .string(shapeID.uuidString),
+                "row": .number(Double(row)),
+                "column": .number(Double(column)),
+            ]
+        )
+        return persisted
+    }
+
+    private func anchorKindLabel(_ anchor: ConnectorEndpoint) -> JSONValue {
+        switch anchor {
+        case .attached: return .string("attached")
+        case .free: return .string("free")
+        }
+    }
+
     @discardableResult
     public func setZOrder(_ move: ShapeZOrder.Move, forShape shapeID: UUID, in drawingID: UUID) async throws -> Drawing {
         var drawing = try await loadOrFail(id: drawingID)
@@ -622,6 +754,50 @@ public struct DrawingStore: Sendable {
             updated = updated.updatingShape(shape)
         }
         return (updated, members.map(\.id))
+    }
+
+    // MARK: - Item 2.12 pure application (testable without DB, doctrine rule 11)
+    //
+    // Each returns `nil` for "no shape with this id" (the caller throws
+    // `DrawingStoreError.shapeNotFound`) or `(drawing, changed)` where
+    // `changed == false` means the new value was already the shape's
+    // current value (the caller returns `drawing` as-is: zero receipts,
+    // zero persistence) - mirroring `applyingGroup`/`applyingUngroup`'s
+    // "nil is the no-op signal" shape, generalized to also distinguish
+    // "not found" from "found but unchanged," which those two methods
+    // did not need to (grouping/ungrouping have no per-shape "already
+    // has this exact value" no-op case of their own).
+
+    static func applyingCalloutAnchor(_ anchor: ConnectorEndpoint?, toShape shapeID: UUID, in drawing: Drawing) -> (drawing: Drawing, changed: Bool)? {
+        guard var shape = drawing.shape(id: shapeID) else { return nil }
+        guard shape.calloutAnchor != anchor else { return (drawing, false) }
+        shape.calloutAnchor = anchor
+        return (drawing.updatingShape(shape), true)
+    }
+
+    static func applyingDimensionInfo(_ info: ShapeDimensionInfo?, toShape shapeID: UUID, in drawing: Drawing) -> (drawing: Drawing, changed: Bool)? {
+        guard var shape = drawing.shape(id: shapeID) else { return nil }
+        guard shape.dimensionInfo != info else { return (drawing, false) }
+        shape.dimensionInfo = info
+        return (drawing.updatingShape(shape), true)
+    }
+
+    static func applyingListItems(_ listItems: [ShapeTextListItem]?, style: ShapeTextListStyle?, toShape shapeID: UUID, in drawing: Drawing) -> (drawing: Drawing, changed: Bool)? {
+        guard var shape = drawing.shape(id: shapeID) else { return nil }
+        guard shape.text?.listItems != listItems || shape.text?.listStyle != style else { return (drawing, false) }
+        var text = shape.text ?? ShapeText()
+        text.listItems = listItems
+        text.listStyle = style
+        shape.text = text
+        return (drawing.updatingShape(shape), true)
+    }
+
+    static func applyingTableCell(_ cell: DrawTableCell, row: Int, column: Int, toShape shapeID: UUID, in drawing: Drawing) -> (drawing: Drawing, changed: Bool)? {
+        guard var shape = drawing.shape(id: shapeID) else { return nil }
+        guard let table = shape.table, table.index(row: row, column: column) != nil else { return (drawing, false) }
+        guard table.cell(row: row, column: column) != cell else { return (drawing, false) }
+        shape.table = table.settingCell(cell, row: row, column: column)
+        return (drawing.updatingShape(shape), true)
     }
 
     // MARK: - Receipts

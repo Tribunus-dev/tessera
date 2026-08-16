@@ -42,6 +42,32 @@ public enum ShapeKind: String, Codable, Sendable, Hashable, CaseIterable {
     /// visible path at render time from `connector`'s resolved
     /// endpoints, not from this shape's `x`/`y`/`width`/`height`.
     case connector
+    /// A callout (item 2.12): a body shape (own fill/stroke/text, via
+    /// the same `Shape` fields every other kind uses) that ALSO carries
+    /// a leader line to `Shape.calloutAnchor` - distinct from
+    /// `.connector`, which IS just a line with no body of its own. A
+    /// new case (not an orthogonal field on every kind, unlike
+    /// `.extrusion`/`.dimensionInfo` below) because real office formats
+    /// model a callout as its own preset shape family (OOXML
+    /// `wedgeRectCallout` and friends, ODF's own callout custom-shape
+    /// types), not as a property layered onto an arbitrary shape - see
+    /// this wave's findings file for the full reasoning and the
+    /// `ODGBridgeFilter.swift`/`ShapeCatalog.swift` follow-up this
+    /// choice requires (both outside this track's owned file list).
+    /// `geometry` is the callout's own body rect, same convention as
+    /// `.rect`.
+    case callout
+    /// A Draw-native table (item 2.12): `Shape.table` carries the real
+    /// grid content (`DrawTable.swift`). A `ShapeKind` case (not a
+    /// separate top-level `Drawing` entity) so a table gets z-order,
+    /// layer membership, group, snap, and transform for free through
+    /// the exact same `Shape`-based machinery every other kind already
+    /// has - see this wave's findings file for the full reasoning.
+    /// `geometry`'s width/height is the table's own outer bounding box
+    /// (sum of `DrawTable.columnWidths`/`rowHeights`), kept in sync by
+    /// whoever mutates the table, matching `.bezier`'s own documented
+    /// bbox-sync convention above.
+    case table
 }
 
 // MARK: - ShapeGeometry
@@ -199,14 +225,75 @@ public struct ShapeStroke: Codable, Sendable, Hashable {
 /// document model.
 public struct ShapeText: Codable, Sendable, Hashable {
     public var runs: [InlineRun]
+    /// Non-nil and non-empty puts this text in BULLETED-LIST mode
+    /// (item 2.12): `ShapeRenderer` draws `listItems` instead of
+    /// `runs` when present, matching how `Block`'s own `.list`/
+    /// `.listItem` container walks its children instead of a leaf's
+    /// `content`. `nil` (the default) is the ORIGINAL plain-paragraph
+    /// shape (every shape before this field existed) - purely additive,
+    /// both new fields decode/encode via Swift's synthesized
+    /// `Codable` `Optional` handling (`decodeIfPresent`/absent-on-nil),
+    /// so no custom `Codable` conformance was needed to add these,
+    /// unlike `ShapeGeometry`'s `flipH`/`flipV`. `runs` is left
+    /// untouched when `listItems` is set (not required to be empty) -
+    /// it simply isn't the field the renderer reads while list mode is
+    /// active.
+    public var listItems: [ShapeTextListItem]?
+    /// The bullet/number/checkbox convention every item in `listItems`
+    /// renders with (item 2.12) - one style per shape, matching
+    /// `Block`'s own `.list` container's single `attributes["style"]`
+    /// (a list does not mix bullet conventions mid-list). `nil` when
+    /// `listItems` is `nil`; defaults to `.unordered` when `listItems`
+    /// is set but this is left `nil` (mirrors `BlockRenderer
+    /// .renderListContainer`'s own `?? "unordered"` fallback).
+    public var listStyle: ShapeTextListStyle?
 
-    public init(runs: [InlineRun] = []) {
+    public init(runs: [InlineRun] = [], listItems: [ShapeTextListItem]? = nil, listStyle: ShapeTextListStyle? = nil) {
         self.runs = runs
+        self.listItems = listItems
+        self.listStyle = listStyle
     }
 
+    /// `listItems`' own text, one item per line, when list mode is
+    /// active; else `runs`' plain text - derived, matching every other
+    /// "plain text view" in this codebase (never a second stored copy).
     public var plainText: String {
-        runs.map(\.text).joined()
+        if let listItems, !listItems.isEmpty {
+            return listItems.map { $0.runs.map(\.text).joined() }.joined(separator: "\n")
+        }
+        return runs.map(\.text).joined()
     }
+}
+
+// MARK: - ShapeTextListItem / ShapeTextListStyle
+
+/// One bulleted-list line inside a shape's text (item 2.12). Peer of
+/// `Block`'s own `.listItem` case, flattened to a plain array (no
+/// nested block-id indirection) since shape text has no need for
+/// `Block`'s general container machinery - a shape's list is always a
+/// single flat run of items, indent level and all.
+public struct ShapeTextListItem: Codable, Sendable, Hashable {
+    public var runs: [InlineRun]
+    /// 0-based indent depth. Clamped to `>= 0` in `init` - matching
+    /// every other "no negative magnitude" field in this codebase
+    /// (`ShapeStroke.width`, `ShapeExtrusion.depth`).
+    public var level: Int
+
+    public init(runs: [InlineRun] = [], level: Int = 0) {
+        self.runs = runs
+        self.level = max(0, level)
+    }
+}
+
+/// The bullet/number/checkbox convention a `ShapeText`'s `listItems`
+/// render with - same three-way vocabulary as `BlockType.list`'s own
+/// `attributes["style"]` string (`"unordered" | "ordered" | "task"`),
+/// typed here instead of a raw string since `ShapeText` is not
+/// attribute-bag-shaped the way `Block` is.
+public enum ShapeTextListStyle: String, Codable, Sendable, Hashable, CaseIterable {
+    case unordered
+    case ordered
+    case task
 }
 
 // MARK: - ConnectorInfo
@@ -252,6 +339,87 @@ public struct ConnectorInfo: Codable, Sendable, Hashable {
     }
 }
 
+// MARK: - ShapeDimensionInfo
+
+/// A measure/dimension-line's own annotation (item 2.12) - reuses
+/// `ShapeKind.line` (a dimension line IS a line, geometrically: two
+/// endpoints, `ShapeRenderer.linePath`'s existing horizontal-midline
+/// construction is already exactly right) rather than a new
+/// `ShapeKind` case, matching `ShapeExtrusion`'s own "orthogonal
+/// property of an existing 2D shape" precedent (`ShapeKind`'s own doc
+/// comment) - a dimension line has no body/fill concept a callout
+/// needs, so there is no real-format precedent pulling it toward a
+/// distinct shape family the way `.callout` has.
+public struct ShapeDimensionInfo: Codable, Sendable, Hashable {
+    public var units: DimensionUnit
+    /// Decimal places shown in the auto-computed label. Clamped to
+    /// `>= 0` in `init`, matching this file's other "no negative
+    /// magnitude" fields.
+    public var precision: Int
+    /// A non-nil, non-empty value overrides the auto-computed label
+    /// text outright - the same "manual override always wins" contract
+    /// `FieldSpec`'s dirty-cache convention already establishes
+    /// elsewhere in this codebase, not a second parallel mechanism.
+    public var manualOverrideText: String?
+
+    public init(units: DimensionUnit = .point, precision: Int = 1, manualOverrideText: String? = nil) {
+        self.units = units
+        self.precision = max(0, precision)
+        self.manualOverrideText = manualOverrideText
+    }
+
+    /// The measured distance in `units`, auto-computed from `geometry`.
+    /// A `.line` shape's own two endpoints are `(x, y + height/2)` and
+    /// `(x + width, y + height/2)` (`ShapeRenderer.linePath`'s existing
+    /// construction) - a horizontal segment of length `width` in the
+    /// shape's own local space, which rotation/flip do not change the
+    /// LENGTH of (only its on-canvas orientation) - so `abs(width)` IS
+    /// the segment length, no trigonometry needed.
+    public func measuredLength(for geometry: ShapeGeometry) -> Double {
+        abs(geometry.width) / units.pointsPerUnit
+    }
+
+    /// The text `ShapeRenderer` draws at the dimension line's midpoint:
+    /// `manualOverrideText` verbatim when set, else the auto-computed
+    /// `measuredLength(for:)` formatted to `precision` decimal places
+    /// plus `units`' own display suffix.
+    public func displayText(for geometry: ShapeGeometry) -> String {
+        if let manualOverrideText, !manualOverrideText.isEmpty { return manualOverrideText }
+        return String(format: "%.\(precision)f", measuredLength(for: geometry)) + units.suffix
+    }
+}
+
+/// The unit vocabulary `ShapeDimensionInfo.units` measures in. Every
+/// case's `pointsPerUnit` conversion factor is exact (points are this
+/// codebase's own persisted-model unit, `ShapeGeometry`'s header
+/// comment - the same convention `DocumentPageLayout` uses elsewhere).
+public enum DimensionUnit: String, Codable, Sendable, Hashable, CaseIterable {
+    case point
+    case millimeter
+    case centimeter
+    case inch
+
+    /// Points per one unit of `self` (1 pt = 1/72 in, the standard
+    /// desktop-publishing/PDF/CoreGraphics point).
+    public var pointsPerUnit: Double {
+        switch self {
+        case .point: return 1
+        case .inch: return 72
+        case .millimeter: return 72 / 25.4
+        case .centimeter: return 72 / 2.54
+        }
+    }
+
+    public var suffix: String {
+        switch self {
+        case .point: return "pt"
+        case .millimeter: return "mm"
+        case .centimeter: return "cm"
+        case .inch: return "in"
+        }
+    }
+}
+
 // MARK: - Shape
 
 /// One vector shape on a `Drawing`'s canvas (or, when Impress reuses
@@ -292,6 +460,24 @@ public struct Shape: Codable, Sendable, Identifiable, Hashable {
     /// didn't exist yet. Membership only: doesn't affect this shape's
     /// `zIndex`, which stays dense per layer, not globally.
     public var layerID: UUID?
+    /// Non-nil only for `.callout` shapes (item 2.12) - the leader
+    /// line's target: either glued to another shape's compass glue
+    /// point, or a free canvas point. Reuses `ConnectorEndpoint`
+    /// verbatim rather than a second attachment type (this file's own
+    /// "one identity/attachment model" convention) - `ShapeRenderer`
+    /// resolves it the same way `ConnectorRouter` resolves a
+    /// connector's own endpoints. UNLIKE `.connector`, a callout DOES
+    /// use `geometry` as its body's source of truth - only the leader
+    /// line's far end comes from this field.
+    public var calloutAnchor: ConnectorEndpoint?
+    /// Non-nil only for `.line` shapes (item 2.12) that are dimension/
+    /// measure lines rather than plain lines - see
+    /// `ShapeDimensionInfo`. Orthogonal to `kind`, matching
+    /// `extrusion`'s own "any 2D shape can carry X" convention above.
+    public var dimensionInfo: ShapeDimensionInfo?
+    /// Non-nil only for `.table` shapes (item 2.12) - the real grid
+    /// content. See `DrawTable.swift`.
+    public var table: DrawTable?
 
     public init(
         id: UUID = UUID(),
@@ -305,7 +491,10 @@ public struct Shape: Codable, Sendable, Identifiable, Hashable {
         extrusion: ShapeExtrusion? = nil,
         zIndex: Int = 0,
         parentGroupID: UUID? = nil,
-        layerID: UUID? = nil
+        layerID: UUID? = nil,
+        calloutAnchor: ConnectorEndpoint? = nil,
+        dimensionInfo: ShapeDimensionInfo? = nil,
+        table: DrawTable? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -319,5 +508,8 @@ public struct Shape: Codable, Sendable, Identifiable, Hashable {
         self.zIndex = zIndex
         self.parentGroupID = parentGroupID
         self.layerID = layerID
+        self.calloutAnchor = calloutAnchor
+        self.dimensionInfo = dimensionInfo
+        self.table = table
     }
 }

@@ -393,4 +393,247 @@ final class DrawingStoreTests: DoctrineTestCase {
         )
         XCTAssertNil(DrawingStore.applyingUngroup(UUID(), to: drawing), "a groupID no shape carries must be a no-op")
     }
+
+    // MARK: - Item 2.12: setCalloutAnchor / setDimensionInfo / setListItems
+    // / setTableCell / insertTable - receipt + persistence + no-op + error
+    // path (testing-doctrine.md's "Store mutation" coverage shape).
+
+    func testSetCalloutAnchorEmitsExactlyOneReceiptWithShapeIDAndAnchorKind() async throws {
+        let layer = try await DrawTestDataLayer.startedOrSkip()
+        let store = DrawingStore(dataLayer: layer)
+        var drawing = try await store.upsert(Drawing(title: "Callout Gate Test"))
+        let callout = Shape(kind: .callout, geometry: ShapeGeometry(x: 0, y: 0, width: 100, height: 40))
+        drawing = try await store.insertShape(callout, for: drawing.id)
+
+        let updated = try await store.setCalloutAnchor(.free(x: 200, y: 200), forShape: callout.id, in: drawing.id)
+        XCTAssertEqual(updated.shape(id: callout.id)?.calloutAnchor, .free(x: 200, y: 200))
+
+        let receipts = try await store.receipts(forDrawing: drawing.id)
+        let calloutReceipts = receipts.filter { $0.receiptType == DrawingReceiptType.setCalloutAnchor.rawValue }
+        XCTAssertEqual(calloutReceipts.count, 1)
+        XCTAssertEqual(calloutReceipts.first?.payload["shapeID"], .string(callout.id.uuidString))
+        XCTAssertEqual(calloutReceipts.first?.payload["anchorKind"], .string("free"))
+    }
+
+    func testSetCalloutAnchorToItsCurrentValueEmitsNoReceipt() async throws {
+        let layer = try await DrawTestDataLayer.startedOrSkip()
+        let store = DrawingStore(dataLayer: layer)
+        var drawing = try await store.upsert(Drawing(title: "Callout NoOp Gate Test"))
+        let callout = Shape(kind: .callout, geometry: ShapeGeometry(x: 0, y: 0, width: 100, height: 40), calloutAnchor: .free(x: 5, y: 5))
+        drawing = try await store.insertShape(callout, for: drawing.id)
+
+        let receiptsBefore = try await store.receipts(forDrawing: drawing.id).count
+        _ = try await store.setCalloutAnchor(.free(x: 5, y: 5), forShape: callout.id, in: drawing.id)
+        let receiptsAfter = try await store.receipts(forDrawing: drawing.id).count
+
+        XCTAssertEqual(receiptsAfter, receiptsBefore, "setting a callout's anchor to its own current value must not append a receipt")
+    }
+
+    func testSetCalloutAnchorOfUnknownShapeIDThrowsWithoutPersisting() async throws {
+        let layer = try await DrawTestDataLayer.startedOrSkip()
+        let store = DrawingStore(dataLayer: layer)
+        let drawing = try await store.upsert(Drawing(title: "Callout ErrorPath Gate Test"))
+        let unknownID = UUID()
+
+        do {
+            _ = try await store.setCalloutAnchor(.free(x: 0, y: 0), forShape: unknownID, in: drawing.id)
+            XCTFail("expected DrawingStoreError.shapeNotFound")
+        } catch DrawingStoreError.shapeNotFound(let id) {
+            XCTAssertEqual(id, unknownID)
+        }
+
+        let receipts = try await store.receipts(forDrawing: drawing.id)
+        XCTAssertTrue(receipts.filter { $0.receiptType == DrawingReceiptType.setCalloutAnchor.rawValue }.isEmpty)
+    }
+
+    func testSetDimensionInfoEmitsExactlyOneReceiptAndPersistsInfo() async throws {
+        let layer = try await DrawTestDataLayer.startedOrSkip()
+        let store = DrawingStore(dataLayer: layer)
+        var drawing = try await store.upsert(Drawing(title: "DimensionInfo Gate Test"))
+        let line = Shape(kind: .line, geometry: ShapeGeometry(x: 0, y: 0, width: 100, height: 0))
+        drawing = try await store.insertShape(line, for: drawing.id)
+
+        let info = ShapeDimensionInfo(units: .centimeter, precision: 2)
+        let updated = try await store.setDimensionInfo(info, forShape: line.id, in: drawing.id)
+        XCTAssertEqual(updated.shape(id: line.id)?.dimensionInfo, info)
+
+        let receipts = try await store.receipts(forDrawing: drawing.id)
+        let dimensionReceipts = receipts.filter { $0.receiptType == DrawingReceiptType.setDimensionInfo.rawValue }
+        XCTAssertEqual(dimensionReceipts.count, 1)
+        XCTAssertEqual(dimensionReceipts.first?.payload["units"], .string("centimeter"))
+        XCTAssertEqual(dimensionReceipts.first?.payload["hasManualOverride"], .bool(false))
+    }
+
+    func testSetDimensionInfoToItsCurrentValueEmitsNoReceipt() async throws {
+        let layer = try await DrawTestDataLayer.startedOrSkip()
+        let store = DrawingStore(dataLayer: layer)
+        var drawing = try await store.upsert(Drawing(title: "DimensionInfo NoOp Gate Test"))
+        let line = Shape(kind: .line, geometry: ShapeGeometry(x: 0, y: 0, width: 100, height: 0), dimensionInfo: ShapeDimensionInfo(units: .point, precision: 1))
+        drawing = try await store.insertShape(line, for: drawing.id)
+
+        let receiptsBefore = try await store.receipts(forDrawing: drawing.id).count
+        _ = try await store.setDimensionInfo(ShapeDimensionInfo(units: .point, precision: 1), forShape: line.id, in: drawing.id)
+        let receiptsAfter = try await store.receipts(forDrawing: drawing.id).count
+
+        XCTAssertEqual(receiptsAfter, receiptsBefore)
+    }
+
+    func testSetDimensionInfoOfUnknownShapeIDThrowsWithoutPersisting() async throws {
+        let layer = try await DrawTestDataLayer.startedOrSkip()
+        let store = DrawingStore(dataLayer: layer)
+        let drawing = try await store.upsert(Drawing(title: "DimensionInfo ErrorPath Gate Test"))
+        let unknownID = UUID()
+
+        do {
+            _ = try await store.setDimensionInfo(ShapeDimensionInfo(), forShape: unknownID, in: drawing.id)
+            XCTFail("expected DrawingStoreError.shapeNotFound")
+        } catch DrawingStoreError.shapeNotFound(let id) {
+            XCTAssertEqual(id, unknownID)
+        }
+    }
+
+    func testSetListItemsEmitsExactlyOneReceiptWithItemCount() async throws {
+        let layer = try await DrawTestDataLayer.startedOrSkip()
+        let store = DrawingStore(dataLayer: layer)
+        var drawing = try await store.upsert(Drawing(title: "ListItems Gate Test"))
+        let s = Shape(kind: .rect, geometry: ShapeGeometry(x: 0, y: 0, width: 100, height: 100))
+        drawing = try await store.insertShape(s, for: drawing.id)
+
+        let items = [ShapeTextListItem(runs: [InlineRun(text: "one")]), ShapeTextListItem(runs: [InlineRun(text: "two")], level: 1)]
+        let updated = try await store.setListItems(items, style: .ordered, forShape: s.id, in: drawing.id)
+        XCTAssertEqual(updated.shape(id: s.id)?.text?.listItems, items)
+        XCTAssertEqual(updated.shape(id: s.id)?.text?.listStyle, .ordered)
+
+        let receipts = try await store.receipts(forDrawing: drawing.id)
+        let listReceipts = receipts.filter { $0.receiptType == DrawingReceiptType.setListItems.rawValue }
+        XCTAssertEqual(listReceipts.count, 1)
+        XCTAssertEqual(listReceipts.first?.payload["itemCount"], .number(2))
+    }
+
+    func testSetListItemsPreservesExistingPlainRunsField() async throws {
+        let layer = try await DrawTestDataLayer.startedOrSkip()
+        let store = DrawingStore(dataLayer: layer)
+        var drawing = try await store.upsert(Drawing(title: "ListItems Preserve Gate Test"))
+        var s = Shape(kind: .rect, geometry: ShapeGeometry(x: 0, y: 0, width: 100, height: 100))
+        s.text = ShapeText(runs: [InlineRun(text: "original plain text")])
+        drawing = try await store.insertShape(s, for: drawing.id)
+
+        let items = [ShapeTextListItem(runs: [InlineRun(text: "bullet")])]
+        let updated = try await store.setListItems(items, style: .unordered, forShape: s.id, in: drawing.id)
+
+        XCTAssertEqual(updated.shape(id: s.id)?.text?.runs.first?.text, "original plain text", "setListItems must not clear the pre-existing runs field")
+    }
+
+    func testSetListItemsToItsCurrentValueEmitsNoReceipt() async throws {
+        let layer = try await DrawTestDataLayer.startedOrSkip()
+        let store = DrawingStore(dataLayer: layer)
+        var drawing = try await store.upsert(Drawing(title: "ListItems NoOp Gate Test"))
+        var s = Shape(kind: .rect, geometry: ShapeGeometry(x: 0, y: 0, width: 100, height: 100))
+        let items = [ShapeTextListItem(runs: [InlineRun(text: "one")])]
+        s.text = ShapeText(listItems: items, listStyle: .task)
+        drawing = try await store.insertShape(s, for: drawing.id)
+
+        let receiptsBefore = try await store.receipts(forDrawing: drawing.id).count
+        _ = try await store.setListItems(items, style: .task, forShape: s.id, in: drawing.id)
+        let receiptsAfter = try await store.receipts(forDrawing: drawing.id).count
+
+        XCTAssertEqual(receiptsAfter, receiptsBefore)
+    }
+
+    func testSetListItemsOfUnknownShapeIDThrowsWithoutPersisting() async throws {
+        let layer = try await DrawTestDataLayer.startedOrSkip()
+        let store = DrawingStore(dataLayer: layer)
+        let drawing = try await store.upsert(Drawing(title: "ListItems ErrorPath Gate Test"))
+        let unknownID = UUID()
+
+        do {
+            _ = try await store.setListItems([ShapeTextListItem()], style: .unordered, forShape: unknownID, in: drawing.id)
+            XCTFail("expected DrawingStoreError.shapeNotFound")
+        } catch DrawingStoreError.shapeNotFound(let id) {
+            XCTAssertEqual(id, unknownID)
+        }
+    }
+
+    func testInsertTableEmitsExactlyOneInsertShapeReceiptWithTableKind() async throws {
+        let layer = try await DrawTestDataLayer.startedOrSkip()
+        let store = DrawingStore(dataLayer: layer)
+        let drawing = try await store.upsert(Drawing(title: "InsertTable Gate Test"))
+        let table = DrawTable(rowCount: 2, columnCount: 2)
+
+        let updated = try await store.insertTable(table, geometry: ShapeGeometry(x: 0, y: 0, width: table.totalWidth, height: table.totalHeight), for: drawing.id)
+        XCTAssertEqual(updated.shapes.first?.kind, .table)
+        XCTAssertEqual(updated.shapes.first?.table?.rowCount, 2)
+
+        let receipts = try await store.receipts(forDrawing: drawing.id)
+        let insertReceipts = receipts.filter { $0.receiptType == DrawingReceiptType.insertShape.rawValue }
+        XCTAssertEqual(insertReceipts.count, 1)
+        XCTAssertEqual(insertReceipts.first?.payload["kind"], .string("table"))
+    }
+
+    func testSetTableCellEmitsExactlyOneReceiptAndPersistsCellContent() async throws {
+        let layer = try await DrawTestDataLayer.startedOrSkip()
+        let store = DrawingStore(dataLayer: layer)
+        let table = DrawTable(rowCount: 2, columnCount: 2)
+        var drawing = try await store.upsert(Drawing(title: "SetTableCell Gate Test"))
+        drawing = try await store.insertTable(table, geometry: ShapeGeometry(x: 0, y: 0, width: table.totalWidth, height: table.totalHeight), for: drawing.id)
+        let shapeID = try XCTUnwrap(drawing.shapes.first?.id)
+
+        let cell = DrawTableCell(text: ShapeText(runs: [InlineRun(text: "A1")]))
+        let updated = try await store.setTableCell(cell, row: 0, column: 0, forShape: shapeID, in: drawing.id)
+        XCTAssertEqual(updated.shape(id: shapeID)?.table?.cell(row: 0, column: 0)?.text.plainText, "A1")
+
+        let receipts = try await store.receipts(forDrawing: drawing.id)
+        let cellReceipts = receipts.filter { $0.receiptType == DrawingReceiptType.setTableCell.rawValue }
+        XCTAssertEqual(cellReceipts.count, 1)
+        XCTAssertEqual(cellReceipts.first?.payload["row"], .number(0))
+        XCTAssertEqual(cellReceipts.first?.payload["column"], .number(0))
+    }
+
+    func testSetTableCellAtOutOfRangePositionEmitsNoReceipt() async throws {
+        let layer = try await DrawTestDataLayer.startedOrSkip()
+        let store = DrawingStore(dataLayer: layer)
+        let table = DrawTable(rowCount: 1, columnCount: 1)
+        var drawing = try await store.upsert(Drawing(title: "SetTableCell OutOfRange Gate Test"))
+        drawing = try await store.insertTable(table, geometry: ShapeGeometry(x: 0, y: 0, width: table.totalWidth, height: table.totalHeight), for: drawing.id)
+        let shapeID = try XCTUnwrap(drawing.shapes.first?.id)
+
+        let receiptsBefore = try await store.receipts(forDrawing: drawing.id).count
+        _ = try await store.setTableCell(DrawTableCell(), row: 9, column: 9, forShape: shapeID, in: drawing.id)
+        let receiptsAfter = try await store.receipts(forDrawing: drawing.id).count
+
+        XCTAssertEqual(receiptsAfter, receiptsBefore, "an out-of-range table cell position must not append a receipt")
+    }
+
+    func testSetTableCellOnAShapeWithNoTableEmitsNoReceipt() async throws {
+        let layer = try await DrawTestDataLayer.startedOrSkip()
+        let store = DrawingStore(dataLayer: layer)
+        var drawing = try await store.upsert(Drawing(title: "SetTableCell NoTable Gate Test"))
+        let rect = Shape(kind: .rect, geometry: ShapeGeometry(x: 0, y: 0, width: 10, height: 10))
+        drawing = try await store.insertShape(rect, for: drawing.id)
+
+        let receiptsBefore = try await store.receipts(forDrawing: drawing.id).count
+        _ = try await store.setTableCell(DrawTableCell(), row: 0, column: 0, forShape: rect.id, in: drawing.id)
+        let receiptsAfter = try await store.receipts(forDrawing: drawing.id).count
+
+        XCTAssertEqual(receiptsAfter, receiptsBefore)
+    }
+
+    func testSetTableCellOfUnknownShapeIDThrowsWithoutPersisting() async throws {
+        let layer = try await DrawTestDataLayer.startedOrSkip()
+        let store = DrawingStore(dataLayer: layer)
+        let drawing = try await store.upsert(Drawing(title: "SetTableCell ErrorPath Gate Test"))
+        let unknownID = UUID()
+
+        do {
+            _ = try await store.setTableCell(DrawTableCell(), row: 0, column: 0, forShape: unknownID, in: drawing.id)
+            XCTFail("expected DrawingStoreError.shapeNotFound")
+        } catch DrawingStoreError.shapeNotFound(let id) {
+            XCTAssertEqual(id, unknownID)
+        }
+    }
+
+    // MARK: - Item 2.12 pure application (UNGATED SHADOW, doctrine rule
+    // 11) - see DrawingTests.swift for the corresponding no-DB tests of
+    // applyingCalloutAnchor/applyingDimensionInfo/applyingListItems/
+    // applyingTableCell.
 }

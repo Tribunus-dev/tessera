@@ -85,4 +85,19 @@ public enum DrawingReceiptType: String, Codable, Sendable, CaseIterable {
     case setPath = "drawing_shape_path_changed"
     /// A shape's extrusion (or lack of one) was changed (P2-B 2.17).
     case setExtrusion = "drawing_shape_extrusion_changed"
+    /// A `.callout` shape's leader-line anchor was set or cleared
+    /// (P2-C 2.12).
+    case setCalloutAnchor = "drawing_shape_callout_anchor_changed"
+    /// A `.line` shape's dimension-line info (units/precision/manual
+    /// override) was set or cleared (P2-C 2.12).
+    case setDimensionInfo = "drawing_shape_dimension_info_changed"
+    /// A shape's text bulleted-list items/style were set or cleared
+    /// (P2-C 2.12).
+    case setListItems = "drawing_shape_list_items_changed"
+    /// One cell of a `.table` shape's `DrawTable` had its content
+    /// replaced (P2-C 2.12). `insertTable`/`deleteShape` reuse the
+    /// existing `insertShape`/`deleteShape` cases (a table shape's own
+    /// creation/removal is not a distinct kind of mutation) - only
+    /// per-cell content editing gets its own case here.
+    case setTableCell = "drawing_table_cell_changed"
 }

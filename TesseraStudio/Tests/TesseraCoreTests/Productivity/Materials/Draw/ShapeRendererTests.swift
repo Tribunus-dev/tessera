@@ -243,4 +243,159 @@ final class ShapeRendererTests: DoctrineTestCase {
         let alpha = pixels[offset + 3]
         XCTAssertGreaterThan(alpha, 0, "an open subpath must still fill (SVG/CoreGraphics implicit-close-for-fill)")
     }
+
+    // MARK: - Item 2.12: .callout / .table path(for:) (doctrine rule 9:
+    // math gets fixtures + rule 8: degenerate inputs)
+
+    func testCalloutPathIsTheBodyBoundingRect() {
+        let shape = Shape(kind: .callout, geometry: ShapeGeometry(x: 10, y: 20, width: 100, height: 40))
+        let flat = flatten(renderer.path(for: shape))
+        XCTAssertTrue(flat.contains(.moveTo(CGPoint(x: 10, y: 20))))
+    }
+
+    func testTablePathIsTheOuterBoundingRect() {
+        let table = DrawTable(rowCount: 2, columnCount: 2)
+        let shape = Shape(kind: .table, geometry: ShapeGeometry(x: 5, y: 5, width: table.totalWidth, height: table.totalHeight), table: table)
+        let flat = flatten(renderer.path(for: shape))
+        XCTAssertTrue(flat.contains(.moveTo(CGPoint(x: 5, y: 5))))
+    }
+
+    // MARK: - Item 2.12: arrowheadPath / rectEdgePoint pure math (doctrine
+    // rule 9: hand-computed fixtures)
+
+    func testArrowheadPathRightwardTriangleIsSymmetricAboutTheTip() {
+        let path = ShapeRenderer.arrowheadPath(tip: CGPoint(x: 100, y: 50), direction: CGVector(dx: 1, dy: 0), headLength: 10, headWidth: 8)
+        let flat = flatten(path)
+        XCTAssertEqual(flat, [
+            .moveTo(CGPoint(x: 100, y: 50)),
+            .lineTo(CGPoint(x: 90, y: 54)),
+            .lineTo(CGPoint(x: 90, y: 46)),
+            .closeSubpath,
+        ])
+    }
+
+    func testArrowheadPathLeftwardTriangleMirrorsRightward() {
+        let path = ShapeRenderer.arrowheadPath(tip: CGPoint(x: 0, y: 0), direction: CGVector(dx: -1, dy: 0), headLength: 10, headWidth: 8)
+        let flat = flatten(path)
+        XCTAssertEqual(flat, [
+            .moveTo(CGPoint(x: 0, y: 0)),
+            .lineTo(CGPoint(x: 10, y: -4)),
+            .lineTo(CGPoint(x: 10, y: 4)),
+            .closeSubpath,
+        ])
+    }
+
+    func testRectEdgePointForHorizontalTargetLandsOnRightEdgeMidpoint() {
+        // 100x50 box centered at (50, 25); target far to the right ->
+        // the ray exits exactly at the right edge's own midpoint.
+        let point = ShapeRenderer.rectEdgePoint(center: CGPoint(x: 50, y: 25), towards: CGPoint(x: 500, y: 25), halfWidth: 50, halfHeight: 25)
+        XCTAssertEqual(point.x, 100, accuracy: 1e-9)
+        XCTAssertEqual(point.y, 25, accuracy: 1e-9)
+    }
+
+    func testRectEdgePointForDiagonalTargetClampsToTheNearerAxis() {
+        // 40x40 box (half-extents 20,20) centered at origin; target at
+        // (100, 10) is far more horizontal than vertical, so the ray
+        // exits through the RIGHT edge (x = 20), not the top/bottom.
+        let point = ShapeRenderer.rectEdgePoint(center: .zero, towards: CGPoint(x: 100, y: 10), halfWidth: 20, halfHeight: 20)
+        XCTAssertEqual(point.x, 20, accuracy: 1e-9)
+        XCTAssertEqual(point.y, 2, accuracy: 1e-9) // t = 20/100 = 0.2; y = 10 * 0.2
+    }
+
+    func testRectEdgePointDegenerateBoxReturnsCenter() {
+        let point = ShapeRenderer.rectEdgePoint(center: CGPoint(x: 5, y: 5), towards: CGPoint(x: 50, y: 50), halfWidth: 0, halfHeight: 0)
+        XCTAssertEqual(point, CGPoint(x: 5, y: 5))
+    }
+
+    // MARK: - Item 2.12: content assertions (doctrine rule 8) - render
+    // into a tiny offscreen bitmap and sample specific pixels, not just
+    // "did not crash".
+
+    private func offscreenContext(width: Int, height: Int) -> (CGContext, UnsafeMutablePointer<UInt8>) {
+        let pixels = UnsafeMutablePointer<UInt8>.allocate(capacity: width * height * 4)
+        pixels.initialize(repeating: 0, count: width * height * 4)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let context = CGContext(
+            data: pixels, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+            space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        return (context, pixels)
+    }
+
+    func testTableCellFillPaintsExactlyThatCellsOwnRegion() {
+        var table = DrawTable(rowCount: 1, columnCount: 2, defaultColumnWidth: 10, defaultRowHeight: 10, gridStroke: nil)
+        table = table.settingCell(DrawTableCell(fill: ShapeFill(colorHex: "#FF0000", opacity: 1)), row: 0, column: 0)
+        let shape = Shape(kind: .table, geometry: ShapeGeometry(x: 0, y: 0, width: 20, height: 10), table: table)
+
+        let (context, pixels) = offscreenContext(width: 20, height: 10)
+        defer { pixels.deallocate() }
+        renderer.render(shape, in: context)
+
+        func alpha(_ x: Int, _ y: Int) -> UInt8 { pixels[(y * 20 + x) * 4 + 3] }
+        XCTAssertGreaterThan(alpha(5, 5), 0, "the filled cell (column 0) must be painted")
+        XCTAssertEqual(alpha(15, 5), 0, "the unfilled cell (column 1) must NOT be painted")
+    }
+
+    func testDimensionLineDrawsArrowheadPixelsNearBothEndpoints() {
+        // width=100 so headLength hits its 10pt cap (min(width*0.15, 10))
+        // on both ends - a round, hand-verifiable triangle: base 10pt
+        // back from each tip, 8pt wide (halfWidth 4pt at the base).
+        var shape = Shape(kind: .line, geometry: ShapeGeometry(x: 0, y: 10, width: 100, height: 0))
+        shape.stroke = ShapeStroke(colorHex: "#000000", width: 1)
+        shape.dimensionInfo = ShapeDimensionInfo(units: .point, precision: 0)
+
+        let (context, pixels) = offscreenContext(width: 100, height: 20)
+        defer { pixels.deallocate() }
+        renderer.render(shape, in: context)
+
+        func alpha(_ x: Int, _ y: Int) -> UInt8 { pixels[(y * 100 + x) * 4 + 3] }
+        // Sampled 2pt BELOW the line's own centerline (y=12, not y=10) so
+        // this only lights up if the arrowhead's own wide triangle body
+        // painted - the label draws ABOVE the line (y < 10) and the
+        // line's own 1pt stroke only reaches +/-0.5pt from centerline,
+        // so neither could produce a false positive here. At x=9 (start)
+        // and x=91 (end), 90% of the way from tip to base, the
+        // triangle's own half-width is already 3.6pt (> the 2pt sampled
+        // offset) - see this test's own header comment for the fixture.
+        XCTAssertGreaterThan(alpha(9, 12), 0, "the start arrowhead's triangle body must be painted, not just the thin line stroke")
+        XCTAssertGreaterThan(alpha(91, 12), 0, "the end arrowhead's triangle body must be painted, not just the thin line stroke")
+    }
+
+    // MARK: - Item 2.12: bulleted shape text actually paints ink
+    // (doctrine rule 8 - content, not "did not crash")
+
+    func testShapeTextWithListItemsPaintsSomeInkInTheShapesFrame() {
+        var shape = Shape(kind: .rect, geometry: ShapeGeometry(x: 0, y: 0, width: 100, height: 60))
+        shape.text = ShapeText(
+            listItems: [ShapeTextListItem(runs: [InlineRun(text: "first bullet")])],
+            listStyle: .unordered
+        )
+
+        let (context, pixels) = offscreenContext(width: 100, height: 60)
+        defer { pixels.deallocate() }
+        renderer.render(shape, in: context)
+
+        var anyPainted = false
+        for i in stride(from: 3, to: 100 * 60 * 4, by: 4) where pixels[i] > 0 {
+            anyPainted = true
+            break
+        }
+        XCTAssertTrue(anyPainted, "a shape with bulleted list text must paint SOME ink into its frame")
+    }
+
+    func testEmptyListItemsArrayFallsBackToPlainEmptyRunsAndPaintsNoText() {
+        var shape = Shape(kind: .rect, geometry: ShapeGeometry(x: 0, y: 0, width: 20, height: 20))
+        shape.text = ShapeText(listItems: [], listStyle: .unordered) // non-nil but EMPTY listItems
+
+        let (context, pixels) = offscreenContext(width: 20, height: 20)
+        defer { pixels.deallocate() }
+        renderer.render(shape, in: context) // must not crash on an empty (but non-nil) listItems array
+
+        // An empty listItems array falls back to `runs` (also empty by
+        // default), so no text ink is expected anywhere in the frame -
+        // not merely "did not crash".
+        for i in stride(from: 3, to: 20 * 20 * 4, by: 4) {
+            XCTAssertEqual(pixels[i], 0, "an empty listItems array must not paint any text ink")
+        }
+    }
 }

@@ -72,8 +72,24 @@ public struct ShapeRenderer: Sendable {
             drawArrowhead(shape.geometry, colorHex: stroke.colorHex, in: context)
         }
 
+        if shape.kind == .line, let dimensionInfo = shape.dimensionInfo {
+            drawDimensionAnnotation(shape.geometry, info: dimensionInfo, colorHex: shape.stroke?.colorHex ?? "#333333", context: context)
+        }
+
+        if shape.kind == .callout, let anchor = shape.calloutAnchor {
+            drawCalloutLeader(shape, anchor: anchor, allShapes: allShapes, colorHex: shape.stroke?.colorHex ?? "#333333", context: context)
+        }
+
+        if shape.kind == .table, let table = shape.table {
+            renderTable(table, origin: CGPoint(x: shape.geometry.x, y: shape.geometry.y), context: context)
+        }
+
         if let text = shape.text {
-            renderShapeText(text, in: shape.geometry.frame, context: context)
+            if let items = text.listItems, !items.isEmpty {
+                renderShapeTextList(items, style: text.listStyle ?? .unordered, in: shape.geometry.frame, context: context)
+            } else {
+                renderShapeText(text, in: shape.geometry.frame, context: context)
+            }
         }
     }
 
@@ -102,8 +118,15 @@ public struct ShapeRenderer: Sendable {
     /// `kindIsFillable` operates.
     private func kindIsFillable(_ kind: ShapeKind) -> Bool {
         switch kind {
+        // `.table` has its own dedicated per-cell fill pass
+        // (`renderTable`) drawn AFTER this generic block - it stays
+        // fillable at the KIND level so `shape.fill` (distinct from
+        // any cell's own `DrawTableCell.fill`) can still paint a
+        // uniform background behind the whole grid, matching a
+        // spreadsheet's "sheet background shows through an unfilled
+        // cell" convention.
         case .line, .arrow, .connector: return false
-        case .rect, .ellipse, .polygon, .star, .freeform, .bezier: return true
+        case .rect, .ellipse, .polygon, .star, .freeform, .bezier, .callout, .table: return true
         }
     }
 
@@ -248,6 +271,21 @@ public struct ShapeRenderer: Sendable {
             return bezierPath(shapePath, origin: CGPoint(x: shape.geometry.x, y: shape.geometry.y))
         case .connector:
             return connectorPath(shape, allShapes: allShapes)
+        case .callout:
+            // The callout's own BODY outline - plain rect at P0 (a
+            // rounded/pointer-notched outline is a natural follow-up,
+            // not part of this item's contract). The leader line to
+            // `calloutAnchor` is drawn separately in `render(_:in:
+            // allShapes:)`, same two-part treatment `.arrow` gets
+            // (body path here, extra decoration drawn after).
+            return rectPath(shape.geometry)
+        case .table:
+            // The table's own OUTER bounding box - used for the
+            // optional whole-table fill/stroke via the generic
+            // mechanism every other kind already uses; the internal
+            // grid + per-cell fills are a separate dedicated pass
+            // (`renderTable`) `render(_:in:allShapes:)` runs after this.
+            return rectPath(shape.geometry)
         }
     }
 
@@ -384,15 +422,253 @@ public struct ShapeRenderer: Sendable {
         let tip = CGPoint(x: g.x + g.width, y: g.y + g.height / 2)
         let headLength: CGFloat = min(CGFloat(g.width) * 0.2, 12)
         let headWidth: CGFloat = headLength * 0.8
+        context.setFillColor(resolveColor(colorHex, opacity: 1))
+        context.addPath(Self.arrowheadPath(tip: tip, direction: CGVector(dx: 1, dy: 0), headLength: headLength, headWidth: headWidth))
+        context.fillPath()
+    }
+
+    /// A filled-triangle arrowhead pointing FROM `tip` back along
+    /// `-direction` (i.e. the triangle's base trails behind `tip` in
+    /// the direction the arrow is coming from) - the general form
+    /// `drawArrowhead` above specializes to `direction: (1, 0)` for
+    /// `.arrow`'s own single rightward tip, and
+    /// `drawDimensionAnnotation` below reuses directly for BOTH of a
+    /// dimension line's own endpoints (`direction` pointing outward,
+    /// left at the start, right at the end). `direction` need not be
+    /// unit length - only its own direction is used.
+    static func arrowheadPath(tip: CGPoint, direction: CGVector, headLength: CGFloat, headWidth: CGFloat) -> CGPath {
+        let length = (direction.dx * direction.dx + direction.dy * direction.dy).squareRoot()
+        let unit = length > 0 ? CGVector(dx: direction.dx / length, dy: direction.dy / length) : CGVector(dx: 1, dy: 0)
+        // The perpendicular to `unit`, for the triangle's two base
+        // corners either side of the shaft.
+        let perp = CGVector(dx: -unit.dy, dy: unit.dx)
+        let base = CGPoint(x: tip.x - unit.dx * headLength, y: tip.y - unit.dy * headLength)
+        let corner1 = CGPoint(x: base.x + perp.dx * headWidth / 2, y: base.y + perp.dy * headWidth / 2)
+        let corner2 = CGPoint(x: base.x - perp.dx * headWidth / 2, y: base.y - perp.dy * headWidth / 2)
 
         let path = CGMutablePath()
         path.move(to: tip)
-        path.addLine(to: CGPoint(x: tip.x - headLength, y: tip.y - headWidth / 2))
-        path.addLine(to: CGPoint(x: tip.x - headLength, y: tip.y + headWidth / 2))
+        path.addLine(to: corner1)
+        path.addLine(to: corner2)
         path.closeSubpath()
+        return path
+    }
+
+    // MARK: - Item 2.12: dimension/measure lines
+
+    /// Draws arrowheads at BOTH of a dimension line's endpoints plus
+    /// the measured-value label at its midpoint (item 2.12) - the
+    /// visual distinguishing a dimension line from a plain `.line`.
+    /// `g`'s own two endpoints are `(x, midY)`/`(x + width, midY)`,
+    /// matching `linePath(_:)`'s construction exactly (this function
+    /// only runs when `shape.kind == .line`, so that construction
+    /// always applies).
+    private func drawDimensionAnnotation(_ g: ShapeGeometry, info: ShapeDimensionInfo, colorHex: String, context: CGContext) {
+        let midY = g.y + g.height / 2
+        let start = CGPoint(x: g.x, y: midY)
+        let end = CGPoint(x: g.x + g.width, y: midY)
+        let headLength: CGFloat = min(CGFloat(abs(g.width)) * 0.15, 10)
+        let headWidth: CGFloat = headLength * 0.8
 
         context.setFillColor(resolveColor(colorHex, opacity: 1))
-        context.addPath(path)
+        context.addPath(Self.arrowheadPath(tip: start, direction: CGVector(dx: -1, dy: 0), headLength: headLength, headWidth: headWidth))
         context.fillPath()
+        context.addPath(Self.arrowheadPath(tip: end, direction: CGVector(dx: 1, dy: 0), headLength: headLength, headWidth: headWidth))
+        context.fillPath()
+
+        let label = info.displayText(for: g)
+        guard !label.isEmpty else { return }
+        let labelHeight: CGFloat = 14
+        let labelRect = CGRect(x: g.x, y: midY - labelHeight - 2, width: max(g.width, 1), height: labelHeight)
+        renderShapeText(ShapeText(runs: [InlineRun(text: label)]), in: labelRect, context: context)
+    }
+
+    // MARK: - Item 2.12: callout leader line
+
+    /// Draws the leader line from `shape`'s own body edge to its
+    /// resolved `anchor` point (item 2.12) - the visual that
+    /// distinguishes a `.callout` from a plain annotated `.rect`.
+    /// Resolution mirrors `connectorPath`'s own `allShapes` lookup for
+    /// an `.attached` endpoint, reusing `ConnectorRouter.gluePoint`
+    /// rather than a second glue-point implementation.
+    private func drawCalloutLeader(_ shape: Shape, anchor: ConnectorEndpoint, allShapes: [Shape], colorHex: String, context: CGContext) {
+        let target: CGPoint
+        switch anchor {
+        case .free(let x, let y):
+            target = CGPoint(x: x, y: y)
+        case .attached(let shapeID, let index):
+            guard let attached = allShapes.first(where: { $0.id == shapeID }),
+                  let point = ConnectorRouter.gluePoint(index, for: attached)
+            else { return }
+            target = point
+        }
+        let frame = shape.geometry.frame
+        let center = CGPoint(x: frame.midX, y: frame.midY)
+        let start = Self.rectEdgePoint(center: center, towards: target, halfWidth: frame.width / 2, halfHeight: frame.height / 2)
+
+        let path = CGMutablePath()
+        path.move(to: start)
+        path.addLine(to: target)
+        context.setStrokeColor(resolveColor(colorHex, opacity: 1))
+        context.setLineWidth(1)
+        context.setLineDash(phase: 0, lengths: [])
+        context.addPath(path)
+        context.strokePath()
+    }
+
+    /// Where the ray from `center` towards `target` exits the
+    /// axis-aligned box of half-extents `halfWidth`/`halfHeight`
+    /// centered at `center` - the standard box/ray intersection: scale
+    /// the offset by the smaller of the two axis-clamping factors.
+    /// `center` itself for a degenerate box (`halfWidth`/`halfHeight
+    /// <= 0`) or a `target` exactly AT `center` (no direction to
+    /// project along).
+    static func rectEdgePoint(center: CGPoint, towards target: CGPoint, halfWidth: CGFloat, halfHeight: CGFloat) -> CGPoint {
+        let dx = target.x - center.x
+        let dy = target.y - center.y
+        guard halfWidth > 0, halfHeight > 0, dx != 0 || dy != 0 else { return center }
+        var t = CGFloat.greatestFiniteMagnitude
+        if dx != 0 { t = min(t, halfWidth / abs(dx)) }
+        if dy != 0 { t = min(t, halfHeight / abs(dy)) }
+        return CGPoint(x: center.x + dx * t, y: center.y + dy * t)
+    }
+
+    // MARK: - Item 2.12: Draw-side tables
+
+    /// Draws a `.table` shape's grid: each cell's own background, the
+    /// internal row/column divider lines, then each cell's own text -
+    /// three passes so no cell's text is ever painted over by a LATER
+    /// cell's background (matches how `render(_:in:allShapes:)` itself
+    /// orders fill-before-text for a single shape).
+    private func renderTable(_ table: DrawTable, origin: CGPoint, context: CGContext) {
+        guard table.rowCount > 0, table.columnCount > 0 else { return }
+        // Exactly `count + 1` entries each, regardless of whether
+        // `columnWidths`/`rowHeights` themselves happen to be shorter
+        // or longer than `columnCount`/`rowCount` (malformed/foreign
+        // data) - a missing width/height degrades to 0 rather than
+        // this loop ever indexing `columnOffsets`/`rowOffsets`
+        // out of bounds below.
+        let columnOffsets = Self.cumulativeOffsets(table.columnWidths, count: table.columnCount)
+        let rowOffsets = Self.cumulativeOffsets(table.rowHeights, count: table.rowCount)
+
+        func cellRect(row: Int, column: Int) -> CGRect {
+            CGRect(
+                x: origin.x + CGFloat(columnOffsets[column]),
+                y: origin.y + CGFloat(rowOffsets[row]),
+                width: CGFloat(columnOffsets[column + 1] - columnOffsets[column]),
+                height: CGFloat(rowOffsets[row + 1] - rowOffsets[row])
+            )
+        }
+
+        for row in 0..<table.rowCount {
+            for column in 0..<table.columnCount {
+                guard let cell = table.cell(row: row, column: column), let fill = cell.fill else { continue }
+                context.setFillColor(resolveColor(hex(for: fill.colorHex), opacity: fill.opacity))
+                context.fill(cellRect(row: row, column: column))
+            }
+        }
+
+        if let stroke = table.gridStroke {
+            let totalWidth = CGFloat(columnOffsets[table.columnCount])
+            let totalHeight = CGFloat(rowOffsets[table.rowCount])
+            let gridPath = CGMutablePath()
+            for offset in rowOffsets {
+                let y = origin.y + CGFloat(offset)
+                gridPath.move(to: CGPoint(x: origin.x, y: y))
+                gridPath.addLine(to: CGPoint(x: origin.x + totalWidth, y: y))
+            }
+            for offset in columnOffsets {
+                let x = origin.x + CGFloat(offset)
+                gridPath.move(to: CGPoint(x: x, y: origin.y))
+                gridPath.addLine(to: CGPoint(x: x, y: origin.y + totalHeight))
+            }
+            context.setStrokeColor(resolveColor(stroke.colorHex, opacity: 1))
+            context.setLineWidth(CGFloat(stroke.width))
+            context.addPath(gridPath)
+            context.strokePath()
+        }
+
+        for row in 0..<table.rowCount {
+            for column in 0..<table.columnCount {
+                guard let cell = table.cell(row: row, column: column), !cell.text.plainText.isEmpty else { continue }
+                let rect = cellRect(row: row, column: column)
+                if let items = cell.text.listItems, !items.isEmpty {
+                    renderShapeTextList(items, style: cell.text.listStyle ?? .unordered, in: rect, context: context)
+                } else {
+                    renderShapeText(cell.text, in: rect, context: context)
+                }
+            }
+        }
+    }
+
+    /// `count + 1` offsets: `[0, e[0], e[0]+e[1], ..., sum]`, treating
+    /// any missing trailing entry in `extents` (shorter than `count`)
+    /// as a zero-width/height column/row - see `renderTable`'s own
+    /// call-site comment for why this guarantee matters.
+    private static func cumulativeOffsets(_ extents: [Double], count: Int) -> [Double] {
+        var offsets: [Double] = [0]
+        offsets.reserveCapacity(count + 1)
+        var running = 0.0
+        for i in 0..<count {
+            running += extents[safe: i] ?? 0
+            offsets.append(running)
+        }
+        return offsets
+    }
+
+    // MARK: - Item 2.12: bulleted list shape text
+
+    /// Draws `items` as a bulleted/numbered/task list inside `rect`
+    /// (item 2.12) - the SAME `BlockRenderer`-> `CTFramesetter` stack
+    /// `renderShapeText` uses for plain paragraph text (one text
+    /// stack, ever, per `ShapeRenderer`'s own file header), with each
+    /// item's own marker built from the SAME glyph vocabulary
+    /// `BlockRenderer.renderListContainer`/`.renderListItem` already
+    /// use ("*" bullet / "N." ordinal / task-box) so a shape's bulleted
+    /// text looks identical to a document's own list.
+    private func renderShapeTextList(_ items: [ShapeTextListItem], style: ShapeTextListStyle, in rect: CGRect, context: CGContext) {
+        guard !items.isEmpty, rect.width > 1, rect.height > 1 else { return }
+        let combined = NSMutableAttributedString()
+        for (index, item) in items.enumerated() {
+            if index > 0 { combined.append(NSAttributedString(string: "\n")) }
+            let indent = String(repeating: "    ", count: item.level)
+            combined.append(NSAttributedString(string: indent + Self.listMarker(style: style, ordinal: index + 1) + " "))
+            combined.append(blockRenderer.render(Block(type: .paragraph, content: item.runs), in: .document))
+        }
+        let framesetter = CTFramesetterCreateWithAttributedString(combined)
+        let path = CGPath(rect: rect, transform: nil)
+        let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: 0, length: 0), path, nil)
+        context.saveGState()
+        context.textMatrix = .identity
+        context.translateBy(x: 0, y: rect.minY + rect.maxY)
+        context.scaleBy(x: 1, y: -1)
+        CTFrameDraw(frame, context)
+        context.restoreGState()
+    }
+
+    /// Same three-way glyph convention as
+    /// `BlockRenderer.renderListContainer` ("*" unordered / "N."
+    /// ordered / task checkbox), so a shape's own bulleted text is
+    /// visually indistinguishable from a document list using the same
+    /// style.
+    private static func listMarker(style: ShapeTextListStyle, ordinal: Int) -> String {
+        switch style {
+        case .ordered: return "\(ordinal)."
+        case .task: return "\u{2610}"
+        case .unordered: return "\u{2022}"
+        }
+    }
+}
+
+// MARK: - Array safe-subscript
+//
+// Mirrors `BezierPathController.swift`'s own identical extension
+// (`fileprivate`, so no cross-file conflict) - out-of-range table
+// column/row indices degrade to `nil` rather than trapping, the same
+// "malformed data doesn't crash the renderer" contract this file's
+// other degrade paths already document.
+fileprivate extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }
