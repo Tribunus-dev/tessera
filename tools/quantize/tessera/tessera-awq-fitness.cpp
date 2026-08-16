@@ -381,11 +381,18 @@ static void ts_fitness_matmul_at_host(const float * A, const float * B,
         hipMemcpyAsync(b.dev, B, b.bytes, hipMemcpyHostToDevice, st);
         const float alpha = 1.0f;
         const float beta  = 0.0f;
-        rocblas_sgemm(ts_rocblas_handle(),
+        // W2 move 3 (ts_rblas_gemm_bf16_mixed): no cache context at this
+        // call site (this function stages fresh from host pointers every
+        // call, unlike the cache-hoisted _at_dev variant below), so
+        // A_bf16 is always null here and the helper always takes its f32
+        // fallback branch - the call-site swap is real, the promotion
+        // benefit is not yet reachable until a caller threads a cached
+        // bf16 pointer through (see ts_fitness_matmul_at_dev).
+        ts_rblas_gemm_bf16_mixed(ts_rocblas_handle(),
                       rocblas_operation_transpose,
                       rocblas_operation_none,
                       (int)N, (int)M, (int)K,
-                      &alpha, (float*)b.dev, (int)K, (float*)a.dev, (int)K,
+                      &alpha, nullptr, (float*)b.dev, (int)K, (float*)a.dev, (int)K,
                       &beta,  (float*)c.dev, (int)N);
         hipMemcpyAsync(C, c.dev, c.bytes, hipMemcpyDeviceToHost, st);
         hipStreamSynchronize(st);
@@ -430,7 +437,17 @@ static void ts_fitness_matmul_at_host(const float * A, const float * B,
 //
 // On cblas / scalar builds, this falls back to the host matmul (the cache is
 // unused; the GA runs scalar on every call site).
+// b_dev_bf16: optional (may be null) cache-hoisted bf16 copy of the b_dev
+// weights (W2 move 3 - ts_awq_eval_cache::bf16_weights), typed as a
+// generic pointer and cast to rocblas_bfloat16* below (keeps this
+// function's signature stable across build configs). No current caller of
+// ts_awq_relative_output_error_device supplies one (that path is dormant -
+// see the eval_with_cache comment above); the parameter exists so a future
+// cache-aware evaluator can opt in without another signature change. When
+// null, ts_rblas_gemm_bf16_mixed's own fallback covers it exactly like the
+// plain rocblas_sgemm this replaced.
 static void ts_fitness_matmul_at_dev(const float * a_dev, const float * b_dev,
+                                     const void * b_dev_bf16,
                                      float * c_dev, float * c_host,
                                      int64_t M, int64_t K, int64_t N) {
     if (M <= 0 || N <= 0) {
@@ -438,7 +455,7 @@ static void ts_fitness_matmul_at_dev(const float * a_dev, const float * b_dev,
     }
 #if defined(TS_HAS_CBLAS)
     // No device cache on cblas builds; same math as the host path.
-    (void)c_dev;
+    (void)c_dev; (void)b_dev_bf16;
     ts_fitness_matmul_at_host((const float *)a_dev, (const float *)b_dev,
                               c_host, M, K, N);
 #elif defined(TS_USE_ROCBLAS)
@@ -446,11 +463,12 @@ static void ts_fitness_matmul_at_dev(const float * a_dev, const float * b_dev,
         hipStream_t st = ts_rblas_stream();
         const float alpha = 1.0f;
         const float beta  = 0.0f;
-        rocblas_sgemm(ts_rocblas_handle(),
+        ts_rblas_gemm_bf16_mixed(ts_rocblas_handle(),
                       rocblas_operation_transpose,
                       rocblas_operation_none,
                       (int)N, (int)M, (int)K,
-                      &alpha, (float*)b_dev, (int)K, (float*)a_dev, (int)K,
+                      &alpha, (const rocblas_bfloat16*)b_dev_bf16,
+                      (float*)b_dev, (int)K, (float*)a_dev, (int)K,
                       &beta,  (float*)c_dev, (int)N);
         hipMemcpyAsync(c_host, c_dev, (size_t)M * N * sizeof(float),
                        hipMemcpyDeviceToHost, st);
@@ -460,6 +478,7 @@ static void ts_fitness_matmul_at_dev(const float * a_dev, const float * b_dev,
                                   c_host, M, K, N);
     }
 #else
+    (void)b_dev_bf16;
     ts_fitness_matmul_at_host((const float *)a_dev, (const float *)b_dev,
                               c_host, M, K, N);
 #endif
@@ -540,6 +559,7 @@ double ts_awq_relative_output_error(const float * activations,
 double ts_awq_relative_output_error_device(
         const float * activations_dev,
         const float * W_dev,
+        const void * W_bf16_dev,
         const float * reconstructed_dev,
         const float * reference_or_null_dev,
         float * approx_host,
@@ -559,8 +579,10 @@ double ts_awq_relative_output_error_device(
     ts_rblas_buf approx = ts_rblas_buf_get(TS_RBLAS_OUT_F32,
                                             (size_t)ref_n * sizeof(float));
     if (approx.dev) {
-        // approximate = activations @ reconstructed^T.
-        ts_fitness_matmul_at_dev(activations_dev, reconstructed_dev,
+        // approximate = activations @ reconstructed^T. reconstructed is
+        // per-candidate (rebuilt every GA candidate), so there is no
+        // cached bf16 copy worth having - null.
+        ts_fitness_matmul_at_dev(activations_dev, reconstructed_dev, nullptr,
                                  (float*)approx.dev, approx_host,
                                  n_tokens, in_dim, out_dim);
 
@@ -582,7 +604,7 @@ double ts_awq_relative_output_error_device(
             // short-lived; we use the same approx slot since the previous
             // sgemm has already D2H-copied its result.
             ref_host.resize(ref_n);
-            ts_fitness_matmul_at_dev(activations_dev, W_dev,
+            ts_fitness_matmul_at_dev(activations_dev, W_dev, W_bf16_dev,
                                      (float*)approx.dev, ref_host.data(),
                                      n_tokens, in_dim, out_dim);
             ref_h = ref_host.data();
@@ -692,11 +714,35 @@ ts_awq_score ts_awq_eval_with_cache(const ts_awq_candidate * cand,
                                                   (size_t)layer->n_tokens_h * layer->out_dim
                                                   * sizeof(float));
         }
+        // W2 move 3: bf16 copy of the weights (halves H2D bytes + device
+        // footprint for the buffer that is hoisted once per worker thread
+        // and reused across every GA candidate). Converted host-side via
+        // rocblas_bfloat16's own float constructor (round-to-nearest
+        // truncation) since the source data is f32, not device-resident.
+        // `weights` (f32) stays populated unconditionally above as the
+        // fallback operand ts_rblas_gemm_bf16_mixed uses if this is
+        // unavailable or rejected by rocblas_gemm_ex.
+        std::vector<rocblas_bfloat16> weights_bf16_host;
+        if (layer->weights) {
+            cache->bf16_weights = ts_rblas_buf_get(TS_RBLAS_CACHE_BF16_WEIGHTS,
+                                                   (size_t)n_w * sizeof(rocblas_bfloat16));
+            if (cache->bf16_weights.dev) {
+                weights_bf16_host.resize((size_t)n_w);
+                for (int64_t i = 0; i < n_w; i++) {
+                    weights_bf16_host[(size_t)i] = rocblas_bfloat16(layer->weights[i]);
+                }
+            }
+        }
         if (layer->weights && cache->weights.dev) {
             hipStream_t st = ts_rblas_stream();
             (void)hipMemcpyAsync(cache->weights.dev, layer->weights,
                                  (size_t)n_w * sizeof(float),
                                  hipMemcpyHostToDevice, st);
+            if (!weights_bf16_host.empty() && cache->bf16_weights.dev) {
+                (void)hipMemcpyAsync(cache->bf16_weights.dev, weights_bf16_host.data(),
+                                     (size_t)n_w * sizeof(rocblas_bfloat16),
+                                     hipMemcpyHostToDevice, st);
+            }
             if (layer->train_activations && cache->train_act.dev) {
                 (void)hipMemcpyAsync(cache->train_act.dev, layer->train_activations,
                                      (size_t)layer->n_tokens * layer->in_dim * sizeof(float),
@@ -740,6 +786,7 @@ void ts_awq_eval_with_cache_release(ts_awq_eval_cache * cache) {
 #if defined(TS_USE_ROCBLAS)
     if (cache->acquired) {
         ts_rblas_buf_release(cache->weights);
+        ts_rblas_buf_release(cache->bf16_weights);
         ts_rblas_buf_release(cache->train_act);
         ts_rblas_buf_release(cache->heldout_act);
         ts_rblas_buf_release(cache->ref_train);
@@ -747,6 +794,7 @@ void ts_awq_eval_with_cache_release(ts_awq_eval_cache * cache) {
         ts_rblas_buf_release(cache->reconstructed);
         ts_rblas_buf_release(cache->approx);
         cache->weights = {nullptr, 0};
+        cache->bf16_weights = {nullptr, 0};
         cache->train_act = {nullptr, 0};
         cache->heldout_act = {nullptr, 0};
         cache->ref_train = {nullptr, 0};

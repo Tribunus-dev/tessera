@@ -146,25 +146,18 @@ static float ts_mm_awq_mse(const float * weights, const float * act,
                     1.0f, Wq.data(), (int)in_dim, calib_X, (int)in_dim,
                     0.0f, acc.data(), (int)n_tokens);
 #elif defined(TS_USE_ROCBLAS)
-        ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32_A, (size_t)out_dim * in_dim * sizeof(float));
-        ts_rblas_buf b = ts_rblas_buf_get(TS_RBLAS_IN_F32_B, (size_t)n_tokens * in_dim * sizeof(float));
-        ts_rblas_buf c = ts_rblas_buf_get(TS_RBLAS_OUT_F32, (size_t)out_dim * n_tokens * sizeof(float));
-        if (a.dev && b.dev && c.dev) {
-            hipStream_t st = ts_rblas_stream();
-            hipMemcpyAsync(a.dev, Wq.data(), a.bytes, hipMemcpyHostToDevice, st);
-            hipMemcpyAsync(b.dev, calib_X,   b.bytes, hipMemcpyHostToDevice, st);
-            const float alpha = 1.0f;
-            const float beta  = 0.0f;
-            rocblas_sgemm(ts_rocblas_handle(),
-                          rocblas_operation_transpose,
-                          rocblas_operation_none,
-                          (int)n_tokens, (int)out_dim, (int)in_dim,
-                          &alpha, (float*)b.dev, (int)in_dim,
-                                  (float*)a.dev, (int)in_dim,
-                          &beta,  (float*)c.dev, (int)n_tokens);
-            hipMemcpyAsync(acc.data(), c.dev, c.bytes, hipMemcpyDeviceToHost, st);
-            hipStreamSynchronize(st);
-        } else {
+        {
+        const float alpha = 1.0f;
+        const float beta  = 0.0f;
+        rocblas_status st = ts_rblas_sgemm_bf16acc(
+            rocblas_operation_transpose, rocblas_operation_none,
+            (int)n_tokens, (int)out_dim, (int)in_dim,
+            &alpha,
+            calib_X, (int)in_dim, (size_t)n_tokens * in_dim,
+            Wq.data(), (int)in_dim, (size_t)out_dim * in_dim,
+            &beta,
+            acc.data(), (int)n_tokens, (size_t)out_dim * n_tokens);
+        if (st != rocblas_status_success) {
             for (int64_t r = 0; r < out_dim; r++) {
                 for (int64_t t = 0; t < n_tokens; t++) {
                     double s = 0.0;
@@ -175,9 +168,7 @@ static float ts_mm_awq_mse(const float * weights, const float * act,
                 }
             }
         }
-        ts_rblas_buf_release(a);
-        ts_rblas_buf_release(b);
-        ts_rblas_buf_release(c);
+        }
 #else
         for (int64_t r = 0; r < out_dim; r++) {
             for (int64_t t = 0; t < n_tokens; t++) {

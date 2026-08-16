@@ -63,9 +63,17 @@ double ts_awq_relative_output_error(const float * activations,
 // pays the cost of one H2D copy (reconstructed, which is per-candidate)
 // and one D2H copy (approx). Pair with ts_awq_eval_with_cache and
 // ts_awq_eval_with_cache_release.
+// W_bf16_dev: optional (may be null) cache-hoisted bf16 copy of W_dev's
+// weights (W2 move 3 - ts_awq_eval_cache::bf16_weights). Declared as a
+// generic pointer here (this header is included regardless of
+// TS_USE_ROCBLAS) and cast to rocblas_bfloat16* internally where the type
+// is available; ignored on cblas/scalar builds. No current caller supplies
+// one - see ts_awq_eval_with_cache's own doc comment for why the cache-
+// aware evaluator is not yet wired into the live GA loop.
 double ts_awq_relative_output_error_device(
         const float * activations_dev,
         const float * W_dev,
+        const void * W_bf16_dev,
         const float * reconstructed_dev,
         const float * reference_or_null_dev,
         float * approx_host,

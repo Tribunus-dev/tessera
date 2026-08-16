@@ -296,6 +296,12 @@ struct ts_awq_evolve_result {
 #if defined(TS_USE_ROCBLAS)
 struct ts_awq_eval_cache {
     ts_rblas_buf weights     = {nullptr, 0};  // layer.weights (out_dim * in_dim)
+    ts_rblas_buf bf16_weights = {nullptr, 0}; // W2 move 3: bf16 copy of weights,
+                                               // rocblas_bfloat16 elements (half the
+                                               // bytes of `weights`) - see
+                                               // ts_rblas_gemm_bf16_mixed. `weights`
+                                               // (f32) stays populated regardless, as
+                                               // the fallback operand.
     ts_rblas_buf train_act   = {nullptr, 0};  // layer.train_activations (n_tokens * in_dim)
     ts_rblas_buf heldout_act = {nullptr, 0};  // layer.heldout_activations (n_tokens_h * in_dim)
     ts_rblas_buf ref_train   = {nullptr, 0};  // layer.ref_train_output (n_tokens * out_dim)

@@ -231,24 +231,17 @@ static float ts_champq_eval(const float * x, float * grad, int64_t n, void * ctx
     // branch never compiled before the D1 macro-precedence fix, since
     // GGML_USE_OPENBLAS previously always won TS_HAS_CBLAS's #if).
     {
-    ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32_A, (size_t)out_dim * K * sizeof(float));
-    ts_rblas_buf b = ts_rblas_buf_get(TS_RBLAS_IN_F32_B, (size_t)K * K * sizeof(float));
-    ts_rblas_buf co = ts_rblas_buf_get(TS_RBLAS_OUT_F32, (size_t)out_dim * K * sizeof(float));
-    if (a.dev && b.dev && co.dev) {
-        hipStream_t st = ts_rblas_stream();
-        hipMemcpyAsync(a.dev, W,         a.bytes, hipMemcpyHostToDevice, st);
-        hipMemcpyAsync(b.dev, x,         b.bytes, hipMemcpyHostToDevice, st);
-        const float alpha = 1.0f;
-        const float beta  = 0.0f;
-        rocblas_sgemm(ts_rocblas_handle(),
-                      rocblas_operation_none,
-                      rocblas_operation_none,
-                      (int)K, (int)out_dim, (int)K,
-                      &alpha, (float*)b.dev, (int)K, (float*)a.dev, (int)K,
-                      &beta,  (float*)co.dev, (int)K);
-        hipMemcpyAsync(W_perm.data(), co.dev, co.bytes, hipMemcpyDeviceToHost, st);
-        hipStreamSynchronize(st);
-    } else {
+    const float alpha = 1.0f;
+    const float beta  = 0.0f;
+    rocblas_status st = ts_rblas_sgemm_bf16acc(
+        rocblas_operation_none, rocblas_operation_none,
+        (int)K, (int)out_dim, (int)K,
+        &alpha,
+        x, (int)K, (size_t)K * K,
+        W, (int)K, (size_t)out_dim * K,
+        &beta,
+        W_perm.data(), (int)K, (size_t)out_dim * K);
+    if (st != rocblas_status_success) {
         for (int64_t r = 0; r < out_dim; r++) {
             const float * Wr = W + r * K;
             for (int64_t col = 0; col < K; col++) {
@@ -260,9 +253,6 @@ static float ts_champq_eval(const float * x, float * grad, int64_t n, void * ctx
             }
         }
     }
-    ts_rblas_buf_release(a);
-    ts_rblas_buf_release(b);
-    ts_rblas_buf_release(co);
     }
 #else
     for (int64_t r = 0; r < out_dim; r++) {
@@ -323,24 +313,17 @@ static float ts_champq_eval(const float * x, float * grad, int64_t n, void * ctx
     // Scoped block: see the W_perm rocBLAS block above for why `c` (the
     // outer ts_champq_ctx*) is avoided and each block gets its own scope.
     {
-    ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32_A, (size_t)out_dim * K * sizeof(float));
-    ts_rblas_buf b = ts_rblas_buf_get(TS_RBLAS_IN_F32_B, (size_t)out_dim * K * sizeof(float));
-    ts_rblas_buf co = ts_rblas_buf_get(TS_RBLAS_OUT_F32, (size_t)K * K * sizeof(float));
-    if (a.dev && b.dev && co.dev) {
-        hipStream_t st = ts_rblas_stream();
-        hipMemcpyAsync(a.dev, W,         a.bytes, hipMemcpyHostToDevice, st);
-        hipMemcpyAsync(b.dev, g.data(),  b.bytes, hipMemcpyHostToDevice, st);
-        const float alpha = 1.0f;
-        const float beta  = 0.0f;
-        rocblas_sgemm(ts_rocblas_handle(),
-                      rocblas_operation_transpose,
-                      rocblas_operation_none,
-                      (int)K, (int)K, (int)out_dim,
-                      &alpha, (float*)a.dev, (int)K, (float*)b.dev, (int)K,
-                      &beta,  (float*)co.dev, (int)K);
-        hipMemcpyAsync(grad, co.dev, co.bytes, hipMemcpyDeviceToHost, st);
-        hipStreamSynchronize(st);
-    } else {
+    const float alpha = 1.0f;
+    const float beta  = 0.0f;
+    rocblas_status st = ts_rblas_sgemm_bf16acc(
+        rocblas_operation_transpose, rocblas_operation_none,
+        (int)K, (int)K, (int)out_dim,
+        &alpha,
+        W, (int)K, (size_t)out_dim * K,
+        g.data(), (int)K, (size_t)out_dim * K,
+        &beta,
+        grad, (int)K, (size_t)K * K);
+    if (st != rocblas_status_success) {
         for (int64_t i = 0; i < K; i++) {
             for (int64_t k = 0; k < K; k++) {
                 float s = 0.0f;
@@ -351,9 +334,6 @@ static float ts_champq_eval(const float * x, float * grad, int64_t n, void * ctx
             }
         }
     }
-    ts_rblas_buf_release(a);
-    ts_rblas_buf_release(b);
-    ts_rblas_buf_release(co);
     }
 #else
     for (int64_t i = 0; i < K; i++) {

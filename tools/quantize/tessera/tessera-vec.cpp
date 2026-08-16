@@ -328,24 +328,18 @@ void ts_mat_mul(const float * A, const float * B, float * C,
     //   C^T(N,M) = B^T(N,K) * A^T(K,M)           (col-major)
     // so we swap operand order; both A and B keep NoTrans because the
     // col-major view sees them transposed already.
-    ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32_A, (size_t)M * K * sizeof(float));
-    ts_rblas_buf b = ts_rblas_buf_get(TS_RBLAS_IN_F32_B, (size_t)K * N * sizeof(float));
-    ts_rblas_buf c = ts_rblas_buf_get(TS_RBLAS_OUT_F32, (size_t)M * N * sizeof(float));
-    if (a.dev && b.dev && c.dev) {
-        hipStream_t s = ts_rblas_stream();
-        hipMemcpyAsync(a.dev, A, a.bytes, hipMemcpyHostToDevice, s);
-        hipMemcpyAsync(b.dev, B, b.bytes, hipMemcpyHostToDevice, s);
-        const float alpha = 1.0f;
-        const float beta  = 0.0f;
-        rocblas_sgemm(ts_rocblas_handle(),
-                      rocblas_operation_none,
-                      rocblas_operation_none,
-                      (int)N, (int)M, (int)K,
-                      &alpha, (float*)b.dev, (int)N, (float*)a.dev, (int)K,
-                      &beta,  (float*)c.dev, (int)N);
-        hipMemcpyAsync(C, c.dev, c.bytes, hipMemcpyDeviceToHost, s);
-        hipStreamSynchronize(s);
-    } else {
+    {
+    const float alpha = 1.0f;
+    const float beta  = 0.0f;
+    rocblas_status st = ts_rblas_sgemm_bf16acc(
+        rocblas_operation_none, rocblas_operation_none,
+        (int)N, (int)M, (int)K,
+        &alpha,
+        B, (int)N, (size_t)K * N,
+        A, (int)K, (size_t)M * K,
+        &beta,
+        C, (int)N, (size_t)M * N);
+    if (st != rocblas_status_success) {
         for (int64_t i = 0; i < M; ++i) {
             for (int64_t j = 0; j < N; ++j) {
                 float s = 0.0f;
@@ -356,9 +350,7 @@ void ts_mat_mul(const float * A, const float * B, float * C,
             }
         }
     }
-    ts_rblas_buf_release(a);
-    ts_rblas_buf_release(b);
-    ts_rblas_buf_release(c);
+    }
 #elif defined(__APPLE__) || defined(GGML_USE_OPENBLAS)
     // C(M x N) = A(M x K) @ B(K x N), row-major
     cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
@@ -391,24 +383,18 @@ void ts_mat_mul_at(const float * A, const float * B, float * C,
     // B is read transposed (to match its col-major view of the row-major
     // KxN storage); A is read as-is (its col-major view is the KxM transposed
     // form, which is exactly what we want to be A(M,K)).
-    ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32_A, (size_t)K * M * sizeof(float));
-    ts_rblas_buf b = ts_rblas_buf_get(TS_RBLAS_IN_F32_B, (size_t)K * N * sizeof(float));
-    ts_rblas_buf c = ts_rblas_buf_get(TS_RBLAS_OUT_F32, (size_t)M * N * sizeof(float));
-    if (a.dev && b.dev && c.dev) {
-        hipStream_t s = ts_rblas_stream();
-        hipMemcpyAsync(a.dev, A, a.bytes, hipMemcpyHostToDevice, s);
-        hipMemcpyAsync(b.dev, B, b.bytes, hipMemcpyHostToDevice, s);
-        const float alpha = 1.0f;
-        const float beta  = 0.0f;
-        rocblas_sgemm(ts_rocblas_handle(),
-                      rocblas_operation_transpose,
-                      rocblas_operation_none,
-                      (int)N, (int)M, (int)K,
-                      &alpha, (float*)b.dev, (int)N, (float*)a.dev, (int)M,
-                      &beta,  (float*)c.dev, (int)N);
-        hipMemcpyAsync(C, c.dev, c.bytes, hipMemcpyDeviceToHost, s);
-        hipStreamSynchronize(s);
-    } else {
+    {
+    const float alpha = 1.0f;
+    const float beta  = 0.0f;
+    rocblas_status st = ts_rblas_sgemm_bf16acc(
+        rocblas_operation_transpose, rocblas_operation_none,
+        (int)N, (int)M, (int)K,
+        &alpha,
+        B, (int)N, (size_t)K * N,
+        A, (int)M, (size_t)K * M,
+        &beta,
+        C, (int)N, (size_t)M * N);
+    if (st != rocblas_status_success) {
         // A stored as (K x M): element A[k][m] lives at A[k * M + m]
         for (int64_t i = 0; i < M; ++i) {
             for (int64_t j = 0; j < N; ++j) {
@@ -420,9 +406,7 @@ void ts_mat_mul_at(const float * A, const float * B, float * C,
             }
         }
     }
-    ts_rblas_buf_release(a);
-    ts_rblas_buf_release(b);
-    ts_rblas_buf_release(c);
+    }
 #elif defined(__APPLE__) || defined(GGML_USE_OPENBLAS)
     // C(M x N) = A^T @ B, with A stored row-major as (K x M) and B as (K x N)
     cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,

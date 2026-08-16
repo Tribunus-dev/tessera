@@ -27,8 +27,10 @@
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 namespace {
 
@@ -67,6 +69,37 @@ bool ts_rblas_disabled() {
         }
     }
     return g_disabled.load(std::memory_order_acquire);
+}
+
+// W2 kill switch (rule 0.2): TS_RBLAS_BF16=0 forces every bf16-promotion
+// helper to its plain f32 rocBLAS path. Independent of TS_RBLAS_DISABLE
+// (which kills the whole shim); this only kills the bf16 promotion.
+std::atomic<bool> g_bf16_checked{false};
+std::atomic<bool> g_bf16_enabled{true};
+std::atomic<bool> g_gemm_ex_fail_logged{false};
+
+bool ts_rblas_bf16_enabled() {
+    if (!g_bf16_checked.exchange(true, std::memory_order_acq_rel)) {
+        const char * v = std::getenv("TS_RBLAS_BF16");
+        bool enabled = !(v != nullptr && std::strcmp(v, "0") == 0);
+        g_bf16_enabled.store(enabled, std::memory_order_release);
+        if (!enabled) {
+            std::fprintf(stderr, "ts_rblas: TS_RBLAS_BF16=0 - bf16-compute promotion "
+                                  "disabled, plain f32 rocBLAS for the process\n");
+        }
+    }
+    return g_bf16_enabled.load(std::memory_order_acquire);
+}
+
+// One-shot log for any rocblas_gemm_ex failure (rule 0.8: API error -> log
+// with status, fall back THIS call, counter++ - the counter side is the
+// caller's per-role fallback count via ts_rblas_buf_get; this is just the
+// diagnostic line, capped to one occurrence like the other shim logs).
+void ts_rblas_log_gemm_ex_fail_once(const char * who, rocblas_status st) {
+    if (!g_gemm_ex_fail_logged.exchange(true, std::memory_order_acq_rel)) {
+        std::fprintf(stderr, "%s: rocblas_gemm_ex failed (%d) - falling back to "
+                              "plain f32 rocBLAS\n", who, (int) st);
+    }
 }
 
 } // anonymous namespace
@@ -187,6 +220,170 @@ void ts_rblas_buf_release(ts_rblas_buf b) {
     // Slot not found - shouldn't happen if the buffer came from this shim,
     // but be defensive: free the device memory rather than leak.
     (void)hipFree(b.dev);
+}
+
+// ---------------------------------------------------------------------------
+// W2 native-precision GEMM helpers. See tessera-rocblas.h for the full
+// per-helper design rationale.
+// ---------------------------------------------------------------------------
+
+rocblas_status ts_rblas_sgemm_bf16acc(rocblas_operation transA, rocblas_operation transB,
+                                       int m, int n, int k,
+                                       const float * alpha,
+                                       const float * A, int lda, size_t a_elems,
+                                       const float * B, int ldb, size_t b_elems,
+                                       const float * beta,
+                                       float * C, int ldc, size_t c_elems) {
+    rocblas_handle handle = ts_rocblas_handle();
+    if (handle == nullptr) {
+        return rocblas_status_invalid_handle;
+    }
+    // OQ-2 + empirically confirmed hardware constraint (gap-ledger
+    // CORRECTION-w2-2): below the WMMA minimum tile, or with the kill
+    // switch off, skip straight to plain f32 - no bf16 cast overhead for
+    // nothing.
+    if (ts_rblas_bf16_enabled() && m >= 16 && n >= 16 && k >= 16) {
+        std::vector<rocblas_bfloat16> A_bf16(a_elems), B_bf16(b_elems);
+        for (size_t i = 0; i < a_elems; i++) A_bf16[i] = rocblas_bfloat16(A[i]);
+        for (size_t i = 0; i < b_elems; i++) B_bf16[i] = rocblas_bfloat16(B[i]);
+
+        ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_BF16_A, a_elems * sizeof(rocblas_bfloat16));
+        ts_rblas_buf b = ts_rblas_buf_get(TS_RBLAS_BF16_B, b_elems * sizeof(rocblas_bfloat16));
+        ts_rblas_buf c = ts_rblas_buf_get(TS_RBLAS_OUT_F32, c_elems * sizeof(float));
+        if (a.dev && b.dev && c.dev) {
+            hipStream_t s = ts_rblas_stream();
+            hipMemcpyAsync(a.dev, A_bf16.data(), a_elems * sizeof(rocblas_bfloat16),
+                           hipMemcpyHostToDevice, s);
+            hipMemcpyAsync(b.dev, B_bf16.data(), b_elems * sizeof(rocblas_bfloat16),
+                           hipMemcpyHostToDevice, s);
+            // Both operands must be bf16_r - c/d_type f32_r + compute_type
+            // f32_r accumulate (D1 W2: f32 accumulation mandatory). The
+            // f32-storage-with-bf16-compute_type design this replaced, and
+            // a mixed bf16/f32 operand pair, both return
+            // rocblas_status_not_implemented on this host - only this
+            // combination has a Tensile kernel.
+            rocblas_status st = rocblas_gemm_ex(
+                handle, transA, transB, m, n, k,
+                alpha,
+                a.dev, rocblas_datatype_bf16_r, lda,
+                b.dev, rocblas_datatype_bf16_r, ldb,
+                beta,
+                c.dev, rocblas_datatype_f32_r, ldc,
+                c.dev, rocblas_datatype_f32_r, ldc,
+                rocblas_datatype_f32_r,
+                rocblas_gemm_algo_standard, 0, 0);
+            if (st == rocblas_status_success) {
+                hipMemcpyAsync(C, c.dev, c_elems * sizeof(float), hipMemcpyDeviceToHost, s);
+                hipStreamSynchronize(s);
+                ts_rblas_buf_release(a);
+                ts_rblas_buf_release(b);
+                ts_rblas_buf_release(c);
+                return st;
+            }
+            ts_rblas_log_gemm_ex_fail_once("ts_rblas_sgemm_bf16acc", st);
+        }
+        ts_rblas_buf_release(a);
+        ts_rblas_buf_release(b);
+        ts_rblas_buf_release(c);
+    }
+    // Fallback: plain f32 rocBLAS, re-staging the caller's ORIGINAL data
+    // (not the bf16-truncated copy).
+    ts_rblas_buf af = ts_rblas_buf_get(TS_RBLAS_IN_F32_A, a_elems * sizeof(float));
+    ts_rblas_buf bf = ts_rblas_buf_get(TS_RBLAS_IN_F32_B, b_elems * sizeof(float));
+    ts_rblas_buf cf = ts_rblas_buf_get(TS_RBLAS_OUT_F32, c_elems * sizeof(float));
+    if (!af.dev || !bf.dev || !cf.dev) {
+        ts_rblas_buf_release(af);
+        ts_rblas_buf_release(bf);
+        ts_rblas_buf_release(cf);
+        return rocblas_status_memory_error;
+    }
+    hipStream_t s = ts_rblas_stream();
+    hipMemcpyAsync(af.dev, A, a_elems * sizeof(float), hipMemcpyHostToDevice, s);
+    hipMemcpyAsync(bf.dev, B, b_elems * sizeof(float), hipMemcpyHostToDevice, s);
+    rocblas_status st = rocblas_sgemm(handle, transA, transB, m, n, k,
+                                      alpha, (float*) af.dev, lda,
+                                      (float*) bf.dev, ldb,
+                                      beta, (float*) cf.dev, ldc);
+    hipMemcpyAsync(C, cf.dev, c_elems * sizeof(float), hipMemcpyDeviceToHost, s);
+    hipStreamSynchronize(s);
+    ts_rblas_buf_release(af);
+    ts_rblas_buf_release(bf);
+    ts_rblas_buf_release(cf);
+    return st;
+}
+
+rocblas_status ts_rblas_dgemm_to_sgemm(rocblas_operation transA, rocblas_operation transB,
+                                        int m, int n, int k,
+                                        float alpha,
+                                        const float * A, int lda, size_t a_elems,
+                                        const float * B, int ldb, size_t b_elems,
+                                        float * C, int ldc, size_t c_elems) {
+    rocblas_handle handle = ts_rocblas_handle();
+    if (handle == nullptr) {
+        return rocblas_status_invalid_handle;
+    }
+    ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32_A, a_elems * sizeof(float));
+    ts_rblas_buf b = ts_rblas_buf_get(TS_RBLAS_IN_F32_B, b_elems * sizeof(float));
+    ts_rblas_buf c = ts_rblas_buf_get(TS_RBLAS_OUT_F32, c_elems * sizeof(float));
+    if (!a.dev || !b.dev || !c.dev) {
+        ts_rblas_buf_release(a);
+        ts_rblas_buf_release(b);
+        ts_rblas_buf_release(c);
+        return rocblas_status_memory_error;
+    }
+    hipStream_t s = ts_rblas_stream();
+    hipMemcpyAsync(a.dev, A, a_elems * sizeof(float), hipMemcpyHostToDevice, s);
+    hipMemcpyAsync(b.dev, B, b_elems * sizeof(float), hipMemcpyHostToDevice, s);
+    const float beta = 0.0f;
+    rocblas_status st = rocblas_sgemm(handle, transA, transB, m, n, k,
+                                      &alpha, (float*) a.dev, lda,
+                                      (float*) b.dev, ldb,
+                                      &beta,  (float*) c.dev, ldc);
+    hipMemcpyAsync(C, c.dev, c_elems * sizeof(float), hipMemcpyDeviceToHost, s);
+    hipStreamSynchronize(s);
+    ts_rblas_buf_release(a);
+    ts_rblas_buf_release(b);
+    ts_rblas_buf_release(c);
+    return st;
+}
+
+rocblas_status ts_rblas_gemm_bf16_mixed(rocblas_handle handle,
+                                         rocblas_operation transA, rocblas_operation transB,
+                                         int m, int n, int k,
+                                         const float * alpha,
+                                         const rocblas_bfloat16 * A_bf16,
+                                         const float * A_f32,
+                                         int lda,
+                                         const float * B, int ldb,
+                                         const float * beta,
+                                         float * C, int ldc) {
+    if (!ts_rblas_bf16_enabled() || A_bf16 == nullptr || m < 16 || n < 16 || k < 16) {
+        return rocblas_sgemm(handle, transA, transB, m, n, k,
+                             alpha, A_f32, lda, B, ldb, beta, C, ldc);
+    }
+    // Genuinely mixed input dtypes (A bf16, B/C f32) - unlike
+    // ts_rblas_sgemm_bf16acc, which keeps all operands f32 and only
+    // promotes compute_type. OQ-1 territory: unverified whether this
+    // specific combination is accelerated (vs. silently falling back to a
+    // slower internal path) on this ROCm version - rocprofv3 is the
+    // diagnostic (task 2.4); the API-level fallback below makes an
+    // outright rejection safe either way.
+    rocblas_status st = rocblas_gemm_ex(
+        handle, transA, transB, m, n, k,
+        alpha,
+        A_bf16, rocblas_datatype_bf16_r, lda,
+        B,      rocblas_datatype_f32_r,  ldb,
+        beta,
+        C, rocblas_datatype_f32_r, ldc,
+        C, rocblas_datatype_f32_r, ldc,
+        rocblas_datatype_f32_r,   // f32 accumulation (D1 W2: mandatory)
+        rocblas_gemm_algo_standard, 0, 0);
+    if (st != rocblas_status_success) {
+        ts_rblas_log_gemm_ex_fail_once("ts_rblas_gemm_bf16_mixed", st);
+        return rocblas_sgemm(handle, transA, transB, m, n, k,
+                             alpha, A_f32, lda, B, ldb, beta, C, ldc);
+    }
+    return st;
 }
 
 namespace {
