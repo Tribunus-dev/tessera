@@ -116,8 +116,14 @@ static void ts_lrq_matmul_atb(const float * A, const float * B, float * C,
                 1.0, Ad.data(), (int)n, Bd.data(), (int)k, 0.0, Cd.data(), (int)k);
     for (int64_t i = 0; i < n * k; i++) C[i] = (float)Cd[i];
 #elif defined(TS_USE_ROCBLAS)
+    // Same fix as tessera-dartquant.cpp's ts_dq_matmul_atb (this function
+    // was copied from that pattern): transA/transB were backwards for the
+    // row-major-via-column-major identity C^T = B^T @ A - verified
+    // against a scalar ground truth with a standalone rocBLAS-linked test
+    // (rocblas_status_invalid_size at small scale, an unbounded-read GPU
+    // page fault at real pipeline scale) before fixing.
     rocblas_status st = ts_rblas_dgemm_to_sgemm(
-        rocblas_operation_transpose, rocblas_operation_none,
+        rocblas_operation_none, rocblas_operation_transpose,
         (int)k, (int)n, (int)m, 1.0f,
         B, (int)k, (size_t)m * k,
         A, (int)n, (size_t)m * n,

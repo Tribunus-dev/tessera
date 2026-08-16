@@ -136,9 +136,23 @@ static void ts_dq_matmul_atb(const float * A, const float * B, float * C,
                 1.0, Ad.data(), (int)n, Bd.data(), (int)k, 0.0, Cd.data(), (int)k);
     for (int64_t i = 0; i < n * k; i++) C[i] = (float)Cd[i];
 #elif defined(TS_USE_ROCBLAS)
-    // W2 task 2.2: cast to sgemm (OQ-A), same remap as ts_dq_matmul above.
+    // Row-major C(n x k) = A(m x n)^T @ B(m x k) via the column-major
+    // identity C^T = B^T @ A: the as-stored buffers, reinterpreted
+    // column-major, already ARE B^T (physical k x m, ld=k) and A^T
+    // (physical n x m, ld=n) - so achieving B^T @ A needs NO transpose on
+    // the first (B-derived) operand and Transpose on the second
+    // (A-derived) operand to undo its already-transposed interpretation
+    // back to A. (transpose, none) - what this used to say - has the two
+    // flags backwards: verified against a scalar ground truth with a
+    // standalone rocBLAS-linked test before fixing (rocblas_status_
+    // invalid_size at small scale; an unbounded-read GPU page fault at
+    // the ~2560x128 scale this pipeline actually runs at, since a wrong
+    // lda doesn't always fail validation before it corrupts a real
+    // kernel launch). Never previously exercised end-to-end (DartQuant
+    // was dead code from the live quantize path before this session -
+    // see gap ledger), so nothing had run this branch until now.
     rocblas_status st = ts_rblas_dgemm_to_sgemm(
-        rocblas_operation_transpose, rocblas_operation_none,
+        rocblas_operation_none, rocblas_operation_transpose,
         (int)k, (int)n, (int)m, 1.0f,
         B, (int)k, (size_t)m * k,
         A, (int)n, (size_t)m * n,
