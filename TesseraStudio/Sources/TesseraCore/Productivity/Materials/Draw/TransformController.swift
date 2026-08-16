@@ -320,4 +320,41 @@ public enum TransformController {
         result.rotation = startGeometry.rotation + deltaDegrees
         return result
     }
+
+    // MARK: - Group transform (row 48, P2-0)
+
+    /// The group-recursion entry point the design contract calls for
+    /// ("TransformController recurses"): applies a uniform world-space
+    /// translation to every shape whose `parentGroupID == groupID`,
+    /// instead of only the one shape a drag started on. A
+    /// `.shapeGroup` carries no geometry of its own at P0
+    /// (`Drawing.swift`'s doc comment: "Carries no geometry of its own
+    /// at P0 - group bounds are derived from members, not stored"),
+    /// so there is nothing else to move - every member moving by the
+    /// same delta together as one rigid body IS what "transforming a
+    /// group" means until a P2 group-relative resize/rotate lands.
+    ///
+    /// `shapes` is the caller's full (unfiltered) shape list - reads
+    /// straight through, like `SnapContext.build`'s own `shapes`
+    /// parameter; non-members are simply absent from the result, the
+    /// same "only the affected ids come back" shape ``resize``/
+    /// ``rotate`` don't need since they operate on one shape at a
+    /// time. Zero-member `groupID` (nothing currently carries it)
+    /// returns an empty dictionary rather than a special-cased nil -
+    /// callers already treat "no entries changed" as their own no-op
+    /// signal (see `DrawingStore.setGeometries`'s empty-map no-op).
+    public static func applyingGroupDelta(
+        groupID: UUID,
+        shapes: [Shape],
+        worldDelta: CGVector
+    ) -> [UUID: ShapeGeometry] {
+        var result: [UUID: ShapeGeometry] = [:]
+        for shape in shapes where shape.parentGroupID == groupID {
+            var g = shape.geometry
+            g.x += worldDelta.dx
+            g.y += worldDelta.dy
+            result[shape.id] = g
+        }
+        return result
+    }
 }

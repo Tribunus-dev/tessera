@@ -212,4 +212,185 @@ final class DrawingStoreTests: DoctrineTestCase {
         XCTAssertEqual(insertReceipts.first?.payload["shapeID"], .string(shape.id.uuidString))
         XCTAssertEqual(insertReceipts.first?.payload["kind"], .string("ellipse"))
     }
+
+    // MARK: - setGeometries: one commit, N shapes = ONE receipt
+    // (P2-0 item 3, "one physical drag = one receipt = one undo unit")
+
+    func testSetGeometriesOfMultipleShapesEmitsExactlyOneReceiptCoveringAllOfThem() async throws {
+        let layer = try await DrawTestDataLayer.startedOrSkip()
+        let store = DrawingStore(dataLayer: layer)
+        var drawing = try await store.upsert(Drawing(title: "SetGeometries Gate Test"))
+        let s1 = Shape(kind: .rect, geometry: ShapeGeometry(x: 0, y: 0, width: 10, height: 10))
+        let s2 = Shape(kind: .rect, geometry: ShapeGeometry(x: 20, y: 20, width: 10, height: 10))
+        drawing = try await store.insertShape(s1, for: drawing.id)
+        drawing = try await store.insertShape(s2, for: drawing.id)
+
+        var g1 = s1.geometry; g1.x += 5; g1.y += 5
+        var g2 = s2.geometry; g2.x += 5; g2.y += 5
+        let updated = try await store.setGeometries([s1.id: g1, s2.id: g2], for: drawing.id)
+
+        XCTAssertEqual(updated.shape(id: s1.id)?.geometry.x, g1.x)
+        XCTAssertEqual(updated.shape(id: s2.id)?.geometry.x, g2.x)
+
+        let receipts = try await store.receipts(forDrawing: drawing.id)
+        let geometryReceipts = receipts.filter { $0.receiptType == DrawingReceiptType.setGeometry.rawValue }
+        XCTAssertEqual(geometryReceipts.count, 1, "moving 2 shapes in one gesture must produce exactly one setGeometry receipt, not one per shape")
+        XCTAssertEqual(geometryReceipts.first?.payload["shapeCount"], .number(2))
+    }
+
+    func testSetGeometriesWithNoActualChangeEmitsNoReceipt() async throws {
+        let layer = try await DrawTestDataLayer.startedOrSkip()
+        let store = DrawingStore(dataLayer: layer)
+        var drawing = try await store.upsert(Drawing(title: "SetGeometries NoOp Gate Test"))
+        let shape = Shape(kind: .rect, geometry: ShapeGeometry(x: 0, y: 0, width: 10, height: 10))
+        drawing = try await store.insertShape(shape, for: drawing.id)
+
+        let receiptsBefore = try await store.receipts(forDrawing: drawing.id).count
+        _ = try await store.setGeometries([shape.id: shape.geometry], for: drawing.id)
+        let receiptsAfter = try await store.receipts(forDrawing: drawing.id).count
+
+        XCTAssertEqual(receiptsAfter, receiptsBefore, "setting a shape's geometry to its own current value must not append a receipt")
+    }
+
+    func testSetGeometriesOfUnknownShapeIDThrowsWithoutPersisting() async throws {
+        let layer = try await DrawTestDataLayer.startedOrSkip()
+        let store = DrawingStore(dataLayer: layer)
+        let drawing = try await store.upsert(Drawing(title: "SetGeometries ErrorPath Gate Test"))
+        let unknownID = UUID()
+
+        do {
+            _ = try await store.setGeometries([unknownID: ShapeGeometry(x: 0, y: 0, width: 1, height: 1)], for: drawing.id)
+            XCTFail("expected DrawingStoreError.shapeNotFound")
+        } catch DrawingStoreError.shapeNotFound(let id) {
+            XCTAssertEqual(id, unknownID)
+        }
+
+        let receipts = try await store.receipts(forDrawing: drawing.id)
+        XCTAssertTrue(receipts.filter { $0.receiptType == DrawingReceiptType.setGeometry.rawValue }.isEmpty)
+    }
+
+    // MARK: - group / ungroup: receipt + persistence (row 48, P2-0)
+
+    func testGroupingTwoShapesSetsParentGroupIDAndEmitsExactlyOneReceipt() async throws {
+        let layer = try await DrawTestDataLayer.startedOrSkip()
+        let store = DrawingStore(dataLayer: layer)
+        var drawing = try await store.upsert(Drawing(title: "Group Gate Test"))
+        let s1 = Shape(kind: .rect, geometry: ShapeGeometry(x: 0, y: 0, width: 10, height: 10))
+        let s2 = Shape(kind: .ellipse, geometry: ShapeGeometry(x: 20, y: 20, width: 10, height: 10))
+        drawing = try await store.insertShape(s1, for: drawing.id)
+        drawing = try await store.insertShape(s2, for: drawing.id)
+
+        let updated = try await store.group([s1.id, s2.id], for: drawing.id)
+        let groupID = updated.shape(id: s1.id)?.parentGroupID
+        XCTAssertNotNil(groupID)
+        XCTAssertEqual(updated.shape(id: s2.id)?.parentGroupID, groupID)
+
+        let receipts = try await store.receipts(forDrawing: drawing.id)
+        let groupReceipts = receipts.filter { $0.receiptType == DrawingReceiptType.groupShapes.rawValue }
+        XCTAssertEqual(groupReceipts.count, 1)
+    }
+
+    func testGroupingFewerThanTwoShapeIDsEmitsNoReceipt() async throws {
+        let layer = try await DrawTestDataLayer.startedOrSkip()
+        let store = DrawingStore(dataLayer: layer)
+        var drawing = try await store.upsert(Drawing(title: "Group NoOp Gate Test"))
+        let s1 = Shape(kind: .rect, geometry: ShapeGeometry(x: 0, y: 0, width: 10, height: 10))
+        drawing = try await store.insertShape(s1, for: drawing.id)
+
+        let receiptsBefore = try await store.receipts(forDrawing: drawing.id).count
+        _ = try await store.group([s1.id], for: drawing.id)
+        let receiptsAfter = try await store.receipts(forDrawing: drawing.id).count
+
+        XCTAssertEqual(receiptsAfter, receiptsBefore, "grouping fewer than 2 shape ids must not append a receipt")
+    }
+
+    func testUngroupingClearsParentGroupIDAndEmitsExactlyOneReceipt() async throws {
+        let layer = try await DrawTestDataLayer.startedOrSkip()
+        let store = DrawingStore(dataLayer: layer)
+        var drawing = try await store.upsert(Drawing(title: "Ungroup Gate Test"))
+        let s1 = Shape(kind: .rect, geometry: ShapeGeometry(x: 0, y: 0, width: 10, height: 10))
+        let s2 = Shape(kind: .rect, geometry: ShapeGeometry(x: 20, y: 20, width: 10, height: 10))
+        drawing = try await store.insertShape(s1, for: drawing.id)
+        drawing = try await store.insertShape(s2, for: drawing.id)
+        drawing = try await store.group([s1.id, s2.id], for: drawing.id)
+        let groupID = try XCTUnwrap(drawing.shape(id: s1.id)?.parentGroupID)
+
+        let updated = try await store.ungroup(groupID, for: drawing.id)
+        XCTAssertNil(updated.shape(id: s1.id)?.parentGroupID)
+        XCTAssertNil(updated.shape(id: s2.id)?.parentGroupID)
+
+        let receipts = try await store.receipts(forDrawing: drawing.id)
+        let ungroupReceipts = receipts.filter { $0.receiptType == DrawingReceiptType.ungroupShapes.rawValue }
+        XCTAssertEqual(ungroupReceipts.count, 1)
+    }
+
+    func testUngroupingAnUnknownGroupIDEmitsNoReceipt() async throws {
+        let layer = try await DrawTestDataLayer.startedOrSkip()
+        let store = DrawingStore(dataLayer: layer)
+        let drawing = try await store.upsert(Drawing(title: "Ungroup NoOp Gate Test"))
+
+        let receiptsBefore = try await store.receipts(forDrawing: drawing.id).count
+        _ = try await store.ungroup(UUID(), for: drawing.id)
+        let receiptsAfter = try await store.receipts(forDrawing: drawing.id).count
+
+        XCTAssertEqual(receiptsAfter, receiptsBefore, "ungrouping an id no shape carries must not append a receipt")
+    }
+
+    // MARK: - group / ungroup pure logic (UNGATED SHADOW, doctrine rule
+    // 11): DrawingStore.group/.ungroup delegate to `applyingGroup`/
+    // `applyingUngroup`, kept `internal` specifically so this contract
+    // is exercised by a plain `swift test` with no DB dependency -
+    // mirrors `SlideStoreLayoutApplicationTests.swift`'s coverage of
+    // `SlideStore.applyingLayout` the same way.
+
+    func testApplyingGroupOfTwoKnownShapeIDsAssignsASharedFreshGroupID() {
+        let s1 = Shape(kind: .rect, geometry: ShapeGeometry(x: 0, y: 0, width: 10, height: 10))
+        let s2 = Shape(kind: .ellipse, geometry: ShapeGeometry(x: 20, y: 20, width: 10, height: 10))
+        let drawing = Drawing.makeBlank().insertingShape(s1).insertingShape(s2)
+
+        let result = DrawingStore.applyingGroup([s1.id, s2.id], to: drawing)
+        let unwrapped = result
+
+        XCTAssertNotNil(unwrapped)
+        XCTAssertEqual(unwrapped?.drawing.shape(id: s1.id)?.parentGroupID, unwrapped?.groupID)
+        XCTAssertEqual(unwrapped?.drawing.shape(id: s2.id)?.parentGroupID, unwrapped?.groupID)
+        XCTAssertEqual(Set(unwrapped?.memberIDs ?? []), Set([s1.id, s2.id]))
+    }
+
+    func testApplyingGroupDropsUnknownIDsAndReturnsNilIfFewerThanTwoValidIDsRemain() {
+        let s1 = Shape(kind: .rect, geometry: ShapeGeometry(x: 0, y: 0, width: 10, height: 10))
+        let drawing = Drawing.makeBlank().insertingShape(s1)
+
+        // s1 plus an id not present in the drawing: only 1 valid id remains.
+        let result = DrawingStore.applyingGroup([s1.id, UUID()], to: drawing)
+        XCTAssertNil(result, "fewer than 2 VALID shape ids (after dropping unknown ones) must be a no-op")
+    }
+
+    func testApplyingGroupOfEmptySelectionReturnsNil() {
+        let drawing = Drawing.makeBlank()
+        XCTAssertNil(DrawingStore.applyingGroup([], to: drawing))
+    }
+
+    func testApplyingUngroupOfKnownGroupIDClearsParentGroupIDOnEveryMember() {
+        let groupID = UUID()
+        var s1 = Shape(kind: .rect, geometry: ShapeGeometry(x: 0, y: 0, width: 10, height: 10))
+        var s2 = Shape(kind: .rect, geometry: ShapeGeometry(x: 20, y: 20, width: 10, height: 10))
+        s1.parentGroupID = groupID
+        s2.parentGroupID = groupID
+        let drawing = Drawing.makeBlank().insertingShape(s1).insertingShape(s2)
+
+        let result = DrawingStore.applyingUngroup(groupID, to: drawing)
+
+        XCTAssertNotNil(result)
+        XCTAssertNil(result?.drawing.shape(id: s1.id)?.parentGroupID)
+        XCTAssertNil(result?.drawing.shape(id: s2.id)?.parentGroupID)
+        XCTAssertEqual(Set(result?.memberIDs ?? []), Set([s1.id, s2.id]))
+    }
+
+    func testApplyingUngroupOfUnknownGroupIDReturnsNil() {
+        let drawing = Drawing.makeBlank().insertingShape(
+            Shape(kind: .rect, geometry: ShapeGeometry(x: 0, y: 0, width: 10, height: 10))
+        )
+        XCTAssertNil(DrawingStore.applyingUngroup(UUID(), to: drawing), "a groupID no shape carries must be a no-op")
+    }
 }

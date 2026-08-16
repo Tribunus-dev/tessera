@@ -369,6 +369,226 @@ public struct SlideStore: Sendable {
         return deck
     }
 
+    // MARK: - Animations (P2-0, prerequisite for P2's SMILAnimationTree)
+
+    /// Replaces the slide's flat animation effect list wholesale
+    /// (mirrors `setTags`'s "set the whole list" shape rather than a
+    /// single-effect append, since `AnimationEffectList` has no id per
+    /// entry to append/replace against - see ``removeAnimationEffect
+    /// (at:forSlideAt:for:)`` for why removal is index-addressed for
+    /// the same reason). Identical-value set (comparing against
+    /// ``SlideMeta/effectiveAnimations``, so setting `[]` when the
+    /// slide already has no animations is ALSO a no-op, not just an
+    /// exact-array match against a possibly-nil stored value) is a
+    /// no-op: zero receipts, zero persistence (receipts law).
+    @discardableResult
+    public func setAnimations(
+        _ effects: AnimationEffectList, forSlideAt index: Int, for deckID: UUID
+    ) async throws -> SlideDeck {
+        var deck = try await loadOrFail(id: deckID)
+        guard index >= 0, index < deck.slideCount else {
+            throw SlideStoreError.slideOutOfBounds(index: index, count: deck.slideCount)
+        }
+        let key = deck.body.rootChildren[index].uuidString
+        var meta = deck.slideMeta[key] ?? .default
+        guard meta.effectiveAnimations != effects else { return deck }
+        meta.animations = effects
+        deck.slideMeta[key] = meta
+        deck.updatedAt = Date()
+        _ = try await upsert(deck)
+        try await appendReceipt(
+            entityID: deckID,
+            receiptType: SlideReceiptType.setAnimationEffects.rawValue,
+            payload: [
+                "index": .number(Double(index)),
+                "effectCount": .number(Double(effects.count)),
+            ]
+        )
+        return deck
+    }
+
+    /// Removes one effect from a slide's animation list, addressed by
+    /// its position in play order. `AnimationEffect` carries no `id`
+    /// field (`AnimationEffectList.swift`'s field list is exactly
+    /// `targetBlockID`/`presetID`/`trigger`/`durationMS`/`delayMS` -
+    /// verified against the type before choosing this signature), and
+    /// `targetBlockID` cannot stand in for one either (a block can
+    /// legitimately carry more than one effect, e.g. a fly-in entrance
+    /// plus a fade exit) - so play-order index is the only stable
+    /// address this P1 type supports. An out-of-range `effectIndex`
+    /// (including on a slide with no animations at all) is a no-op:
+    /// zero receipts, zero persistence.
+    @discardableResult
+    public func removeAnimationEffect(
+        at effectIndex: Int, forSlideAt index: Int, for deckID: UUID
+    ) async throws -> SlideDeck {
+        var deck = try await loadOrFail(id: deckID)
+        guard index >= 0, index < deck.slideCount else {
+            throw SlideStoreError.slideOutOfBounds(index: index, count: deck.slideCount)
+        }
+        let key = deck.body.rootChildren[index].uuidString
+        var meta = deck.slideMeta[key] ?? .default
+        guard effectIndex >= 0, effectIndex < meta.effectiveAnimations.count else { return deck }
+        meta.animations?.remove(at: effectIndex)
+        deck.slideMeta[key] = meta
+        deck.updatedAt = Date()
+        _ = try await upsert(deck)
+        try await appendReceipt(
+            entityID: deckID,
+            receiptType: SlideReceiptType.removeAnimationEffect.rawValue,
+            payload: [
+                "index": .number(Double(index)),
+                "effectIndex": .number(Double(effectIndex)),
+            ]
+        )
+        return deck
+    }
+
+    // MARK: - Media (P1 1.4 write path, wired P2-0)
+
+    /// Attaches a `MediaBlock` to a slide as a new `.media` block,
+    /// parented under the slide's own root block (the same "add a
+    /// child to the slide's subtree" shape `insertingSlide`'s
+    /// `.titleAndContent` case uses to attach a heading + paragraph
+    /// under a toggle wrapper) - `collectBlocks`'s recursive walk
+    /// already includes any child regardless of the parent's
+    /// `BlockType`, so the media block is included in the slide's
+    /// sliced AST (`enumeratedSlides()`) without further changes.
+    /// Always mutates (a freshly-generated `.media` block id is never
+    /// already present), so there is no "identical value" no-op case
+    /// here - mirrors `DrawingStore.addLayer`'s own note that a fresh
+    /// id has no "unknown id" to reject either.
+    @discardableResult
+    public func attachMedia(
+        _ media: MediaBlock, toSlideAt index: Int, for deckID: UUID
+    ) async throws -> SlideDeck {
+        var deck = try await loadOrFail(id: deckID)
+        guard index >= 0, index < deck.slideCount else {
+            throw SlideStoreError.slideOutOfBounds(index: index, count: deck.slideCount)
+        }
+        let rootID = deck.body.rootChildren[index]
+        guard var rootBlock = deck.body.blocks[rootID] else {
+            throw SlideStoreError.slideNotFound(id: rootID)
+        }
+        let mediaBlockID = UUID()
+        var mediaBlock = Block(id: mediaBlockID, type: .media, parentID: rootID)
+        mediaBlock.media = media
+        deck.body.blocks[mediaBlockID] = mediaBlock
+        rootBlock.children.append(mediaBlockID)
+        deck.body.blocks[rootID] = rootBlock
+        deck.updatedAt = Date()
+        _ = try await upsert(deck)
+        try await appendReceipt(
+            entityID: deckID,
+            receiptType: SlideReceiptType.attachMedia.rawValue,
+            payload: [
+                "index": .number(Double(index)),
+                "mediaBlockID": .string(mediaBlockID.uuidString),
+                "kind": .string(media.kind.rawValue),
+            ]
+        )
+        return deck
+    }
+
+    /// Removes a `.media` block (and its reference from its parent's
+    /// `children`) from the deck, addressed by the media block's own
+    /// id (returned by ``attachMedia(_:toSlideAt:for:)``). Unknown id,
+    /// or an id that names a block that isn't a `.media` block, is a
+    /// no-op: zero receipts, zero persistence (guard-and-early-return
+    /// before persist+receipt, the `DocStore.archive` canonical shape).
+    @discardableResult
+    public func removeMedia(_ mediaBlockID: UUID, for deckID: UUID) async throws -> SlideDeck {
+        var deck = try await loadOrFail(id: deckID)
+        guard let mediaBlock = deck.body.blocks[mediaBlockID], mediaBlock.type == .media else {
+            return deck
+        }
+        if let parentID = mediaBlock.parentID, var parent = deck.body.blocks[parentID] {
+            parent.children.removeAll { $0 == mediaBlockID }
+            deck.body.blocks[parentID] = parent
+        }
+        deck.body.blocks.removeValue(forKey: mediaBlockID)
+        deck.updatedAt = Date()
+        _ = try await upsert(deck)
+        try await appendReceipt(
+            entityID: deckID,
+            receiptType: SlideReceiptType.removeMedia.rawValue,
+            payload: ["mediaBlockID": .string(mediaBlockID.uuidString)]
+        )
+        return deck
+    }
+
+    // MARK: - Comment lifecycle (P2-0: reply/resolve/delete, same shape
+    // as the Calc track's SheetStore equivalent - both use the shared
+    // CommentThread.addingReply(_:)/.resolved() + Slide/SheetDeck's own
+    // replacingCommentThread(_:)/removingCommentThread(id:) helpers
+    // pre-landed in Comments.swift.)
+
+    /// Appends a reply message to an existing comment thread. Unknown
+    /// `threadID` is a no-op: zero receipts, zero persistence.
+    @discardableResult
+    public func replyToComment(
+        _ threadID: UUID, author: String, text: String, for deckID: UUID
+    ) async throws -> SlideDeck {
+        var deck = try await loadOrFail(id: deckID)
+        guard let thread = deck.effectiveCommentThreads.first(where: { $0.id == threadID }) else {
+            return deck
+        }
+        let message = CommentMessage(author: author, text: text)
+        deck = deck.replacingCommentThread(thread.addingReply(message))
+        deck.updatedAt = Date()
+        _ = try await upsert(deck)
+        try await appendReceipt(
+            entityID: deckID,
+            receiptType: SlideReceiptType.commentReplied.rawValue,
+            payload: [
+                "commentID": .string(threadID.uuidString),
+                "messageID": .string(message.id.uuidString),
+            ]
+        )
+        return deck
+    }
+
+    /// Marks a comment thread resolved. Unknown `threadID`, or a
+    /// thread that is already resolved, is a no-op: zero receipts,
+    /// zero persistence (re-resolving an already-resolved thread is
+    /// not a mutation - `isResolved` would not change).
+    @discardableResult
+    public func resolveComment(_ threadID: UUID, for deckID: UUID) async throws -> SlideDeck {
+        var deck = try await loadOrFail(id: deckID)
+        guard let thread = deck.effectiveCommentThreads.first(where: { $0.id == threadID }),
+              !thread.isResolved else {
+            return deck
+        }
+        deck = deck.replacingCommentThread(thread.resolved())
+        deck.updatedAt = Date()
+        _ = try await upsert(deck)
+        try await appendReceipt(
+            entityID: deckID,
+            receiptType: SlideReceiptType.commentResolved.rawValue,
+            payload: ["commentID": .string(threadID.uuidString)]
+        )
+        return deck
+    }
+
+    /// Deletes a comment thread entirely. Unknown `threadID` is a
+    /// no-op: zero receipts, zero persistence.
+    @discardableResult
+    public func deleteComment(_ threadID: UUID, for deckID: UUID) async throws -> SlideDeck {
+        var deck = try await loadOrFail(id: deckID)
+        guard deck.effectiveCommentThreads.contains(where: { $0.id == threadID }) else {
+            return deck
+        }
+        deck = deck.removingCommentThread(id: threadID)
+        deck.updatedAt = Date()
+        _ = try await upsert(deck)
+        try await appendReceipt(
+            entityID: deckID,
+            receiptType: SlideReceiptType.commentDeleted.rawValue,
+            payload: ["commentID": .string(threadID.uuidString)]
+        )
+        return deck
+    }
+
     // MARK: - Layout application (pure, P1 1.9)
 
     /// The apply-layout block rearrangement (refinement doc section 4,

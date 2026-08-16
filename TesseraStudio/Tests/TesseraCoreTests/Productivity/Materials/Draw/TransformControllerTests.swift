@@ -183,4 +183,73 @@ final class TransformControllerTests: DoctrineTestCase {
         }
         XCTAssertNil(TransformController.Handle.rotation.opposite)
     }
+
+    // MARK: - Group transform (row 48, P2-0): the group-recursion entry
+    // point. Contract source: this file's own header ("TransformController
+    // recurses") plus applyingGroupDelta's own doc comment (a
+    // `.shapeGroup` carries no geometry of its own - moving every
+    // member by the same delta IS what transforming a group means).
+
+    func testApplyingGroupDeltaMovesEveryMemberOfTheNamedGroupByTheSameDelta() {
+        let groupID = UUID()
+        var a = Shape(kind: .rect, geometry: ShapeGeometry(x: 0, y: 0, width: 10, height: 10))
+        var b = Shape(kind: .ellipse, geometry: ShapeGeometry(x: 50, y: 30, width: 20, height: 20))
+        a.parentGroupID = groupID
+        b.parentGroupID = groupID
+        let delta = CGVector(dx: 7, dy: -3)
+
+        let result = TransformController.applyingGroupDelta(groupID: groupID, shapes: [a, b], worldDelta: delta)
+
+        XCTAssertEqual(result[a.id]?.x ?? .nan, a.geometry.x + 7, accuracy: 1e-9)
+        XCTAssertEqual(result[a.id]?.y ?? .nan, a.geometry.y - 3, accuracy: 1e-9)
+        XCTAssertEqual(result[b.id]?.x ?? .nan, b.geometry.x + 7, accuracy: 1e-9)
+        XCTAssertEqual(result[b.id]?.y ?? .nan, b.geometry.y - 3, accuracy: 1e-9)
+    }
+
+    func testApplyingGroupDeltaLeavesWidthHeightRotationUntouched() {
+        let groupID = UUID()
+        var a = Shape(kind: .rect, geometry: ShapeGeometry(x: 0, y: 0, width: 40, height: 25, rotation: 15))
+        a.parentGroupID = groupID
+
+        let result = TransformController.applyingGroupDelta(groupID: groupID, shapes: [a], worldDelta: CGVector(dx: 5, dy: 5))
+
+        XCTAssertEqual(result[a.id]?.width, 40)
+        XCTAssertEqual(result[a.id]?.height, 25)
+        XCTAssertEqual(result[a.id]?.rotation, 15)
+    }
+
+    func testApplyingGroupDeltaExcludesShapesOutsideTheNamedGroup() {
+        let groupID = UUID()
+        let otherGroupID = UUID()
+        var member = Shape(kind: .rect, geometry: ShapeGeometry(x: 0, y: 0, width: 10, height: 10))
+        var otherGroupMember = Shape(kind: .rect, geometry: ShapeGeometry(x: 100, y: 100, width: 10, height: 10))
+        var ungrouped = Shape(kind: .rect, geometry: ShapeGeometry(x: 200, y: 200, width: 10, height: 10))
+        member.parentGroupID = groupID
+        otherGroupMember.parentGroupID = otherGroupID
+        ungrouped.parentGroupID = nil
+
+        let result = TransformController.applyingGroupDelta(
+            groupID: groupID, shapes: [member, otherGroupMember, ungrouped], worldDelta: CGVector(dx: 1, dy: 1))
+
+        XCTAssertEqual(Set(result.keys), [member.id], "only shapes carrying the exact named groupID move")
+    }
+
+    func testApplyingGroupDeltaOfAnUnusedGroupIDReturnsAnEmptyResult() {
+        let shape = Shape(kind: .rect, geometry: ShapeGeometry(x: 0, y: 0, width: 10, height: 10))
+        let result = TransformController.applyingGroupDelta(groupID: UUID(), shapes: [shape], worldDelta: CGVector(dx: 3, dy: 3))
+        XCTAssertTrue(result.isEmpty)
+    }
+
+    // Property: a zero delta is the identity on every member's origin
+    // (idempotence-style property test, doctrine rule 9).
+    func testApplyingGroupDeltaWithZeroVectorIsIdentityOnEveryMembersOrigin() {
+        let groupID = UUID()
+        var a = Shape(kind: .rect, geometry: ShapeGeometry(x: 12, y: 34, width: 10, height: 10))
+        a.parentGroupID = groupID
+
+        let result = TransformController.applyingGroupDelta(groupID: groupID, shapes: [a], worldDelta: .zero)
+
+        XCTAssertEqual(result[a.id]?.x, a.geometry.x)
+        XCTAssertEqual(result[a.id]?.y, a.geometry.y)
+    }
 }

@@ -429,24 +429,46 @@ public struct SlideMeta: Codable, Sendable, Hashable {
     /// when non-nil - `TransitionStore.setSlideTransition` validates
     /// this before ever assigning it.
     public var transitionID: String?
+    /// The slide's flat, play-order-flattened animation effect list
+    /// (P1 1.20, wired P2-0) - the EXISTING, fully-tested-in-isolation
+    /// `AnimationEffectList` typealias, previously an unreachable
+    /// island with no storage field. `nil` means no animations
+    /// defined, the same "nil means none" convention every other
+    /// optional field in this struct uses - read through
+    /// ``effectiveAnimations``, not this field directly.
+    /// ``SMILAnimationTree`` (P2) evolves this in place; it never
+    /// gains a parallel field.
+    public var animations: AnimationEffectList?
 
     public init(
         layout: SlideLayout = .titleAndContent,
         notes: String = "",
         masterPageID: UUID? = nil,
-        transitionID: String? = nil
+        transitionID: String? = nil,
+        animations: AnimationEffectList? = nil
     ) {
         self.layout = layout
         self.notes = notes
         self.masterPageID = masterPageID
         self.transitionID = transitionID
+        self.animations = animations
     }
 
     public static let `default` = SlideMeta(layout: .titleAndContent, notes: "")
 
     /// Returns a copy with the notes field updated.
     public func copyWith(notes newNotes: String) -> SlideMeta {
-        SlideMeta(layout: self.layout, notes: newNotes, masterPageID: self.masterPageID, transitionID: self.transitionID)
+        SlideMeta(
+            layout: self.layout, notes: newNotes, masterPageID: self.masterPageID,
+            transitionID: self.transitionID, animations: self.animations)
+    }
+
+    /// `animations ?? []` - the "nil means none" read-through every
+    /// other Effective* field in this codebase uses (e.g.
+    /// `SlideDeck.effectiveCommentThreads`, `SlideMasterPage
+    /// .effectiveMasterPages`).
+    public var effectiveAnimations: AnimationEffectList {
+        animations ?? []
     }
 }
 

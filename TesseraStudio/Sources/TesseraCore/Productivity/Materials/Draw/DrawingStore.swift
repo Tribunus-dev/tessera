@@ -280,6 +280,51 @@ public struct DrawingStore: Sendable {
         try await mutatingShape(shapeID, in: drawingID, receiptType: .setText) { $0.text = text }
     }
 
+    /// Sets the geometry of every shape named in `geometries` in a
+    /// SINGLE upsert + SINGLE receipt (P2-0 item 3: "one physical drag
+    /// = one receipt = one undo unit" - a multi-shape or group drag
+    /// commits through this method instead of N calls to
+    /// ``setGeometry(_:forShape:in:)``, matching the receipts law's
+    /// "no receipt without a mutation" in the other direction too: N
+    /// shapes moving together is one mutation of the drawing, not N).
+    /// Reuses the SAME `DrawingReceiptType.setGeometry` case
+    /// `setGeometry` emits - a batched commit is still fundamentally
+    /// "shape geometry changed", so this does not need its own
+    /// receipt-type case (AGENTS.md: "reuse existing infrastructure").
+    /// A shape id with a geometry identical to its current stored
+    /// value is skipped (not counted toward "did anything change");
+    /// an unknown shape id throws ``DrawingStoreError/shapeNotFound(id:)``
+    /// without persisting anything (error path, matching every other
+    /// shape mutator in this store). An empty `geometries`, or a
+    /// `geometries` whose every entry is already identical to the
+    /// stored value, is a no-op: zero receipts, zero persistence.
+    @discardableResult
+    public func setGeometries(_ geometries: [UUID: ShapeGeometry], for drawingID: UUID) async throws -> Drawing {
+        var drawing = try await loadOrFail(id: drawingID)
+        var changedIDs: [UUID] = []
+        for (shapeID, geometry) in geometries {
+            guard var shape = drawing.shape(id: shapeID) else {
+                throw DrawingStoreError.shapeNotFound(id: shapeID)
+            }
+            guard shape.geometry != geometry else { continue }
+            shape.geometry = geometry
+            drawing = drawing.updatingShape(shape)
+            changedIDs.append(shapeID)
+        }
+        guard !changedIDs.isEmpty else { return drawing }
+        drawing.updatedAt = Date()
+        _ = try await upsert(drawing)
+        try await appendReceipt(
+            entityID: drawingID,
+            receiptType: DrawingReceiptType.setGeometry.rawValue,
+            payload: [
+                "shapeIDs": .array(changedIDs.map { .string($0.uuidString) }),
+                "shapeCount": .number(Double(changedIDs.count)),
+            ]
+        )
+        return drawing
+    }
+
     @discardableResult
     public func setZOrder(_ move: ShapeZOrder.Move, forShape shapeID: UUID, in drawingID: UUID) async throws -> Drawing {
         var drawing = try await loadOrFail(id: drawingID)
@@ -409,6 +454,112 @@ public struct DrawingStore: Sendable {
     @discardableResult
     public func setConnector(_ info: ConnectorInfo?, forShape shapeID: UUID, in drawingID: UUID) async throws -> Drawing {
         try await mutatingShape(shapeID, in: drawingID, receiptType: .setConnector) { $0.connector = info }
+    }
+
+    // MARK: - Group / ungroup (row 48, P2-0)
+
+    /// Groups `shapeIDs` under a freshly-created group id, assigned to
+    /// every named shape's `parentGroupID` (``Shape/parentGroupID``).
+    /// Fewer than 2 shape ids (after de-duplicating and dropping any
+    /// id that does not name a shape in this drawing) is a no-op:
+    /// zero receipts, zero persistence - a "group" of 0 or 1 shape is
+    /// not a grouping. The group itself has no separate stored
+    /// geometry or block at P0 (`Drawing.swift`'s `.shapeGroup` doc
+    /// comment: "Carries no geometry of its own at P0 - group bounds
+    /// are derived from members, not stored") - `parentGroupID`
+    /// membership IS the group.
+    ///
+    /// Delegates to ``applyingGroup(_:to:)``, kept `internal` (not
+    /// `private`) so it is directly testable without a live
+    /// `TesseraDataLayer` - mirrors why `SlideStore.applyingLayout` is
+    /// `internal` for the same reason (see that method's doc comment).
+    @discardableResult
+    public func group(_ shapeIDs: [UUID], for drawingID: UUID) async throws -> Drawing {
+        var drawing = try await loadOrFail(id: drawingID)
+        guard let (grouped, groupID, memberIDs) = Self.applyingGroup(shapeIDs, to: drawing) else {
+            return drawing
+        }
+        drawing = grouped
+        drawing.updatedAt = Date()
+        _ = try await upsert(drawing)
+        try await appendReceipt(
+            entityID: drawingID,
+            receiptType: DrawingReceiptType.groupShapes.rawValue,
+            payload: [
+                "groupID": .string(groupID.uuidString),
+                "shapeIDs": .array(memberIDs.map { .string($0.uuidString) }),
+            ]
+        )
+        return drawing
+    }
+
+    /// Dissolves a shape group: every shape whose `parentGroupID ==
+    /// groupID` has it cleared back to `nil`. `groupID` names nothing
+    /// but a value shared shapes' `parentGroupID` happens to carry (no
+    /// separate group entity is stored, per ``group(_:for:)``'s doc
+    /// comment), so "unknown groupID" is exactly "no shape currently
+    /// carries this parentGroupID" - a no-op: zero receipts, zero
+    /// persistence.
+    @discardableResult
+    public func ungroup(_ groupID: UUID, for drawingID: UUID) async throws -> Drawing {
+        var drawing = try await loadOrFail(id: drawingID)
+        guard let (ungrouped, memberIDs) = Self.applyingUngroup(groupID, to: drawing) else {
+            return drawing
+        }
+        drawing = ungrouped
+        drawing.updatedAt = Date()
+        _ = try await upsert(drawing)
+        try await appendReceipt(
+            entityID: drawingID,
+            receiptType: DrawingReceiptType.ungroupShapes.rawValue,
+            payload: [
+                "groupID": .string(groupID.uuidString),
+                "shapeIDs": .array(memberIDs.map { .string($0.uuidString) }),
+            ]
+        )
+        return drawing
+    }
+
+    // MARK: - Group / ungroup application (pure, P2-0)
+
+    /// The pure group transform: de-duplicates `shapeIDs`, drops any
+    /// id that does not name a shape in `drawing`, and - only when at
+    /// least 2 valid ids remain - assigns all of them a freshly
+    /// generated shared group id. Returns `nil` for the no-op case
+    /// (fewer than 2 valid ids) so the caller's guard reads as "no
+    /// grouping happened" without a separate boolean. `shapeIDs` order
+    /// is not preserved in the returned member list (deduplicated via
+    /// `Set`) - grouping does not have a play/z-order contract of its
+    /// own to preserve.
+    static func applyingGroup(
+        _ shapeIDs: [UUID], to drawing: Drawing
+    ) -> (drawing: Drawing, groupID: UUID, memberIDs: [UUID])? {
+        let existingIDs = Array(Set(shapeIDs)).filter { drawing.shape(id: $0) != nil }
+        guard existingIDs.count >= 2 else { return nil }
+        let groupID = UUID()
+        var updated = drawing
+        for id in existingIDs {
+            guard var shape = updated.shape(id: id) else { continue }
+            shape.parentGroupID = groupID
+            updated = updated.updatingShape(shape)
+        }
+        return (updated, groupID, existingIDs)
+    }
+
+    /// The pure ungroup transform: clears `parentGroupID` on every
+    /// shape currently carrying `groupID`. Returns `nil` (the no-op
+    /// case) when no shape carries it.
+    static func applyingUngroup(
+        _ groupID: UUID, to drawing: Drawing
+    ) -> (drawing: Drawing, memberIDs: [UUID])? {
+        let members = drawing.shapes.filter { $0.parentGroupID == groupID }
+        guard !members.isEmpty else { return nil }
+        var updated = drawing
+        for var shape in members {
+            shape.parentGroupID = nil
+            updated = updated.updatingShape(shape)
+        }
+        return (updated, members.map(\.id))
     }
 
     // MARK: - Receipts
