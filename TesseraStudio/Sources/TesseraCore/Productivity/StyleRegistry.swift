@@ -252,7 +252,13 @@ public enum StyleRegistry {
     /// rather than looping or throwing. Malformed/imported documents
     /// can carry a `basedOn` cycle; this is the documented fallback,
     /// not a bug.
-    private static func chain(from styleID: UUID?, in registry: [UUID: StyleDefinition]) -> [StyleDefinition] {
+    ///
+    /// Internal (not `private`) so `TocController` (P2-C item 2.5) can
+    /// reuse this exact walk to find a heading-family ancestor in a
+    /// block's style chain, rather than reimplementing the `basedOn`
+    /// walk + cycle guard a second time - the design contract's
+    /// explicit instruction. No behavior change from widening alone.
+    static func chain(from styleID: UUID?, in registry: [UUID: StyleDefinition]) -> [StyleDefinition] {
         var result: [StyleDefinition] = []
         var seen = Set<UUID>()
         var current = styleID
