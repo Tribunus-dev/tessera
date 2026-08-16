@@ -167,6 +167,22 @@ public actor CalcBridgeFilter {
                 sheet = sheet.settingCellText(row: r, col: c, text)
             }
         }
+
+        // P2b: table:data-pilot-tables round-trip (import direction -
+        // see "Pivot fods round-trip" below for the export/encode
+        // half and its own scope note). A malformed individual
+        // table:data-pilot-table (unparseable source range, etc.) is
+        // skipped rather than failing the whole import - one bad
+        // pivot definition should not block the sheet's cell data from
+        // ever importing.
+        if let pilotTables = spreadsheet.firstElementChild(named: "table:data-pilot-tables") {
+            let definitions = pilotTables.elementChildren
+                .filter { $0.name == "table:data-pilot-table" }
+                .compactMap { pivotDefinition(from: $0) }
+            if !definitions.isEmpty {
+                sheet.pivotDefinitions = definitions
+            }
+        }
         return sheet
     }
 
@@ -190,7 +206,15 @@ public actor CalcBridgeFilter {
             for cellElement in rowElement.elementChildren
             where cellElement.name == "table:table-cell" || cellElement.name == "table:covered-table-cell" {
                 let cellRepeat = max(1, Int(cellElement.attributes["table:number-columns-repeated"] ?? "1") ?? 1)
-                if cellElement.name == "table:table-cell", let text = cellSourceText(cellElement), !text.isEmpty {
+                if cellElement.name == "table:table-cell", let rawText = cellSourceText(cellElement), !rawText.isEmpty {
+                    // Gap item b, final step: a legacy-imported formula
+                    // that would spill under Tessera's modern dynamic-
+                    // array semantics gets the `@` implicit-intersection
+                    // prefix `wouldSpillAsTopLevelResult` was built (P2-0)
+                    // to detect, now that `@` itself is a real, evaluable
+                    // operator (see Lexer/Parser/Evaluator's own P2b
+                    // changes) - see `legacySpillGuarded`'s doc comment.
+                    let text = legacySpillGuarded(rawText)
                     let expand = min(cellRepeat, maxRepeatExpansion)
                     for offset in 0..<expand {
                         rowTexts[col + offset] = text
@@ -455,45 +479,28 @@ public actor CalcBridgeFilter {
     }
 }
 
-// MARK: - Legacy-import @-prefixing (1.21 dynamic-array completion, item 2)
+// MARK: - Legacy-import @-prefixing (1.21 dynamic-array completion, item 2 -
+// UNBLOCKED at P2-B gap item b)
 
-/// Detection half of the legacy-import `@`-prefixing item this fods
-/// migration unblocks (audit item, plan §3 Class B row 6): a formula
-/// that would produce a spilling dynamic-array result under Tessera's
-/// MODERN evaluation semantics, but was imported from a LEGACY source
-/// (any ODS/XLS this bridge reads) that expects old single-cell-
-/// return behavior, should not start silently spilling into its
-/// neighbour cells on import.
+/// A formula that would produce a spilling dynamic-array result under
+/// Tessera's MODERN evaluation semantics, but was imported from a
+/// LEGACY source (any ODS/XLS this bridge reads) that expects old
+/// single-cell-return behavior, should not start silently spilling into
+/// its neighbour cells on import.
 ///
-/// **Why this is detection-only - the marking half is BLOCKED, not
-/// implemented.** The legacy fix Excel itself ships is an explicit
-/// `@` implicit-intersection prefix on the formula
-/// (`Evaluator.swift`'s own doc comment names this exact operator:
-/// "implicit intersection (`@` in Excel's modern engine)"). Tessera's
-/// formula grammar has no such token: `Lexer.swift`'s `scanToken()`
-/// has no case for `@` at all and falls through to its `default`
-/// branch, which throws `LexError("Unexpected character '@'")` for
-/// ANY input containing it - confirmed by reading the lexer, not
-/// assumed. Inserting a literal `@` into an imported formula's source
-/// text would therefore turn a working formula into a parse error on
-/// every subsequent evaluation - strictly worse than leaving it to
-/// spill. Adding `@` support is a `Lexer.swift`/`Parser.swift`/
-/// `Evaluator.swift` change (a real operator: tokenize it, parse it
-/// as a prefix marker, and have `Evaluator` route a `@`-marked
-/// top-level formula through the SAME `implicitIntersection(_:at:
-/// sheet:engine:)` reduction it already applies to operand-position
-/// ranges) - none of those files are in this track's (0-A Calc) owned
-/// file list this wave, so the fix is BLOCKED here rather than
-/// applied unsafely. See `TesseraStudio/docs/.scratch/p2-0-findings-a.md`.
-///
-/// **What IS shipped: the detection this future fix will need**,
-/// built by reusing the existing parser/AST (`FormulaParser`,
-/// `FormulaAST`) rather than a second formula grammar - matching this
-/// item's own instruction to reuse 1.21's machinery. Ready
-/// infrastructure with no caller yet, the same shape
-/// `TokenArray.swift`'s own header comment documents for itself
-/// ("NOT wired into SheetEngine's live cell-evaluation path in this
-/// pass... ready infrastructure for a later increment to adopt").
+/// **History (P2-0 -> P2-B).** P2-0 shipped `wouldSpillAsTopLevelResult`
+/// below as DETECTION ONLY: the marking half was BLOCKED because
+/// Tessera's formula grammar had no `@` token at all -
+/// `Lexer.swift`'s `scanToken()` fell through to `default` and threw
+/// `LexError("Unexpected character '@'")` for any input containing it,
+/// so inserting a literal `@` into an imported formula would have
+/// turned a working formula into a parse error on every subsequent
+/// evaluation - strictly worse than leaving it to spill. See
+/// `TesseraStudio/docs/.scratch/p2-0-findings-a.md` for the full
+/// original reasoning. P2-B gap item b added the real `@` operator
+/// (`Lexer`/`Parser`/`Evaluator`, all outside this file) and wires the
+/// marking half in below (`legacySpillGuarded`, called from
+/// `mapRows(of:)`'s formula-cell branch).
 extension CalcBridgeFilter {
 
     /// The five functions `FunctionRegistry.registerArray()`
@@ -542,6 +549,429 @@ extension CalcBridgeFilter {
             return range.width * range.height > 1
         default:
             return false
+        }
+    }
+
+    /// The marking half (gap item b): inserts an `@` implicit-
+    /// intersection prefix right after `text`'s leading "=" when
+    /// `wouldSpillAsTopLevelResult` says it would otherwise spill,
+    /// preserving the legacy single-cell-return behavior the workbook's
+    /// original (pre-Tessera) author relied on.
+    ///
+    /// **No separate "already has an explicit @" check is needed to
+    /// avoid double-prefixing.** Once `@` is a real prefix operator
+    /// (`Parser.parseUnary`), an already-`@`-prefixed formula's
+    /// top-level AST is `.unary(op: .implicitIntersection, ...)` -
+    /// which `wouldSpillAsTopLevelResult`'s own switch does not match
+    /// (only `.function`/`.range` do), so it already reads as "would
+    /// not spill" and this function leaves it untouched. Idempotent by
+    /// construction, not by a redundant guard.
+    ///
+    /// A non-formula value, or a formula this static check cannot
+    /// resolve, passes through unchanged (`wouldSpillAsTopLevelResult`'s
+    /// own conservative-false contract).
+    static func legacySpillGuarded(_ text: String) -> String {
+        guard wouldSpillAsTopLevelResult(formulaSource: text), let eqIndex = text.firstIndex(of: "=") else { return text }
+        let insertAt = text.index(after: eqIndex)
+        return String(text[..<insertAt]) + "@" + String(text[insertAt...])
+    }
+}
+
+// MARK: - Pivot fods round-trip (2.2b item f)
+
+/// `table:data-pilot-table` import/export - the fods round-trip surface
+/// design decision 12 names for pivot definitions (never the xlsx parts
+/// directly, per `sota-p2-core-report.md` #2.2's SOTA evidence).
+///
+/// **Element/attribute vocabulary.** Real ODF 1.2 §9.3 names
+/// (`table:data-pilot-table`, `table:source-cell-range`,
+/// `table:data-pilot-field`, `table:orientation`, `table:function`,
+/// `table:data-pilot-level`, `table:data-pilot-subtotals`/`-subtotal`,
+/// `table:data-pilot-members`/`-member`, `table:data-pilot-groups`/
+/// `-group`/`-group-member`) are used for every structural element this
+/// engine's own field vocabulary maps onto directly. Four things this
+/// pass could NOT verify against a real soffice-produced pivot fods
+/// (the P2-0 fods migration's own probe covered plain cells/formulas,
+/// not pivot tables - no probe corpus with a real pivot exists yet, and
+/// building one needs UNO macro scripting to script LO into creating
+/// one, out of this track's scope) get a `tessera:`-namespaced
+/// attribute instead of guessing at unverified real-ODF spelling:
+/// `tessera:id` (definition identity - ODF has no such concept, this
+/// bridge's own round-trip needs one), `tessera:sort-*`/
+/// `tessera:auto-show-*` payload attributes on `table:data-pilot-
+/// sort-info`/`table:data-pilot-display-info` (the real elements are
+/// spec-named per `ScDPSaveDimension`'s `sortInfo`/`autoShowInfo`, but
+/// this pass could not verify their exact attribute spelling), the
+/// `table:data-pilot-field-reference` element for `reference` (the real
+/// ODF name for `referenceValue`; attribute spelling likewise
+/// unverified), and `tessera:group-by`/`tessera:date-intervals` on
+/// `table:data-pilot-groups` (the grouping element name is real ODF;
+/// distinguishing numeric-vs-date and spelling the date-interval
+/// multi-select is this bridge's own convention). **Recorded for
+/// architect ratification** (this track's findings file has the full
+/// reasoning): this pass is internally self-consistent (encode's
+/// output round-trips through decode byte-for-byte on the parts that
+/// matter, proven by `CalcBridgeFilterTests`'s direct encode->write->
+/// parse->decode test) but is NOT yet gate-tested against a real
+/// soffice-authored pivot fods the way this file's cell/formula mapping
+/// is - a soffice-probe-gated test (doctrine rule 10) is the natural
+/// follow-up once a real fixture exists.
+///
+/// **Wiring scope call.** The DECODE half is wired into the real
+/// import path (`sheet(fromFlatODS:title:)` above): an imported ODS/XLS
+/// with pivot tables now populates `Sheet.pivotDefinitions`. The ENCODE
+/// half is a real, tested, pure function with no caller yet - this
+/// file's `exportWorkbook` still exports via CSV (its own doc comment:
+/// "a Sheet -> fods serializer through FlatODFWriter is a real
+/// additional surface, not a trivial win"), and CSV cannot carry a
+/// pivot definition at all. Wiring `dataPilotTableElement(for:)` into a
+/// live byte-producing export means building that Sheet -> fods
+/// serializer first - a separate, much larger surface than this one
+/// item, and out of this track's file list to build. Same shape this
+/// file's own `wouldSpillAsTopLevelResult` shipped in P2-0: ready
+/// infrastructure, wired on the read side, waiting for its write-side
+/// caller.
+extension CalcBridgeFilter {
+
+    // MARK: - Encode (SheetPivotDefinition -> FlatODFElement)
+
+    /// One `SheetPivotDefinition` as a `table:data-pilot-table`
+    /// element, ready to nest under a `table:data-pilot-tables`
+    /// container alongside a sheet's `table:table` (see this
+    /// extension's doc comment for the vocabulary this uses).
+    static func dataPilotTableElement(for definition: SheetPivotDefinition) -> FlatODFElement {
+        var attrs: [String: String] = [
+            "table:name": definition.name,
+            "tessera:id": definition.id.uuidString,
+            "table:grand-total": grandTotalAttribute(columnGrand: definition.columnGrand, rowGrand: definition.rowGrand),
+            "table:ignore-empty-rows": boolAttr(definition.ignoreEmptyRows),
+            "table:show-filter-button": boolAttr(definition.filterButton),
+            "table:drill-down": boolAttr(definition.drillDown),
+            "tessera:repeat-if-empty": boolAttr(definition.repeatIfEmpty),
+        ]
+        if let grandTotalName = definition.grandTotalName { attrs["tessera:grand-total-name"] = grandTotalName }
+        if let styleInfo = definition.styleInfo {
+            attrs["tessera:style-name"] = styleInfo.styleName
+            attrs["tessera:style-show-row-headers"] = boolAttr(styleInfo.showRowHeaders)
+            attrs["tessera:style-show-column-headers"] = boolAttr(styleInfo.showColumnHeaders)
+            attrs["tessera:style-show-row-stripes"] = boolAttr(styleInfo.showRowStripes)
+            attrs["tessera:style-show-column-stripes"] = boolAttr(styleInfo.showColumnStripes)
+            attrs["tessera:style-show-last-column"] = boolAttr(styleInfo.showLastColumn)
+        }
+
+        var children: [FlatODFNode] = []
+        if let source = definition.sourceRangeRef {
+            children.append(.element(FlatODFElement(
+                name: "table:source-cell-range",
+                attributes: ["table:cell-range-address": source.description]
+            )))
+        }
+        if let outputCol = definition.outputTopLeftCol, let outputRow = definition.outputTopLeftRow,
+           outputCol >= 0, outputRow >= 0 {
+            // `CellAddr.init` traps on a negative coordinate;
+            // `outputTopLeftCol`/`outputTopLeftRow` carry no such
+            // validation on `SheetPivotDefinition` (unlike the source
+            // range, which is guarded by `sourceRangeRef`'s own nil
+            // check) - skip the target-range element defensively
+            // rather than crash on a definition nobody validated.
+            let anchor = CellAddr(col: outputCol, row: outputRow)
+            let targetRange = RangeRef(sheet: definition.outputSheet, topLeft: anchor, bottomRight: anchor)
+            children.append(.element(FlatODFElement(
+                name: "table:target-range-address",
+                attributes: ["table:cell-range-address": targetRange.description]
+            )))
+        }
+        children.append(contentsOf: definition.fields.map { .element(dataPilotFieldElement(for: $0)) })
+
+        return FlatODFElement(name: "table:data-pilot-table", attributes: attrs, children: children)
+    }
+
+    private static func dataPilotFieldElement(for field: SheetPivotField) -> FlatODFElement {
+        var attrs: [String: String] = [
+            "table:source-field-name": field.fieldName,
+            "table:orientation": field.orientation.rawValue,
+            "table:used-hierarchy": "-1",
+            "tessera:subtotal-auto": boolAttr(field.subtotalAuto),
+            "tessera:repeat-item-labels": boolAttr(field.repeatItemLabels),
+        ]
+        if let function = field.function { attrs["table:function"] = function.rawValue }
+
+        var levelChildren: [FlatODFNode] = []
+        if !field.subtotals.isEmpty {
+            levelChildren.append(.element(FlatODFElement(
+                name: "table:data-pilot-subtotals",
+                children: field.subtotals.map { .element(FlatODFElement(name: "table:data-pilot-subtotal", attributes: ["table:function": $0.rawValue])) }
+            )))
+        }
+        if !field.members.isEmpty {
+            levelChildren.append(.element(FlatODFElement(
+                name: "table:data-pilot-members",
+                children: field.members.map {
+                    .element(FlatODFElement(name: "table:data-pilot-member", attributes: [
+                        "table:name": $0.name,
+                        "table:display": boolAttr($0.visible),
+                    ]))
+                }
+            )))
+        }
+        if let autoShow = field.autoShow {
+            levelChildren.append(.element(FlatODFElement(name: "table:data-pilot-display-info", attributes: [
+                "table:enabled": boolAttr(autoShow.enabled),
+                "table:data-field": autoShow.dataFieldName,
+                "table:member-count": String(autoShow.itemCount),
+                "table:display-member-mode": autoShow.direction == .top ? "from-top" : "from-bottom",
+            ])))
+        }
+        if let sort = field.sort {
+            var sortAttrs = [
+                "table:order": sort.ascending ? "ascending" : "descending",
+                "tessera:sort-mode": sort.mode.rawValue,
+            ]
+            if let dataFieldName = sort.dataFieldName { sortAttrs["table:data-field"] = dataFieldName }
+            levelChildren.append(.element(FlatODFElement(name: "table:data-pilot-sort-info", attributes: sortAttrs)))
+        }
+        if let layout = field.layout {
+            levelChildren.append(.element(FlatODFElement(name: "table:data-pilot-layout-info", attributes: [
+                "table:layout-mode": layout.mode.rawValue,
+                "table:add-empty-lines": boolAttr(layout.addEmptyLine),
+                "tessera:subtotals-at-top": boolAttr(layout.subtotalsAtTop),
+            ])))
+        }
+        if let reference = field.reference {
+            levelChildren.append(.element(FlatODFElement(name: "table:data-pilot-field-reference", attributes: [
+                "tessera:reference-type": reference.rawValue,
+            ])))
+        }
+        if let group = field.group {
+            levelChildren.append(.element(dataPilotGroupsElement(for: group)))
+        }
+        levelChildren.append(.element(FlatODFElement(name: "table:data-pilot-level", attributes: ["table:show-empty": boolAttr(field.showEmpty)], children: [])))
+        // `table:data-pilot-level` is the real ODF container for
+        // subtotals/members/layout per spec; this bridge nests its
+        // level-scoped children as SIBLINGS of the (attribute-only)
+        // level marker rather than inside it, to keep this function
+        // flat - decode reads them back from the field element
+        // directly (see `pivotField(from:)`), so the exact nesting
+        // depth is this bridge's own internal contract, not something
+        // an external reader depends on.
+        return FlatODFElement(name: "table:data-pilot-field", attributes: attrs, children: levelChildren)
+    }
+
+    private static func dataPilotGroupsElement(for group: PivotGroupSpec) -> FlatODFElement {
+        switch group {
+        case .numeric(let start, let end, let step):
+            return FlatODFElement(name: "table:data-pilot-groups", attributes: [
+                "tessera:group-by": "numeric",
+                "table:step": String(step),
+                "table:start-value": String(start),
+                "table:end-value": String(end),
+            ])
+        case .date(let by):
+            return FlatODFElement(name: "table:data-pilot-groups", attributes: [
+                "tessera:group-by": "date",
+                "tessera:date-intervals": by.map { $0.rawValue }.sorted().joined(separator: ","),
+            ])
+        case .members(let groups):
+            return FlatODFElement(
+                name: "table:data-pilot-groups",
+                attributes: ["tessera:group-by": "members"],
+                children: groups.map { memberGroup in
+                    .element(FlatODFElement(
+                        name: "table:data-pilot-group",
+                        attributes: ["table:name": memberGroup.name],
+                        children: memberGroup.members.map {
+                            .element(FlatODFElement(name: "table:data-pilot-group-member", attributes: ["table:name": $0]))
+                        }
+                    ))
+                }
+            )
+        }
+    }
+
+    // MARK: - Decode (FlatODFElement -> SheetPivotDefinition)
+
+    /// The inverse of `dataPilotTableElement(for:)`. Returns `nil` for
+    /// an element this bridge cannot make sense of (an unparseable or
+    /// missing source range) rather than throwing - a single malformed
+    /// pivot definition must not fail the whole sheet import (see the
+    /// call site in `sheet(fromFlatODS:title:)`).
+    static func pivotDefinition(from element: FlatODFElement) -> SheetPivotDefinition? {
+        guard let sourceRangeString = element.firstElementChild(named: "table:source-cell-range")?.attributes["table:cell-range-address"],
+              let source = try? AddressParser.parseRange(sourceRangeString) else { return nil }
+
+        let id = element.attributes["tessera:id"].flatMap { UUID(uuidString: $0) } ?? UUID()
+        let name = element.attributes["table:name"] ?? "Pivot"
+        let (columnGrand, rowGrand) = grandTotals(from: element.attributes["table:grand-total"])
+
+        var outputSheet: String?
+        var outputTopLeftCol: Int?
+        var outputTopLeftRow: Int?
+        if let targetRangeString = element.firstElementChild(named: "table:target-range-address")?.attributes["table:cell-range-address"],
+           let target = try? AddressParser.parseRange(targetRangeString) {
+            outputSheet = target.sheet
+            outputTopLeftCol = target.topLeft.col
+            outputTopLeftRow = target.topLeft.row
+        }
+
+        var styleInfo: SheetPivotTableStyleInfo?
+        if let styleName = element.attributes["tessera:style-name"] {
+            styleInfo = SheetPivotTableStyleInfo(
+                styleName: styleName,
+                showRowHeaders: boolValue(element.attributes["tessera:style-show-row-headers"], default: true),
+                showColumnHeaders: boolValue(element.attributes["tessera:style-show-column-headers"], default: true),
+                showRowStripes: boolValue(element.attributes["tessera:style-show-row-stripes"], default: false),
+                showColumnStripes: boolValue(element.attributes["tessera:style-show-column-stripes"], default: false),
+                showLastColumn: boolValue(element.attributes["tessera:style-show-last-column"], default: false)
+            )
+        }
+
+        let fields = element.elementChildren
+            .filter { $0.name == "table:data-pilot-field" }
+            .compactMap { pivotField(from: $0) }
+
+        return SheetPivotDefinition(
+            id: id,
+            name: name,
+            sheet: source.sheet,
+            topLeftCol: source.topLeft.col,
+            topLeftRow: source.topLeft.row,
+            bottomRightCol: source.bottomRight.col,
+            bottomRightRow: source.bottomRight.row,
+            fields: fields,
+            outputSheet: outputSheet,
+            outputTopLeftCol: outputTopLeftCol,
+            outputTopLeftRow: outputTopLeftRow,
+            columnGrand: columnGrand,
+            rowGrand: rowGrand,
+            ignoreEmptyRows: boolValue(element.attributes["table:ignore-empty-rows"], default: false),
+            repeatIfEmpty: boolValue(element.attributes["tessera:repeat-if-empty"], default: false),
+            filterButton: boolValue(element.attributes["table:show-filter-button"], default: true),
+            drillDown: boolValue(element.attributes["table:drill-down"], default: true),
+            grandTotalName: element.attributes["tessera:grand-total-name"],
+            styleInfo: styleInfo
+        )
+    }
+
+    private static func pivotField(from element: FlatODFElement) -> SheetPivotField? {
+        guard let fieldName = element.attributes["table:source-field-name"],
+              let orientationRaw = element.attributes["table:orientation"],
+              let orientation = SheetPivotFieldOrientation(rawValue: orientationRaw) else { return nil }
+        let function = element.attributes["table:function"].flatMap { SheetPivotAggregation(rawValue: $0) }
+        let showEmpty = boolValue(element.firstElementChild(named: "table:data-pilot-level")?.attributes["table:show-empty"], default: false)
+
+        let subtotals = (element.firstElementChild(named: "table:data-pilot-subtotals")?.elementChildren ?? [])
+            .compactMap { $0.attributes["table:function"].flatMap { SheetPivotAggregation(rawValue: $0) } }
+
+        let members = (element.firstElementChild(named: "table:data-pilot-members")?.elementChildren ?? [])
+            .compactMap { memberElement -> SheetPivotFieldMember? in
+                guard let name = memberElement.attributes["table:name"] else { return nil }
+                return SheetPivotFieldMember(name: name, visible: boolValue(memberElement.attributes["table:display"], default: true))
+            }
+
+        var autoShow: SheetPivotFieldAutoShow?
+        if let displayInfo = element.firstElementChild(named: "table:data-pilot-display-info"),
+           let dataFieldName = displayInfo.attributes["table:data-field"] {
+            autoShow = SheetPivotFieldAutoShow(
+                enabled: boolValue(displayInfo.attributes["table:enabled"], default: true),
+                direction: displayInfo.attributes["table:display-member-mode"] == "from-bottom" ? .bottom : .top,
+                itemCount: displayInfo.attributes["table:member-count"].flatMap { Int($0) } ?? 10,
+                dataFieldName: dataFieldName
+            )
+        }
+
+        var sort: SheetPivotFieldSort?
+        if let sortInfo = element.firstElementChild(named: "table:data-pilot-sort-info") {
+            sort = SheetPivotFieldSort(
+                mode: sortInfo.attributes["tessera:sort-mode"].flatMap { SheetPivotSortMode(rawValue: $0) } ?? .name,
+                ascending: sortInfo.attributes["table:order"] != "descending",
+                dataFieldName: sortInfo.attributes["table:data-field"]
+            )
+        }
+
+        var layout: SheetPivotFieldLayout?
+        if let layoutInfo = element.firstElementChild(named: "table:data-pilot-layout-info") {
+            layout = SheetPivotFieldLayout(
+                mode: layoutInfo.attributes["table:layout-mode"].flatMap { SheetPivotFieldLayoutMode(rawValue: $0) } ?? .tabular,
+                addEmptyLine: boolValue(layoutInfo.attributes["table:add-empty-lines"], default: false),
+                subtotalsAtTop: boolValue(layoutInfo.attributes["tessera:subtotals-at-top"], default: true)
+            )
+        }
+
+        let reference = element.firstElementChild(named: "table:data-pilot-field-reference")?
+            .attributes["tessera:reference-type"].flatMap { SheetPivotReferenceMode(rawValue: $0) }
+
+        let group = element.firstElementChild(named: "table:data-pilot-groups").flatMap { pivotGroupSpec(from: $0) }
+
+        return SheetPivotField(
+            fieldName: fieldName,
+            orientation: orientation,
+            function: function,
+            subtotals: subtotals,
+            subtotalAuto: boolValue(element.attributes["tessera:subtotal-auto"], default: true),
+            showEmpty: showEmpty,
+            repeatItemLabels: boolValue(element.attributes["tessera:repeat-item-labels"], default: false),
+            layout: layout,
+            members: members,
+            sort: sort,
+            autoShow: autoShow,
+            reference: reference,
+            group: group
+        )
+    }
+
+    private static func pivotGroupSpec(from element: FlatODFElement) -> PivotGroupSpec? {
+        switch element.attributes["tessera:group-by"] {
+        case "numeric":
+            guard let step = element.attributes["table:step"].flatMap(Double.init),
+                  let start = element.attributes["table:start-value"].flatMap(Double.init),
+                  let end = element.attributes["table:end-value"].flatMap(Double.init) else { return nil }
+            return .numeric(start: start, end: end, step: step)
+        case "date":
+            let intervals = (element.attributes["tessera:date-intervals"] ?? "")
+                .split(separator: ",")
+                .compactMap { PivotDateGroupInterval(rawValue: String($0)) }
+            return .date(by: Set(intervals))
+        case "members":
+            let groups = element.elementChildren
+                .filter { $0.name == "table:data-pilot-group" }
+                .compactMap { groupElement -> PivotMemberGroup? in
+                    guard let name = groupElement.attributes["table:name"] else { return nil }
+                    let members = groupElement.elementChildren
+                        .filter { $0.name == "table:data-pilot-group-member" }
+                        .compactMap { $0.attributes["table:name"] }
+                    return PivotMemberGroup(name: name, members: members)
+                }
+            return .members(groups)
+        default:
+            return nil
+        }
+    }
+
+    // MARK: - Small attribute helpers
+
+    private static func boolAttr(_ value: Bool) -> String { value ? "true" : "false" }
+
+    private static func boolValue(_ raw: String?, default defaultValue: Bool) -> Bool {
+        guard let raw else { return defaultValue }
+        return raw == "true"
+    }
+
+    private static func grandTotalAttribute(columnGrand: Bool, rowGrand: Bool) -> String {
+        switch (rowGrand, columnGrand) {
+        case (true, true): return "both"
+        case (true, false): return "row"
+        case (false, true): return "column"
+        case (false, false): return "none"
+        }
+    }
+
+    private static func grandTotals(from raw: String?) -> (columnGrand: Bool, rowGrand: Bool) {
+        switch raw {
+        case "both": return (true, true)
+        case "row": return (false, true)
+        case "column": return (true, false)
+        case "none": return (false, false)
+        default: return (true, true) // SheetPivotDefinition's own documented default
         }
     }
 }

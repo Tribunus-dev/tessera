@@ -182,6 +182,24 @@ public final class FormulaParser {
             let operand = try parsePrimary()
             return .unary(op: .percent, operand: operand)
         }
+        if tokens[pos] == .at {
+            // Excel's implicit-intersection prefix operator (gap item
+            // b) - a real prefix operator usable at any operand
+            // position (`=@A1:A10`, `=SUM(@A1:A10)`, `=@A1:A10+1`), not
+            // only the formula's own leading token; the "legacy-import
+            // marks the WHOLE formula" use case (`CalcBridgeFilter`'s
+            // `wouldSpillAsTopLevelResult`) is just this same operator
+            // applied at the top level, not a separate grammar
+            // position. Binds as tightly as `-`/`+` (`minPrec: 10`, well
+            // above every `BinaryOp.precedence`, so `@A1:A10+1` parses
+            // as `(@A1:A10)+1`) - `.colon`'s range-operator branch in
+            // `parseExpression` has no `minPrec` gate at all, so this
+            // still consumes a full `A1:A10` range as one operand
+            // before yielding back to the surrounding expression.
+            _ = advance()
+            let operand = try parseExpression(minPrec: 10)
+            return .unary(op: .implicitIntersection, operand: operand)
+        }
         return nil
     }
 

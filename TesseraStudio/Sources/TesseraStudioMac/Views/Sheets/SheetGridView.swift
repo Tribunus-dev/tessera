@@ -193,12 +193,14 @@ public struct SheetGridView: View {
         let baseFormat = viewModel.sheet.cellFormat(row: row, col: col)
         // Conditional-format overlay (SheetConditionalFormat) on top of
         // the cell's own stored format - dxf-style partial override,
-        // never touching what's actually persisted. No aggregate cache
-        // is threaded through here, so `.top10`/`.aboveAverage`/
-        // `.uniqueValues`/`.duplicateValues` rules safely no-op (their
-        // own documented "no aggregate, no match" fallback) while
-        // `.cellValue`/`.formula`/`.text`/`.blanks`/`.errors` apply.
-        let format = viewModel.sheet.conditionalFormatOverlay(row: row, col: col).applied(over: baseFormat)
+        // never touching what's actually persisted. The viewmodel-scoped
+        // aggregate cache (P2-0 gap item a) is threaded through here so
+        // `.top10`/`.aboveAverage`/`.uniqueValues`/`.duplicateValues`
+        // rules resolve to a real overlay instead of the documented
+        // "no aggregate, no match" fallback; `viewModel` invalidates it
+        // on every mutation that can change a cell value (see
+        // `SheetEditorViewModel`'s call sites).
+        let format = viewModel.sheet.conditionalFormatOverlay(row: row, col: col, cache: viewModel.conditionalFormatAggregateCache).applied(over: baseFormat)
         // The COMPUTED value, rendered under the cell's number format:
         // `=SUM(B1:B4)` shows its total, and a currency cell shows the
         // symbol. Editing swaps back to the SOURCE text (see

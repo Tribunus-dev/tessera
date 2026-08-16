@@ -386,12 +386,20 @@ public enum UnaryOp: String, Sendable, Hashable {
     case negate  = "-"
     case positive = "+"
     case percent  = "%"
+    /// Excel's legacy-compatibility implicit-intersection PREFIX
+    /// operator (gap item b, see `Parser.swift`'s `parse()` for the
+    /// "leading token only" grammar restriction and `Evaluator.swift`'s
+    /// `.unary` dispatch for why this routes through
+    /// `evaluateScalarOperand` - the SAME reduction an ordinary range
+    /// operand already gets - rather than a second evaluation path).
+    case implicitIntersection = "@"
 
     public static func from(_ str: String) -> UnaryOp? {
         switch str {
         case "-": return .negate
         case "+": return .positive
         case "%": return .percent
+        case "@": return .implicitIntersection
         default:  return nil
         }
     }
@@ -478,6 +486,15 @@ public enum UnaryEvaluator {
         case .percent:
             guard let n = v.asNumber else { return .error(.notAvailable) }
             return .number(n / 100.0)
+        case .implicitIntersection:
+            // The real range-reduction only `Evaluator.evalUnary`'s
+            // special-case can do (it needs the operand AST + cell
+            // position, neither of which a bare already-evaluated
+            // `Value` carries here) - a defensive identity fallback for
+            // any caller that reaches this generic apply() with an
+            // already-scalar `Value`, matching Excel's own "@ on an
+            // already-scalar value is a no-op" behavior.
+            return v
         }
     }
 }

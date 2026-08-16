@@ -90,20 +90,35 @@ public struct SheetPivotFieldMember: Codable, Sendable, Hashable {
 // MARK: - SheetPivotFieldLayoutMode / SheetPivotFieldLayout
 
 /// Row/column output layout - `ScDPObject` parity name
-/// `DataPilotFieldLayoutInfo`'s layout mode. Only `.tabular` exists at
-/// P2a (the P2a slice is explicitly "tabular layout"); `.outline`/
-/// `.compact` are P2b additions, appended the same additive way
-/// `SheetPivotAggregation` grew from 9 to 12 cases - never a `_v2`
-/// enum swap.
+/// `DataPilotFieldLayoutInfo`'s layout mode. `.outline`/`.compact` are
+/// P2b additions (`PivotTableStore`'s pipeline, see its own doc
+/// comment for exactly what each mode changes), appended the same
+/// additive way `SheetPivotAggregation` grew from 9 to 12 cases - never
+/// a `_v2` enum swap. Existing `.tabular` raw value unchanged, so a
+/// P2a-written `layout` keeps decoding identically.
 public enum SheetPivotFieldLayoutMode: String, Codable, Sendable, Hashable, CaseIterable {
     case tabular
+    /// Per-field subtotal rows (`subtotals`/`subtotalAuto`) are live -
+    /// see `PivotTableStore`'s subtotal-insertion pass. Row-header
+    /// columns stay one-per-level, same as `.tabular`.
+    case outline
+    /// Same subtotal-row behavior as `.outline`, PLUS - when the
+    /// OUTERMOST row field carries this mode - every row-field level
+    /// collapses into a single indented "Row Labels" column
+    /// (`PivotResultGrid.headerColumnCount == 1`). See
+    /// `PivotTableStore`'s doc comment for the exact scope call: a
+    /// table-wide effective mode read off `rowFields.first`, not a
+    /// per-level collapse (mixing collapsed and per-level columns
+    /// within one grid has no coherent rendering).
+    case compact
 }
 
 /// Per-field layout knobs. `PivotTableStore`'s P2a pipeline always
-/// builds `.tabular` output regardless of `mode` (there is no other
-/// mode to select yet - see ``SheetPivotFieldLayoutMode``); `addEmptyLine`/
-/// `subtotalsAtTop` are round-trip-only until P2b's outline/compact
-/// work gives them a rendering to affect.
+/// built `.tabular` output regardless of `mode`; P2b's pipeline reads
+/// `mode` for real (see ``SheetPivotFieldLayoutMode``'s doc comment) -
+/// `addEmptyLine` remains round-trip-only (no rendering concept for a
+/// blank spacer row exists yet); `subtotalsAtTop` is live wherever
+/// subtotal-row insertion is (mode != `.tabular`).
 public struct SheetPivotFieldLayout: Codable, Sendable, Hashable {
     public var mode: SheetPivotFieldLayoutMode
     public var addEmptyLine: Bool
@@ -120,6 +135,152 @@ public struct SheetPivotFieldLayout: Codable, Sendable, Hashable {
     }
 }
 
+// MARK: - SheetPivotFieldSort (P2b step "sort")
+
+/// Which member-ordering strategy a row/column field's distinct group
+/// keys use, `ScDPSaveDimension.sortInfo` parity. `.name` is the P2a
+/// default behavior (`QueryEngine`'s mixed-type order over the raw
+/// member value) - a field with `sort == nil` behaves identically to
+/// P2a, so this is purely additive.
+public enum SheetPivotSortMode: String, Codable, Sendable, Hashable, CaseIterable {
+    /// By the member's own value, `QueryEngine`'s mixed-type order.
+    case name
+    /// By a `.data` field's aggregated value for that member -
+    /// `dataFieldName` names which one. `PivotTableStore` sorts by the
+    /// SINGLE-FIELD aggregate (that member's own rows, not a full
+    /// multi-level joint aggregate) - see that file's doc comment for
+    /// the scope call.
+    case data
+    /// By the field's own `members` array order (declared order,
+    /// unsorted values fall back to `.name` order after every declared
+    /// member).
+    case manual
+}
+
+/// One field's sort configuration. `ascending: false` reverses
+/// `QueryEngine`'s own comparison, matching `SheetSortCondition`'s
+/// existing convention.
+public struct SheetPivotFieldSort: Codable, Sendable, Hashable {
+    public var mode: SheetPivotSortMode
+    public var ascending: Bool
+    /// The `.data` field to sort by when `mode == .data`. Ignored for
+    /// every other mode.
+    public var dataFieldName: String?
+
+    public init(mode: SheetPivotSortMode = .name, ascending: Bool = true, dataFieldName: String? = nil) {
+        self.mode = mode
+        self.ascending = ascending
+        self.dataFieldName = dataFieldName
+    }
+}
+
+// MARK: - SheetPivotFieldAutoShow (P2b step "autoShow")
+
+public enum SheetPivotAutoShowDirection: String, Codable, Sendable, Hashable, CaseIterable {
+    case top
+    case bottom
+}
+
+/// Top/bottom-N cutoff over a field's distinct members, ranked by a
+/// `.data` field's aggregate - `ScDPSaveDimension.autoShowInfo` parity.
+/// Per the design contract ("autoShow reuses landed top-N cutoffs"),
+/// `PivotTableStore` implements this by constructing a
+/// `SheetFilterCriteria(kind: .top, ...)` (`QueryEngine.swift`) over
+/// the per-member aggregates and reusing its existing cutoff-based
+/// `rowsFailing(in:)` - not a second top-N implementation.
+public struct SheetPivotFieldAutoShow: Codable, Sendable, Hashable {
+    public var enabled: Bool
+    public var direction: SheetPivotAutoShowDirection
+    /// N items - always a count, never a percent (unlike
+    /// `SheetFilterCriteria.topIsPercent`; a pivot autoShow is always
+    /// item-count based in Excel/LO).
+    public var itemCount: Int
+    /// Which `.data` field's aggregate ranks the members.
+    public var dataFieldName: String
+
+    public init(enabled: Bool = true, direction: SheetPivotAutoShowDirection = .top, itemCount: Int = 10, dataFieldName: String) {
+        self.enabled = enabled
+        self.direction = direction
+        self.itemCount = itemCount
+        self.dataFieldName = dataFieldName
+    }
+}
+
+// MARK: - SheetPivotReferenceMode (P2b step "reference" / show-data-as)
+
+/// A `.data` field's "Show Values As" transform, `ScDPSaveDimension
+/// .referenceValue` parity. **Scope call (recorded for architect
+/// ratification - see this track's findings file):** the design
+/// contract names this field only as "referenceValue (show-data-as)"
+/// with no enumerated mode list. LO/Excel's real vocabulary is much
+/// larger (difference-from/running-total/rank/index, each needing a
+/// caller-chosen base field + base item). Bounded here to the four
+/// modes that need no base-field/base-item selection - the same
+/// "grand total" / "row total" / "column total" concepts
+/// `SheetPivotDefinition.columnGrand`/`rowGrand` already compute, just
+/// expressed as a ratio instead of raw sum. `.normal` (the default,
+/// nil-equivalent) is the P2a behavior: the aggregate's own value,
+/// unchanged.
+public enum SheetPivotReferenceMode: String, Codable, Sendable, Hashable, CaseIterable {
+    /// No transform - the aggregate's own computed value (P2a behavior).
+    case normal
+    case percentOfGrandTotal
+    case percentOfRowTotal
+    case percentOfColumnTotal
+}
+
+// MARK: - PivotGroupSpec (P2b design contract step 4)
+
+/// The interval granularities a `.date` group can bucket by -
+/// `ScDPDimensionSaveData`'s date-grouping checkboxes (Excel/LO both
+/// offer exactly these seven). `PivotGroupSpec.date(by:)` takes a SET
+/// (multi-select, matching that real UI) rather than one case - see
+/// `PivotTableStore.dateGroupLabel(for:by:)` for how multiple selected
+/// granularities combine into one label.
+public enum PivotDateGroupInterval: String, Codable, Sendable, Hashable, CaseIterable {
+    case seconds, minutes, hours, days, months, quarters, years
+}
+
+/// One named bucket of an explicit `.members` grouping - `table:
+/// data-pilot-group`'s ODF shape (a group name + the raw member
+/// display-texts it collects).
+public struct PivotMemberGroup: Codable, Sendable, Hashable {
+    public var name: String
+    /// Display-text values (matching `SheetPivotFieldMember.name`'s own
+    /// display-text convention) collected into this group.
+    public var members: [String]
+
+    public init(name: String, members: [String]) {
+        self.name = name
+        self.members = members
+    }
+}
+
+/// How a field's raw source values collapse into synthetic group keys
+/// before group-key derivation - `ScDPDimensionSaveData` parity
+/// (design contract step 4). Auto-synthesized `Codable` (Swift 5.5+
+/// enum-with-payload synthesis, the same convention `ShapePathSegment`
+/// already uses in this codebase) - a brand-new field
+/// (`SheetPivotField.group`), so there is no legacy wire shape to stay
+/// compatible with.
+public enum PivotGroupSpec: Codable, Sendable, Hashable {
+    /// Buckets a numeric field into `[start + k*step, start +
+    /// (k+1)*step)` runs; a value below `start` falls into the first
+    /// bucket's "< start" catch-all, a value >= `end` into the last
+    /// bucket's "end+" catch-all - see `PivotTableStore
+    /// .numericGroupLabel(for:start:end:step:)` for the exact label
+    /// text.
+    case numeric(start: Double, end: Double, step: Double)
+    /// Buckets a date field by the selected granularities combined
+    /// into one label - see `PivotDateGroupInterval`'s doc comment.
+    case date(by: Set<PivotDateGroupInterval>)
+    /// Explicit named groups over declared member values. A raw value
+    /// matching none of `groups`' members passes through UNGROUPED
+    /// (its own value), matching Excel/LO's "grouped and ungrouped
+    /// items coexist" behavior when not every member is assigned.
+    case members([PivotMemberGroup])
+}
+
 // MARK: - SheetPivotField
 
 /// One field's placement and behavior within a pivot - `ScDPObject`
@@ -131,19 +292,19 @@ public struct SheetPivotFieldLayout: Codable, Sendable, Hashable {
 /// decoding and old readers keep working through a future P3.
 ///
 /// **P2a/P2b split** (design contract `sota-p2-core-report.md` #2.2,
-/// "Slices" line - read before changing this type): P2a ships
+/// "Slices" line - read before changing this type): P2a shipped
 /// `fieldName`/`orientation`/`function`/`subtotals`/`subtotalAuto`/
 /// `showEmpty`/`repeatItemLabels`/`layout`/`members` and
 /// `PivotTableStore`'s tabular-layout + grand-total pipeline built on
-/// top of them. `sort`, `autoShow`, `reference` ("show values as"
-/// modes), and `group` (`PivotGroupSpec`, design contract step 4) are
-/// explicitly P2b per that line and the wave brief's own scope carve-
-/// out ("groups/sort/autoShow/outline/fods round-trip are P2b") - they
-/// are deliberately NOT fields on this struct yet. Adding them later is
-/// a pure-additive `Optional` property each, exactly like this type's
+/// top of them. P2b adds `sort`, `autoShow`, `reference` ("show values
+/// as" modes), and `group` (`PivotGroupSpec`, design contract step 4) -
+/// each a pure-additive `Optional` property, exactly like this type's
 /// own P0 -> P2a evolution: a P2a-written `SheetPivotField` simply
-/// decodes those future keys as absent/nil, no migration needed. See
-/// the P2-A findings file for the full reasoning.
+/// decodes these new keys as absent/nil (auto-synthesized `Decodable`
+/// handles a missing key for an `Optional` stored property with no
+/// custom code), so every P2a fixture/test keeps decoding identically.
+/// See the P2-A findings file for the P2a-era reasoning and this
+/// track's findings file for the P2b field shapes.
 public struct SheetPivotField: Codable, Sendable, Hashable {
     public var fieldName: String
     public var orientation: SheetPivotFieldOrientation
@@ -179,6 +340,22 @@ public struct SheetPivotField: Codable, Sendable, Hashable {
     /// comment for exactly which orientation `PivotTableStore` reads
     /// this on at P2a.
     public var members: [SheetPivotFieldMember]
+    /// P2b: member-ordering override - see ``SheetPivotFieldSort``. Nil
+    /// behaves exactly like P2a (`QueryEngine` mixed-type order,
+    /// ascending).
+    public var sort: SheetPivotFieldSort?
+    /// P2b: top/bottom-N member cutoff - see ``SheetPivotFieldAutoShow``.
+    /// Nil (or `enabled == false`) shows every member, matching P2a.
+    public var autoShow: SheetPivotFieldAutoShow?
+    /// P2b: "show values as" transform for a `.data` field - see
+    /// ``SheetPivotReferenceMode``. Nil (or `.normal`) is the P2a
+    /// behavior: the aggregate's own value, untransformed.
+    public var reference: SheetPivotReferenceMode?
+    /// P2b: collapses this field's raw source values into synthetic
+    /// group buckets before group-key derivation - see
+    /// ``PivotGroupSpec``. Nil means "no grouping" (P2a behavior: the
+    /// raw member value IS the group key).
+    public var group: PivotGroupSpec?
 
     public init(
         fieldName: String,
@@ -189,7 +366,11 @@ public struct SheetPivotField: Codable, Sendable, Hashable {
         showEmpty: Bool = false,
         repeatItemLabels: Bool = false,
         layout: SheetPivotFieldLayout? = nil,
-        members: [SheetPivotFieldMember] = []
+        members: [SheetPivotFieldMember] = [],
+        sort: SheetPivotFieldSort? = nil,
+        autoShow: SheetPivotFieldAutoShow? = nil,
+        reference: SheetPivotReferenceMode? = nil,
+        group: PivotGroupSpec? = nil
     ) {
         self.fieldName = fieldName
         self.orientation = orientation
@@ -200,23 +381,77 @@ public struct SheetPivotField: Codable, Sendable, Hashable {
         self.repeatItemLabels = repeatItemLabels
         self.layout = layout
         self.members = members
+        self.sort = sort
+        self.autoShow = autoShow
+        self.reference = reference
+        self.group = group
     }
 }
 
 // MARK: - SheetPivotTableStyleInfo
 
-/// Minimal placeholder for `ScDPObject`'s `PivotTableStyleInfo`. P2b
-/// (fods `table:data-pilot-table` round-trip + outline/compact
-/// styling) specifies the real shape; P2a only needs the field present
-/// on `SheetPivotDefinition` so encode/decode and no-op-refresh diffing
-/// have somewhere stable to live. See the P2-A findings file for this
-/// placeholder decision - the same license the design contract grants
-/// explicitly for this one field.
+/// Style/banding flags for a pivot's rendered output - `ScDPObject`'s
+/// `PivotTableStyleInfo` parity, expressed with the same field
+/// vocabulary OOXML's `pivotTableStyleInfo` element uses
+/// (name/showRowHeaders/showColHeaders/showRowStripes/showColStripes/
+/// showLastColumn) since that is the concrete, spec-named shape this
+/// track's design contract pointed at ("matching `PivotTableStyleInfo`'s
+/// real LO shape" - see the P2-A findings file). Round-trip/rendering
+/// metadata only - `PivotTableStore` is a pure compute engine and never
+/// reads this, matching `filterButton`/`drillDown`'s own "UI-only,
+/// never read by the engine" convention on `SheetPivotDefinition`.
+///
+/// P2a shipped this as a `{ styleName: String? }` placeholder; the
+/// custom `Codable` below keeps a P2a-encoded payload (missing every
+/// new key) decoding to this type's documented defaults, the same
+/// additive-decode contract `SheetPivotDefinition`'s own `Codable`
+/// extension uses.
 public struct SheetPivotTableStyleInfo: Codable, Sendable, Hashable {
     public var styleName: String?
+    public var showRowHeaders: Bool
+    public var showColumnHeaders: Bool
+    public var showRowStripes: Bool
+    public var showColumnStripes: Bool
+    public var showLastColumn: Bool
 
-    public init(styleName: String? = nil) {
+    public init(
+        styleName: String? = nil,
+        showRowHeaders: Bool = true,
+        showColumnHeaders: Bool = true,
+        showRowStripes: Bool = false,
+        showColumnStripes: Bool = false,
+        showLastColumn: Bool = false
+    ) {
         self.styleName = styleName
+        self.showRowHeaders = showRowHeaders
+        self.showColumnHeaders = showColumnHeaders
+        self.showRowStripes = showRowStripes
+        self.showColumnStripes = showColumnStripes
+        self.showLastColumn = showLastColumn
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case styleName, showRowHeaders, showColumnHeaders, showRowStripes, showColumnStripes, showLastColumn
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        styleName = try c.decodeIfPresent(String.self, forKey: .styleName)
+        showRowHeaders = try c.decodeIfPresent(Bool.self, forKey: .showRowHeaders) ?? true
+        showColumnHeaders = try c.decodeIfPresent(Bool.self, forKey: .showColumnHeaders) ?? true
+        showRowStripes = try c.decodeIfPresent(Bool.self, forKey: .showRowStripes) ?? false
+        showColumnStripes = try c.decodeIfPresent(Bool.self, forKey: .showColumnStripes) ?? false
+        showLastColumn = try c.decodeIfPresent(Bool.self, forKey: .showLastColumn) ?? false
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(styleName, forKey: .styleName)
+        try c.encode(showRowHeaders, forKey: .showRowHeaders)
+        try c.encode(showColumnHeaders, forKey: .showColumnHeaders)
+        try c.encode(showRowStripes, forKey: .showRowStripes)
+        try c.encode(showColumnStripes, forKey: .showColumnStripes)
+        try c.encode(showLastColumn, forKey: .showLastColumn)
     }
 }
 

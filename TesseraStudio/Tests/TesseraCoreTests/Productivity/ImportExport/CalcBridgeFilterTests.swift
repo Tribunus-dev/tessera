@@ -299,12 +299,12 @@ final class CalcBridgeFilterTests: DoctrineTestCase {
 
     // MARK: - wouldSpillAsTopLevelResult(formulaSource:) - item 2's detection half
     //
-    // See CalcBridgeFilter.swift's "Legacy-import @-prefixing" extension
-    // doc comment for why this is detection-only: Lexer.swift has no
-    // `@` token (confirmed by reading it - `scanToken()`'s `default`
-    // branch throws `LexError` for any `@`), so inserting one into
-    // imported formula text would turn a working formula into a parse
-    // error. These tests pin the DETECTION half only.
+    // These tests pin the DETECTION half only (unchanged since P2-0).
+    // The MARKING half (`legacySpillGuarded`, wired into
+    // `mapRows(of:)`) was unblocked at P2-B gap item b once Lexer/
+    // Parser/Evaluator grew a real `@` operator - see
+    // CalcBridgeFilterPivotAndSpillGuardTests.swift for its own coverage
+    // (a separate new file per this track's file-ownership boundary).
 
     func testWouldSpillAsTopLevelResultIsTrueForATopLevelArrayReturningFunctionCall() {
         XCTAssertTrue(CalcBridgeFilter.wouldSpillAsTopLevelResult(formulaSource: "=SEQUENCE(3)"))

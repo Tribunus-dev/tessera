@@ -126,6 +126,18 @@ public final class Evaluator {
     private func evalUnary(op: UnaryOp, operand: FormulaAST, at addr: CellAddr, sheet: String,
                            depth: Int, engine: SheetEngineCore,
                            env: Environment) throws -> Value {
+        if op == .implicitIntersection {
+            // Gap item b: `@` routes through the SAME reduction an
+            // ordinary range operand already gets - `evaluateScalarOperand`
+            // reduces a literal `.range` via `implicitIntersection` and
+            // evaluates anything else (a cell, a function call, a named
+            // range) normally, exactly per that function's own doc
+            // comment. No second evaluation path: `UnaryEvaluator.apply`
+            // is never consulted for this operator here (it carries only
+            // a defensive identity fallback for a caller that reaches it
+            // some other way, e.g. TokenArray's own RPN machine).
+            return try evaluateScalarOperand(operand, at: addr, sheet: sheet, depth: depth, engine: engine, env: env)
+        }
         let v = try evaluateScalarOperand(operand, at: addr, sheet: sheet, depth: depth, engine: engine, env: env)
         return UnaryEvaluator.apply(op, v)
     }

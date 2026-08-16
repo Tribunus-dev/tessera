@@ -441,6 +441,18 @@ public final class SheetEditorViewModel: ObservableObject {
     /// source text; computed values live here and are never persisted.
     public let workbook = SheetWorkbook()
 
+    /// Per-rule aggregate memoization for the CF paint path
+    /// (`SheetGridView.cellView`'s `conditionalFormatOverlay(row:col:
+    /// cache:)` call) - viewmodel-scoped lifetime (P2-0 gap item a):
+    /// one instance per open sheet editor, matching `workbook`'s own
+    /// lifetime, so a `.top10`/`.aboveAverage`/`.uniqueValues`/
+    /// `.duplicateValues` CF rule actually paints instead of the
+    /// documented-safe "no cache, no match" fallback
+    /// (`docs/.scratch/p2-0-findings-a.md`). Invalidated wherever this
+    /// class mutates cell values or swaps in a different sheet snapshot
+    /// - see the call sites below.
+    public let conditionalFormatAggregateCache = SheetConditionalFormatAggregateCache()
+
     private var saveDebounceTask: Task<Void, Never>?
     private let debounceDelay: TimeInterval = 2.0
 
@@ -492,6 +504,7 @@ public final class SheetEditorViewModel: ObservableObject {
             self.sheet = recoveredSheet
             self.document = recoveredSheet.body
             self.draftTitle = recoveredSheet.title
+            conditionalFormatAggregateCache.invalidateAll()
             pendingRecovery = false
         } catch {
             lastError = "Failed to restore backup: \(error)"
@@ -527,6 +540,13 @@ public final class SheetEditorViewModel: ObservableObject {
         self.document = sheet.body
         self.draftTitle = sheet.title
         workbook.hydrate(from: sheet)
+        // Blanket-invalidate rather than diff range-by-range (the
+        // cache's own documented convention for a bulk/whole-sheet
+        // swap): every write path that lands a mutation on this sheet
+        // funnels back here (`SheetsViewModel.commitEditingCell`/
+        // `applyAgentEdit` call `editor?.refresh(with:)`), so this one
+        // hook also covers those without duplicating the call there.
+        conditionalFormatAggregateCache.invalidateAll()
     }
 
     // MARK: - Multi-sheet workbook (tabs)
@@ -583,6 +603,7 @@ public final class SheetEditorViewModel: ObservableObject {
         self.selectedCell = nil
         self.editingCell = nil
         self.editingText = ""
+        conditionalFormatAggregateCache.invalidateAll()
     }
 
     // MARK: - Body
@@ -620,6 +641,7 @@ public final class SheetEditorViewModel: ObservableObject {
             let updated = try await store.setBody(ast, for: sheet.id)
             self.sheet = updated
             self.document = updated.body
+            conditionalFormatAggregateCache.invalidateAll()
             clearRecoveryFile()
         } catch {
             lastError = String(describing: error)
@@ -685,6 +707,7 @@ public final class SheetEditorViewModel: ObservableObject {
             let updated = try await store.setCell(row: coord.row, col: coord.col, value: text, for: sheet.id)
             self.sheet = updated
             self.document = updated.body
+            conditionalFormatAggregateCache.invalidateAll()
         } catch {
             lastError = String(describing: error)
         }
@@ -853,6 +876,7 @@ public final class SheetEditorViewModel: ObservableObject {
             let updated = try await store.insertRow(at: index, for: sheet.id)
             self.sheet = updated
             self.document = updated.body
+            conditionalFormatAggregateCache.invalidateAll()
         } catch {
             lastError = String(describing: error)
         }
@@ -865,6 +889,7 @@ public final class SheetEditorViewModel: ObservableObject {
             let updated = try await store.deleteRow(at: index, for: sheet.id)
             self.sheet = updated
             self.document = updated.body
+            conditionalFormatAggregateCache.invalidateAll()
         } catch {
             lastError = String(describing: error)
         }
@@ -877,6 +902,7 @@ public final class SheetEditorViewModel: ObservableObject {
             let updated = try await store.insertColumn(at: index, for: sheet.id)
             self.sheet = updated
             self.document = updated.body
+            conditionalFormatAggregateCache.invalidateAll()
         } catch {
             lastError = String(describing: error)
         }
@@ -889,6 +915,7 @@ public final class SheetEditorViewModel: ObservableObject {
             let updated = try await store.deleteColumn(at: index, for: sheet.id)
             self.sheet = updated
             self.document = updated.body
+            conditionalFormatAggregateCache.invalidateAll()
         } catch {
             lastError = String(describing: error)
         }

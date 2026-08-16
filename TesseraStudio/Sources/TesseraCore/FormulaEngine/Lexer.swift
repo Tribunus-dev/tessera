@@ -42,6 +42,14 @@ public enum Token: Equatable, Sendable, CustomStringConvertible {
     case eq                  // =
     case neq                 // <>  (must check before < and >)
     case ampersand           // &  (concat)
+    /// `@` - Excel's implicit-intersection prefix operator (gap item
+    /// b). A real prefix operator usable at any operand position, same
+    /// binding-power tier as unary `-`/`+` - see
+    /// `Parser.parseUnary()`'s own doc comment for the tight-binding
+    /// precedence rule and why it is NOT restricted to only the
+    /// formula's first token. The lexer itself just emits the token
+    /// wherever `@` appears, same as every other operator token here.
+    case at
     case eof
 
     public var description: String {
@@ -78,6 +86,7 @@ public enum Token: Equatable, Sendable, CustomStringConvertible {
         case .eq:       return "="
         case .neq:      return "<>"
         case .ampersand: return "&"
+        case .at:       return "@"
         case .eof:      return "<EOF>"
         }
     }
@@ -203,6 +212,7 @@ public final class Lexer {
         case "!": _ = advance(); return .bang
         case ".": _ = advance(); return .dot
         case "&": _ = advance(); return .ampersand
+        case "@": _ = advance(); return .at
         case "$": return try scanDollarRef()
         case "'": return try scanQuotedSheetRef()
         case "\"": return try scanString()
