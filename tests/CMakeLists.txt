@@ -331,6 +331,18 @@ llama_build(test-telemetry-jsonl.cpp)
 llama_test(test-telemetry-jsonl)
 llama_build(test-tessera-config.cpp)
 llama_test(test-tessera-config)
+# W3 task 3.1 (host-amd-implementation-plan): unit test for
+# ts_classify_amd_arch_name(), the pure-string half of AMD arch detection.
+# Builds tile-detect.cpp directly (it lives in tools/quantize/tessera,
+# compiled into llama-quantize-impl, not into llama-common) so this stays
+# a small, portable ctest with no ROCm/HIP dependency - see the file header
+# comment in test-tessera-tile-detect-amd.cpp.
+llama_build(test-tessera-tile-detect-amd.cpp
+    ${PROJECT_SOURCE_DIR}/tools/quantize/tessera/tile-detect.cpp)
+llama_test(test-tessera-tile-detect-amd)
+target_include_directories(test-tessera-tile-detect-amd PRIVATE
+    ${PROJECT_SOURCE_DIR}/tools/quantize/tessera
+    ${PROJECT_SOURCE_DIR}/ggml/src)
 llama_build(test-dflash-loader.cpp)
 llama_test(test-dflash-loader)
 target_include_directories(test-dflash-loader PRIVATE ${PROJECT_SOURCE_DIR}/src)
