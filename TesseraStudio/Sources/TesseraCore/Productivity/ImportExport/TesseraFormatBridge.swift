@@ -55,13 +55,25 @@ public actor TesseraFormatBridge {
     // MARK: - Supported formats
 
     /// Formats that can be imported (external file → Block AST).
+    ///
+    /// `docm`/`xlsm`/`pptm` (P2-D item 2.13, MacroCompatLayer) recognize
+    /// the macro-enabled OOXML variants alongside their plain siblings -
+    /// this list only gates format RECOGNITION (what the app will offer/
+    /// accept). It does not by itself make `word/xl/ppt:vbaProject.bin`
+    /// survive the round trip: that needs the Python bridge script (or a
+    /// Swift-side OOXML zip reader) to actually extract/re-inject the
+    /// preserved part - see this wave's findings file
+    /// (`docs/.scratch/p2-d-findings-1.md`) for the exact hook this
+    /// track could not reach from its own file list.
     public static let importFormats: [String] = [
-        "docx", "xlsx", "pptx", "eml", "mbox", "html", "md", "pdf",
+        "docx", "docm", "xlsx", "xlsm", "pptx", "pptm", "eml", "mbox", "html", "md", "pdf",
     ]
 
     /// Formats that can be exported (Block AST → external file).
+    /// See `importFormats`'s own doc comment for the macro-preservation
+    /// caveat these three additions carry.
     public static let exportFormats: [String] = [
-        "docx", "xlsx", "pptx", "eml", "html", "md", "pdf",
+        "docx", "docm", "xlsx", "xlsm", "pptx", "pptm", "eml", "html", "md", "pdf",
     ]
 
     /// Formats that can be imported.
