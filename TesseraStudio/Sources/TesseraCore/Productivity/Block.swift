@@ -361,6 +361,76 @@ extension Block {
     }
 }
 
+// MARK: - Block + ContentControl
+
+extension Block {
+    /// The block types eligible to host a ``ContentControl`` (P2-D item
+    /// 2.15). The design contract's own text says a control attaches to
+    /// "existing block cases" PLURAL - a paragraph, a table cell, a list
+    /// item, etc. - deliberately NOT gated to one `BlockType` the way
+    /// every other bridge below is (`.shape`/`.frame`/`.chart`/`.field`/
+    /// `.media`/`.toc` each own exactly one case). This set is the
+    /// judgment call that resolves "which ones, exactly" (recorded here
+    /// and in this wave's findings file, `p2-d-findings-2.md`):
+    ///
+    /// ELIGIBLE - every block type whose own `content: [InlineRun]` is
+    /// ordinary prose a `w:sdt` could legitimately wrap inline, matching
+    /// DOCX's own host set (a paragraph, a table cell, a list item, ...):
+    /// `.paragraph`, `.heading`, `.listItem`, `.tableCell`, `.quote`,
+    /// `.callout`.
+    ///
+    /// INELIGIBLE, and why:
+    /// - Structural/container-only types that hold CHILD blocks rather
+    ///   than their own content - the control would have to live on one
+    ///   of their CHILDREN instead, never on the container itself:
+    ///   `.list`, `.table`, `.toggle`, `.section`, `.frame`,
+    ///   `.shapeGroup`.
+    /// - Types that already own `attributes["<theirKey>"]` for a
+    ///   DIFFERENT single-purpose structured payload, where a second,
+    ///   unrelated attribute on the same block would collide with that
+    ///   block's whole reason for existing: `.shape`, `.chart`, `.media`,
+    ///   `.field`, `.toc`, `.equation`. (A real `w:sdt` never wraps a
+    ///   graphic frame/OLE object/field/TOC/equation this way either -
+    ///   DOCX puts an inline SDT around RUNS inside an ordinary
+    ///   paragraph/table-cell/list-item, not around another special
+    ///   block.)
+    /// - Non-editable / derived / meta / out-of-flow kinds that were
+    ///   never candidates for user-entered form data: `.divider`,
+    ///   `.image`, `.codeBlock`, `.comment`, `.trackInsertion`,
+    ///   `.trackDeletion`, `.footnote`, `.endnote`.
+    public static let contentControlEligibleTypes: Set<BlockType> = [
+        .paragraph, .heading, .listItem, .tableCell, .quote, .callout,
+    ]
+
+    /// Reads/writes the block's ``ContentControl`` via
+    /// `attributes["contentControl"]`. Same JSON-round-trip bridge shape
+    /// as ``Block/shape``/``Block/frame``/``Block/chart``/``Block/field``/
+    /// ``Block/media`` and for the same reason: `ContentControl`'s own
+    /// `Codable` conformance stays the single source of truth for the
+    /// wire shape. UNLIKE those bridges, gating is NOT `type == .oneCase`
+    /// - see ``contentControlEligibleTypes`` for the exact set and the
+    /// reasoning. Returns `nil` for an ineligible block type or
+    /// malformed/missing content; setting on an ineligible block type is
+    /// a no-op, matching every other bridge in this file.
+    public var contentControl: ContentControl? {
+        get {
+            guard Block.contentControlEligibleTypes.contains(type), let raw = attributes["contentControl"] else { return nil }
+            guard let data = try? JSONEncoder().encode(raw) else { return nil }
+            return try? JSONDecoder().decode(ContentControl.self, from: data)
+        }
+        set {
+            guard Block.contentControlEligibleTypes.contains(type) else { return }
+            guard let newValue else {
+                attributes.removeValue(forKey: "contentControl")
+                return
+            }
+            guard let data = try? JSONEncoder().encode(newValue),
+                  let raw = try? JSONDecoder().decode(AnyCodable.self, from: data) else { return }
+            attributes["contentControl"] = raw
+        }
+    }
+}
+
 // MARK: - DocumentPageLayout
 
 /// Page layout for a document. Stored in ``DocumentAST/meta``.

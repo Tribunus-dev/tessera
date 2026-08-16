@@ -78,13 +78,45 @@ Consent language for "heavier runs elsewhere" (server-side training) is
 a SEPARATE grant class written up front - consent cannot broaden
 retroactively.
 
-**19e - Adapter training: MLX sidecar on macOS.** mlx_lm.lora QLoRA
-against the BF16 base (never a quantized base - avoids MLX-vs-llama.cpp
-quant mismatch), rank 8-16, batch 1, seq cap 1024, AC + idle + thermal
-gates reusing TesseraTrainingScheduler's gates; ~4-6GB peak fits the
-16GB floor with the suite quiesced; iOS never trains (adapters sync).
-Output: PEFT safetensors -> convert_lora_to_gguf.py -> hot-load via
---lora. llama.cpp's finetune is not usable (verified WIP/FP32-only).
+**19e - Adapter training: native C++ in the fork, multi-platform, by
+porting not pioneering.** (REVISED 2026-08-16 after the landscape
+research, superseding the earlier MLX-sidecar plan - MLX has no
+AMD/Intel Linux path, so it cannot serve the Fedora build; evidence:
+`.scratch/ggml-training-landscape-report.md`.) The fork already owns
+the substrate (LK loss in ggml-opt, llama_opt epoch path, the
+`build_lora_mm` seam instrumented for activation capture, and
+`llama_opt_init`'s `param_filter` as the base-freezing hook). The
+plan: port QVAC Fabric's MIT-licensed `llama-finetune-lora` training
+core (LoRA graph, masked loss, cosine LR, their Metal/Vulkan backward
+kernels - the only proven multi-backend GGUF-native LoRA trainer,
+active through 2026-08) onto the fork (M); add Granite-4.1 dense
+coverage (S-M; llama-like graph + scalar multipliers, no mamba); add
+aLoRA training gating - position-mask the lora branch at >= the
+invocation offset, loss on post-invocation tokens, emit
+`adapter.alora.invocation_tokens` (S; FIRST-OF-ITS-KIND in C++); add
+bf16/Q8_0 OUT_PROD dtype coverage for the frozen-base backward (S-M);
+carry the #21037 finetune bug patches until upstream merges. Backend
+reality: Vulkan backward is ON MASTER (the Linux AMD/Intel leg exists
+today); CUDA complete; Metal needs the QVAC kernel port - v1 fallback
+is Mac-trains-on-CPU (historical 3B LoRA ~3h class; QVAC's M3 Pro
+Metal reference: 5.3h for an 8-epoch run). Memory: bf16 base + r=8-16
+adapters + materialized-softmax attention at ctx <= 1024 fits ~11-12GB
+- inside the 16GB floor with the suite quiesced; longer ctx waits for
+the checkpointing port. Artifact boundary (the IBM-interop answer):
+emit BOTH a GGUF adapter (hot-load --lora, aLoRA metadata included)
+AND a PEFT-convention directory (safetensors + adapter_config.json
+with HF module names + alora fields) via a small GGUF->PEFT exporter
+(no such tool exists anywhere - ours to write); datasets in JSONL
+"messages" (sdg_hub/training_hub/QVAC all speak it). NON-NEGOTIABLE
+gate: parity validation of one adapter against an Unsloth/PEFT
+reference run (loss curves + adapter equivalence) before any trained
+artifact ships (M). Upstream strategy rides the IBM playbook: the
+Metal kernels (#14909), the bug patches, dtype OUT_PROD, and a
+plain-LoRA example (#13485) are all upstreamable where IBM's Granite
+lead reviews - and nobody owns llama.cpp training today, which makes
+it a more visible contribution than inference work. iOS still never
+trains (adapters sync). MLX demoted to an optional Mac-side dev
+harness, not shipped.
 
 **19f - The certifiability chain ships with the first adapter.** Per
 training run, the 12 artifacts from the certifiability report: 27560
