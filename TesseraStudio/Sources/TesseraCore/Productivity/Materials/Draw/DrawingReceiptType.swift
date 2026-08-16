@@ -81,4 +81,8 @@ public enum DrawingReceiptType: String, Codable, Sendable, CaseIterable {
     case groupShapes = "drawing_shapes_grouped"
     /// A shape group was dissolved back into its members (P2-0).
     case ungroupShapes = "drawing_shapes_ungrouped"
+    /// A `.bezier` shape's custom path was set or edited (P2-B 2.3).
+    case setPath = "drawing_shape_path_changed"
+    /// A shape's extrusion (or lack of one) was changed (P2-B 2.17).
+    case setExtrusion = "drawing_shape_extrusion_changed"
 }

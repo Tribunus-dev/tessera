@@ -245,7 +245,12 @@ public actor ODGBridgeFilter {
         }
 
         switch shape.kind {
-        case .rect, .freeform, .ellipse:
+        case .rect, .freeform, .ellipse, .bezier:
+            // .bezier placeholder (item 2.3's real I/O work): maps onto
+            // the bounding-box element for now, same honest-placeholder
+            // shape as .freeform above - a real draw:path element
+            // carrying shape.path's subpaths is BezierPathController's
+            // own job to add here.
             attributes.merge(boxAttributes(shape.geometry)) { _, new in new }
         case .line, .arrow:
             attributes.merge(lineAttributes(shape.geometry)) { _, new in new }
@@ -265,7 +270,7 @@ public actor ODGBridgeFilter {
     /// `ShapeKind` on the way back in.
     private static func elementName(for kind: ShapeKind) -> String {
         switch kind {
-        case .rect, .freeform: return "draw:rect"
+        case .rect, .freeform, .bezier: return "draw:rect"
         case .ellipse: return "draw:ellipse"
         case .line, .arrow: return "draw:line"
         case .polygon, .star: return "draw:polygon"

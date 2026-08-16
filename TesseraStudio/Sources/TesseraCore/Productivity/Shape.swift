@@ -14,9 +14,14 @@ import CoreGraphics
 
 // MARK: - ShapeKind
 
-/// The P0 shape catalog plus P1's `.connector` (item 1.19). P2 adds
-/// `.bezier` / CAD-style custom paths - out of scope here per the
-/// architect decision (3D and morph are punted entirely, not phased).
+/// The P0 shape catalog plus P1's `.connector` (item 1.19) and P2's
+/// `.bezier` (item 2.3, full custom-geometry paths - the P0 `.freeform`
+/// case stays as a plain rect-bounded placeholder; `.bezier` is the one
+/// with a real `Shape.path`). 3D (2.17) and morph (2.18) do NOT get new
+/// `ShapeKind` cases - a 3D-extruded shape is still fundamentally a 2D
+/// `ShapeKind` (rect/ellipse/polygon/bezier/...) with `Shape.extrusion`
+/// set, matching how OOXML/ODF themselves model extrusion as a
+/// property of an existing 2D shape, not a distinct shape family.
 public enum ShapeKind: String, Codable, Sendable, Hashable, CaseIterable {
     case rect
     case ellipse
@@ -25,6 +30,12 @@ public enum ShapeKind: String, Codable, Sendable, Hashable, CaseIterable {
     case polygon
     case star
     case freeform
+    /// Full custom-geometry path (item 2.3) - `Shape.path` is this
+    /// case's real geometry; `Shape.geometry`'s x/y/width/height still
+    /// carries the path's bounding box (kept in sync by whoever mutates
+    /// `path`) so every geometry-agnostic call site (z-order, layer
+    /// membership, group transforms) keeps working unchanged.
+    case bezier
     /// A `Shape.connector`-carrying shape - see `ConnectorInfo`. Its
     /// own `geometry` is NOT the connector's source of truth (`Shape
     /// .connector`'s doc comment): `ConnectorRouter` derives the
@@ -259,6 +270,13 @@ public struct Shape: Codable, Sendable, Identifiable, Hashable {
     /// renderers read `connector`, not `geometry`, for a connector's
     /// actual path.
     public var connector: ConnectorInfo?
+    /// Non-nil only for `.bezier` shapes (item 2.3) - the actual custom
+    /// geometry. See `ShapePath.swift`.
+    public var path: ShapePath?
+    /// Non-nil when this shape is extruded into 3D (item 2.17,
+    /// extrude-only minimal design). Orthogonal to `kind`/`path` - any
+    /// 2D shape can carry an extrusion. See `ShapeExtrusion.swift`.
+    public var extrusion: ShapeExtrusion?
     /// Paint order within the drawing: higher draws on top. Not
     /// necessarily contiguous or unique - `ShapeRenderer`/callers sort
     /// by this, they don't rely on it being densely packed.
@@ -283,6 +301,8 @@ public struct Shape: Codable, Sendable, Identifiable, Hashable {
         stroke: ShapeStroke? = nil,
         text: ShapeText? = nil,
         connector: ConnectorInfo? = nil,
+        path: ShapePath? = nil,
+        extrusion: ShapeExtrusion? = nil,
         zIndex: Int = 0,
         parentGroupID: UUID? = nil,
         layerID: UUID? = nil
@@ -294,6 +314,8 @@ public struct Shape: Codable, Sendable, Identifiable, Hashable {
         self.stroke = stroke
         self.text = text
         self.connector = connector
+        self.path = path
+        self.extrusion = extrusion
         self.zIndex = zIndex
         self.parentGroupID = parentGroupID
         self.layerID = layerID

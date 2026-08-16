@@ -85,7 +85,7 @@ public struct ShapeRenderer: Sendable {
     private func kindIsFillable(_ kind: ShapeKind) -> Bool {
         switch kind {
         case .line, .arrow, .connector: return false
-        case .rect, .ellipse, .polygon, .star, .freeform: return true
+        case .rect, .ellipse, .polygon, .star, .freeform, .bezier: return true
         }
     }
 
@@ -212,6 +212,13 @@ public struct ShapeRenderer: Sendable {
             // owns custom-geometry authoring); the bounding rect is the
             // honest P0 placeholder rather than pretending a real
             // freeform outline exists.
+            return rectPath(shape.geometry)
+        case .bezier:
+            // Placeholder (item 2.3, BezierPathController's own render
+            // path to fill in): real construction from
+            // shape.path.subpaths' move/line/quad/cubic segments via
+            // CGMutablePath. Bounding rect for now, matching .freeform's
+            // own honest-placeholder precedent above.
             return rectPath(shape.geometry)
         case .connector:
             return connectorPath(shape, allShapes: allShapes)
