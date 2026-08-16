@@ -120,9 +120,9 @@ struct ts_tile_config ts_detect_tile_config() {
 // why the string classifier and the device probe are separate functions.
 // ---------------------------------------------------------------------------
 
-enum ts_amd_arch ts_classify_amd_arch_name(const char * gcn_arch_name) {
+enum ts_arch_target ts_classify_amd_arch_name(const char * gcn_arch_name) {
     if (gcn_arch_name == nullptr) {
-        return TS_ARCH_AMD_UNKNOWN;
+        return TS_ARCH_UNKNOWN;
     }
     std::string name(gcn_arch_name);
     // gcnArchName carries optional ":feature[+-]" suffixes (e.g.
@@ -167,21 +167,21 @@ enum ts_amd_arch ts_classify_amd_arch_name(const char * gcn_arch_name) {
         gfx.rfind("gfx8", 0) == 0 || gfx == "gfx900") {
         return TS_ARCH_AMD_GCN;
     }
-    return TS_ARCH_AMD_UNKNOWN;
+    return TS_ARCH_UNKNOWN;
 }
 
-enum ts_amd_arch ts_detect_amd_arch() {
+enum ts_arch_target ts_detect_amd_arch() {
 #if defined(GGML_USE_HIP) || defined(TS_USE_ROCBLAS)
     int device_count = 0;
     if (hipGetDeviceCount(&device_count) != hipSuccess || device_count <= 0) {
-        return TS_ARCH_AMD_UNKNOWN;
+        return TS_ARCH_UNKNOWN;
     }
     hipDeviceProp_t prop{};
     if (hipGetDeviceProperties(&prop, 0) != hipSuccess) {
-        return TS_ARCH_AMD_UNKNOWN;
+        return TS_ARCH_UNKNOWN;
     }
     return ts_classify_amd_arch_name(prop.gcnArchName);
 #else
-    return TS_ARCH_AMD_UNKNOWN;
+    return TS_ARCH_UNKNOWN;
 #endif
 }

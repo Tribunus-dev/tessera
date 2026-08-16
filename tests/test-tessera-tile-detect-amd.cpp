@@ -73,13 +73,13 @@ static void test_gcn_legacy(void) {
 
 static void test_unknown(void) {
     printf("test-tessera-tile-detect-amd: unknown / null input\n");
-    assert(ts_classify_amd_arch_name(nullptr) == TS_ARCH_AMD_UNKNOWN);
-    assert(ts_classify_amd_arch_name("") == TS_ARCH_AMD_UNKNOWN);
-    assert(ts_classify_amd_arch_name("not-a-gfx-string") == TS_ARCH_AMD_UNKNOWN);
+    assert(ts_classify_amd_arch_name(nullptr) == TS_ARCH_UNKNOWN);
+    assert(ts_classify_amd_arch_name("") == TS_ARCH_UNKNOWN);
+    assert(ts_classify_amd_arch_name("not-a-gfx-string") == TS_ARCH_UNKNOWN);
     // gfx9 codes that are neither CDNA1/2 nor the gfx900 GCN boundary
     // (e.g. Vega20's gfx906, an APU-only gfx9 SKU) are not in the spec's
     // table and must not silently misclassify as GCN or CDNA.
-    assert(ts_classify_amd_arch_name("gfx906") == TS_ARCH_AMD_UNKNOWN);
+    assert(ts_classify_amd_arch_name("gfx906") == TS_ARCH_UNKNOWN);
 }
 
 int main(void) {
