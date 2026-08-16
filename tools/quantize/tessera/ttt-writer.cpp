@@ -149,10 +149,40 @@ void ts_collect_arrays(const std::string & name,
     ts_add_array(out, name + ".awq_scale",           "F32", t.awq_scale,             {in_dim});
     ts_add_array(out, name + ".awq_input_scale",     "F32", t.awq_input_scale,       {in_dim});
 
+    // row_scale/lane_scale: cheap (out_dim, and out_dim*ceil(in_dim/8)
+    // respectively - a few tenths of a percent and a few percent of the
+    // tensor's own byte size) magnitude hints the packer's scale-fitting
+    // step uses instead of collapsing to one whole-tensor global_amp value
+    // - see tessera-ternary.h for the full rationale/measurements. Only
+    // written when populated (a caller that hasn't been updated to
+    // compute them yields empty vectors here, same optional-array
+    // convention act_scale already uses below) - the reader treats
+    // absence as "fall back to global_amp", so this is purely additive
+    // and backward compatible with tile-neutral safetensors directories
+    // written before this field existed.
+    if (!t.row_scale.empty()) {
+        ts_add_array(out, name + ".row_scale", "F16", t.row_scale, {out_dim});
+    }
+    if (!t.lane_scale.empty()) {
+        const int64_t lanes_per_row = (in_dim + TS_TRANSPORT_LANE_SIZE - 1) / TS_TRANSPORT_LANE_SIZE;
+        ts_add_array(out, name + ".lane_scale", "F16", t.lane_scale, {out_dim * lanes_per_row});
+    }
+
+    // dartquant_rotation: the learned K x K rotation, shape-encoded (K is
+    // recovered from the array's own [K, K] shape at read time, no
+    // separate scalar needed). Only written when a DartQuant-quantized
+    // tensor populated it - see tessera-ternary.h. Absence means "no
+    // rotation", exactly like row_scale/lane_scale's own optional
+    // convention above.
+    if (!t.dartquant_rotation.empty()) {
+        const int64_t K = t.dartquant_block_size;
+        ts_add_array(out, name + ".dartquant_rotation", "F16", t.dartquant_rotation, {K, K});
+    }
+
     // core is NOT shipped: the transport artifact carries trits + global_amp
-    // + outliers, which is sufficient for the packer to reconstruct page/lane
-    // scales for any tile geometry. This keeps the transport at ~half the BF16
-    // size instead of 2.5x.
+    // + outliers + row_scale/lane_scale, which is sufficient for the packer
+    // to reconstruct page/lane scales for any tile geometry. This keeps the
+    // transport at ~half the BF16 size instead of 2.5x.
     // (empty when AWQ alpha resolved to 0). The reader treats its absence as
     // "no act_scale" and leaves the vector empty.
     if (!t.act_scale.empty()) {
@@ -713,6 +743,25 @@ void ts_spool_collect_arrays(std::ofstream & spoolf,
     ts_spool_add_array(spoolf, out, name + ".outlier_vals",        "F16", t.outlier_vals,          {nnz}, err, ok);
     ts_spool_add_array(spoolf, out, name + ".awq_scale",           "F32", t.awq_scale,             {in_dim}, err, ok);
     ts_spool_add_array(spoolf, out, name + ".awq_input_scale",     "F32", t.awq_input_scale,       {in_dim}, err, ok);
+
+    // row_scale/lane_scale: see ts_collect_arrays' comment (ts_write_ttt,
+    // above) for the full rationale - mirrored here so the streaming and
+    // in-memory paths emit identical keys/shapes/dtypes, same as every
+    // other array in this function.
+    if (!t.row_scale.empty()) {
+        ts_spool_add_array(spoolf, out, name + ".row_scale", "F16", t.row_scale, {out_dim}, err, ok);
+    }
+    if (!t.lane_scale.empty()) {
+        const int64_t lanes_per_row = (in_dim + TS_TRANSPORT_LANE_SIZE - 1) / TS_TRANSPORT_LANE_SIZE;
+        ts_spool_add_array(spoolf, out, name + ".lane_scale", "F16", t.lane_scale, {out_dim * lanes_per_row}, err, ok);
+    }
+
+    // dartquant_rotation: see ts_collect_arrays' comment above - mirrored
+    // here for the streaming path.
+    if (!t.dartquant_rotation.empty()) {
+        const int64_t K = t.dartquant_block_size;
+        ts_spool_add_array(spoolf, out, name + ".dartquant_rotation", "F16", t.dartquant_rotation, {K, K}, err, ok);
+    }
 
     // core is NOT shipped (see ts_write_ttt comment).
     // (empty when AWQ alpha resolved to 0). The reader treats its absence as

@@ -681,6 +681,14 @@ struct llama_tile_rdna3_tensor {
     ggml_tensor * lane_scales         = nullptr;
     std::array<int64_t, 4> ne         = { 1, 1, 1, 1 };
 
+    // Optional DartQuant rotation (tessera-ternary.h's dartquant_rotation):
+    // a learned K x K orthogonal matrix, present only when this tensor was
+    // quantized via the DartQuant regime expert. nullptr (the common case)
+    // means the trits are in the plain (unrotated) basis - build_qkv/
+    // build_ffn skip the activation pre-rotate entirely when this is null,
+    // so a model with no DartQuant tensors pays zero extra graph cost.
+    ggml_tensor * dartquant_rotation  = nullptr;
+
     bool valid() const { return packed != nullptr; }
 };
 

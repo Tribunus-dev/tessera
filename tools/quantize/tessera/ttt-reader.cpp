@@ -264,6 +264,45 @@ bool ts_read_tensor_arrays(std::ifstream & f,
     if (const st_entry * e = ts_find(merged, name + ".core")) {
         if (!ts_read_typed(f, shard_header.data_section_off, *e, t.core, err)) return false;
     }
+    // row_scale/lane_scale are optional: absence (a tile-neutral
+    // safetensors directory written before this field existed) => leave
+    // both vectors empty, which the packer's own fallback chain already
+    // treats as "use global_amp" (see tessera-ternary.h).
+    if (const st_entry * e = ts_find(merged, name + ".row_scale")) {
+        if (!ts_read_typed(f, shard_header.data_section_off, *e, t.row_scale, err)) return false;
+        if ((int64_t) t.row_scale.size() != out_dim) {
+            err = "row_scale size mismatch for " + name;
+            return false;
+        }
+    }
+    if (const st_entry * e = ts_find(merged, name + ".lane_scale")) {
+        if (!ts_read_typed(f, shard_header.data_section_off, *e, t.lane_scale, err)) return false;
+        const int64_t expect_lanes = out_dim * ((in_dim + TS_TRANSPORT_LANE_SIZE - 1) / TS_TRANSPORT_LANE_SIZE);
+        if ((int64_t) t.lane_scale.size() != expect_lanes) {
+            err = "lane_scale size mismatch for " + name;
+            return false;
+        }
+    }
+    // dartquant_rotation is optional: absence => no rotation, K stays 0
+    // (see tessera-ternary.h). Block size K is recovered from the array's
+    // own [K, K] shape rather than a separate scalar.
+    if (const st_entry * e = ts_find(merged, name + ".dartquant_rotation")) {
+        if (e->shape.size() != 2 || e->shape[0] != e->shape[1] || e->shape[0] <= 0) {
+            err = "dartquant_rotation shape mismatch for " + name;
+            return false;
+        }
+        const int64_t K = e->shape[0];
+        if (in_dim % K != 0) {
+            err = "dartquant_rotation block size does not divide in_dim for " + name;
+            return false;
+        }
+        if (!ts_read_typed(f, shard_header.data_section_off, *e, t.dartquant_rotation, err)) return false;
+        if ((int64_t) t.dartquant_rotation.size() != K * K) {
+            err = "dartquant_rotation size mismatch for " + name;
+            return false;
+        }
+        t.dartquant_block_size = K;
+    }
     // act_scale is optional: absence => leave the vector empty.
     if (const st_entry * e = ts_find(merged, name + ".act_scale")) {
         if (!ts_read_typed(f, shard_header.data_section_off, *e, t.act_scale, err)) return false;
@@ -781,6 +820,10 @@ std::string ts_ttt_tensor_stream::next(ts_ternary_tensor & tensor) {
     tensor.awq_input_scale.clear();
     tensor.act_scale.clear();
     tensor.core.clear();
+    tensor.row_scale.clear();
+    tensor.lane_scale.clear();
+    tensor.dartquant_rotation.clear();
+    tensor.dartquant_block_size = 0;
     tensor.global_amp = 0.0f;
     tensor.best_alpha = 0.0f;
     tensor.out_dim = c.out_dim;
@@ -842,6 +885,7 @@ static const std::vector<std::string> & ts_ternary_cluster_suffixes() {
     static const std::vector<std::string> s = {
         ".trits", ".outlier_row_offsets", ".outlier_cols", ".outlier_vals",
         ".awq_scale", ".awq_input_scale", ".act_scale", ".global_amp", ".best_alpha",
+        ".row_scale", ".lane_scale", ".dartquant_rotation",
     };
     return s;
 }

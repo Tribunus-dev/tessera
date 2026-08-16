@@ -1028,11 +1028,16 @@ struct llm_graph_context {
     // and no act_scale, unlike build_tile640_lora_mm (docs/amd-tile-
     // format-spec.md 3.4 has no outlier path for this format). LoRA
     // adapters are not supported for RDNA3 tile weights, same as Tile640.
+    // dartquant_rotation: optional (nullptr = no rotation, the common
+    // case). When present, block-diagonally rotates `cur` by its
+    // transpose before the tile matmul - see llama-graph.cpp and
+    // tessera-ternary.h's dartquant_rotation comment.
     ggml_tensor * build_tile_rdna3_lora_mm(
               ggml_tensor * w_packed,
               ggml_tensor * w_page_scales,
               ggml_tensor * w_lane_scales,
-              ggml_tensor * cur) const;
+              ggml_tensor * cur,
+              ggml_tensor * dartquant_rotation = nullptr) const;
 
     // Per-expert variant of build_tile640_lora_mm for MoE FFN.
     // out_dim is the per-expert output dim (rows of each expert matrix).

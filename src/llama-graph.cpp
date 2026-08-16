@@ -1608,7 +1608,8 @@ ggml_tensor * llm_graph_context::build_tile_rdna3_lora_mm(
           ggml_tensor * w_packed,
           ggml_tensor * w_page_scales,
           ggml_tensor * w_lane_scales,
-          ggml_tensor * cur) const {
+          ggml_tensor * cur,
+          ggml_tensor * dartquant_rotation) const {
     // AMD RDNA3 WMMA-native tile matmul (docs/amd-tile-format-spec.md 3.4).
     // No outlier correction cluster and no act_scale, unlike
     // build_tile640_lora_mm above - ggml_tile_rdna3_matmul's kernel accepts
@@ -1617,6 +1618,38 @@ ggml_tensor * llm_graph_context::build_tile_rdna3_lora_mm(
     // needed unless cur is some other type.
     if (cur->type != GGML_TYPE_F16 && cur->type != GGML_TYPE_F32) {
         cur = ggml_cast(ctx0, cur, GGML_TYPE_F32);
+    }
+    if (dartquant_rotation != nullptr) {
+        // DartQuant: this tensor's trits were decided on `weights @
+        // blockdiag(R)` (tessera-quant.cpp's DartQuant dispatch), so
+        // reconstructing the true `W @ X` from the shipped Wrot requires
+        // rotating activations by blockdiag(R)^T first - Wrot @ (R^T @ X)
+        // == (W @ R) @ (R^T @ X) == W @ X for orthogonal R (see
+        // tessera-ternary.h's dartquant_rotation comment). `cur` is
+        // [in_dim, n_tokens]; in_dim is a multiple of K by construction
+        // (tessera-quant.cpp picks K as a divisor of in_dim). Reshaping to
+        // [K, n_blocks*n_tokens] is a free view (K is already the fastest-
+        // varying axis within each token's row), and since the SAME R
+        // applies to every block, one ggml_mul_mat rotates every block for
+        // every token in a single call - dartquant_rotation is shipped
+        // pre-transposed (R^T, not R) specifically so this single
+        // ggml_mul_mat(dartquant_rotation, cur_blocks) call computes R^T @
+        // X directly, with no separate transpose op. Verified numerically
+        // (not just derived) against ggml_mul_mat's own index convention
+        // before relying on it here - see the DartQuant round-trip check.
+        ggml_tensor * cur_f32 = (cur->type == GGML_TYPE_F32) ? cur : ggml_cast(ctx0, cur, GGML_TYPE_F32);
+        if (!ggml_is_contiguous(cur_f32)) {
+            cur_f32 = ggml_cont(ctx0, cur_f32);
+        }
+        const int64_t K         = dartquant_rotation->ne[0];
+        const int64_t in_dim    = cur_f32->ne[0];
+        const int64_t n_tokens  = cur_f32->ne[1];
+        GGML_ASSERT(in_dim % K == 0);
+        const int64_t n_blocks  = in_dim / K;
+
+        ggml_tensor * cur_blocks = ggml_reshape_2d(ctx0, cur_f32, K, n_blocks * n_tokens);
+        ggml_tensor * rotated    = ggml_mul_mat(ctx0, dartquant_rotation, cur_blocks);
+        cur = ggml_reshape_2d(ctx0, rotated, in_dim, n_tokens);
     }
     return ggml_tile_rdna3_matmul(ctx0, w_packed, w_page_scales, w_lane_scales, cur);
 }
@@ -1812,7 +1845,8 @@ llm_graph_qkv llm_graph_context::build_qkv(
         // pre-existing (already broken, out of scope here) behavior
         // exactly rather than dereferencing a null wq_tile_rdna3.
         Qcur = wq_tile_rdna3 ? build_tile_rdna3_lora_mm(wq_tile_rdna3->packed, wq_tile_rdna3->page_scales,
-                                                        wq_tile_rdna3->lane_scales, cur)
+                                                        wq_tile_rdna3->lane_scales, cur,
+                                                        wq_tile_rdna3->dartquant_rotation)
                              : build_lora_mm(layer.wq, cur, layer.wq_s);
         cb(Qcur, "Qcur", il);
         if (layer.wq_b) {
@@ -1824,7 +1858,8 @@ llm_graph_qkv llm_graph_context::build_qkv(
             cb(Qcur, "Qcur_clamped", il);
         }
         Kcur = wk_tile_rdna3 ? build_tile_rdna3_lora_mm(wk_tile_rdna3->packed, wk_tile_rdna3->page_scales,
-                                                        wk_tile_rdna3->lane_scales, cur)
+                                                        wk_tile_rdna3->lane_scales, cur,
+                                                        wk_tile_rdna3->dartquant_rotation)
                              : build_lora_mm(layer.wk, cur, layer.wk_s);
         cb(Kcur, "Kcur", il);
         if (layer.wk_b) {
@@ -1836,7 +1871,8 @@ llm_graph_qkv llm_graph_context::build_qkv(
             cb(Kcur, "Kcur_clamped", il);
         }
         Vcur = wv_tile_rdna3 ? build_tile_rdna3_lora_mm(wv_tile_rdna3->packed, wv_tile_rdna3->page_scales,
-                                                        wv_tile_rdna3->lane_scales, cur)
+                                                        wv_tile_rdna3->lane_scales, cur,
+                                                        wv_tile_rdna3->dartquant_rotation)
                              : build_lora_mm(layer.wv, cur, layer.wv_s);
         cb(Vcur, "Vcur", il);
         if (layer.wv_b) {
@@ -1906,7 +1942,8 @@ ggml_tensor * llm_graph_context::build_ffn(
         tmp = build_lora_mm(up, cur);
     } else if (up_tile_rdna3) {
         tmp = build_tile_rdna3_lora_mm(up_tile_rdna3->packed, up_tile_rdna3->page_scales,
-                                       up_tile_rdna3->lane_scales, cur);
+                                       up_tile_rdna3->lane_scales, cur,
+                                       up_tile_rdna3->dartquant_rotation);
     } else {
         tmp = cur;
     }
@@ -1928,14 +1965,16 @@ ggml_tensor * llm_graph_context::build_ffn(
                 {
                     cur = gate ? build_lora_mm(gate, tmp)
                                : build_tile_rdna3_lora_mm(gate_tile_rdna3->packed, gate_tile_rdna3->page_scales,
-                                                          gate_tile_rdna3->lane_scales, tmp);
+                                                          gate_tile_rdna3->lane_scales, tmp,
+                                                          gate_tile_rdna3->dartquant_rotation);
                     cb(cur, "ffn_gate", il);
                 } break;
             case LLM_FFN_PAR:
                 {
                     cur = gate ? build_lora_mm(gate, cur)
                                : build_tile_rdna3_lora_mm(gate_tile_rdna3->packed, gate_tile_rdna3->page_scales,
-                                                          gate_tile_rdna3->lane_scales, cur);
+                                                          gate_tile_rdna3->lane_scales, cur,
+                                                          gate_tile_rdna3->dartquant_rotation);
                     cb(cur, "ffn_gate", il);
                 } break;
         }
@@ -2062,7 +2101,8 @@ ggml_tensor * llm_graph_context::build_ffn(
     if (down || down_tile_rdna3) {
         cur = down ? build_lora_mm(down, cur)
                    : build_tile_rdna3_lora_mm(down_tile_rdna3->packed, down_tile_rdna3->page_scales,
-                                              down_tile_rdna3->lane_scales, cur);
+                                              down_tile_rdna3->lane_scales, cur,
+                                              down_tile_rdna3->dartquant_rotation);
         cb(cur, "ffn_down", il);
         if (down && (arch == LLM_ARCH_GLM4 || arch == LLM_ARCH_GLM4_MOE || arch == LLM_ARCH_JAIS2)) {
             // GLM4, GLM4_MOE, and JAIS2 seem to have numerical issues with half-precision accumulators

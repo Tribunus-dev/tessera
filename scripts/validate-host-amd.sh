@@ -47,12 +47,23 @@ set -euo pipefail
 
 # GAP-w3-3 bars - see the comment block above for the rationale behind
 # each. Kept as overridable env vars rather than hardcoded so a future
-# wave (e.g. after a calibration fix narrows the ternary ceiling) can
-# tighten REF_COSINE_MIN/REF_FROBENIUS_MAX without editing this script.
+# wave can tighten REF_COSINE_MIN/REF_FROBENIUS_MAX further without
+# editing this script.
+#
+# REF_* tightened after wiring SEPTQ (Hessian error-compensated ternary,
+# previously dead code - see gap ledger) + real AWQ calibration (a real
+# --imatrix, not calib_X=nullptr) + uncapped outlier repair through
+# export-ternary: measured cosine=0.576/frobenius_rel=1.331 on Granite
+# 4.1 3B (both -ngl 0 and -ngl 999), up from the naive path's
+# 0.553/1.590 - a real but modest gain, consistent with ternary
+# quantization's own representational ceiling (see GAP-w3-3: even a
+# perfect-magnitude oracle reconstruction capped at cosine ~0.95 on a
+# single tensor before any cross-layer compounding). Bars set with
+# margin below/above the measured value, not AT it.
 SELF_COSINE_MIN="${SELF_COSINE_MIN:-0.999}"
 SELF_FROBENIUS_MAX="${SELF_FROBENIUS_MAX:-0.01}"
-REF_COSINE_MIN="${REF_COSINE_MIN:-0.5}"
-REF_FROBENIUS_MAX="${REF_FROBENIUS_MAX:-2.0}"
+REF_COSINE_MIN="${REF_COSINE_MIN:-0.55}"
+REF_FROBENIUS_MAX="${REF_FROBENIUS_MAX:-1.5}"
 
 usage() {
     cat >&2 <<'EOF'

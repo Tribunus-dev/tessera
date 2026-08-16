@@ -30,3 +30,10 @@ struct ts_lrq_params {
 
 int ts_train_lrq(const float * weights, int64_t out_dim, int64_t in_dim,
                  const ts_lrq_params * params, ts_lrq_result * result);
+
+// S_out[out_dim x in_dim] = result->U @ result->V, the learned multiplicative
+// pre-scale. Callers (ts_quantize_2d_ternary's FLRQ dispatch) apply it as
+// scaled[i] = weights[i] * S_out[i] before ternarizing. Uses the same
+// CBLAS/rocBLAS-accelerated matmul as the training loop itself.
+void ts_lrq_reconstruct_scale(const ts_lrq_result * result,
+                              int64_t out_dim, int64_t in_dim, float * S_out);

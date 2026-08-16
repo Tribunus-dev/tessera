@@ -441,7 +441,7 @@ static ts_awq_score ts_dispatch_awq_eval(const ts_awq_candidate * cand,
 
 // Quantize a tensor with a forced expert profile and return relative
 // Frobenius t_l^2 = ||W_hat - W||_F^2 / ||W||_F^2.
-static float ts_dispatch_forced_t2(const float * weights, const float * act_scales,
+float ts_dispatch_forced_t2(const float * weights, const float * act_scales,
                                    int64_t out_dim, int64_t in_dim,
                                    ts_expert_id expert, float base_alpha,
                                    float base_clip, float outlier_thresh,
@@ -537,7 +537,7 @@ static float ts_dispatch_kernel_direct_t2(
 //   SEPTQ scoring is not yet plumbed (needs a dequant of its packed
 //     output); its slot keeps the proxy and the verdict labels it.
 // Returns -1 on any failure so the caller keeps the proxy value.
-static float ts_dispatch_tier2_t2(ts_expert_id expert, const float * w,
+float ts_dispatch_tier2_t2(ts_expert_id expert, const float * w,
                                   const float * act_scales,
                                   int64_t out_dim, int64_t in_dim,
                                   float alpha, float clip, uint32_t seed) {
@@ -590,20 +590,23 @@ static float ts_dispatch_tier2_t2(ts_expert_id expert, const float * w,
                 (int64_t)lres.V.size() < r * in_dim) {
                 return -1.0f;
             }
-            std::vector<float> resid((size_t)n);
-            for (int64_t i = 0; i < out_dim; i++) {
-                for (int64_t j = 0; j < in_dim; j++) {
-                    float uv = 0.0f;
-                    for (int64_t k = 0; k < r; k++) {
-                        uv += lres.U[(size_t)(i * r + k)] *
-                              lres.V[(size_t)(k * in_dim + j)];
-                    }
-                    resid[(size_t)(i * in_dim + j)] =
-                        w[(size_t)(i * in_dim + j)] - uv;
-                }
+            // FLRQ trains U/V as a MULTIPLICATIVE pre-scale (S = U@V, warm-
+            // started near identity so W*S stays close to W - see
+            // tessera-lrq.h and per_tensor_calibrate.py:624-724), not an
+            // additive low-rank residual. `scaled = W * S` is the same
+            // proxy convention TS_EXPERT_DARTQUANT above already uses for
+            // `wrot`: a self-referential ternarize-round-trip MSE of the
+            // transformed weight, normalized by the ORIGINAL W's frob2 -
+            // not a true W-vs-reconstruction comparison, but consistent
+            // with how the sibling expert is scored and with what
+            // ts_train_lrq's own training loss actually optimizes.
+            std::vector<float> S((size_t)n), scaled((size_t)n);
+            ts_lrq_reconstruct_scale(&lres, out_dim, in_dim, S.data());
+            for (int64_t i = 0; i < n; i++) {
+                scaled[(size_t)i] = w[(size_t)i] * S[(size_t)i];
             }
             const float mse = ts_quantize_mse_streaming(
-                resid.data(), act_scales, alpha, clip, out_dim, in_dim);
+                scaled.data(), act_scales, alpha, clip, out_dim, in_dim);
             if (mse < 0.0f) return -1.0f;
             return mse * (float)n / frob2;
         }

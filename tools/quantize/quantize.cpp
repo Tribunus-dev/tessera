@@ -23,6 +23,9 @@
 #include "tessera/ttt-reader.h"
 #include "tessera/tessera-gguf-writer.h"
 #include "tessera/tile-detect.h"
+#if defined(TS_USE_ROCBLAS)
+#include "tessera/tessera-rocblas.h"
+#endif
 
 #include "gguf.h"
 
@@ -43,6 +46,8 @@
 #include <unordered_map>
 #include <fstream>
 #include <filesystem>
+#include <atomic>
+#include <thread>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -1180,160 +1185,260 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
     // quantize each 2D weight via ts_quantize_2d_ternary. 3D MoE experts
     // are exported as one ternary tensor per expert (flattened name suffix
     // .E<j>), matching the dispatch's per-expert quantize convention.
-    ts_quant_params_2d qp{};
-    qp.alpha          = 0.0f;   // auto-search
-    qp.clip           = 1.0f;
-    qp.max_outliers   = 0;
-    qp.outlier_thresh = tp.outlier_frac;
-    qp.use_imatrix    = false;
-    qp.use_septq      = false;
-    qp.awq_grid       = 20;
+    //
+    // Parallelized across CPU threads: mirrors the atomic-work-stealing
+    // pool tessera-dispatch.cpp's acceptance-gate re-quantize already uses
+    // (tessera-dispatch.cpp:3679-3798) - a fast sequential pre-pass
+    // enumerates every exportable (base) tensor into `work` (metadata
+    // only, no dequant), then a fixed-size thread pool claims items via an
+    // atomic index, dequantizes + quantizes each one (all experts of a 3D
+    // MoE tensor together, so the base tensor is dequantized once per
+    // work item, not once per expert), and writes into a pre-sized
+    // `results` slot. ts_export_tensor_to_f32/ts_quantize_2d_ternary/
+    // ts_imatrix_lookup are all pure/reentrant (fresh local buffers, const
+    // inputs) - verified by direct code reading, not assumed - so no
+    // locking is needed beyond the atomic work-stealing index itself.
+    //
+    // This trades the original per-tensor RSS-bounded streaming design
+    // for holding the whole ternary-exported model in RAM at once (~half
+    // the source BF16 size, see ttt-writer.cpp:152-155) - fine at this
+    // model's scale (a few GB) on this host; a genuinely RAM-constrained
+    // host would need a bounded producer/consumer window instead of this
+    // all-at-once buffer, not implemented here.
+    ts_quant_params_2d qp_base{};
+    qp_base.alpha          = 0.0f;   // auto-search
+    qp_base.clip           = 1.0f;
+    qp_base.outlier_thresh = tp.outlier_frac;
+    // use_imatrix/use_septq: real calibration data (AWQ act_scales, and
+    // SEPTQ's diagonal-Hessian proxy which is built from those same
+    // act_scales - see ts_septq_quantize_2d's hessian_mode fallback) only
+    // exists when the caller actually supplied --imatrix. Without one,
+    // these degenerate to nothing useful (SEPTQ's diagonal mode with a
+    // null act_scales, AWQ's scale search with no per-channel signal), so
+    // gate both on have_imatrix rather than turning them on unconditionally.
+    qp_base.use_imatrix    = have_imatrix;
+    qp_base.use_septq      = have_imatrix;
+    qp_base.awq_grid       = 20;
 
-    // Streaming source state: the source lambda is called once per exported
-    // (sub)tensor and advances through the GGUF. `cur_*` cache the current
-    // source tensor so a 3D MoE weight yields one call per expert without
-    // re-dequantizing. `full` holds the dequantized F32 buffer for the
-    // current tensor and is cleared (and its mmap pages evicted) once all
-    // experts are emitted.
     int64_t n_exported = 0;
     int64_t n_skipped  = 0;
-    int64_t gguf_idx   = 0;
-    int64_t expert_idx = 0;
-    int64_t n_experts  = 0;
-    int64_t in_dim     = 0;
-    int64_t out_dim    = 0;
-    int     n_dims     = 0;
-    const float * act_scales = nullptr;
-    std::string cur_name;
-    std::vector<float> full;
-    struct ggml_tensor * cur_t = nullptr;
 
-    // Drop residence for the current source tensor's mmap range. Called once
-    // the last expert has been quantized so the next tensor's pages can
-    // reuse the memory. madvise DONTNEED is a hint; on macOS it instructs
-    // the pager to drop the (clean, read-only) pages.
-    auto evict_current = [&]() {
-        if (cur_t && cur_t->data && mm.mapped) {
-            const size_t nbytes = ggml_nbytes(cur_t);
-            (void) posix_madvise(cur_t->data, nbytes, POSIX_MADV_DONTNEED);
-        }
+    struct ts_export_work_item {
+        struct ggml_tensor * t;
+        std::string          base_name;
+        int64_t               out_dim;
+        int64_t               in_dim;
+        int                    n_dims;
+        int64_t               n_experts;
     };
+    std::vector<ts_export_work_item> work;
+    work.reserve((size_t) n_tensors);
+    for (int64_t i = 0; i < n_tensors; i++) {
+        const char * name = gguf_get_tensor_name(in_ctx, i);
+        const enum ggml_type type = gguf_get_tensor_type(in_ctx, i);
+        const int64_t * ne = gguf_get_tensor_ne(in_ctx, i);
+        int nd = GGML_MAX_DIMS;
+        while (nd > 1 && ne[nd - 1] == 1) {
+            nd--;
+        }
+        if (!ts_export_is_weight(name, type, nd)) {
+            n_skipped++;
+            continue;
+        }
+        struct ggml_tensor * t = ggml_get_tensor(ggml_ctx, name);
+        if (t == nullptr) {
+            fprintf(stderr, "export-ternary: warning: '%s' not in ggml ctx, skipping\n", name);
+            n_skipped++;
+            continue;
+        }
+        ts_export_work_item item;
+        item.t         = t;
+        item.base_name = name;
+        item.in_dim    = ne[0];
+        item.out_dim   = ne[1];
+        item.n_dims    = nd;
+        item.n_experts = (nd == 3) ? ne[2] : 1;
+        work.push_back(std::move(item));
+    }
 
-    // Advance to the next exportable GGUF tensor and dequantize it into
-    // `full`. Returns true if a tensor was loaded, false at end-of-stream
-    // (or on a fatal dequant error). Skips non-weight tensors with a
-    // warning count. Issues WILLNEED before the dequant so the kernel pages
-    // the tensor in proactively rather than on the first byte read.
-    auto load_next_tensor = [&]() -> bool {
-        full.clear();
-        full.shrink_to_fit();
-        cur_t = nullptr;
-        cur_name.clear();
-        act_scales = nullptr;
-        n_experts  = 0;
-        expert_idx = 0;
-        while (gguf_idx < n_tensors) {
-            const int64_t i = gguf_idx++;
-            const char * name = gguf_get_tensor_name(in_ctx, i);
-            const enum ggml_type type = gguf_get_tensor_type(in_ctx, i);
-            const int64_t * ne = gguf_get_tensor_ne(in_ctx, i);
-            int nd = GGML_MAX_DIMS;
-            while (nd > 1 && ne[nd - 1] == 1) {
-                nd--;
-            }
-            if (!ts_export_is_weight(name, type, nd)) {
-                n_skipped++;
-                continue;
-            }
-            struct ggml_tensor * t = ggml_get_tensor(ggml_ctx, name);
-            if (t == nullptr) {
-                fprintf(stderr, "export-ternary: warning: '%s' not in ggml ctx, skipping\n", name);
-                n_skipped++;
-                continue;
-            }
+    struct ts_export_result {
+        std::string       name;
+        ts_ternary_tensor tensor;
+    };
+    std::vector<std::vector<ts_export_result>> results(work.size());
+    std::vector<int64_t> item_skipped(work.size(), 0);
 
-            // Hint the pager that we are about to read this tensor's pages.
-            // The mmap was created without WILLNEED/MAP_POPULATE, so without
-            // this hint the first dequant byte read would fault each page in
-            // on demand; WILLNEED lets the kernel start the readahead for
-            // just this tensor's byte range in parallel.
+    const int32_t n_threads = std::max(1, std::min(
+        (int32_t) std::thread::hardware_concurrency(),
+        (int32_t) work.size()));
+    printf("export-ternary: quantizing %zu tensors across %d threads\n", work.size(), (int) n_threads);
+
+    // Dequantizes + quantizes one base tensor (all its experts, if any).
+    // Everything touched here is either work[idx]-local, a fresh local
+    // buffer, or a read-only shared input (in_ctx/ggml_ctx/imatrix) - safe
+    // to call concurrently for different idx values from different threads.
+    auto process_item = [&](size_t idx) {
+        const ts_export_work_item & item = work[idx];
+        struct ggml_tensor * t = item.t;
+        // WILLNEED/DONTNEED act on this tensor's own disjoint mmap byte
+        // range, so concurrent calls for different tensors don't race.
+        if (t->data) {
+            (void) posix_madvise(t->data, ggml_nbytes(t), POSIX_MADV_WILLNEED);
+        }
+        std::vector<float> full = ts_export_tensor_to_f32(t);
+        if (full.empty()) {
+            fprintf(stderr, "export-ternary: warning: unsupported type for '%s', skipping\n",
+                    item.base_name.c_str());
+            item_skipped[idx]++;
             if (t->data) {
-                (void) posix_madvise(t->data, ggml_nbytes(t), POSIX_MADV_WILLNEED);
+                (void) posix_madvise(t->data, ggml_nbytes(t), POSIX_MADV_DONTNEED);
+            }
+            return;
+        }
+
+        const float * act_scales = nullptr;
+        if (have_imatrix) {
+            int64_t act_n = 0;
+            act_scales = ts_imatrix_lookup(&imatrix, item.base_name.c_str(), &act_n);
+            if (act_scales != nullptr && act_n != item.in_dim) {
+                act_scales = nullptr;
+            }
+        }
+
+        const int64_t per = item.out_dim * item.in_dim;
+        for (int64_t e = 0; e < item.n_experts; e++) {
+            const float * wptr = full.data() + (size_t)(e * per);
+            std::vector<float> expert_weights;
+            if (item.n_dims == 3) {
+                // per-expert slice needs contiguous storage independent of `full`
+                expert_weights.assign(wptr, wptr + per);
+                wptr = expert_weights.data();
+            }
+            std::string tname = item.base_name;
+            if (item.n_dims == 3) {
+                tname += ".E" + std::to_string(e);
             }
 
-            std::vector<float> dequant = ts_export_tensor_to_f32(t);
-            if (dequant.empty()) {
-                fprintf(stderr, "export-ternary: warning: unsupported type for '%s', skipping\n", name);
-                n_skipped++;
-                // Evict the pages we just hinted in for this unusable tensor.
-                if (t->data) {
-                    (void) posix_madvise(t->data, ggml_nbytes(t), POSIX_MADV_DONTNEED);
+            // Local copy per call: qp.max_outliers is per-tensor-sized and
+            // must not be a shared struct mutated by concurrent workers.
+            // ts_select_repair_residuals treats max_outliers<=0 as "no
+            // outliers, return immediately" (tessera-quant.cpp), which is
+            // what silently disabled outlier repair for every export-
+            // ternary run before this. Uncapped (the tensor's full element
+            // count): outlier_thresh (an absolute residual-magnitude
+            // cutoff, not a fraction - see ts_select_repair_residuals'
+            // `resid >= threshold` test) is the real selectivity
+            // mechanism; a separate count cap was only ever an extra,
+            // unnecessary ceiling on top of it - outliers are stored
+            // exactly, so letting the threshold alone decide is strictly
+            // more faithful.
+            ts_quant_params_2d qp = qp_base;
+            qp.max_outliers = per;
+
+            // Live per-tensor algorithm selection: measure AWQ/SEPTQ (via
+            // ts_dispatch_forced_t2, which genuinely dispatches to those
+            // two algorithms) and DartQuant/FLRQ (via ts_dispatch_tier2_t2,
+            // which actually runs their trainers - forced_t2's own
+            // DARTQUANT/FLRQ cases silently fall back to SEPTQ/AWQ
+            // internally via ts_expert_default_profile, so they are not
+            // used here) against this tensor, then ship whichever yields
+            // the lowest measured t2. This is the same acceptance-gate
+            // measurement tessera-dispatch.cpp already computed for every
+            // tensor without ever using it to pick what got shipped - see
+            // gap ledger. Only meaningful with real calibration signal, so
+            // gated on have_imatrix like use_septq already was above.
+            if (have_imatrix) {
+                struct ts_algo_candidate { ts_expert_id expert; float t2; };
+                std::vector<ts_algo_candidate> cands;
+                float t2;
+                t2 = ts_dispatch_forced_t2(wptr, act_scales, item.out_dim, item.in_dim,
+                                           TS_EXPERT_AWQ, qp_base.alpha, qp_base.clip,
+                                           qp_base.outlier_thresh, qp_base.seed);
+                if (t2 >= 0.0f) cands.push_back({TS_EXPERT_AWQ, t2});
+                t2 = ts_dispatch_forced_t2(wptr, act_scales, item.out_dim, item.in_dim,
+                                           TS_EXPERT_SEPTQ, qp_base.alpha, qp_base.clip,
+                                           qp_base.outlier_thresh, qp_base.seed);
+                if (t2 >= 0.0f) cands.push_back({TS_EXPERT_SEPTQ, t2});
+                t2 = ts_dispatch_tier2_t2(TS_EXPERT_DARTQUANT, wptr, act_scales,
+                                          item.out_dim, item.in_dim,
+                                          qp_base.alpha, qp_base.clip, qp_base.seed);
+                if (t2 >= 0.0f) cands.push_back({TS_EXPERT_DARTQUANT, t2});
+                t2 = ts_dispatch_tier2_t2(TS_EXPERT_FLRQ, wptr, act_scales,
+                                          item.out_dim, item.in_dim,
+                                          qp_base.alpha, qp_base.clip, qp_base.seed);
+                if (t2 >= 0.0f) cands.push_back({TS_EXPERT_FLRQ, t2});
+
+                if (!cands.empty()) {
+                    const ts_algo_candidate & best = *std::min_element(
+                        cands.begin(), cands.end(),
+                        [](const ts_algo_candidate & a, const ts_algo_candidate & b) {
+                            return a.t2 < b.t2;
+                        });
+                    qp.use_septq     = (best.expert == TS_EXPERT_SEPTQ);
+                    qp.use_flrq      = (best.expert == TS_EXPERT_FLRQ);
+                    qp.use_dartquant = (best.expert == TS_EXPERT_DARTQUANT);
                 }
+            }
+
+            ts_ternary_tensor tn;
+            int rc = ts_quantize_2d_ternary(wptr, act_scales,
+                                            nullptr, nullptr, nullptr,
+                                            item.out_dim, item.in_dim, 0,
+                                            &qp, &tn);
+            if (rc != 0) {
+                fprintf(stderr, "export-ternary: warning: quantize failed for '%s', skipping\n",
+                        tname.c_str());
+                item_skipped[idx]++;
                 continue;
             }
-
-            cur_t     = t;
-            cur_name  = name;
-            n_dims    = nd;
-            in_dim    = ne[0];
-            out_dim   = ne[1];
-            n_experts = (n_dims == 3) ? ne[2] : 1;
-            expert_idx = 0;
-            full = std::move(dequant);
-
-            if (have_imatrix) {
-                int64_t act_n = 0;
-                act_scales = ts_imatrix_lookup(&imatrix, name, &act_n);
-                if (act_scales != nullptr && act_n != in_dim) {
-                    act_scales = nullptr;
-                }
-            }
-            return true;
+            results[idx].push_back({ std::move(tname), std::move(tn) });
         }
-        return false;
+
+        if (t->data) {
+            (void) posix_madvise(t->data, ggml_nbytes(t), POSIX_MADV_DONTNEED);
+        }
     };
 
-    ts_ttt_tensor_source source = [&](ts_ternary_tensor & tensor) -> std::string {
-        for (;;) {
-            if (expert_idx < n_experts) {
-                const int64_t per = out_dim * in_dim;
-                const float * wptr = full.data() + (int64_t)(expert_idx * per);
-                std::vector<float> expert_weights;
-                if (n_dims == 3) {
-                    // per-expert slice needs contiguous storage independent of `full`
-                    expert_weights.assign(wptr, wptr + per);
-                    wptr = expert_weights.data();
-                }
-
-                std::string tname = cur_name;
-                if (n_dims == 3) {
-                    tname += ".E" + std::to_string(expert_idx);
-                }
-
-                expert_idx++;
-
-                ts_ternary_tensor tn;
-                int rc = ts_quantize_2d_ternary(wptr, act_scales,
-                                                nullptr, nullptr, nullptr,
-                                                out_dim, in_dim, 0,
-                                                &qp, &tn);
-                if (rc != 0) {
-                    fprintf(stderr, "export-ternary: warning: quantize failed for '%s', skipping\n",
-                            tname.c_str());
-                    n_skipped++;
-                    continue;
-                }
-                n_exported++;
-                tensor = std::move(tn);
-                return tname;
-            }
-            // Done with the current source tensor's experts: drop its pages
-            // so the next tensor can reuse the memory, then advance.
-            evict_current();
-            if (!load_next_tensor()) {
-                return std::string();
-            }
+    if (n_threads <= 1 || work.size() < 2) {
+        for (size_t idx = 0; idx < work.size(); idx++) {
+            process_item(idx);
         }
+    } else {
+        std::atomic<size_t> next_idx(0);
+        auto worker = [&]() {
+            for (;;) {
+                size_t idx = next_idx.fetch_add(1, std::memory_order_relaxed);
+                if (idx >= work.size()) return;
+                process_item(idx);
+            }
+        };
+        std::vector<std::thread> pool;
+        pool.reserve((size_t) n_threads);
+        for (int32_t t = 0; t < n_threads; t++) pool.emplace_back(worker);
+        for (auto & th : pool) th.join();
+    }
+    for (int64_t s : item_skipped) {
+        n_skipped += s;
+    }
+
+    // Sequential replay into ts_write_ttt_stream: all the expensive work
+    // (dequant + AWQ/SEPTQ) already happened above in parallel; this just
+    // walks the pre-computed `results` in original tensor order so the
+    // writer's single serial spool-file cursor sees the same deterministic
+    // tensor sequence the old streaming source produced.
+    size_t src_outer = 0, src_inner = 0;
+    ts_ttt_tensor_source source = [&](ts_ternary_tensor & tensor) -> std::string {
+        while (src_outer < results.size()) {
+            if (src_inner < results[src_outer].size()) {
+                ts_export_result & r = results[src_outer][src_inner++];
+                tensor = std::move(r.tensor);
+                n_exported++;
+                return r.name;
+            }
+            src_outer++;
+            src_inner = 0;
+        }
+        return std::string();
     };
 
     // Passthrough source (architect-directed, task 3.9 evidence): a second,
@@ -1407,7 +1512,26 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
     if (rc != 0) {
         fprintf(stderr, "error: export-ternary: ts_write_ttt_stream failed (rc=%d)\n", rc);
     } else {
+#if defined(TS_USE_ROCBLAS)
+        // A HW fault (e.g. this host's known "HW Exception ... GPU Hang"
+        // class of event - see the gap ledger's INCIDENT-w3-1) can occur
+        // at any point during the process's lifetime (including outside
+        // this export-ternary run's own compute, e.g. during the ROCm
+        // backend's startup device probe) without any prior step here
+        // returning a visible error - ts_write_ttt_stream reporting rc==0
+        // is necessary but not sufficient for a trustworthy result on this
+        // host. Check before declaring success rather than let a mid-run
+        // fault produce a silent, truncated-looking-complete .ttt export.
+        if (ts_rblas_check_device_health("export-ternary") != 0) {
+            fprintf(stderr, "error: export-ternary: HIP device fault detected after "
+                            "writing %s - output is not trustworthy\n", tp.export_out.c_str());
+            rc = 1;
+        } else {
+            printf("export-ternary: wrote %s\n", tp.export_out.c_str());
+        }
+#else
         printf("export-ternary: wrote %s\n", tp.export_out.c_str());
+#endif
     }
 
     if (!chat_template_path.empty()) {
@@ -1577,7 +1701,9 @@ static int ts_cli_pack(const common_tessera_params & tp) {
         }
         if (config.packing == TS_PACK_AMD_RDNA3) {
             ts_gguf_write_tensor_cluster_amd_rdna3(out_ctx, out_ggml_ctx, name.c_str(), &qr,
-                                                   tn.out_dim, tn.in_dim);
+                                                   tn.out_dim, tn.in_dim,
+                                                   tn.dartquant_rotation.empty() ? nullptr : tn.dartquant_rotation.data(),
+                                                   tn.dartquant_block_size);
         } else {
             ts_gguf_write_tensor_cluster(out_ctx, out_ggml_ctx, name.c_str(), &qr,
                                          tn.out_dim, tn.in_dim);
@@ -1669,6 +1795,19 @@ static int ts_cli_pack(const common_tessera_params & tp) {
 
     ggml_free(out_ggml_ctx);
     gguf_free(out_ctx);
+
+#if defined(TS_USE_ROCBLAS)
+    // Same rationale as export-ternary's post-write health check: a HIP
+    // fault can occur during this process's lifetime (e.g. at the ROCm
+    // backend's startup device probe) without any step above returning a
+    // visible error, so gguf_write_to_file succeeding is not by itself
+    // sufficient evidence the written file is trustworthy on this host.
+    if (ts_rblas_check_device_health("pack") != 0) {
+        fprintf(stderr, "error: pack: HIP device fault detected after writing %s - "
+                        "output is not trustworthy\n", tp.pack_out.c_str());
+        return 1;
+    }
+#endif
     return 0;
 }
 

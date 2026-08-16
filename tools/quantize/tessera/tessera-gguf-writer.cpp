@@ -142,7 +142,9 @@ void ts_gguf_write_tensor_cluster_amd_rdna3(struct gguf_context * ctx,
                                             struct ggml_context * gctx,
                                             const char * base_name,
                                             const void * result,
-                                            int64_t out_dim, int64_t in_dim) {
+                                            int64_t out_dim, int64_t in_dim,
+                                            const uint16_t * dartquant_rotation,
+                                            int64_t dartquant_block_size) {
     const auto * res = static_cast<const ts_quant_result_2d *>(result);
 
     const int64_t pages_per_row = (in_dim + TS_AMD_RDNA3_PAGE_SIZE - 1) / TS_AMD_RDNA3_PAGE_SIZE;
@@ -172,6 +174,18 @@ void ts_gguf_write_tensor_cluster_amd_rdna3(struct gguf_context * ctx,
     ggml_format_name(t, "%s.weight_lane_scales", base);
     t->data = (void *)res->lane_scales.data();
     gguf_add_tensor(ctx, t);
+
+    // weight_dartquant_rotation: f16 [K, K] (optional). Presence signals
+    // the model loader/graph builder should block-diagonally rotate this
+    // tensor's activations by R^T before the tile matmul - see
+    // tessera-ternary.h and llama-graph.cpp's DartQuant wiring. Absence
+    // (the common case) means no rotation.
+    if (dartquant_rotation != nullptr && dartquant_block_size > 0) {
+        t = ggml_new_tensor_2d(gctx, GGML_TYPE_F16, dartquant_block_size, dartquant_block_size);
+        ggml_format_name(t, "%s.weight_dartquant_rotation", base);
+        t->data = (void *)dartquant_rotation;
+        gguf_add_tensor(ctx, t);
+    }
 }
 
 int ts_gguf_repoint_tensor_cluster(struct ggml_context * gctx,

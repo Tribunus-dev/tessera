@@ -77,6 +77,7 @@ bool ts_rblas_disabled() {
 std::atomic<bool> g_bf16_checked{false};
 std::atomic<bool> g_bf16_enabled{true};
 std::atomic<bool> g_gemm_ex_fail_logged{false};
+std::atomic<bool> g_sync_fail_logged{false};
 
 bool ts_rblas_bf16_enabled() {
     if (!g_bf16_checked.exchange(true, std::memory_order_acq_rel)) {
@@ -102,7 +103,52 @@ void ts_rblas_log_gemm_ex_fail_once(const char * who, rocblas_status st) {
     }
 }
 
+// rocblas_gemm_ex/rocblas_sgemm returning rocblas_status_success only means
+// the async kernel launched validly onto the shim's own stream - a fault
+// during execution (illegal device address, GPU hang/reset, etc.) surfaces
+// at the NEXT synchronization point, not at dispatch. Every GEMM helper in
+// this file that stages its own H2D/D2H copies must check this, or a
+// mid-kernel fault is invisible: the caller's D2H copy reads a stale/
+// partial device buffer and the helper still reports rocblas_status_success,
+// so a caller like export-ternary proceeds with corrupted output and the
+// process exits 0. Returns true iff the stream is genuinely fenced with no
+// fault pending.
+bool ts_rblas_check_sync(const char * who, hipStream_t s) {
+    hipError_t err = hipStreamSynchronize(s);
+    if (err != hipSuccess) {
+        if (!g_sync_fail_logged.exchange(true, std::memory_order_acq_rel)) {
+            std::fprintf(stderr, "%s: hipStreamSynchronize failed (%s) - GEMM result is "
+                                  "not trustworthy, treating this call as a failure\n",
+                                  who, hipGetErrorString(err));
+        }
+        return false;
+    }
+    return true;
+}
+
 } // anonymous namespace
+
+int ts_rblas_check_device_health(const char * where) {
+    // hipGetLastError reports any error already latched by a prior
+    // (synchronous) HIP call - cheap, no device-side wait.
+    hipError_t err = hipGetLastError();
+    if (err != hipSuccess) {
+        std::fprintf(stderr, "ts_rblas: device health check at '%s': pending HIP error "
+                              "%s (%s)\n", where, hipGetErrorName(err), hipGetErrorString(err));
+        return 1;
+    }
+    // An async kernel/HW fault is not necessarily visible until the device
+    // is fenced - hipDeviceSynchronize both fences the default stream and
+    // returns the same error class if the device itself is in a faulted
+    // state (e.g. mid-recovery from a GPU reset).
+    err = hipDeviceSynchronize();
+    if (err != hipSuccess) {
+        std::fprintf(stderr, "ts_rblas: device health check at '%s': device fault on "
+                              "synchronize: %s (%s)\n", where, hipGetErrorName(err), hipGetErrorString(err));
+        return 1;
+    }
+    return 0;
+}
 
 hipStream_t ts_rblas_stream() {
     // Stream is created lazily alongside the handle (see ts_rocblas_handle()).
@@ -274,11 +320,15 @@ rocblas_status ts_rblas_sgemm_bf16acc(rocblas_operation transA, rocblas_operatio
                 rocblas_gemm_algo_standard, 0, 0);
             if (st == rocblas_status_success) {
                 hipMemcpyAsync(C, c.dev, c_elems * sizeof(float), hipMemcpyDeviceToHost, s);
-                hipStreamSynchronize(s);
-                ts_rblas_buf_release(a);
-                ts_rblas_buf_release(b);
-                ts_rblas_buf_release(c);
-                return st;
+                if (!ts_rblas_check_sync("ts_rblas_sgemm_bf16acc(bf16 fast path)", s)) {
+                    st = rocblas_status_internal_error;
+                }
+                if (st == rocblas_status_success) {
+                    ts_rblas_buf_release(a);
+                    ts_rblas_buf_release(b);
+                    ts_rblas_buf_release(c);
+                    return st;
+                }
             }
             ts_rblas_log_gemm_ex_fail_once("ts_rblas_sgemm_bf16acc", st);
         }
@@ -305,7 +355,13 @@ rocblas_status ts_rblas_sgemm_bf16acc(rocblas_operation transA, rocblas_operatio
                                       (float*) bf.dev, ldb,
                                       beta, (float*) cf.dev, ldc);
     hipMemcpyAsync(C, cf.dev, c_elems * sizeof(float), hipMemcpyDeviceToHost, s);
-    hipStreamSynchronize(s);
+    // Always synchronize (regardless of st) - buffers are about to be
+    // released back to the pool and must not be handed to the next caller
+    // while an async copy is still in flight. Only let a genuine sync fault
+    // downgrade st; an already-failed st stays failed either way.
+    if (!ts_rblas_check_sync("ts_rblas_sgemm_bf16acc(f32 fallback)", s)) {
+        st = rocblas_status_internal_error;
+    }
     ts_rblas_buf_release(af);
     ts_rblas_buf_release(bf);
     ts_rblas_buf_release(cf);
@@ -340,7 +396,9 @@ rocblas_status ts_rblas_dgemm_to_sgemm(rocblas_operation transA, rocblas_operati
                                       (float*) b.dev, ldb,
                                       &beta,  (float*) c.dev, ldc);
     hipMemcpyAsync(C, c.dev, c_elems * sizeof(float), hipMemcpyDeviceToHost, s);
-    hipStreamSynchronize(s);
+    if (!ts_rblas_check_sync("ts_rblas_dgemm_to_sgemm", s)) {
+        st = rocblas_status_internal_error;
+    }
     ts_rblas_buf_release(a);
     ts_rblas_buf_release(b);
     ts_rblas_buf_release(c);

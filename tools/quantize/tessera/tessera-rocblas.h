@@ -174,6 +174,23 @@ rocblas_status ts_rblas_dgemm_to_sgemm(rocblas_operation transA, rocblas_operati
 // Device pointers throughout (drop-in for the existing
 // ts_fitness_matmul_at_dev rocblas_sgemm call). 2 call sites:
 // ts_fitness_matmul_at_dev's two operand pairs (awq-fitness.cpp).
+// Checks whether the process's HIP device is in a faulted state (e.g. the
+// "HW Exception ... GPU Hang" class of fault this host is known to hit -
+// see tessera-quant.cpp callers' own comments). Unlike every other function
+// in this header, this does NOT require ts_rocblas_handle()/TS_RBLAS_DISABLE
+// to have been consulted first: it inspects the ONE process-wide HIP
+// runtime state directly, so it also observes faults that originated
+// outside this shim entirely (e.g. ggml's dynamically-loaded HIP backend,
+// or the initial device-enumeration probe at process startup - both share
+// the same underlying libamdhip64 runtime as this shim's own calls).
+// `where` is a short label for the diagnostic message (e.g. the CLI
+// subcommand name). Returns 0 if healthy, non-zero if a fault was detected
+// (in which case a message was already printed to stderr) - callers whose
+// success path silently ignored a mid-run HW fault (the "export-ternary
+// exits 0 with truncated output" bug class) should call this before
+// reporting success and propagate a non-zero process exit if it fails.
+int ts_rblas_check_device_health(const char * where);
+
 rocblas_status ts_rblas_gemm_bf16_mixed(rocblas_handle handle,
                                          rocblas_operation transA, rocblas_operation transB,
                                          int m, int n, int k,

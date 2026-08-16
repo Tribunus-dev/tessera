@@ -3347,6 +3347,19 @@ ggml_tensor * llama_model_base::create_tensor_or_tile_rdna3(
     value.page_scales = component("_page_scales", { n_rows * pages_per_row });
     value.lane_scales = component("_lane_scales", { n_rows * pages_per_row * LANES_PER_PAGE });
 
+    // Optional DartQuant rotation (tessera-gguf-writer.cpp's
+    // "%s.weight_dartquant_rotation", written only for DartQuant-quantized
+    // tensors). Shape is read from the GGUF's own metadata (K is per-tensor,
+    // not derivable from `ne`) rather than guessed - absent for every
+    // tensor that didn't use DartQuant, which is the common case.
+    const std::string rotation_suffix = stem + "_dartquant_rotation";
+    const LLM_TN_IMPL rotation_tn(tn.arch, tn.tensor, rotation_suffix.c_str(), tn.bid, tn.xid);
+    const ggml_tensor * rotation_meta = ml->get_tensor_meta(rotation_tn.str().c_str());
+    if (rotation_meta != nullptr) {
+        value.dartquant_rotation = create_tensor(
+            rotation_tn, { rotation_meta->ne[0], rotation_meta->ne[1] }, TENSOR_NOT_REQUIRED);
+    }
+
     tile_rdna3_tensors.emplace(logical_name, value);
     return nullptr;
 }

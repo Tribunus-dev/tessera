@@ -11,6 +11,8 @@
 #include "tessera-vec.h"
 #include "tessera-metal.h"
 #include "tessera-septq.h"
+#include "tessera-lrq.h"
+#include "tessera-dartquant.h"
 #include "tile-detect.h"
 #include "ggml-quants.h"
 
@@ -386,6 +388,49 @@ float ts_scale_clip_ternarize_fused(const float * weights,
 // ---------------------------------------------------------------------------
 // scale fitting from weights + ternary pattern
 // ---------------------------------------------------------------------------
+
+// Computes the cheap row_scale/lane_scale magnitude hints shipped in the
+// tile-neutral safetensors transport (ts_ternary_tensor::row_scale/
+// lane_scale) - mean(|magnitude_source|) over nonzero-trit positions, at
+// row granularity and TS_TRANSPORT_LANE_SIZE-element lane granularity.
+// magnitude_source is whatever "space" the caller's ternary decision was
+// made in (AWQ-scaled `ws` for the AWQ path, raw `weights` for SEPTQ,
+// which does not do its own column pre-scaling) - out_dim*in_dim floats,
+// same indexing as ternary_flat. Falls back to global_amp for any row/
+// lane with zero nonzero-trit positions (matches ts_compute_scales' own
+// empty-lane convention below).
+void ts_compute_row_lane_scale(const float * magnitude_source, const int8_t * ternary_flat,
+                               int64_t out_dim, int64_t in_dim, float global_amp,
+                               std::vector<uint16_t> & row_scale,
+                               std::vector<uint16_t> & lane_scale) {
+    const int64_t lanes_per_row = (in_dim + TS_TRANSPORT_LANE_SIZE - 1) / TS_TRANSPORT_LANE_SIZE;
+    row_scale.assign((size_t) out_dim, 0);
+    lane_scale.assign((size_t) (out_dim * lanes_per_row), 0);
+
+    for (int64_t o = 0; o < out_dim; o++) {
+        double row_sum = 0.0;
+        int64_t row_count = 0;
+        for (int64_t l = 0; l < lanes_per_row; l++) {
+            const int64_t c0 = l * TS_TRANSPORT_LANE_SIZE;
+            const int64_t c1 = std::min<int64_t>(c0 + TS_TRANSPORT_LANE_SIZE, in_dim);
+            double lane_sum = 0.0;
+            int64_t lane_count = 0;
+            for (int64_t c = c0; c < c1; c++) {
+                const int64_t idx = o * in_dim + c;
+                if (ternary_flat[idx] != 0) {
+                    lane_sum += std::fabs(magnitude_source[idx]);
+                    lane_count++;
+                }
+            }
+            const float lane_mean = (lane_count > 0) ? (float) (lane_sum / (double) lane_count) : global_amp;
+            lane_scale[(size_t) (o * lanes_per_row + l)] = ts_f32_to_f16(lane_mean);
+            row_sum   += lane_sum;
+            row_count += lane_count;
+        }
+        const float row_mean = (row_count > 0) ? (float) (row_sum / (double) row_count) : global_amp;
+        row_scale[(size_t) o] = ts_f32_to_f16(row_mean);
+    }
+}
 
 // Compute page/lane scales from a magnitude profile (per-element |core|)
 // OR from trits + global_amp when no magnitude profile is available.
@@ -1011,6 +1056,279 @@ int ts_quantize_2d_ternary(const float * weights, const float * act_scales,
 
     const int64_t n = out_dim * in_dim;
 
+    // --- SEPTQ dispatch (routed via params->use_septq) ---
+    // Alternative to the AWQ-scale-search + independent-threshold
+    // ternarize + outlier-repair pipeline below, not a supplement to it:
+    // SEPTQ (GPTQ-style Hessian error-compensation, tessera-septq.cpp)
+    // decides trits and outliers together using calibration act_scales/
+    // activations (falls back to a diagonal Hessian proxy when calib_X is
+    // null - same dispatch rule ts_quantize_2d's own SEPTQ branch uses,
+    // mirrored here). Early-returns before the Metal/AWQ machinery below,
+    // which SEPTQ does not use. Previously this flag was silently ignored
+    // by this function (only the sibling ts_quantize_2d checked it, which
+    // export-ternary never calls) - see gap ledger.
+    //
+    // SEPTQ does not produce an AWQ per-column scale (its Hessian already
+    // accounts for per-channel importance), so awq_scale/awq_input_scale
+    // stay identity and act_scale stays empty - a different calibration
+    // strategy, not AWQ plus SEPTQ combined.
+    if (params->use_septq) {
+        ts_septq_params sp;
+        sp.septq_ratio         = 1.0f;
+        sp.septq_iterations    = 1;
+        sp.ternary_threshold   = 1.0f;
+        sp.hessian_bandwidth   = 0;
+        sp.importance_weight   = TS_SEPTQ_IMP_QUANT_ERROR_H;
+        sp.importance_lambda   = 0.0f;
+        sp.ridge_fraction      = 1e-4f;
+        if (params->clip > 0.0f) {
+            sp.ternary_threshold = params->clip;
+        }
+        sp.hessian_mode = (calib_X != nullptr && n_tokens > 0)
+                              ? TS_SEPTQ_HESSIAN_BANDED
+                              : TS_SEPTQ_HESSIAN_DIAGONAL;
+
+        ts_septq_result sr;
+        if (ts_septq_quantize_2d(weights, out_dim, in_dim,
+                                 calib_X, n_tokens, act_scales,
+                                 &sp, &sr) != 0) {
+            return 1;
+        }
+
+        result->trits.assign(sr.ternary.begin(), sr.ternary.end());
+        result->outlier_row_offsets = std::move(sr.outlier_row_offsets);
+        result->outlier_cols        = std::move(sr.outlier_cols);
+        result->outlier_vals        = std::move(sr.outlier_vals);
+        result->awq_scale.assign((size_t) in_dim, 1.0f);
+        result->awq_input_scale.assign((size_t) in_dim, 1.0f);
+        result->act_scale.clear();
+        result->out_dim    = out_dim;
+        result->in_dim     = in_dim;
+        result->best_alpha = 0.0f;
+
+        // global_amp: mean(|weights|) over nonzero-trit positions - the
+        // same definition ts_scale_clip_ternarize_fused uses for the
+        // non-SEPTQ path below, needed as the tile packer's magnitude
+        // fallback when core is not shipped (ts_pack_ternary_to_tile).
+        double sum_abs = 0.0;
+        int64_t count = 0;
+        for (int64_t i = 0; i < n; i++) {
+            if (result->trits[(size_t) i] != 0) {
+                sum_abs += std::fabs(weights[i]);
+                count++;
+            }
+        }
+        result->global_amp = (count > 0) ? (float) (sum_abs / (double) count) : 1.0f;
+
+        // row_scale/lane_scale from raw `weights` (SEPTQ does not do its
+        // own AWQ-style column pre-scaling, unlike the non-SEPTQ path
+        // below which uses the AWQ-scaled `core`) - see tessera-ternary.h.
+        ts_compute_row_lane_scale(weights, result->trits.data(), out_dim, in_dim,
+                                  result->global_amp, result->row_scale, result->lane_scale);
+
+        return 0;
+    }
+
+    // --- FLRQ dispatch (routed via params->use_flrq) ---
+    // Alternative to AWQ/SEPTQ, not a supplement: FLRQ (tessera-lrq.cpp,
+    // ported from per_tensor_calibrate.py::train_lrq) trains low-rank
+    // factors U [out_dim x rank] / V [rank x in_dim] end-to-end against the
+    // real activation-projected reconstruction loss so that S = U@V stays
+    // near the identity (warm-started that way) while nudging weights[i]
+    // toward whatever the ternary lattice can represent with less error -
+    // a richer, gradient-learned analogue of AWQ's per-channel scale
+    // search, structured full-matrix instead of per-column. U/V are
+    // training-time-only: once `scaled = weights * S` decides the trit
+    // pattern, reconstruction fidelity is carried by the SAME row_scale/
+    // lane_scale magnitude hints every other path ships (see
+    // tessera-ternary.h) - no new transport field, no new dequant kernel
+    // work, because S's role ends at the ternarize step (unlike
+    // DartQuant's rotation below, which changes the matmul's basis and so
+    // must be shipped and reversed at inference time).
+    if (params->use_flrq) {
+        ts_lrq_params lp;
+        lp.rank      = params->flrq_rank > 0 ? params->flrq_rank : 32;
+        if (lp.rank > std::min(out_dim, in_dim)) {
+            lp.rank = std::min(out_dim, in_dim);
+        }
+        lp.max_iters = params->flrq_iters > 0 ? params->flrq_iters : 50;
+        lp.lr        = 1.0e-3f;
+        lp.tol       = 1.0e-7f;
+        lp.seed      = params->seed ? params->seed : 42;
+
+        ts_lrq_result lr;
+        if (ts_train_lrq(weights, out_dim, in_dim, &lp, &lr) != 0) {
+            return 1;
+        }
+
+        // scaled = weights * (U @ V), element-wise. S is trained to stay
+        // near 1 (see ts_train_lrq's warm start), so `scaled` stays in the
+        // same numeric space as `weights` - ternarize it directly with a
+        // single global threshold via the existing fused kernel (identity
+        // wscale, since FLRQ's own S already IS the per-element scale;
+        // stacking a further per-channel AWQ scale on top would double up
+        // on the same job).
+        std::vector<float> S((size_t) n), scaled((size_t) n);
+        ts_lrq_reconstruct_scale(&lr, out_dim, in_dim, S.data());
+        for (int64_t i = 0; i < n; i++) {
+            scaled[(size_t) i] = weights[i] * S[(size_t) i];
+        }
+
+        std::vector<float>  ws((size_t) n);
+        std::vector<float>  core((size_t) n);
+        std::vector<int8_t> ternary((size_t) n);
+        std::vector<float>  wscale_identity((size_t) in_dim, 1.0f);
+        float global_amp = ts_scale_clip_ternarize_fused(
+            scaled.data(), wscale_identity.data(), params->clip,
+            ws.data(), core.data(), ternary.data(), out_dim, in_dim);
+        if (n == 0) global_amp = 1.0f;
+
+        std::vector<int32_t> outlier_flat = ts_select_repair_residuals(
+            ws.data(), ternary.data(), global_amp, out_dim, in_dim,
+            params->max_outliers, params->outlier_thresh);
+        for (int32_t idx : outlier_flat) {
+            ternary[(size_t) idx] = 0;
+        }
+        std::stable_sort(outlier_flat.begin(), outlier_flat.end(),
+                         [in_dim](int32_t a, int32_t b) {
+                             return (a / in_dim) < (b / in_dim);
+                         });
+
+        result->trits.assign(ternary.begin(), ternary.end());
+        result->awq_scale.assign((size_t) in_dim, 1.0f);
+        result->awq_input_scale.assign((size_t) in_dim, 1.0f);
+        result->act_scale.clear();
+        result->global_amp = global_amp;
+        result->out_dim    = out_dim;
+        result->in_dim     = in_dim;
+        result->best_alpha = 0.0f;
+
+        ts_compute_row_lane_scale(core.data(), ternary.data(), out_dim, in_dim,
+                                  global_amp, result->row_scale, result->lane_scale);
+
+        result->outlier_row_offsets.assign((size_t)(out_dim + 1), 0);
+        result->outlier_cols.resize(outlier_flat.size());
+        result->outlier_vals.resize(outlier_flat.size());
+        for (size_t i = 0; i < outlier_flat.size(); i++) {
+            int64_t idx = outlier_flat[i];
+            int64_t row = idx / in_dim;
+            result->outlier_row_offsets[(size_t) row + 1]++;
+            result->outlier_cols[i] = (int32_t)(idx % in_dim);
+            result->outlier_vals[i] = ts_f32_to_f16(ws[(size_t) idx]);
+        }
+        for (int64_t r = 0; r < out_dim; r++) {
+            result->outlier_row_offsets[(size_t) r + 1] += result->outlier_row_offsets[(size_t) r];
+        }
+
+        return 0;
+    }
+
+    // --- DartQuant dispatch (routed via params->use_dartquant) ---
+    // Alternative to AWQ/SEPTQ/FLRQ: DartQuant (tessera-dartquant.cpp,
+    // ported from per_tensor_calibrate.py::dartquant_qr_orth) learns a
+    // small K x K orthogonal rotation R and applies it block-diagonally
+    // along in_dim (W_rot = W @ blockdiag(R)), then ternarizes W_rot
+    // instead of W. Unlike FLRQ's multiplicative pre-scale, this changes
+    // the matmul's BASIS - trits/outliers below are in the ROTATED domain
+    // - so R must travel with the tensor (dartquant_rotation) and the
+    // inference-time consumer rotates its ACTIVATIONS by the same
+    // blockdiag(R)^T before the ternary matmul rather than un-rotating the
+    // weight back (valid because Wrot @ (R^T @ X) == (W @ R) @ (R^T @ X)
+    // == W @ X for orthogonal R); see llama-graph.cpp's DartQuant wiring.
+    if (params->use_dartquant) {
+        int64_t requested = params->dartquant_block > 0 ? params->dartquant_block : TS_DARTQUANT_MAX_BLOCK;
+        if (requested > TS_DARTQUANT_MAX_BLOCK) requested = TS_DARTQUANT_MAX_BLOCK;
+        if (requested > in_dim) requested = in_dim;
+        int64_t K = 1;
+        for (int64_t cand = requested; cand >= 1; cand--) {
+            if (in_dim % cand == 0) { K = cand; break; }
+        }
+
+        ts_dartquant_params dp;
+        dp.block_size  = K;
+        dp.max_iters   = params->dartquant_iters > 0 ? params->dartquant_iters : 30;
+        dp.lr          = 1.0e-2f;
+        dp.whip_weight = 0.1f;
+        dp.seed        = params->seed;
+
+        ts_dartquant_result dr;
+        if (ts_dartquant_qr_orth(weights, out_dim, in_dim, calib_X, n_tokens,
+                                 nullptr, &dp, &dr) != 0) {
+            return 1;
+        }
+
+        std::vector<float> wrot((size_t) n);
+        ts_dartquant_apply(weights, dr.R.data(), wrot.data(), out_dim, in_dim, K);
+
+        // Ternarize the rotated weight directly (global threshold, no
+        // per-channel AWQ scale on top - matches the self-referential
+        // convention TS_EXPERT_DARTQUANT's own acceptance-gate diagnostic
+        // already uses for `wrot`, tessera-dispatch.cpp).
+        std::vector<float>  ws((size_t) n);
+        std::vector<float>  core((size_t) n);
+        std::vector<int8_t> ternary((size_t) n);
+        std::vector<float>  wscale_identity((size_t) in_dim, 1.0f);
+        float global_amp = ts_scale_clip_ternarize_fused(
+            wrot.data(), wscale_identity.data(), params->clip,
+            ws.data(), core.data(), ternary.data(), out_dim, in_dim);
+        if (n == 0) global_amp = 1.0f;
+
+        std::vector<int32_t> outlier_flat = ts_select_repair_residuals(
+            ws.data(), ternary.data(), global_amp, out_dim, in_dim,
+            params->max_outliers, params->outlier_thresh);
+        for (int32_t idx : outlier_flat) {
+            ternary[(size_t) idx] = 0;
+        }
+        std::stable_sort(outlier_flat.begin(), outlier_flat.end(),
+                         [in_dim](int32_t a, int32_t b) {
+                             return (a / in_dim) < (b / in_dim);
+                         });
+
+        result->trits.assign(ternary.begin(), ternary.end());
+        result->awq_scale.assign((size_t) in_dim, 1.0f);
+        result->awq_input_scale.assign((size_t) in_dim, 1.0f);
+        result->act_scale.clear();
+        result->global_amp = global_amp;
+        result->out_dim    = out_dim;
+        result->in_dim     = in_dim;
+        result->best_alpha = 0.0f;
+
+        ts_compute_row_lane_scale(core.data(), ternary.data(), out_dim, in_dim,
+                                  global_amp, result->row_scale, result->lane_scale);
+
+        result->outlier_row_offsets.assign((size_t)(out_dim + 1), 0);
+        result->outlier_cols.resize(outlier_flat.size());
+        result->outlier_vals.resize(outlier_flat.size());
+        for (size_t i = 0; i < outlier_flat.size(); i++) {
+            int64_t idx = outlier_flat[i];
+            int64_t row = idx / in_dim;
+            result->outlier_row_offsets[(size_t) row + 1]++;
+            result->outlier_cols[i] = (int32_t)(idx % in_dim);
+            result->outlier_vals[i] = ts_f32_to_f16(ws[(size_t) idx]);
+        }
+        for (int64_t r = 0; r < out_dim; r++) {
+            result->outlier_row_offsets[(size_t) r + 1] += result->outlier_row_offsets[(size_t) r];
+        }
+
+        // Ship R TRANSPOSED relative to ts_dartquant_apply's own convention
+        // (Wrot = W @ R, i.e. R[p][q] = dr.R[p*K+q]). The inference-time
+        // consumer needs R^T @ X to rotate activations (see llama-graph.cpp);
+        // storing Rt[i][k] = R[k][i] = dr.R[k*K+i] lets ggml_mul_mat(Rt, X)
+        // compute that directly with no runtime transpose op - verified
+        // numerically (not just derived) against a ground-truth W@X before
+        // relying on it here, since ggml_mul_mat's index convention is easy
+        // to get backwards silently.
+        result->dartquant_block_size = K;
+        result->dartquant_rotation.resize((size_t)(K * K));
+        for (int64_t i = 0; i < K; i++) {
+            for (int64_t k = 0; k < K; k++) {
+                result->dartquant_rotation[(size_t)(i * K + k)] = ts_f32_to_f16(dr.R[(size_t)(k * K + i)]);
+            }
+        }
+
+        return 0;
+    }
+
     // Metal path: when ts_metal_available(), upload the weight tensor once
     // and let the batched AWQ grid kernel resolve alpha in a single dispatch
     // (cuts the n_grid full-tensor passes to 1). Falls back to the CPU path
@@ -1117,13 +1435,23 @@ int ts_quantize_2d_ternary(const float * weights, const float * act_scales,
 
     result->trits.assign(ternary.begin(), ternary.end());
     // core is NOT populated for the transport artifact — it's too large to
-    // ship (same size as the model). The packer reconstructs magnitudes from
-    // trits + global_amp instead.
+    // ship (same size as the model). row_scale/lane_scale below are the
+    // cheap substitute the packer actually consumes.
     result->awq_scale.assign(wscale.begin(), wscale.end());
     result->awq_input_scale.assign(input_scale.begin(), input_scale.end());
     result->global_amp = global_amp;
     result->out_dim    = out_dim;
     result->in_dim     = in_dim;
+
+    // core (clipped AWQ-scaled magnitudes) is the same "space" global_amp
+    // was computed in above - row_scale/lane_scale must match it, not the
+    // raw pre-AWQ weights, so the packer's reconstruction (trit * scale)
+    // stays consistent with awq_scale/awq_input_scale's own convention.
+    // Uses the post-outlier-zeroing `ternary` (same array result->trits
+    // was just assigned from) so outlier positions - already carried
+    // exactly via the CSR above - don't skew the "typical" lane average.
+    ts_compute_row_lane_scale(core.data(), ternary.data(), out_dim, in_dim,
+                              global_amp, result->row_scale, result->lane_scale);
 
     result->outlier_row_offsets.assign((size_t)(out_dim + 1), 0);
     result->outlier_cols.resize(outlier_flat.size());
@@ -1157,6 +1485,56 @@ int ts_quantize_2d_ternary(const float * weights, const float * act_scales,
     return 0;
 }
 
+// Synthesizes a per-element magnitude array from the best-available source
+// in `tn`: real per-element core (single-step quantize path) > lane_scale
+// (TS_TRANSPORT_LANE_SIZE-wide, broadcast across each lane) > row_scale
+// (broadcast across each row) > global_amp (whole-tensor, the final
+// fallback for a tile-neutral safetensors directory written before
+// row_scale/lane_scale existed). Shared by every ts_pack_ternary_to_tile
+// packer branch (AMD RDNA3 and the generic T640/ts_compute_scales path)
+// instead of duplicating the fallback chain per packer. Always returns a
+// full out_dim*in_dim array, even in the global_amp-only case (a uniform
+// fill), so callers have one interface regardless of which tier fired;
+// the fabs(global_amp) fill exactly reproduces ts_compute_scales' own
+// core==nullptr fallback numerically (global_amp is already >= 0 by
+// construction: it's a mean of absolute values), so this is a
+// unification, not a behavior change, for tensors with no row/lane data.
+std::vector<float> ts_ternary_synth_magnitude(const ts_ternary_tensor & tn) {
+    const int64_t out_dim = tn.out_dim;
+    const int64_t in_dim  = tn.in_dim;
+    const int64_t n = out_dim * in_dim;
+    std::vector<float> mag((size_t) n);
+
+    if (!tn.core.empty()) {
+        for (int64_t i = 0; i < n; i++) {
+            mag[(size_t) i] = std::fabs(ts_f16_to_f32(tn.core[(size_t) i]));
+        }
+        return mag;
+    }
+    if (!tn.lane_scale.empty()) {
+        const int64_t lanes_per_row = (in_dim + TS_TRANSPORT_LANE_SIZE - 1) / TS_TRANSPORT_LANE_SIZE;
+        for (int64_t o = 0; o < out_dim; o++) {
+            for (int64_t c = 0; c < in_dim; c++) {
+                const int64_t lane = c / TS_TRANSPORT_LANE_SIZE;
+                mag[(size_t) (o * in_dim + c)] =
+                    ts_f16_to_f32(tn.lane_scale[(size_t) (o * lanes_per_row + lane)]);
+            }
+        }
+        return mag;
+    }
+    if (!tn.row_scale.empty()) {
+        for (int64_t o = 0; o < out_dim; o++) {
+            const float v = ts_f16_to_f32(tn.row_scale[(size_t) o]);
+            for (int64_t c = 0; c < in_dim; c++) {
+                mag[(size_t) (o * in_dim + c)] = v;
+            }
+        }
+        return mag;
+    }
+    std::fill(mag.begin(), mag.end(), tn.global_amp);
+    return mag;
+}
+
 // ---------------------------------------------------------------------------
 // pack_ternary_to_tile: client-side packer
 // ---------------------------------------------------------------------------
@@ -1177,6 +1555,11 @@ int ts_pack_ternary_to_tile(const ts_ternary_tensor & tn,
     if (out_dim <= 0 || in_dim <= 0) {
         return 1;
     }
+
+    // Best-available magnitude source (core > lane_scale > row_scale >
+    // global_amp), computed once and shared by every branch below - see
+    // ts_ternary_synth_magnitude's own comment for the fallback rationale.
+    const std::vector<float> synth_mag = ts_ternary_synth_magnitude(tn);
 
     if (config.packing == TS_PACK_AMD_RDNA3) {
         // WMMA-native i8 packing (docs/amd-tile-format-spec.md 3.4).
@@ -1201,13 +1584,9 @@ int ts_pack_ternary_to_tile(const ts_ternary_tensor & tn,
         result->outlier_vals.clear();
         result->act_scale.clear();
 
-        // Reconstruct per-element float magnitudes the same way the T640
-        // path below does (see ts_compute_scales): tn.core when shipped
-        // (single-step quantize path), else sign(trit) * global_amp (the
-        // tile-neutral safetensors round-trip path - core is not shipped
-        // there, to halve transport size).
-        const bool have_core = !tn.core.empty();
-
+        // Reconstruct per-element float magnitudes from the best available
+        // source - see ts_ternary_synth_magnitude (core > lane_scale >
+        // row_scale > global_amp).
         std::vector<float>   row_f32(in_dim);
         std::vector<uint8_t> row_buf((size_t) pages * (size_t) config.page_size * sizeof(int8_t) +
                                      (size_t) pages * sizeof(uint16_t) +
@@ -1219,7 +1598,7 @@ int ts_pack_ternary_to_tile(const ts_ternary_tensor & tn,
                 if (trit_row[c] == 0) {
                     row_f32[c] = 0.0f;
                 } else {
-                    const float mag = have_core ? std::fabs(ts_f16_to_f32(tn.core[o * in_dim + c])) : tn.global_amp;
+                    const float mag = synth_mag[(size_t) (o * in_dim + c)];
                     row_f32[c] = (trit_row[c] > 0) ? mag : -mag;
                 }
             }
@@ -1258,25 +1637,16 @@ int ts_pack_ternary_to_tile(const ts_ternary_tensor & tn,
                  result->packed.data(), pack_ps.data(), pack_ls.data(),
                  out_dim, in_dim);
 
-    // Scale fitting: when tn.core is populated (single-step quantize path),
-    // use the actual per-element magnitudes. When empty (tile-neutral
-    // transport path — core not shipped), reconstruct magnitudes from
-    // trits + global_amp. The reconstruction loses per-element magnitude
-    // variation but preserves the sign/count pattern, which is sufficient
-    // for the coarse int8/f16 page/lane scale fitting.
-    if (!tn.core.empty()) {
-        std::vector<float> core_f32(tn.core.size());
-        for (size_t i = 0; i < tn.core.size(); i++) {
-            core_f32[i] = ts_f16_to_f32(tn.core[i]);
-        }
-        ts_compute_scales(core_f32.data(), tn.trits.data(), &config,
-                          result->page_scales.data(), result->lane_scales.data(),
-                          out_dim, in_dim, tn.global_amp);
-    } else {
-        ts_compute_scales(nullptr, tn.trits.data(), &config,
-                          result->page_scales.data(), result->lane_scales.data(),
-                          out_dim, in_dim, tn.global_amp);
-    }
+    // Scale fitting from the best available magnitude source (core >
+    // lane_scale > row_scale > global_amp - see ts_ternary_synth_magnitude).
+    // synth_mag is never empty (always sized out_dim*in_dim, uniformly
+    // global_amp-filled in the worst case), so this always takes
+    // ts_compute_scales' "core provided" branch - see synth_mag's own
+    // comment for why that's numerically identical to the old
+    // core==nullptr path when no row/lane/core data exists.
+    ts_compute_scales(synth_mag.data(), tn.trits.data(), &config,
+                      result->page_scales.data(), result->lane_scales.data(),
+                      out_dim, in_dim, tn.global_amp);
 
     // outlier CSR travels with the ternary tensor; copy verbatim.
     result->outlier_row_offsets = tn.outlier_row_offsets;

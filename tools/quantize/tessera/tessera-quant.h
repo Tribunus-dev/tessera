@@ -108,6 +108,22 @@ void ts_compute_scales(const float * core, const int8_t * ternary_flat,
                        uint16_t * page_scales, int8_t * lane_scales,
                        int64_t out_dim, int64_t in_dim);
 
+// Computes ts_ternary_tensor::row_scale/lane_scale (see tessera-ternary.h
+// for the full rationale): mean(|magnitude_source|) over nonzero-trit
+// positions, at row granularity and TS_TRANSPORT_LANE_SIZE-element lane
+// granularity, f16-encoded. Falls back to global_amp for any row/lane with
+// no nonzero trits.
+void ts_compute_row_lane_scale(const float * magnitude_source, const int8_t * ternary_flat,
+                               int64_t out_dim, int64_t in_dim, float global_amp,
+                               std::vector<uint16_t> & row_scale,
+                               std::vector<uint16_t> & lane_scale);
+
+// Synthesizes a full out_dim*in_dim per-element magnitude array from the
+// best-available source in `tn`: core > lane_scale > row_scale >
+// global_amp. Shared by every ts_pack_ternary_to_tile packer branch. See
+// tessera-quant.cpp for the full fallback-tier rationale.
+std::vector<float> ts_ternary_synth_magnitude(const ts_ternary_tensor & tn);
+
 // Select repair residuals (outlier columns) for a quantized tensor.
 // Returns indices of selected outlier columns.
 std::vector<int32_t> ts_select_repair_residuals(
@@ -168,6 +184,18 @@ struct ts_quant_params_2d {
     bool      use_septq;        // use SEPTQ Hessian compensation
     int64_t   awq_grid;         // grid points for alpha search (default 20)
     uint32_t  seed;             // determinism
+
+    // FLRQ (low-rank multiplicative pre-scale, tessera-lrq.h) and DartQuant
+    // (learned block-diagonal rotation, tessera-dartquant.h) regime
+    // experts. Mutually exclusive with use_septq and each other -
+    // ts_quantize_2d_ternary checks them in a fixed priority order (septq
+    // > flrq > dartquant > AWQ), documented at the dispatch sites.
+    bool      use_flrq;
+    int64_t   flrq_rank;        // 0 -> default (32)
+    int64_t   flrq_iters;       // 0 -> default (50)
+    bool      use_dartquant;
+    int64_t   dartquant_block;  // 0 -> default (128, clamped to a divisor of in_dim)
+    int64_t   dartquant_iters;  // 0 -> default (30)
 };
 
 int ts_quantize_2d(const float * weights,
