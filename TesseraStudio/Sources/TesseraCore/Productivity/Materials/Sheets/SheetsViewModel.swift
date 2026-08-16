@@ -147,6 +147,23 @@ public final class SheetsViewModel: ObservableObject {
         }
         let text = editingText
         editingCell = nil
+
+        // Data validation's interactive-entry gate (SheetValidationRule):
+        // a covering .stop rule rejects the entry outright, before the
+        // engine or the store ever see it - matching Excel's own
+        // interactive editor. Every other write path (paste, agent
+        // tool, engine results) calls store.setCell directly and is
+        // never gated this way; see
+        // Sheet.applyingInteractiveEntry(_:row:col:)'s doc comment.
+        if let sheet = allSheets.first(where: { $0.id == sheetID }) {
+            let columnType = coord.col < sheet.columns.count ? sheet.columns[coord.col].type : .text
+            let enteredValue = CellValue.classify(text, columnType: columnType)
+            if case .rejected(let rule) = sheet.applyingInteractiveEntry(enteredValue, row: coord.row, col: coord.col) {
+                loadError = rule.errorMessage ?? "This value isn't allowed for this cell."
+                return
+            }
+        }
+
         // Calculate first so the grid updates immediately, then persist
         // the SOURCE text. A rejected formula is still stored: it is what
         // the user typed, and dropping it would look like data loss.
@@ -641,6 +658,21 @@ public final class SheetEditorViewModel: ObservableObject {
         editingCell = nil
         isSaving = true
         defer { isSaving = false }
+
+        // Data validation's interactive-entry gate (SheetValidationRule):
+        // a covering .stop rule rejects the entry outright, before the
+        // engine or the store ever see it - matching Excel's own
+        // interactive editor. Every other write path (paste, agent
+        // tool, engine results) calls store.setCell directly and is
+        // never gated this way; see
+        // Sheet.applyingInteractiveEntry(_:row:col:)'s doc comment.
+        let columnType = coord.col < sheet.columns.count ? sheet.columns[coord.col].type : .text
+        let enteredValue = CellValue.classify(text, columnType: columnType)
+        if case .rejected(let rule) = sheet.applyingInteractiveEntry(enteredValue, row: coord.row, col: coord.col) {
+            lastError = rule.errorMessage ?? "This value isn't allowed for this cell."
+            return
+        }
+
         // Recalculate first so the grid reflects the edit immediately,
         // then persist the source text.
         workbook.apply(text: text, row: coord.row, col: coord.col)

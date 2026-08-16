@@ -488,11 +488,15 @@ public struct SheetStore: Sendable {
     /// ``QueryEngine/sort(rowCount:conditions:cellValue:)``) and
     /// persist the new physical row order.
     ///
-    /// `filterState` is left exactly as it was: a sort permutes which
-    /// row holds what, it does not re-run or invalidate an autofilter,
-    /// so `criteria`/`hiddenRows` carry over unchanged (see
-    /// `QueryEngine.sort`'s `(order:, outcome:)` return shape - there is
-    /// no mutated `SheetFilterState` for a sort to hand back).
+    /// `filterState.criteria` is left exactly as it was: a sort
+    /// permutes which row holds what, it does not re-run or invalidate
+    /// an autofilter (see `QueryEngine.sort`'s `(order:, outcome:)`
+    /// return shape - there is no mutated `SheetFilterState` for a sort
+    /// to hand back). `hiddenRows`, though, is remapped through the
+    /// SAME permutation the grid itself gets below - "hidden rows are
+    /// truth" (audit item A4): a row hidden before the sort must be the
+    /// SAME logical row that is hidden after it, not whatever content
+    /// happens to land at that physical index post-sort.
     public func sortRange(_ conditions: [SheetSortCondition], for sheetID: UUID) async throws -> Sheet {
         var sheet = try await loadOrFail(id: sheetID)
         try guardUnlocked(sheet)
@@ -516,6 +520,19 @@ public struct SheetStore: Sendable {
             }
             table.children = reordered
             sheet.body.blocks[tableID] = table
+        }
+        // `order[newRow] == oldRow` (QueryEngine.sort's own contract):
+        // a physical row previously hidden at `oldRow` now lives at
+        // `newRow`, so remap the set through that same mapping rather
+        // than leaving it pointing at pre-sort indices.
+        if var state = sheet.filterState, !state.hiddenRows.isEmpty {
+            var remapped: Set<Int> = []
+            remapped.reserveCapacity(state.hiddenRows.count)
+            for (newRow, oldRow) in order.enumerated() where state.hiddenRows.contains(oldRow) {
+                remapped.insert(newRow)
+            }
+            state.hiddenRows = remapped
+            sheet.filterState = state
         }
         sheet.updatedAt = Date()
         _ = try await upsert(sheet)
@@ -622,6 +639,79 @@ public struct SheetStore: Sendable {
         case let .slide(slideID):
             return ["kind": .string("slide"), "slideID": .string(slideID.uuidString)]
         }
+    }
+
+    /// Append a reply to an existing comment thread. Uses
+    /// `CommentThread.addingReply(_:)` (Comments.swift) for the value
+    /// mutation and `Sheet.replacingCommentThread(_:)` to write it
+    /// back. A no-op (zero receipts, zero persistence) when `threadID`
+    /// doesn't name a thread on this sheet - guard-and-early-return
+    /// before persist+receipt, the receipts law's canonical shape (see
+    /// `SheetStore.archive`).
+    public func replyToComment(
+        threadID: UUID,
+        author: String,
+        text: String,
+        for sheetID: UUID
+    ) async throws -> Sheet {
+        var sheet = try await loadOrFail(id: sheetID)
+        guard let thread = sheet.effectiveCommentThreads.first(where: { $0.id == threadID }) else {
+            return sheet
+        }
+        let message = CommentMessage(author: author, text: text)
+        sheet = sheet.replacingCommentThread(thread.addingReply(message))
+        sheet.updatedAt = Date()
+        _ = try await upsert(sheet)
+        try await appendReceipt(
+            entityID: sheetID,
+            receiptType: SheetReceiptType.commentReplied.rawValue,
+            payload: [
+                "commentID": .string(threadID.uuidString),
+                "messageID": .string(message.id.uuidString),
+            ]
+        )
+        return sheet
+    }
+
+    /// Mark a comment thread resolved via `CommentThread.resolved()`.
+    /// A no-op when `threadID` doesn't name a thread on this sheet, OR
+    /// the thread is already resolved - the second guard is what keeps
+    /// a repeated "resolve" from receipting a non-mutation, matching
+    /// `SheetStore.archive`'s `guard !sheet.isArchived` shape exactly.
+    public func resolveComment(threadID: UUID, for sheetID: UUID) async throws -> Sheet {
+        var sheet = try await loadOrFail(id: sheetID)
+        guard let thread = sheet.effectiveCommentThreads.first(where: { $0.id == threadID }),
+              !thread.isResolved else {
+            return sheet
+        }
+        sheet = sheet.replacingCommentThread(thread.resolved())
+        sheet.updatedAt = Date()
+        _ = try await upsert(sheet)
+        try await appendReceipt(
+            entityID: sheetID,
+            receiptType: SheetReceiptType.commentResolved.rawValue,
+            payload: ["commentID": .string(threadID.uuidString)]
+        )
+        return sheet
+    }
+
+    /// Delete a comment thread outright via
+    /// `Sheet.removingCommentThread(id:)`. A no-op when `threadID`
+    /// doesn't name a thread on this sheet.
+    public func deleteComment(threadID: UUID, for sheetID: UUID) async throws -> Sheet {
+        var sheet = try await loadOrFail(id: sheetID)
+        guard sheet.effectiveCommentThreads.contains(where: { $0.id == threadID }) else {
+            return sheet
+        }
+        sheet = sheet.removingCommentThread(id: threadID)
+        sheet.updatedAt = Date()
+        _ = try await upsert(sheet)
+        try await appendReceipt(
+            entityID: sheetID,
+            receiptType: SheetReceiptType.commentDeleted.rawValue,
+            payload: ["commentID": .string(threadID.uuidString)]
+        )
+        return sheet
     }
 
     // MARK: - Archive / Trash / Favorite

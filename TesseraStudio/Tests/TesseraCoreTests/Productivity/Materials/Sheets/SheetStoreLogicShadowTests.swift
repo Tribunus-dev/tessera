@@ -86,6 +86,111 @@ final class SheetStoreLogicShadowTests: DoctrineTestCase {
         XCTAssertEqual(adjusted.cellText(row: 2, col: 0), "=A2")
     }
 
+    // MARK: - sortRange's hiddenRows remap: pure permutation logic
+    //
+    // `QueryEngine.sortedRowOrder` itself (the pure function
+    // `SheetStore.sortRange` calls to get `order`) already has a full
+    // ungated shadow in QueryEngineTests.swift - not repeated here. What
+    // IS shadowed here is the REMAP arithmetic `SheetStore.sortRange`
+    // performs on `order` (audit item A4), which is inline in that
+    // store method with no extracted pure function of its own to call
+    // directly - the same situation the "Archive/trash/favorite
+    // family's pure logic" section below documents and handles the
+    // same way: pin the identical computation as a standalone value-
+    // type-layer assertion.
+
+    func testSortRangeHiddenRowsRemapPureLogicFollowsTheSamePermutationAsTheRowReorder() {
+        // order[newRow] == oldRow (QueryEngine.sortedRowOrder's own
+        // contract) - here the row that was physically at index 0
+        // sorts to index 1.
+        let order = [1, 0]
+        let hiddenRowsBeforeSort: Set<Int> = [0]
+
+        var remapped: Set<Int> = []
+        for (newRow, oldRow) in order.enumerated() where hiddenRowsBeforeSort.contains(oldRow) {
+            remapped.insert(newRow)
+        }
+
+        XCTAssertEqual(remapped, [1], "the row physically hidden before the sort (old index 0) now lives at new index 1 - the SAME logical row must stay hidden")
+    }
+
+    func testSortRangeHiddenRowsRemapPureLogicIsEmptyWhenNothingWasHidden() {
+        let order = [2, 0, 1]
+        let hiddenRowsBeforeSort: Set<Int> = []
+
+        var remapped: Set<Int> = []
+        for (newRow, oldRow) in order.enumerated() where hiddenRowsBeforeSort.contains(oldRow) {
+            remapped.insert(newRow)
+        }
+
+        XCTAssertTrue(remapped.isEmpty)
+    }
+
+    // MARK: - Comment lifecycle's pure logic: CommentThread.addingReply/.resolved, Sheet.replacingCommentThread/.removingCommentThread
+
+    private func rootThread(anchorRow: Int = 0, anchorCol: Int = 0, sheetID: UUID) -> CommentThread {
+        CommentThread(
+            id: UUID(), anchor: .cell(sheetID: sheetID, row: anchorRow, col: anchorCol),
+            author: "alice", createdAt: Date(), messages: [CommentMessage(author: "alice", text: "root")]
+        )
+    }
+
+    func testReplyToCommentPureLogicAppendsAMessageViaAddingReply() {
+        let sheet = Sheet.makeBlank(title: "t", rows: 1, cols: 1)
+        let thread = rootThread(sheetID: sheet.id)
+        let reply = CommentMessage(author: "bob", text: "reply")
+
+        let updated = thread.addingReply(reply)
+
+        XCTAssertEqual(updated.messages.count, 2)
+        XCTAssertEqual(updated.messages.last?.text, "reply")
+        XCTAssertEqual(updated.messages.first?.text, "root", "the original root message must survive a reply")
+    }
+
+    func testResolveCommentPureLogicFlipsIsResolvedAndReplacingCommentThreadWritesItBackByID() {
+        var sheet = Sheet.makeBlank(title: "t", rows: 1, cols: 1)
+        let thread = rootThread(sheetID: sheet.id)
+        sheet = sheet.addingCommentThread(thread)
+
+        sheet = sheet.replacingCommentThread(thread.resolved())
+
+        XCTAssertEqual(sheet.effectiveCommentThreads.count, 1, "replacingCommentThread must not add a second thread")
+        XCTAssertEqual(sheet.effectiveCommentThreads.first?.isResolved, true)
+    }
+
+    func testDeleteCommentPureLogicRemovesTheThreadByID() {
+        var sheet = Sheet.makeBlank(title: "t", rows: 1, cols: 1)
+        let thread = rootThread(sheetID: sheet.id)
+        sheet = sheet.addingCommentThread(thread)
+
+        sheet = sheet.removingCommentThread(id: thread.id)
+
+        XCTAssertTrue(sheet.effectiveCommentThreads.isEmpty)
+    }
+
+    func testReplacingCommentThreadPureLogicIsANoOpWhenTheIDIsUnknown() {
+        var sheet = Sheet.makeBlank(title: "t", rows: 1, cols: 1)
+        let thread = rootThread(sheetID: sheet.id)
+        sheet = sheet.addingCommentThread(thread)
+        let before = sheet.effectiveCommentThreads
+        let unrelated = rootThread(anchorRow: 1, anchorCol: 1, sheetID: sheet.id)
+
+        let unchanged = sheet.replacingCommentThread(unrelated.resolved())
+
+        XCTAssertEqual(unchanged.effectiveCommentThreads, before, "replacing an unknown thread id must leave the list unchanged - the guard-and-return-unchanged shape SheetStore's comment lifecycle methods rely on for their zero-receipt no-op path")
+    }
+
+    func testRemovingCommentThreadPureLogicIsANoOpWhenTheIDIsUnknown() {
+        var sheet = Sheet.makeBlank(title: "t", rows: 1, cols: 1)
+        let thread = rootThread(sheetID: sheet.id)
+        sheet = sheet.addingCommentThread(thread)
+        let before = sheet.effectiveCommentThreads
+
+        let unchanged = sheet.removingCommentThread(id: UUID())
+
+        XCTAssertEqual(unchanged.effectiveCommentThreads, before)
+    }
+
     // MARK: - defineNamedRange/undefineNamedRange's pure logic
 
     func testDefineNamedRangePureLogicStoresUppercaseKeyedRange() {

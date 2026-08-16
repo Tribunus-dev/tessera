@@ -190,7 +190,15 @@ public struct SheetGridView: View {
         let coord = SheetCellCoord(row: row, col: col)
         let isSelected = viewModel.selectedCell == coord
         let isEditing = viewModel.editingCell == coord
-        let format = viewModel.sheet.cellFormat(row: row, col: col)
+        let baseFormat = viewModel.sheet.cellFormat(row: row, col: col)
+        // Conditional-format overlay (SheetConditionalFormat) on top of
+        // the cell's own stored format - dxf-style partial override,
+        // never touching what's actually persisted. No aggregate cache
+        // is threaded through here, so `.top10`/`.aboveAverage`/
+        // `.uniqueValues`/`.duplicateValues` rules safely no-op (their
+        // own documented "no aggregate, no match" fallback) while
+        // `.cellValue`/`.formula`/`.text`/`.blanks`/`.errors` apply.
+        let format = viewModel.sheet.conditionalFormatOverlay(row: row, col: col).applied(over: baseFormat)
         // The COMPUTED value, rendered under the cell's number format:
         // `=SUM(B1:B4)` shows its total, and a currency cell shows the
         // symbol. Editing swaps back to the SOURCE text (see
@@ -247,13 +255,26 @@ public struct SheetGridView: View {
         }
     }
 
+    // MARK: - Row visibility
+
+    /// Every row index NOT in the sheet's effective `hiddenRows`
+    /// (`SheetFilterState`, QueryEngine.swift) - "hidden rows are
+    /// truth": a row hidden by an applied autofilter (or carried
+    /// through a sort, see `SheetStore.sortRange`) simply does not
+    /// render, the same as Excel/LO hiding a filtered-out row.
+    private var visibleRows: [Int] {
+        let hidden = viewModel.sheet.effectiveFilterState.hiddenRows
+        guard !hidden.isEmpty else { return Array(0..<viewModel.sheet.rowCount) }
+        return (0..<viewModel.sheet.rowCount).filter { !hidden.contains($0) }
+    }
+
     // MARK: - Body
 
     private var gridBody: some View {
         ZStack {
             ScrollView([.horizontal, .vertical], showsIndicators: true) {
                 Grid(horizontalSpacing: 0, verticalSpacing: 0) {
-                    ForEach(0..<viewModel.sheet.rowCount, id: \.self) { row in
+                    ForEach(visibleRows, id: \.self) { row in
                         GridRow {
                             // Row index
                             HStack(spacing: 4) {

@@ -272,6 +272,38 @@ final class SheetStoreTests: DoctrineTestCase {
         XCTAssertEqual(receiptTypes(receipts).filter { $0 == SheetReceiptType.filterCleared.rawValue }.count, 1)
     }
 
+    // MARK: - sortRange hiddenRows remap (audit item A4, "hidden rows are truth")
+
+    func testSortRangeRemapsHiddenRowsThroughTheSamePermutationAsTheRowReorderSoTheSameLogicalRowStaysHidden() async throws {
+        let store = try await makeConnectedStore()
+        var sheet = try await store.upsert(freshSheet(rows: 3, cols: 1))
+        // Row content by ORIGINAL physical index: row0="b", row1="a",
+        // row2="c". Sorting ascending moves "a" to row0, "b" to row1,
+        // "c" stays at row2.
+        sheet = try await store.setCell(row: 0, col: 0, value: "b", for: sheet.id)
+        sheet = try await store.setCell(row: 1, col: 0, value: "a", for: sheet.id)
+        sheet = try await store.setCell(row: 2, col: 0, value: "c", for: sheet.id)
+        // QueryEngine.rowsFailing/.valueSet hides rows whose display text
+        // is NOT in `values` (SheetFilterCriteria.matchesValueSet: the
+        // filter SHOWS the named set, hides everything else) - so
+        // `values: ["b"]` hides row1 ("a") and row2 ("c") BY IDENTITY,
+        // not row0 ("b") itself.
+        let criteria = [SheetFilterColumn(columnIndex: 0, criteria: SheetFilterCriteria(kind: .valueSet, values: ["b"]))]
+        sheet = try await store.applyFilter(criteria, for: sheet.id)
+        XCTAssertEqual(sheet.effectiveFilterState.hiddenRows, [1, 2], "sanity: row1 (\"a\") and row2 (\"c\") are hidden before the sort - the filter SHOWS \"b\", hides everything else")
+
+        let sorted = try await store.sortRange([SheetSortCondition(columnIndex: 0, ascending: true)], for: sheet.id)
+
+        XCTAssertEqual(sorted.cellText(row: 0, col: 0), "a")
+        XCTAssertEqual(sorted.cellText(row: 1, col: 0), "b")
+        XCTAssertEqual(sorted.cellText(row: 2, col: 0), "c")
+        // "a" (pre-sort row1, hidden) now lives at row0; "c" (pre-sort
+        // row2, hidden) stays at row2. hiddenRows must follow those two
+        // logical rows to their new positions, not stay pinned to the
+        // pre-sort indices {1, 2} (which now hold "b" and "c").
+        XCTAssertEqual(sorted.effectiveFilterState.hiddenRows, [0, 2])
+    }
+
     // MARK: - defineNamedRange / undefineNamedRange
 
     func testDefineNamedRangeEmitsExactlyOneReceiptAndPersistsTheRange() async throws {
@@ -317,6 +349,100 @@ final class SheetStoreTests: DoctrineTestCase {
         XCTAssertEqual(commentReceipts.first?.payload["anchor"], .object([
             "kind": .string("cell"), "row": .number(1), "col": .number(2),
         ]))
+    }
+
+    // MARK: - Comment lifecycle: reply / resolve / delete (P2-0 item 13)
+
+    func testReplyToCommentEmitsExactlyOneCommentRepliedReceiptAndAppendsTheMessage() async throws {
+        let store = try await makeConnectedStore()
+        var sheet = try await store.upsert(freshSheet())
+        sheet = try await store.addComment(anchor: .cell(sheetID: sheet.id, row: 0, col: 0), author: "alice", text: "root", for: sheet.id)
+        let threadID = try XCTUnwrap(sheet.effectiveCommentThreads.first?.id)
+
+        let updated = try await store.replyToComment(threadID: threadID, author: "bob", text: "reply", for: sheet.id)
+
+        XCTAssertEqual(updated.effectiveCommentThreads.first?.messages.count, 2)
+        XCTAssertEqual(updated.effectiveCommentThreads.first?.messages.last?.text, "reply")
+        let receipts = try await sheetReceipts(store, forSheet: sheet.id)
+        XCTAssertEqual(receiptTypes(receipts).filter { $0 == SheetReceiptType.commentReplied.rawValue }.count, 1)
+    }
+
+    /// No-op zero-receipt path: replying to a thread id that doesn't exist.
+    func testReplyToCommentOfAnUnknownThreadIDIsANoOpEmittingNoReceiptAndNotPersisting() async throws {
+        let store = try await makeConnectedStore()
+        let sheet = try await store.upsert(freshSheet())
+        let receiptsBefore = try await sheetReceipts(store, forSheet: sheet.id)
+
+        let result = try await store.replyToComment(threadID: UUID(), author: "bob", text: "reply", for: sheet.id)
+
+        XCTAssertTrue(result.effectiveCommentThreads.isEmpty)
+        let receiptsAfter = try await sheetReceipts(store, forSheet: sheet.id)
+        XCTAssertEqual(receiptsAfter.count, receiptsBefore.count, "replying to an unknown thread must not emit a receipt")
+    }
+
+    func testResolveCommentEmitsExactlyOneCommentResolvedReceiptAndFlipsIsResolved() async throws {
+        let store = try await makeConnectedStore()
+        var sheet = try await store.upsert(freshSheet())
+        sheet = try await store.addComment(anchor: .cell(sheetID: sheet.id, row: 0, col: 0), author: "alice", text: "root", for: sheet.id)
+        let threadID = try XCTUnwrap(sheet.effectiveCommentThreads.first?.id)
+
+        let updated = try await store.resolveComment(threadID: threadID, for: sheet.id)
+
+        XCTAssertEqual(updated.effectiveCommentThreads.first?.isResolved, true)
+        let receipts = try await sheetReceipts(store, forSheet: sheet.id)
+        XCTAssertEqual(receiptTypes(receipts).filter { $0 == SheetReceiptType.commentResolved.rawValue }.count, 1)
+    }
+
+    /// No-op zero-receipt path: resolving an ALREADY-resolved thread.
+    func testResolvingAnAlreadyResolvedCommentEmitsNoReceipt() async throws {
+        let store = try await makeConnectedStore()
+        var sheet = try await store.upsert(freshSheet())
+        sheet = try await store.addComment(anchor: .cell(sheetID: sheet.id, row: 0, col: 0), author: "alice", text: "root", for: sheet.id)
+        let threadID = try XCTUnwrap(sheet.effectiveCommentThreads.first?.id)
+        sheet = try await store.resolveComment(threadID: threadID, for: sheet.id)
+        let receiptsBefore = try await sheetReceipts(store, forSheet: sheet.id)
+
+        _ = try await store.resolveComment(threadID: threadID, for: sheet.id)
+
+        let receiptsAfter = try await sheetReceipts(store, forSheet: sheet.id)
+        XCTAssertEqual(receiptsAfter.count, receiptsBefore.count, "resolving an already-resolved thread must not emit a second receipt")
+    }
+
+    /// No-op zero-receipt path: resolving a thread id that doesn't exist.
+    func testResolveCommentOfAnUnknownThreadIDIsANoOpEmittingNoReceipt() async throws {
+        let store = try await makeConnectedStore()
+        let sheet = try await store.upsert(freshSheet())
+        let receiptsBefore = try await sheetReceipts(store, forSheet: sheet.id)
+
+        _ = try await store.resolveComment(threadID: UUID(), for: sheet.id)
+
+        let receiptsAfter = try await sheetReceipts(store, forSheet: sheet.id)
+        XCTAssertEqual(receiptsAfter.count, receiptsBefore.count)
+    }
+
+    func testDeleteCommentEmitsExactlyOneCommentDeletedReceiptAndRemovesTheThread() async throws {
+        let store = try await makeConnectedStore()
+        var sheet = try await store.upsert(freshSheet())
+        sheet = try await store.addComment(anchor: .cell(sheetID: sheet.id, row: 0, col: 0), author: "alice", text: "root", for: sheet.id)
+        let threadID = try XCTUnwrap(sheet.effectiveCommentThreads.first?.id)
+
+        let updated = try await store.deleteComment(threadID: threadID, for: sheet.id)
+
+        XCTAssertTrue(updated.effectiveCommentThreads.isEmpty)
+        let receipts = try await sheetReceipts(store, forSheet: sheet.id)
+        XCTAssertEqual(receiptTypes(receipts).filter { $0 == SheetReceiptType.commentDeleted.rawValue }.count, 1)
+    }
+
+    /// No-op zero-receipt path: deleting a thread id that doesn't exist.
+    func testDeleteCommentOfAnUnknownThreadIDIsANoOpEmittingNoReceipt() async throws {
+        let store = try await makeConnectedStore()
+        let sheet = try await store.upsert(freshSheet())
+        let receiptsBefore = try await sheetReceipts(store, forSheet: sheet.id)
+
+        _ = try await store.deleteComment(threadID: UUID(), for: sheet.id)
+
+        let receiptsAfter = try await sheetReceipts(store, forSheet: sheet.id)
+        XCTAssertEqual(receiptsAfter.count, receiptsBefore.count)
     }
 
     // MARK: - Archive/trash/favorite family: happy path + a SUSPECTED
