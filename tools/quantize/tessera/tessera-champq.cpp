@@ -8,11 +8,12 @@
 #endif
 #include <Accelerate/Accelerate.h>
 #define TS_HAS_CBLAS 1
+#elif defined(TS_USE_ROCBLAS)
+// rocBLAS before GGML_USE_OPENBLAS: matmul-acceleration, not fallback (D1).
+#include "tessera-rocblas.h"
 #elif defined(GGML_USE_OPENBLAS)
 #include <cblas.h>
 #define TS_HAS_CBLAS 1
-#elif defined(TS_USE_ROCBLAS)
-#include "tessera-rocblas.h"
 #endif
 
 #include <cmath>
@@ -225,10 +226,15 @@ static float ts_champq_eval(const float * x, float * grad, int64_t n, void * ctx
                 (int)out_dim, (int)K, (int)K,
                 1.0f, W, (int)K, x, (int)K, 0.0f, W_perm.data(), (int)K);
 #elif defined(TS_USE_ROCBLAS)
+    // Scoped block: the outer `c` is the ts_champq_ctx* captured above, so
+    // the rocBLAS output buffer is named `co` to avoid shadowing it (this
+    // branch never compiled before the D1 macro-precedence fix, since
+    // GGML_USE_OPENBLAS previously always won TS_HAS_CBLAS's #if).
+    {
     ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)out_dim * K * sizeof(float));
     ts_rblas_buf b = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)K * K * sizeof(float));
-    ts_rblas_buf c = ts_rblas_buf_get(TS_RBLAS_OUT_F32, (size_t)out_dim * K * sizeof(float));
-    if (a.dev && b.dev && c.dev) {
+    ts_rblas_buf co = ts_rblas_buf_get(TS_RBLAS_OUT_F32, (size_t)out_dim * K * sizeof(float));
+    if (a.dev && b.dev && co.dev) {
         hipStream_t st = ts_rblas_stream();
         hipMemcpyAsync(a.dev, W,         a.bytes, hipMemcpyHostToDevice, st);
         hipMemcpyAsync(b.dev, x,         b.bytes, hipMemcpyHostToDevice, st);
@@ -239,8 +245,8 @@ static float ts_champq_eval(const float * x, float * grad, int64_t n, void * ctx
                       rocblas_operation_none,
                       (int)K, (int)out_dim, (int)K,
                       &alpha, (float*)b.dev, (int)K, (float*)a.dev, (int)K,
-                      &beta,  (float*)c.dev, (int)K);
-        hipMemcpyAsync(W_perm.data(), c.dev, c.bytes, hipMemcpyDeviceToHost, st);
+                      &beta,  (float*)co.dev, (int)K);
+        hipMemcpyAsync(W_perm.data(), co.dev, co.bytes, hipMemcpyDeviceToHost, st);
         hipStreamSynchronize(st);
     } else {
         for (int64_t r = 0; r < out_dim; r++) {
@@ -256,7 +262,8 @@ static float ts_champq_eval(const float * x, float * grad, int64_t n, void * ctx
     }
     ts_rblas_buf_release(a);
     ts_rblas_buf_release(b);
-    ts_rblas_buf_release(c);
+    ts_rblas_buf_release(co);
+    }
 #else
     for (int64_t r = 0; r < out_dim; r++) {
         const float * Wr = W + r * K;
@@ -313,10 +320,13 @@ static float ts_champq_eval(const float * x, float * grad, int64_t n, void * ctx
                 1.0f, W, (int)K, g.data(), (int)K,
                 0.0f, grad, (int)K);
 #elif defined(TS_USE_ROCBLAS)
+    // Scoped block: see the W_perm rocBLAS block above for why `c` (the
+    // outer ts_champq_ctx*) is avoided and each block gets its own scope.
+    {
     ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)out_dim * K * sizeof(float));
     ts_rblas_buf b = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)out_dim * K * sizeof(float));
-    ts_rblas_buf c = ts_rblas_buf_get(TS_RBLAS_OUT_F32, (size_t)K * K * sizeof(float));
-    if (a.dev && b.dev && c.dev) {
+    ts_rblas_buf co = ts_rblas_buf_get(TS_RBLAS_OUT_F32, (size_t)K * K * sizeof(float));
+    if (a.dev && b.dev && co.dev) {
         hipStream_t st = ts_rblas_stream();
         hipMemcpyAsync(a.dev, W,         a.bytes, hipMemcpyHostToDevice, st);
         hipMemcpyAsync(b.dev, g.data(),  b.bytes, hipMemcpyHostToDevice, st);
@@ -327,8 +337,8 @@ static float ts_champq_eval(const float * x, float * grad, int64_t n, void * ctx
                       rocblas_operation_none,
                       (int)K, (int)K, (int)out_dim,
                       &alpha, (float*)a.dev, (int)K, (float*)b.dev, (int)K,
-                      &beta,  (float*)c.dev, (int)K);
-        hipMemcpyAsync(grad, c.dev, c.bytes, hipMemcpyDeviceToHost, st);
+                      &beta,  (float*)co.dev, (int)K);
+        hipMemcpyAsync(grad, co.dev, co.bytes, hipMemcpyDeviceToHost, st);
         hipStreamSynchronize(st);
     } else {
         for (int64_t i = 0; i < K; i++) {
@@ -343,7 +353,8 @@ static float ts_champq_eval(const float * x, float * grad, int64_t n, void * ctx
     }
     ts_rblas_buf_release(a);
     ts_rblas_buf_release(b);
-    ts_rblas_buf_release(c);
+    ts_rblas_buf_release(co);
+    }
 #else
     for (int64_t i = 0; i < K; i++) {
         for (int64_t k = 0; k < K; k++) {

@@ -15,9 +15,17 @@
 #define ACCELERATE_NEW_LAPACK
 #endif
 #include <Accelerate/Accelerate.h>
-#elif defined(GGML_USE_OPENBLAS)
+#endif
+// Unlike the single-TS_HAS_CBLAS-flag files, this file's functions each pick
+// their own lane independently (some have no rocBLAS variant at all - norm2,
+// scale, ...), so both headers are included when both are available; the
+// GEMM/dot call sites below independently prefer TS_USE_ROCBLAS over
+// GGML_USE_OPENBLAS at their own #if chains (D1: matmul-acceleration, not
+// fallback) without gating header visibility on that preference.
+#if defined(GGML_USE_OPENBLAS)
 #include <cblas.h>
-#elif defined(TS_USE_ROCBLAS)
+#endif
+#if defined(TS_USE_ROCBLAS)
 #include "tessera-rocblas.h"
 #endif
 
@@ -122,8 +130,6 @@ float ts_vec_dotpr(const float * a, const float * b, int64_t n) {
     float r;
     vDSP_dotpr(a, 1, b, 1, &r, (vDSP_Length)n);
     return r;
-#elif defined(GGML_USE_OPENBLAS)
-    return cblas_sdot((int)n, a, 1, b, 1);
 #elif defined(TS_USE_ROCBLAS)
     ts_rblas_buf ax = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)n * sizeof(float));
     ts_rblas_buf ay = ts_rblas_buf_get(TS_RBLAS_IN_F32, (size_t)n * sizeof(float));
@@ -149,6 +155,8 @@ float ts_vec_dotpr(const float * a, const float * b, int64_t n) {
     ts_rblas_buf_release(ay);
     ts_rblas_buf_release(rs);
     return r;
+#elif defined(GGML_USE_OPENBLAS)
+    return cblas_sdot((int)n, a, 1, b, 1);
 #else
     float s = 0.0f;
     for (int64_t i = 0; i < n; ++i) {
@@ -312,13 +320,9 @@ void ts_mat_mul(const float * A, const float * B, float * C,
     if (M <= 0 || N <= 0) {
         return;
     }
-#if defined(__APPLE__) || defined(GGML_USE_OPENBLAS)
-    // C(M x N) = A(M x K) @ B(K x N), row-major
-    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
-                (int)M, (int)N, (int)K,
-                1.0f, A, (int)K, B, (int)N, 0.0f, C, (int)N);
-#elif defined(TS_USE_ROCBLAS)
-    // rocBLAS is column-major. The cblas_sgemm above computes
+#if defined(TS_USE_ROCBLAS)
+    // rocBLAS before __APPLE__/GGML_USE_OPENBLAS: matmul-acceleration, not
+    // fallback (D1). rocBLAS is column-major. The cblas_sgemm below computes
     //   C(M,N) = A(M,K) * B(K,N)                 (row-major)
     // which in column-major view is
     //   C^T(N,M) = B^T(N,K) * A^T(K,M)           (col-major)
@@ -355,6 +359,11 @@ void ts_mat_mul(const float * A, const float * B, float * C,
     ts_rblas_buf_release(a);
     ts_rblas_buf_release(b);
     ts_rblas_buf_release(c);
+#elif defined(__APPLE__) || defined(GGML_USE_OPENBLAS)
+    // C(M x N) = A(M x K) @ B(K x N), row-major
+    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                (int)M, (int)N, (int)K,
+                1.0f, A, (int)K, B, (int)N, 0.0f, C, (int)N);
 #else
     for (int64_t i = 0; i < M; ++i) {
         for (int64_t j = 0; j < N; ++j) {
@@ -373,13 +382,9 @@ void ts_mat_mul_at(const float * A, const float * B, float * C,
     if (M <= 0 || N <= 0) {
         return;
     }
-#if defined(__APPLE__) || defined(GGML_USE_OPENBLAS)
-    // C(M x N) = A^T @ B, with A stored row-major as (K x M) and B as (K x N)
-    cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
-                (int)M, (int)N, (int)K,
-                1.0f, A, (int)M, B, (int)N, 0.0f, C, (int)N);
-#elif defined(TS_USE_ROCBLAS)
-    // rocBLAS is column-major. The cblas_sgemm above computes
+#if defined(TS_USE_ROCBLAS)
+    // rocBLAS before __APPLE__/GGML_USE_OPENBLAS: matmul-acceleration, not
+    // fallback (D1). rocBLAS is column-major. The cblas_sgemm below computes
     //   C(M,N) = A^T(M,K) * B(K,N)               (row-major, A stored as KxM)
     // which in column-major view is
     //   C^T(N,M) = B^T(N,K) * A(M,K)             (col-major)
@@ -418,6 +423,11 @@ void ts_mat_mul_at(const float * A, const float * B, float * C,
     ts_rblas_buf_release(a);
     ts_rblas_buf_release(b);
     ts_rblas_buf_release(c);
+#elif defined(__APPLE__) || defined(GGML_USE_OPENBLAS)
+    // C(M x N) = A^T @ B, with A stored row-major as (K x M) and B as (K x N)
+    cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                (int)M, (int)N, (int)K,
+                1.0f, A, (int)M, B, (int)N, 0.0f, C, (int)N);
 #else
     // A stored as (K x M): element A[k][m] lives at A[k * M + m]
     for (int64_t i = 0; i < M; ++i) {

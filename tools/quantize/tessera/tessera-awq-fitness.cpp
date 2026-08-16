@@ -34,11 +34,14 @@
 #endif
 #include <Accelerate/Accelerate.h>
 #define TS_HAS_CBLAS 1
+#elif defined(TS_USE_ROCBLAS)
+// rocBLAS is matmul-acceleration, not a fallback (master plan D1): checked
+// before GGML_USE_OPENBLAS so a system BLAS lib being linked does not shadow
+// the GPU path when both are available.
+#include "tessera-rocblas.h"
 #elif defined(GGML_USE_OPENBLAS)
 #include <cblas.h>
 #define TS_HAS_CBLAS 1
-#elif defined(TS_USE_ROCBLAS)
-#include "tessera-rocblas.h"
 #endif
 
 #include <algorithm>
