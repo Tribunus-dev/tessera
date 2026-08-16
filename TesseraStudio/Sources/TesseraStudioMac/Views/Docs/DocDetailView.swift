@@ -58,6 +58,8 @@ public struct DocDetailView: View {
                     }
                     editorSection
                     if !isFocusMode {
+                        footnotesSection
+                        endnotesSection
                         Divider()
                         linkedSection
                     }
@@ -320,6 +322,28 @@ public struct DocDetailView: View {
         .frame(minHeight: 260)
     }
 
+    // MARK: - Footnotes / endnotes (P2-0 item 2: real rendering surface)
+
+    /// Tappable footnote markers with a content popover - see
+    /// `FootnoteReferencesStrip`'s own doc comment for why this is the
+    /// closest a Views/Docs/-scoped surface gets to "anchored near its
+    /// reference mark". Renders nothing when the document has no
+    /// footnotes.
+    private var footnotesSection: some View {
+        FootnoteReferencesStrip(document: viewModel.document) { anchorBlockID in
+            editorCoordinator.selectBlock(id: anchorBlockID)
+        }
+    }
+
+    /// The dedicated end-of-document endnotes list, numbered per
+    /// `DocumentAST.deriveNoteNumbering()`. Renders nothing when the
+    /// document has no endnotes.
+    private var endnotesSection: some View {
+        EndnotesSectionView(document: viewModel.document) { anchorBlockID in
+            editorCoordinator.selectBlock(id: anchorBlockID)
+        }
+    }
+
     // MARK: - Linked entities
 
     private var linkedSection: some View {
@@ -490,15 +514,24 @@ public struct DocDetailView: View {
         formattingState.pendingChangeCount = CommentStore.pendingChangeCount(from: doc)
     }
 
+    /// Routes through `DocStore.resolveComment` (P2-0 item 3) instead of
+    /// mutating `attributes["resolved"]` directly, so resolving a thread
+    /// appends the `doc_comment_resolved` receipt the store method
+    /// carries. `flushBody()` runs first so a comment added moments ago
+    /// (still sitting in the debounce window) is persisted before the
+    /// store loads the doc fresh - otherwise `resolveComment` would load
+    /// a stale copy that doesn't have the thread yet and safely no-op.
     private func resolveComment(id: UUID) {
-        guard var doc = editorCoordinator.binding?.wrappedValue else { return }
-        guard var block = doc.blocks[id], block.type == .comment else { return }
-        block.attributes["resolved"] = .bool(true)
-        doc.blocks[id] = block
-        editorCoordinator.binding?.wrappedValue = doc
-        updateCommentCounts()
         Task {
-            await viewModel.commitBody(doc)
+            await viewModel.flushBody()
+            do {
+                let updated = try await viewModel.store.resolveComment(id, for: viewModel.doc.id)
+                viewModel.refresh(with: updated)
+                editorCoordinator.binding?.wrappedValue = updated.body
+                updateCommentCounts()
+            } catch {
+                print("DocDetailView.resolveComment: \(error)")
+            }
         }
     }
 }

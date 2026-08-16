@@ -359,6 +359,52 @@ public struct DocStore: Sendable {
         return (doc, changedCount)
     }
 
+    // MARK: - Footnotes / Endnotes (P2-0 item 1: insert/delete lifecycle)
+
+    /// Insert a new footnote/endnote body block anchored at a UTF-16 text
+    /// offset inside `anchorBlockID`'s own `content` - see
+    /// `NoteController.insertNote` for the marker-splicing mechanics and
+    /// why the new note body is written to `doc.body.meta.notes`, never
+    /// `doc.body.blocks`. A no-op (no persist, no receipt) when `kind`
+    /// isn't `.footnote`/`.endnote`, `anchorBlockID` doesn't exist in the
+    /// doc's body, or `offset` falls outside the anchor's own content
+    /// length - an invalid anchor, matching `acceptRevision`/
+    /// `findAndReplace`/`deleteStyle`'s "only emit when something
+    /// actually changed" precedent in this store. Numbering is never
+    /// persisted here (derived-never-stored law) -
+    /// `DocumentAST.deriveNoteNumbering()` re-derives it on read.
+    public func insertNote(
+        kind: BlockType,
+        anchorBlockID: UUID,
+        at offset: Int,
+        text: String,
+        for docID: UUID
+    ) async throws -> Doc {
+        var doc = try await loadOrFail(id: docID)
+        guard let (ast, outcome) = NoteController.insertNote(
+            kind: kind, anchorBlockID: anchorBlockID, at: offset, noteText: text, in: doc.body
+        ) else { return doc }
+        doc.body = ast
+        doc.updatedAt = Date()
+        _ = try await persist(doc)
+        try await appendReceipt(entityID: docID, receiptType: outcome.receiptType, payload: outcome.payload)
+        return doc
+    }
+
+    /// Delete a footnote/endnote body block and strip every in-text
+    /// reference to it - see `NoteController.deleteNote`. A no-op (no
+    /// persist, no receipt) when `noteID` isn't registered in
+    /// `doc.body.meta.notes`.
+    public func deleteNote(_ noteID: UUID, for docID: UUID) async throws -> Doc {
+        var doc = try await loadOrFail(id: docID)
+        guard let (ast, outcome) = NoteController.deleteNote(noteID: noteID, in: doc.body) else { return doc }
+        doc.body = ast
+        doc.updatedAt = Date()
+        _ = try await persist(doc)
+        try await appendReceipt(entityID: docID, receiptType: outcome.receiptType, payload: outcome.payload)
+        return doc
+    }
+
     // MARK: - Archive / Trash / Favorite
 
     public func archive(_ docID: UUID) async throws -> Doc {
@@ -593,6 +639,212 @@ public struct DocStore: Sendable {
                 "linkType": .string(linkType),
             ]
         )
+    }
+
+    // MARK: - Comments (P2-0 item 3: full lifecycle, block-tree based)
+    //
+    // Doc's comment model is block-tree based (`BlockType.comment`
+    // blocks - see `Comments.swift`'s `CommentStore.threads(from:)`, which
+    // already knows how to walk root-vs-reply blocks), NOT the flat
+    // `CommentThread`-array model `Sheet`/`SlideDeck` use - the
+    // pre-landed `Comments.swift` helpers (`addingReply`/`.resolved`/
+    // `replacingCommentThread`) do not apply here. These methods
+    // manipulate `doc.body`'s block tree directly, mirroring the shape
+    // `TesseraSTTextView.insertCommentBlock` already established for a
+    // NEW thread's root block: inserted into `rootChildren`, right after
+    // the anchor block's own root-level position.
+
+    /// Start a new comment thread: inserts a new root `.comment` block
+    /// into `doc.body.rootChildren`, right after `anchorBlockID`'s own
+    /// root-level position (appended at the end of `rootChildren` when
+    /// `anchorBlockID` isn't itself a root child - e.g. nested inside a
+    /// list/table - the same fallback `TesseraSTTextView
+    /// .insertCommentBlock` uses). A no-op (no persist, no receipt) when
+    /// `anchorBlockID` isn't in the document - an invalid anchor.
+    public func addComment(
+        anchorBlockID: UUID,
+        anchorRangeStart: Int,
+        anchorRangeEnd: Int,
+        author: String,
+        text: String,
+        for docID: UUID
+    ) async throws -> Doc {
+        var doc = try await loadOrFail(id: docID)
+        guard doc.body.contains(anchorBlockID) else { return doc }
+
+        let commentID = UUID()
+        let commentBlock = Block(
+            id: commentID,
+            type: .comment,
+            attributes: [
+                "anchorBlockID": .string(anchorBlockID.uuidString),
+                "anchorRangeStart": .number(Double(anchorRangeStart)),
+                "anchorRangeEnd": .number(Double(anchorRangeEnd)),
+                "author": .string(author),
+                "timestamp": .number(Date().timeIntervalSince1970),
+                "resolved": .bool(false),
+            ],
+            content: [InlineRun(text: text)]
+        )
+        var ast = doc.body
+        Self.insertCommentRoot(commentBlock, after: anchorBlockID, in: &ast)
+        doc.body = ast
+        doc.updatedAt = Date()
+        _ = try await persist(doc)
+        try await appendReceipt(
+            entityID: docID,
+            receiptType: DocReceiptType.addComment.rawValue,
+            payload: [
+                "commentID": .string(commentID.uuidString),
+                "anchorBlockID": .string(anchorBlockID.uuidString),
+                "author": .string(author),
+            ]
+        )
+        return doc
+    }
+
+    /// Append a reply to an existing comment thread: a new `.comment`
+    /// block added to `threadID`'s own `children`. A no-op (no persist,
+    /// no receipt) when `threadID` isn't a genuine thread ROOT - it must
+    /// be a `.comment` block with `parentID == nil` (every thread root
+    /// this store creates lives in `rootChildren`, per `addComment`
+    /// above); a reply target that is itself a reply is rejected rather
+    /// than silently nesting a reply-of-reply, which `CommentStore
+    /// .threads(from:)` has no way to surface (it only walks a root's
+    /// OWN direct children for messages).
+    public func replyToComment(
+        threadID: UUID,
+        author: String,
+        text: String,
+        for docID: UUID
+    ) async throws -> Doc {
+        var doc = try await loadOrFail(id: docID)
+        guard let root = doc.body.blocks[threadID], root.type == .comment, root.parentID == nil else { return doc }
+
+        let replyID = UUID()
+        let replyBlock = Block(
+            id: replyID,
+            type: .comment,
+            attributes: [
+                "author": .string(author),
+                "timestamp": .number(Date().timeIntervalSince1970),
+            ],
+            content: [InlineRun(text: text)],
+            parentID: threadID
+        )
+        var ast = doc.body
+        ast.blocks[replyID] = replyBlock
+        ast.blocks[threadID]?.children.append(replyID)
+        doc.body = ast
+        doc.updatedAt = Date()
+        _ = try await persist(doc)
+        try await appendReceipt(
+            entityID: docID,
+            receiptType: DocReceiptType.commentReplied.rawValue,
+            payload: [
+                "threadID": .string(threadID.uuidString),
+                "replyID": .string(replyID.uuidString),
+                "author": .string(author),
+            ]
+        )
+        return doc
+    }
+
+    /// Mark a comment thread resolved: sets the root block's
+    /// `attributes["resolved"]` to `true`. A no-op (no persist, no
+    /// receipt) when `threadID` isn't a `.comment` block, or is already
+    /// resolved - matching `archive`/`trash`/`favorite`'s idempotence
+    /// precedent in this same store.
+    public func resolveComment(_ threadID: UUID, for docID: UUID) async throws -> Doc {
+        var doc = try await loadOrFail(id: docID)
+        guard var root = doc.body.blocks[threadID], root.type == .comment else { return doc }
+        guard root.attributes["resolved"]?.boolValue != true else { return doc }
+
+        root.attributes["resolved"] = .bool(true)
+        var ast = doc.body
+        ast.blocks[threadID] = root
+        doc.body = ast
+        doc.updatedAt = Date()
+        _ = try await persist(doc)
+        try await appendReceipt(
+            entityID: docID,
+            receiptType: DocReceiptType.commentResolved.rawValue,
+            payload: ["threadID": .string(threadID.uuidString)]
+        )
+        return doc
+    }
+
+    /// Delete a comment thread: removes the root `.comment` block and its
+    /// whole subtree (every reply, recursively) - see
+    /// `removeCommentSubtree`. A no-op (no persist, no receipt) when
+    /// `threadID` isn't a `.comment` block. Deleting a REPLY block's own
+    /// id (rather than a thread root) is accepted too: it removes just
+    /// that reply (and anything nested under it), the same "gone means
+    /// gone" subtree removal, scoped to whatever block id was passed.
+    public func deleteComment(_ threadID: UUID, for docID: UUID) async throws -> Doc {
+        var doc = try await loadOrFail(id: docID)
+        guard doc.body.blocks[threadID]?.type == .comment else { return doc }
+
+        var ast = doc.body
+        let removedCount = Self.removeCommentSubtree(threadID, in: &ast)
+        doc.body = ast
+        doc.updatedAt = Date()
+        _ = try await persist(doc)
+        try await appendReceipt(
+            entityID: docID,
+            receiptType: DocReceiptType.commentDeleted.rawValue,
+            payload: [
+                "threadID": .string(threadID.uuidString),
+                "blocksRemoved": .number(Double(removedCount)),
+            ]
+        )
+        return doc
+    }
+
+    // MARK: - Comments: block-tree helpers
+    //
+    // `internal` (not `private`) so DocStoreTests can exercise this pure
+    // tree-surgery logic directly, without a live data layer - the
+    // ungated shadow of the gated `addComment`/`deleteComment` contract
+    // (testing-doctrine.md rule 11), mirroring how RevisionController/
+    // FieldController/StyleRegistry each carry their own DB-free coverage
+    // for the decision logic DocStore's gated tests exercise end-to-end.
+
+    /// Insert `block` into `ast.rootChildren` immediately after
+    /// `anchorBlockID`'s own root-level position - falls back to the end
+    /// of `rootChildren` when `anchorBlockID` isn't itself a root child.
+    /// Forces `block.parentID = nil` (a thread root always lives at the
+    /// document root, never nested) regardless of what the caller passed.
+    static func insertCommentRoot(_ block: Block, after anchorBlockID: UUID, in ast: inout DocumentAST) {
+        var toInsert = block
+        toInsert.parentID = nil
+        ast.blocks[toInsert.id] = toInsert
+        if let idx = ast.rootChildren.firstIndex(of: anchorBlockID) {
+            ast.rootChildren.insert(toInsert.id, at: idx + 1)
+        } else {
+            ast.rootChildren.append(toInsert.id)
+        }
+    }
+
+    /// Removes `blockID` and every block reachable from it via
+    /// `children`, recursively, then unlinks `blockID` from its parent's
+    /// `children` (or `rootChildren` when it was a root) - the same
+    /// "gone means gone" shape as `RevisionController.removeSubtree`.
+    /// Returns the count of blocks removed (the target block plus every
+    /// descendant).
+    @discardableResult
+    static func removeCommentSubtree(_ blockID: UUID, in ast: inout DocumentAST) -> Int {
+        guard let removed = ast.blocks.removeValue(forKey: blockID) else { return 0 }
+        var count = 1
+        for child in removed.children {
+            count += removeCommentSubtree(child, in: &ast)
+        }
+        if let parentID = removed.parentID {
+            ast.blocks[parentID]?.children.removeAll { $0 == blockID }
+        } else {
+            ast.rootChildren.removeAll { $0 == blockID }
+        }
+        return count
     }
 
     // MARK: - Hybrid search (subtype-filtered)

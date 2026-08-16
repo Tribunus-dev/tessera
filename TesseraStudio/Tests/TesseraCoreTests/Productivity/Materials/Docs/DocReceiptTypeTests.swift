@@ -44,6 +44,12 @@ final class DocReceiptTypeTests: DoctrineTestCase {
         (.link, "doc_link_created"),
         (.unlink, "doc_link_deleted"),
         (.import, "doc_imported"),
+        (.insertNote, "doc_note_inserted"),
+        (.deleteNote, "doc_note_deleted"),
+        (.addComment, "doc_comment_added"),
+        (.commentReplied, "doc_comment_replied"),
+        (.commentResolved, "doc_comment_resolved"),
+        (.commentDeleted, "doc_comment_deleted"),
     ]
 
     func testEveryCaseHasItsDocumentedRawValue() {
