@@ -132,13 +132,25 @@ public actor LOBridgeDeckIO {
     /// `impress_pdf_Export`'s `ExportNotesPages` filter option through
     /// `LibreOfficeConverter.convert(...)`'s `filterOptions` parameter
     /// so speaker notes are included in the rendered PDF (see this
-    /// type's doc comment).
-    public func exportDeck(_ deck: SlideDeck, to url: URL, format: DeckExportFormat) async throws {
+    /// type's doc comment). `accessibility` (item 2.20's filter-options
+    /// plumbing) extends that SAME `impress_pdf_Export:{...}` filter-data
+    /// object with `UseTaggedPDF`/`PDFUACompliance` rather than building
+    /// a second filter-options mechanism - see `PDFFilterOptions.build`
+    /// and `PDFAccessibilityOptions`'s own doc comment for what the flag
+    /// currently does and does not achieve on this LO install.
+    public func exportDeck(
+        _ deck: SlideDeck, to url: URL, format: DeckExportFormat, accessibility: PDFAccessibilityOptions = .off
+    ) async throws {
         let root = Self.mapToFlatODFTree(deck)
         let fodpData = try await writer.write(root) { blobURL in
             try Data(contentsOf: blobURL)
         }
-        let filterOptions = format == .pdf ? "impress_pdf_Export:{\"ExportNotesPages\":true}" : nil
+        var filterOptions: String?
+        if format == .pdf {
+            var fragments = ["\"ExportNotesPages\":true"]
+            fragments.append(contentsOf: accessibility.filterDataFragments)
+            filterOptions = PDFFilterOptions.build(filterName: "impress_pdf_Export", fragments: fragments)
+        }
         let outputData = try await converter.convert(
             data: fodpData, sourceExtension: "fodp", targetExtension: format.rawValue, filterOptions: filterOptions
         )

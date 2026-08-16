@@ -47,12 +47,20 @@ public actor PDFExportBridge {
         converter.isAvailable
     }
 
-    public func export(_ drawing: Drawing, to url: URL) async throws {
+    /// `accessibility` (item 2.20's filter-options plumbing) is applied
+    /// via the `draw_pdf_Export` filter - the name soffice uses for a
+    /// Draw (fodg-sourced) document's own PDF export, distinct from
+    /// Impress's `impress_pdf_Export` (`LOBridgeDeckIO`) and Writer's
+    /// `writer_web_pdf_Export` (`DocumentExporter`). See
+    /// `PDFAccessibilityOptions`'s own doc comment for what the flag
+    /// currently does and does not achieve on this LO install.
+    public func export(_ drawing: Drawing, to url: URL, accessibility: PDFAccessibilityOptions = .off) async throws {
         let root = ODGBridgeFilter.flatODFTree(for: drawing)
         let fodgData = try await writer.write(root) { referenced in
             throw FilterError.malformedDocument("unexpected externalized binary data reference: \(referenced.absoluteString)")
         }
-        let pdfData = try await converter.convert(data: fodgData, sourceExtension: "fodg", targetExtension: "pdf")
+        let filterOptions = PDFFilterOptions.build(filterName: "draw_pdf_Export", fragments: accessibility.filterDataFragments)
+        let pdfData = try await converter.convert(data: fodgData, sourceExtension: "fodg", targetExtension: "pdf", filterOptions: filterOptions)
         try pdfData.write(to: url)
     }
 }

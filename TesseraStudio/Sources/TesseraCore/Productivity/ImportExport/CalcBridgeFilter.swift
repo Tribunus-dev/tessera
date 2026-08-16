@@ -452,6 +452,32 @@ public actor CalcBridgeFilter {
         return try await converter.convert(data: csvData, sourceExtension: "csv", targetExtension: normalized)
     }
 
+    /// Export a `Sheet` to PDF (item 2.20's "Calc's PDF export path" -
+    /// this method did not exist before this wave; `exportWorkbook`
+    /// above only ever covered ods/xls). Same CSV intermediate as
+    /// `exportWorkbook`, and the same limitation this file's own header
+    /// already states for that path: only cell text survives (literal
+    /// values and formula source), no per-cell formatting, since CSV
+    /// carries none of it - `soffice`'s own `calc_pdf_Export` filter then
+    /// makes its own choices for column widths/page breaks/pagination as
+    /// print output, beyond this bridge's control. Not folded into
+    /// `exportWorkbook`/`supportedExportFormats`: those names are
+    /// specifically the ODS/XLS round-trip-parity surface (a `Sheet`
+    /// read back in later), while PDF is a one-way print target - the
+    /// same distinction `DocumentExporter.ExportFormat` and
+    /// `LOBridgeDeckIO.DeckExportFormat` each already draw between their
+    /// round-trippable formats and `.pdf`.
+    ///
+    /// `accessibility` (item 2.20's filter-options plumbing) is applied
+    /// via the `calc_pdf_Export` filter name. See
+    /// `PDFAccessibilityOptions`'s own doc comment for what the flag
+    /// currently does and does not achieve on this LO install.
+    public func exportPDF(_ sheet: Sheet, accessibility: PDFAccessibilityOptions = .off) async throws -> Data {
+        let csvData = Self.csvData(for: sheet)
+        let filterOptions = PDFFilterOptions.build(filterName: "calc_pdf_Export", fragments: accessibility.filterDataFragments)
+        return try await converter.convert(data: csvData, sourceExtension: "csv", targetExtension: "pdf", filterOptions: filterOptions)
+    }
+
     // MARK: - CSV serialization
 
     /// RFC 4180 CSV: a field is quoted (with embedded quotes doubled)

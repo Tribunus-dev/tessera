@@ -95,12 +95,18 @@ public final class DocumentExporter: Sendable {
 
     // MARK: - Public API
 
-    /// Export the document to the given format.
+    /// Export the document to the given format. `accessibility` (item
+    /// 2.20's filter-options plumbing) is honored only for `.pdf` -
+    /// `textutil`'s DOCX/ODT conversion has no tagged-PDF concept, so it
+    /// is silently ignored for `.docx`/`.odt` rather than erroring (the
+    /// same "irrelevant for this format" posture `filterOptions: nil`
+    /// already has on every other converter call in this codebase).
     /// Returns the file URL of the written file.
     public func export(
         _ doc: Doc,
         to format: ExportFormat,
-        destination: URL
+        destination: URL,
+        accessibility: PDFAccessibilityOptions = .off
     ) async throws -> URL {
         let html = try htmlFromDocument(doc)
         let tempDir = FileManager.default.temporaryDirectory
@@ -112,7 +118,7 @@ public final class DocumentExporter: Sendable {
             return try await convertWithTextutil(from: htmlFile, to: format, destination: destination)
         case .pdf:
             #if canImport(AppKit)
-            return try await renderPDF(from: htmlFile, destination: destination)
+            return try await renderPDF(from: htmlFile, destination: destination, accessibility: accessibility)
             #else
             throw ExportError.unsupportedFormat(format)
             #endif
@@ -131,6 +137,28 @@ public final class DocumentExporter: Sendable {
     private func htmlFromDocument(_ doc: Doc) throws -> String {
         let body = try renderAST(doc.body)
         let title = doc.displayTitle
+        // Item 2.20 CRITICAL SCOPING NOTE, option (a) (upgrade HTML to
+        // real semantic markup so LO's tagger has something to work
+        // with): on inspection, this generator ALREADY emits real
+        // <h1>-<h6> (see the `.heading` case below, not a styled <div>),
+        // a real <title> from Doc.displayTitle (right below), and a real
+        // alt="..." on every <img> (the `.image` case below). The one
+        // PREFERRED-path item this file does NOT add is real <th> for
+        // table header rows/cells - the contract's own text makes that
+        // conditional ("if BlockType.table has header-row/column
+        // metadata"), and it does not: `.table`'s only attributes are
+        // rows/cols (TableLayout.swift), no header-row/column concept
+        // exists anywhere in the Block model. Every table cell renders
+        // <td> regardless of position, unchanged by this wave - adding
+        // that concept would mean a new Block/BlockType attribute, which
+        // is out of this file's own scope (DocumentExporter.swift) and
+        // wasn't asked for as its own item. `lang="en"` below is the
+        // "sensible default" half of the same scoping note: neither
+        // `Doc` nor `DocumentMeta` carries a language/locale concept
+        // (confirmed against Productivity/Block.swift), so there is no
+        // real per-document value to read here - see
+        // AccessibilityPreflight.swift's own doc comment for the same
+        // call applied to the `missingLanguage` check.
         return """
         <!DOCTYPE html>
         <html lang="en">
@@ -519,9 +547,19 @@ public final class DocumentExporter: Sendable {
     /// never pdf), so `convertWithTextutil` above cannot serve this
     /// format - `soffice` is the one already-proven-working converter
     /// in this codebase that actually supports HTML -> PDF.
-    private func renderPDF(from htmlFile: URL, destination: URL) async throws -> URL {
+    ///
+    /// **Filter name: `writer_web_pdf_Export`, not `writer_pdf_Export`.**
+    /// Confirmed empirically (LO 26.2.5.2): an HTML source opens as a
+    /// Writer/Web document, and soffice auto-selects `writer_web_pdf_
+    /// Export` for its PDF export - passing the plain-Writer filter name
+    /// here would name a filter that never actually runs against this
+    /// pipeline's own source format. See `PDFAccessibilityOptions`'s
+    /// doc comment for what `accessibility` currently does and does not
+    /// achieve on this LO install.
+    private func renderPDF(from htmlFile: URL, destination: URL, accessibility: PDFAccessibilityOptions = .off) async throws -> URL {
         let htmlData = try Data(contentsOf: htmlFile)
-        let pdfData = try await converter.convert(data: htmlData, sourceExtension: "html", targetExtension: "pdf")
+        let filterOptions = PDFFilterOptions.build(filterName: "writer_web_pdf_Export", fragments: accessibility.filterDataFragments)
+        let pdfData = try await converter.convert(data: htmlData, sourceExtension: "html", targetExtension: "pdf", filterOptions: filterOptions)
         let outputDir = destination.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
         try? FileManager.default.removeItem(at: destination)
