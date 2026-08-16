@@ -50,6 +50,9 @@ final class DocReceiptTypeTests: DoctrineTestCase {
         (.commentReplied, "doc_comment_replied"),
         (.commentResolved, "doc_comment_resolved"),
         (.commentDeleted, "doc_comment_deleted"),
+        (.regenerateToc, "doc_toc_regenerated"),
+        (.changeMasterParts, "doc_master_parts_changed"),
+        (.runMailMerge, "doc_mail_merge_run"),
     ]
 
     func testEveryCaseHasItsDocumentedRawValue() {

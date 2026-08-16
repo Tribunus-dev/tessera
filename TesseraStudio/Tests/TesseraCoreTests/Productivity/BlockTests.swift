@@ -61,7 +61,7 @@ final class BlockTests: DoctrineTestCase {
         "image", "codeBlock", "callout", "divider", "quote", "toggle",
         "equation", "comment", "trackInsertion", "trackDeletion", "shape",
         "shapeGroup", "section", "frame", "chart", "field", "footnote",
-        "endnote", "media",
+        "endnote", "media", "toc",
     ]
 
     func testBlockTypeCaseIterableMatchesTheIndependentlyPinnedList() {

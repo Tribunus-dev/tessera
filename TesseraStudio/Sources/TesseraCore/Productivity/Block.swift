@@ -131,6 +131,12 @@ public enum BlockType: String, Codable, Sendable, Hashable, CaseIterable {
     /// AVFoundation type (not simply Codable/Sendable-friendly);
     /// playback is a view-layer concern that reads this spec.
     case media
+    /// A table of contents (item 2.5). `attributes["toc"]` holds the
+    /// JSON-encoded `TocSpec` (fromLevel/toLevel/includeOutlineLevels/
+    /// hyperlink/extraStyles/tabLeader); `children` are the generated
+    /// entry paragraphs (derived-never-stored: regenerated from the
+    /// document's own heading-family styles, never hand-edited).
+    case toc
 }
 
 // MARK: - InlineRun

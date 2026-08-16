@@ -507,9 +507,12 @@ public struct Sheet: Codable, Sendable, Identifiable, Hashable {
             if let text = block.shape?.text?.plainText, !text.isEmpty { out.append(text) }
         case .toggle, .image, .chart, .divider, .equation, .comment, .trackInsertion, .trackDeletion, .footnote, .endnote, .media:
             break
+        case .toc:
+            break
         }
         for child in block.children where block.type != .list && block.type != .table
-            && block.type != .shapeGroup && block.type != .section && block.type != .frame {
+            && block.type != .shapeGroup && block.type != .section && block.type != .frame
+            && block.type != .toc {
             appendPlainText(blockID: child, ast: ast, into: &out)
         }
     }

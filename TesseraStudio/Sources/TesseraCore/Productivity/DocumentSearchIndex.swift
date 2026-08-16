@@ -227,9 +227,16 @@ public enum DocumentSearchIndex {
             }
         case .toggle, .image, .chart, .divider, .equation, .comment, .trackInsertion, .trackDeletion, .footnote, .endnote, .media:
             break
+        case .toc:
+            // Derived entry paragraphs (heading text + cached page
+            // number), not original prose - excluded from the search
+            // index the same way .comment/.trackInsertion are, so it
+            // doesn't index duplicate content twice.
+            break
         }
         for child in block.children where block.type != .list && block.type != .table
-            && block.type != .shapeGroup && block.type != .section && block.type != .frame {
+            && block.type != .shapeGroup && block.type != .section && block.type != .frame
+            && block.type != .toc {
             appendEntries(blockID: child, ast: ast, into: &out)
         }
     }

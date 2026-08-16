@@ -72,4 +72,16 @@ public enum DocReceiptType: String, Codable, Sendable, CaseIterable {
     case commentResolved = "doc_comment_resolved"
     /// A comment thread was deleted (P2-0).
     case commentDeleted = "doc_comment_deleted"
+    /// A table of contents was (re)generated (P2-C 2.5). Regenerating
+    /// with no change (identical entries) is a no-op - zero receipts.
+    case regenerateToc = "doc_toc_regenerated"
+    /// A master document's part list, break kind, or numbering mode was
+    /// changed (P2-C 2.11).
+    case changeMasterParts = "doc_master_parts_changed"
+    /// A mail-merge run completed, fanning one template + one record
+    /// set out to N output documents (P2-C 2.4). Payload carries the
+    /// source hash + record count named by the design contract; the
+    /// per-output documents get their own ordinary doc_upsert receipts,
+    /// this one is the merge OPERATION's own audit entry.
+    case runMailMerge = "doc_mail_merge_run"
 }

@@ -350,6 +350,20 @@ public final class DocumentExporter: Sendable {
             let src = media?.sourceURL ?? ""
             let tag = media?.kind == .video ? "video" : "audio"
             return "<\(tag) src=\"\(escapeHTML(src))\" controls></\(tag)>"
+
+        case .toc:
+            // Same recurse-and-wrap shape as .section/.shapeGroup above:
+            // a TOC's children are real generated entry paragraphs, so
+            // (unlike plainText's derived-content exclusion) an exported
+            // document should show them - a reader opening the HTML
+            // export needs to see the table of contents, not just know
+            // one exists.
+            var items: [String] = []
+            for childID in block.children {
+                guard let child = ast.blocks[childID] else { continue }
+                items.append(try renderBlock(child, in: ast))
+            }
+            return "<nav class=\"toc\">\n\(items.joined(separator: "\n"))\n</nav>"
         }
     }
 

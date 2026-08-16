@@ -215,9 +215,18 @@ public struct Doc: Codable, Sendable, Identifiable, Hashable {
             if let text = block.shape?.text?.plainText, !text.isEmpty { out.append(text) }
         case .toggle, .image, .chart, .divider, .equation, .comment, .trackInsertion, .trackDeletion, .footnote, .endnote, .media:
             break
+        case .toc:
+            // A TOC's children are DERIVED entry paragraphs (heading
+            // text + a cached page number) - pure navigation, not
+            // original prose. Excluding them from plainText keeps this
+            // extraction (search index, agent context) free of
+            // duplicate/derived content, the same reasoning that
+            // excludes .comment/.trackInsertion above.
+            break
         }
         for child in block.children where block.type != .list && block.type != .table
-            && block.type != .shapeGroup && block.type != .section && block.type != .frame {
+            && block.type != .shapeGroup && block.type != .section && block.type != .frame
+            && block.type != .toc {
             appendPlainText(blockID: child, ast: ast, into: &out)
         }
     }

@@ -114,6 +114,8 @@ public struct BlockRenderer: Sendable {
             return renderNotePlaceholder(block, mode: mode)
         case .media:
             return renderMediaPlaceholder(block, mode: mode)
+        case .toc:
+            return renderTocPlaceholder(block, mode: mode)
         }
     }
 
@@ -270,6 +272,23 @@ public struct BlockRenderer: Sendable {
         let label = block.media.map { $0.kind == .video ? "Video" : "Audio" } ?? "Media"
         return NSAttributedString(
             string: "[\(label)]",
+            attributes: [
+                .font: fontResolver.font(from: theme.bodyFont),
+                .foregroundColor: PlatformColor.secondaryLabelColor,
+            ]
+        )
+    }
+
+    /// Placeholder (item 2.5, TocController's own render path to fill
+    /// in): a real TOC renders each entry child (attributes["tocEntry"])
+    /// as a leader-dotted line to its cached pageText, not this label -
+    /// matching every other Phase-3-deferred surface's placeholder shape
+    /// in this file (renderTablePlaceholder above).
+    private func renderTocPlaceholder(_ block: Block, mode: EditorMode) -> NSAttributedString {
+        let entryCount = block.children.count
+        let label = entryCount == 0 ? "[Table of Contents]" : "[Table of Contents — \(entryCount) entries]"
+        return NSAttributedString(
+            string: label,
             attributes: [
                 .font: fontResolver.font(from: theme.bodyFont),
                 .foregroundColor: PlatformColor.secondaryLabelColor,

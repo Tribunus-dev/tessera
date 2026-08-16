@@ -153,7 +153,7 @@ private struct SlideBlockRow: View {
             // interim SwiftUI block view; same placeholder shape as
             // .shape/.shapeGroup above.
             Text(block.chart?.title ?? "[Chart]").font(.caption).foregroundStyle(.secondary)
-        case .section, .frame, .field, .footnote, .endnote:
+        case .section, .frame, .field, .footnote, .endnote, .toc:
             // Writer-only concepts, not expected on a slide canvas; keeps
             // the switch exhaustive rather than crashing if one appears.
             Text(SlideDeck.plainText(of: ast)).font(.caption).foregroundStyle(.secondary)
