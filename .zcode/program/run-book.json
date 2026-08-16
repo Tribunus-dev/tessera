@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "last_updated": "2026-08-16T04:06:39Z",
+  "last_updated": "2026-08-16T05:03:16Z",
   "objective": "Reduce inference memory (peak RSS) on Apple Silicon without sacrificing correctness, via low-bit KV paged-attention and calibrated per-tensor quantization.",
   "phases": [
     {
@@ -144,9 +144,9 @@
     {
       "id": "p21",
       "capability": "alphaevolve",
-      "status": "in_progress",
+      "status": "done",
       "summary": "Starting W1: configure build-linux-amd/ with -DGGML_HIP=ON -DAMDGPU_TARGETS=gfx1103;gfx1151, run cmake build, verify rocBLAS linkage + AWQ GA speedup + parity vs cblas baseline.",
-      "last_updated": "2026-08-15T23:05:07Z",
+      "last_updated": "2026-08-16T05:03:16Z",
       "artifact": ".zcode/xdna-research/host-amd-pipeline-master-plan.md"
     },
     {
@@ -264,6 +264,21 @@
     {
       "ts": "2026-08-16T04:06:39Z",
       "decision": "W1 paused after tasks 1.1-1.4 (build reconfigure, HIP_ARCHITECTURES fix, observability patch, cblas baseline capture all landed cleanly). Stopping before task 1.5 (rocBLAS run) per the GPU-hang-containment rule: journalctl shows 6 amdgpu GPU reset cycles (MES REMOVE_QUEUE failure -> MODE2 reset -> auto-recover, ~1s each) correlated with ordinary llama-tessera/llama-imatrix process exit, including plain --help/--version with no kernel dispatch - not caused by new code, reproduces on unmodified invocations. Each reset auto-recovered and subsequent commands worked correctly, but the rule treats any reset as BLOCKING regardless. Logged as INCIDENT-w1-1 in the gap ledger. Awaiting architect guidance before any further GPU-touching run.",
+      "capability": ""
+    },
+    {
+      "ts": "2026-08-16T04:22:16Z",
+      "decision": "Architect confirmed: treat the auto-recovering amdgpu reset-on-exit (INCIDENT-w1-1) as a tolerable host quirk. Resuming the run at W1 task 1.5 (rocBLAS comparison run + parity vs cblas baseline).",
+      "capability": ""
+    },
+    {
+      "ts": "2026-08-16T04:49:04Z",
+      "decision": "W1: found and fixed a real crash - HipVMM pool allocator ('HipVMM Failure: invalid argument' at ggml-cuda.cu:650) aborts on ANY real GPU forward pass with the master plan's canonical GGML_HIP_NO_VMM=OFF setting. Not a hang (no kernel-level reset/fault, clean software abort). Reconfigured build-linux-amd with GGML_HIP_NO_VMM=ON (upstream-safe default); verified fixed by re-running the same imatrix generation that crashed - now completes cleanly with real PPL numbers. Applied as a mechanical config correction (same class as the earlier ROCM_PATH fix), not gated on architect confirmation since there is no real design tradeoff. Logged as CORRECTION-w1-2 in gap-ledger.md.",
+      "capability": ""
+    },
+    {
+      "ts": "2026-08-16T05:03:16Z",
+      "decision": "W1 (rocBLAS lane) closed: 5/7 criteria PASS (1 cold-build parity, 2 first-call init, 4 symbols resolve, 5 silent-fallback counter, 7 build-cache invalidation), 2 GAP folded to W2 (3 AWQ GA wall-clock, 6 AWQ parity - both blocked by an unrelated pre-existing CLI subcommand bug, not by the rocBLAS work itself). Landed 3 real correctness/build fixes discovered during the gate: dual-ROCm ROCM_PATH contamination, HIP_ARCHITECTURES missing on llama-quantize-impl, rocBLAS macro-precedence (dead code whenever cblas also present), rocBLAS pool use-after-free (single slot shared by simultaneously-live A/B operands, grew 6->13 roles), and a HipVMM crash on real inference (reverted to upstream-safe GGML_HIP_NO_VMM=ON). Evidence: .zcode/xdna-research/evidence/w1/. Milestone commit follows.",
       "capability": ""
     }
   ]
