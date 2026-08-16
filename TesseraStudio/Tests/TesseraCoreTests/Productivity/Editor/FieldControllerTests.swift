@@ -19,6 +19,17 @@ import XCTest
 // exactly the property DocStore.refreshFields relies on (its own doc
 // comment: "a plain != check ... which refresh's own idempotence ... is
 // what makes that check sufficient").
+//
+// .mergeField(name:) (P2-C item 2.4, sota-p2-core-report.md's "2.4
+// MailMergeCoordinator - restatement"): "mergeField joins the existing
+// FieldKind enum (reserved by name - not a new BlockType)". Contract for
+// its own resolution is this file's OWN header comment (the design
+// decision this track made and recorded there + in
+// docs/.scratch/p2-c-findings-2.md): a merge record is threaded through
+// via `refresh`'s new `mergeRecord` parameter; `nil` (no merge
+// underway) behaves like a layout-sensitive field (untouched); a name
+// absent from a supplied record resolves to "" (matching `.author`/
+// `.docProperty`'s own "empty is a legitimate resolution" precedent).
 
 final class FieldControllerTests: DoctrineTestCase {
 
@@ -171,12 +182,73 @@ final class FieldControllerTests: DoctrineTestCase {
             FieldSpec(kind: .author),
             FieldSpec(kind: .title),
             FieldSpec(kind: .docProperty(name: "Company"), dirty: false),
+            FieldSpec(kind: .mergeField(name: "FirstName"), dirty: false),
         ]
         for spec in specs {
             let data = try JSONEncoder().encode(spec)
             let decoded = try JSONDecoder().decode(FieldSpec.self, from: data)
             XCTAssertEqual(decoded, spec)
         }
+    }
+
+    // MARK: - .mergeField(name:) (P2-C item 2.4) - contract per this file's
+    // own header comment + docs/.scratch/p2-c-findings-2.md
+
+    /// The headline resolution case: a record supplying the named key
+    /// resolves to that value and clears `dirty`, exactly like every
+    /// other non-layout-sensitive kind.
+    func testRefreshMergeFieldWithMatchingRecordResolvesToRecordValue() {
+        let block = fieldBlock(kind: .mergeField(name: "FirstName"))
+        let refreshed = FieldController.refresh(block, in: .empty, clock: fixedClock, mergeRecord: ["FirstName": "Ada", "LastName": "Lovelace"])
+        XCTAssertEqual(refreshed.content, [InlineRun(text: "Ada")])
+        XCTAssertEqual(refreshed.field?.dirty, false)
+    }
+
+    /// Degrade gracefully, not crash: a mergeField name absent from the
+    /// SUPPLIED record substitutes an empty string, matching `.author`/
+    /// `.docProperty`'s own "empty is a legitimate resolution" precedent -
+    /// this is this item's own "template mergeField name absent from a
+    /// given record" test-coverage requirement.
+    func testRefreshMergeFieldWithRecordMissingKeyResolvesToEmptyStringNotACrash() {
+        let block = fieldBlock(kind: .mergeField(name: "MiddleName"))
+        let refreshed = FieldController.refresh(block, in: .empty, clock: fixedClock, mergeRecord: ["FirstName": "Ada"])
+        XCTAssertEqual(refreshed.content, [InlineRun(text: "")])
+        XCTAssertEqual(refreshed.field?.dirty, false, "a resolved-to-empty merge field is still RESOLVED, not still dirty")
+    }
+
+    /// The load-bearing regression guard from this file's own header:
+    /// refreshing WITHOUT a merge record (the ordinary `DocStore.
+    /// refreshFields` path, which has no notion of "current record")
+    /// must leave an ALREADY-MERGED field's content completely
+    /// untouched - never silently blank it back to "".
+    func testRefreshMergeFieldWithNoMergeRecordLeavesAlreadyResolvedContentUntouched() {
+        var block = fieldBlock(kind: .mergeField(name: "FirstName"), dirty: false)
+        block.content = [InlineRun(text: "Ada")]
+        let refreshed = FieldController.refresh(block, in: .empty, clock: fixedClock)
+        XCTAssertEqual(refreshed, block, "no mergeRecord supplied must be a byte-for-byte no-op, same as a layout-sensitive field")
+        XCTAssertEqual(refreshed.content, [InlineRun(text: "Ada")])
+    }
+
+    /// Same "no mergeRecord" no-op, on a field that was never resolved
+    /// (still dirty, empty content) - dirty must stay true, matching
+    /// `.page`/`.numPages`/`.ref`'s own layout-sensitive contract.
+    func testRefreshMergeFieldWithNoMergeRecordOnNeverResolvedFieldLeavesDirtyTrue() {
+        let block = fieldBlock(kind: .mergeField(name: "FirstName"), dirty: true)
+        let refreshed = FieldController.refresh(block, in: .empty, clock: fixedClock)
+        XCTAssertEqual(refreshed, block)
+        XCTAssertEqual(refreshed.field?.dirty, true)
+    }
+
+    /// Idempotence under the SAME record (mirrors this file's own
+    /// headline date/time idempotence tests) - refreshing an
+    /// already-merged field again with the identical record produces an
+    /// identical block.
+    func testRefreshMergeFieldTwiceUnderSameRecordIsIdempotent() {
+        let original = fieldBlock(kind: .mergeField(name: "FirstName"))
+        let record = ["FirstName": "Grace"]
+        let once = FieldController.refresh(original, in: .empty, clock: fixedClock, mergeRecord: record)
+        let twice = FieldController.refresh(once, in: .empty, clock: fixedClock, mergeRecord: record)
+        XCTAssertEqual(once, twice)
     }
 
     // MARK: - Block.field bridge

@@ -65,6 +65,33 @@ import Foundation
 //  through, which is a later item's scope, not this one's. Empty is
 //  the same rendering LO/Word give an unset property, so this is a
 //  legitimate resolution, not a placeholder error value.
+//
+//  **`.mergeField(name:)` (P2 item 2.4) needs a per-call MERGE RECORD,
+//  not just `ast`.** Every other case resolves from `ast`/`clock` alone;
+//  a merge field's value is "the named field's value from the CURRENT
+//  record being merged" (this item's own design contract), which is a
+//  property of one merge RUN, not of the document. Threading that
+//  without breaking the existing pure-function signature: `refresh`
+//  gained one new trailing parameter, `mergeRecord: [String: String]? =
+//  nil`, defaulted to `nil` so every existing call site (including
+//  `DocStore.refreshFields`, which has no notion of "current record" and
+//  must keep compiling unchanged) is untouched. Two states:
+//    - `mergeRecord == nil` (ordinary refresh, no merge underway): a
+//      `.mergeField` behaves like a LAYOUT-SENSITIVE field - `content`/
+//      `dirty` are left completely untouched. This is the load-bearing
+//      half of the decision: without it, calling `DocStore.refreshFields`
+//      on an ALREADY-MERGED output Doc (which legitimately still has
+//      `.mergeField` blocks - the resolved value lives in `content`, the
+//      spec's `kind` stays `.mergeField` forever, same as every other
+//      field kind) would silently blank the merged text back to "",
+//      exactly the "canonize a bug via a code-derived test" trap this
+//      file's own doctrine warns about.
+//    - `mergeRecord != nil` (a merge run is in progress, via
+//      `MailMergeCoordinator`): resolves to `mergeRecord[name] ?? ""` -
+//      a name absent from THIS record degrades to an empty substitution
+//      (matching `.author`/`.title`/`.docProperty`'s own "empty is a
+//      legitimate resolution, not a placeholder error value" precedent),
+//      never a crash or a thrown error.
 //===----------------------------------------------------------------------===//
 
 // MARK: - FieldKind
@@ -97,6 +124,12 @@ public enum FieldKind: Codable, Sendable, Hashable {
     case title
     /// A named custom document property (Word's DOCPROPERTY field).
     case docProperty(name: String)
+    /// A mail-merge placeholder (P2 item 2.4): resolves to `name`'s
+    /// value in the CURRENT record being merged, threaded through
+    /// `refresh`'s `mergeRecord` parameter - see file header. Outside a
+    /// merge run (`mergeRecord == nil`) this behaves like a layout-
+    /// sensitive field: last-known `content` untouched, never blanked.
+    case mergeField(name: String)
 }
 
 // MARK: - FieldSpec
@@ -130,11 +163,23 @@ public enum FieldController {
     /// when `block` isn't a `.field` block or carries no `FieldSpec`
     /// yet. See the file header for the layout-sensitive/insensitive
     /// split and the idempotence guarantee under a fixed `clock`.
-    public static func refresh(_ block: Block, in ast: DocumentAST, clock: () -> Date = { Date() }) -> Block {
+    ///
+    /// `mergeRecord` is `nil` for every ordinary refresh (every existing
+    /// call site, including `DocStore.refreshFields`, keeps compiling
+    /// and behaving exactly as before) and non-nil only mid-merge, via
+    /// `MailMergeCoordinator` - see file header for why `.mergeField`
+    /// needs it and what each state means.
+    public static func refresh(
+        _ block: Block,
+        in ast: DocumentAST,
+        clock: () -> Date = { Date() },
+        mergeRecord: [String: String]? = nil
+    ) -> Block {
         guard block.type == .field, var spec = block.field else { return block }
-        guard let text = resolvedText(for: spec.kind, blockID: block.id, in: ast, now: clock()) else {
-            // Layout-sensitive: last-known content and dirty flag are
-            // left exactly as they were - see file header.
+        guard let text = resolvedText(for: spec.kind, blockID: block.id, in: ast, now: clock(), mergeRecord: mergeRecord) else {
+            // Layout-sensitive (or a merge field with no merge underway):
+            // last-known content and dirty flag are left exactly as they
+            // were - see file header.
             return block
         }
         var result = block
@@ -145,9 +190,16 @@ public enum FieldController {
     }
 
     /// The freshly-resolved text for a layout-INSENSITIVE `kind`, or
-    /// `nil` for a layout-SENSITIVE one (`.page`/`.numPages`/`.ref`) -
-    /// `nil` is `refresh`'s signal to leave `content`/`dirty` untouched.
-    private static func resolvedText(for kind: FieldKind, blockID: UUID, in ast: DocumentAST, now: Date) -> String? {
+    /// `nil` for a layout-SENSITIVE one (`.page`/`.numPages`/`.ref`, or
+    /// `.mergeField` with no `mergeRecord` supplied) - `nil` is
+    /// `refresh`'s signal to leave `content`/`dirty` untouched.
+    private static func resolvedText(
+        for kind: FieldKind,
+        blockID: UUID,
+        in ast: DocumentAST,
+        now: Date,
+        mergeRecord: [String: String]?
+    ) -> String? {
         switch kind {
         case .page, .numPages, .ref:
             return nil
@@ -159,6 +211,9 @@ public enum FieldController {
             return String(sequenceNumber(name: name, blockID: blockID, in: ast))
         case .author, .title, .docProperty:
             return ""
+        case .mergeField(let name):
+            guard let mergeRecord else { return nil }
+            return mergeRecord[name] ?? ""
         }
     }
 
