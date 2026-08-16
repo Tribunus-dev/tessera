@@ -4497,6 +4497,20 @@ void ggml_backend_cuda_get_device_description(int device, char * description, si
     snprintf(description, description_size, "%s", ggml_cuda_device_description(device).c_str());
 }
 
+void ggml_backend_cuda_get_device_arch(int device, char * arch, size_t arch_size) {
+    if (arch_size > 0) {
+        arch[0] = '\0';
+    }
+#if defined(GGML_USE_HIP)
+    cudaDeviceProp prop;
+    if (cudaGetDeviceProperties(&prop, ggml_cuda_get_physical_device(device)) == cudaSuccess) {
+        snprintf(arch, arch_size, "%s", prop.gcnArchName);
+    }
+#else
+    GGML_UNUSED(device);
+#endif
+}
+
 static int ggml_cuda_physical_device_share_count(int device) {
     const ggml_cuda_device_info & info = ggml_cuda_info();
     GGML_ASSERT(device >= 0 && device < info.device_count);
@@ -5360,6 +5374,9 @@ static void * ggml_backend_cuda_reg_get_proc_address(ggml_backend_reg_t reg, con
     }
     if (strcmp(name, "ggml_backend_get_features") == 0) {
         return (void *)ggml_backend_cuda_get_features;
+    }
+    if (strcmp(name, "ggml_backend_cuda_get_device_arch") == 0) {
+        return (void *)ggml_backend_cuda_get_device_arch;
     }
     return nullptr;
 }

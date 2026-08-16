@@ -19,6 +19,7 @@
 #include "llama-model-loader.h"
 
 #include "ggml-alloc.h"
+#include "ggml-backend.h"
 #include "ggml.h"
 #include "gguf.h"
 #include "llama-hparams.h"
@@ -32,12 +33,118 @@
 #include <array>
 #include <cinttypes>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <future>
 #include <regex>
 
 static const size_t kiB = 1024;
 static const size_t MiB = 1024*kiB;
+
+// W3 task 3.8 (docs/amd-tile-format-spec.md 3.6, 9(vii); master-plan
+// criterion 23): validates the amd.tile.* GGUF metadata a host-amd GGUF
+// carries (written by tools/quantize/quantize.cpp's `pack --quant=host-amd`,
+// task 3.5) against this host's actually-loaded GPU backend, before the
+// model finishes loading. These keys have no reader anywhere else in the
+// codebase today - this is the first one.
+namespace {
+
+struct ts_amd_tile_meta {
+    bool        present = false;
+    std::string arch;   // "amd.tile.arch", e.g. "RDNA35"
+    std::string parent; // "amd.tile.parent", e.g. "RDNA3" (empty if absent)
+    uint32_t    version = 0;
+};
+
+ts_amd_tile_meta ts_gguf_get_amd_tile_meta(const struct gguf_context * meta) {
+    ts_amd_tile_meta out;
+    const int64_t arch_idx = gguf_find_key(meta, "amd.tile.arch");
+    if (arch_idx < 0) {
+        return out; // not a host-amd GGUF; nothing to validate
+    }
+    out.present = true;
+    out.arch = gguf_get_val_str(meta, arch_idx);
+    const int64_t parent_idx = gguf_find_key(meta, "amd.tile.parent");
+    if (parent_idx >= 0) {
+        out.parent = gguf_get_val_str(meta, parent_idx);
+    }
+    const int64_t version_idx = gguf_find_key(meta, "amd.tile.version");
+    if (version_idx >= 0) {
+        out.version = gguf_get_val_u32(meta, version_idx);
+    }
+    return out;
+}
+
+// Queries the dynamically-loaded GPU backend registry - GGML_BACKEND_DL-
+// safe (this file has no HIP headers, no GGML_USE_HIP define, and must
+// keep working on hosts with no GPU backend loaded at all; direct
+// hipGetDeviceProperties calls, as tools/quantize/tessera/tile-detect.cpp
+// uses, are not an option here - src/ does not depend on tools/quantize/).
+//
+// Also cannot call ggml_backend_cuda_get_device_arch() directly despite
+// including ggml-cuda.h: with GGML_BACKEND_DL, ggml-hip.so is dlopen'd at
+// runtime, not linked into libllama.so, so a direct call is an unresolved
+// symbol at link time (found the hard way - first attempt at this file
+// failed exactly that link). Must go through ggml_backend_reg_get_proc_
+// address like every other cross-backend call in src/ (see llama.cpp,
+// llama-model.cpp, llama-context.cpp for the same pattern).
+//
+// Returns the empty string if no ROCm device is currently registered;
+// callers must treat that as "arch unknown", never as a mismatch.
+//
+// TS_FORCE_HOST_ARCH overrides the probe unconditionally - the hook task
+// 3.8 needs for a negative test that forces a mismatch without requiring
+// different physical hardware.
+std::string ts_probe_loaded_hip_arch() {
+    if (const char * forced = getenv("TS_FORCE_HOST_ARCH")) {
+        return std::string(forced);
+    }
+    typedef void (*ggml_backend_cuda_get_device_arch_t)(int, char *, size_t);
+    const size_t n = ggml_backend_dev_count();
+    for (size_t i = 0; i < n; i++) {
+        ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+        if (ggml_backend_dev_type(dev) != GGML_BACKEND_DEVICE_TYPE_GPU) {
+            continue;
+        }
+        const char * name = ggml_backend_dev_name(dev);
+        if (name == nullptr || strncmp(name, "ROCm", 4) != 0) {
+            continue; // Metal / Vulkan / real CUDA / etc - not HIP
+        }
+        int local_idx = 0;
+        if (sscanf(name, "ROCm%d", &local_idx) != 1) {
+            continue;
+        }
+        ggml_backend_reg_t reg = ggml_backend_dev_backend_reg(dev);
+        if (reg == nullptr) {
+            continue;
+        }
+        auto * get_arch_fn = (ggml_backend_cuda_get_device_arch_t)
+            ggml_backend_reg_get_proc_address(reg, "ggml_backend_cuda_get_device_arch");
+        if (get_arch_fn == nullptr) {
+            continue; // this backend build predates the proc, or isn't HIP after all
+        }
+        char arch_buf[64] = {0};
+        get_arch_fn(local_idx, arch_buf, sizeof(arch_buf));
+        if (arch_buf[0] != '\0') {
+            return std::string(arch_buf);
+        }
+    }
+    return std::string();
+}
+
+// RDNA3-family gfx-target check - the RDNA3-only subset of
+// tile-detect.cpp's ts_classify_amd_arch_name() table (this file can't
+// include that tool-tree header; see this task's evidence note). Only
+// RDNA3/RDNA3.5 matter here because that is the only arch family
+// pack --quant=host-amd currently produces.
+bool ts_host_arch_is_rdna3_family(const std::string & gcn_arch_name) {
+    const size_t colon = gcn_arch_name.find(':');
+    const std::string gfx = (colon == std::string::npos) ? gcn_arch_name : gcn_arch_name.substr(0, colon);
+    return gfx == "gfx1100" || gfx == "gfx1101" || gfx == "gfx1102" ||
+           gfx == "gfx1103" || gfx == "gfx1150" || gfx == "gfx1151";
+}
+
+} // namespace
 static const size_t GiB = 1024*MiB;
 
 const char * llama_file_version_name(llama_fver version) {
@@ -626,6 +733,31 @@ llama_model_loader::llama_model_loader(
         metadata = metadata_ptr.get();
         if (metadata == nullptr) {
             throw std::runtime_error(format("%s: failed to load model from %s", __func__, fname.c_str()));
+        }
+
+        // W3 task 3.8: reject a host-amd GGUF this host cannot run, before
+        // any tensor data is touched. version-reject per spec 9(vii);
+        // arch-mismatch per master-plan criterion 23.
+        {
+            const ts_amd_tile_meta tile_meta = ts_gguf_get_amd_tile_meta(metadata);
+            if (tile_meta.present) {
+                if (tile_meta.version != 2) {
+                    throw std::runtime_error(format(
+                        "%s: %s has amd.tile.version=%u, but this build only supports version 2 - "
+                        "refusing to load an unrecognized host-amd tile format",
+                        __func__, fname.c_str(), tile_meta.version));
+                }
+                const std::string host_arch = ts_probe_loaded_hip_arch();
+                if (!host_arch.empty() && !ts_host_arch_is_rdna3_family(host_arch)) {
+                    throw std::runtime_error(format(
+                        "%s: %s is tagged amd.tile.arch=%s (parent=%s) but this host's detected "
+                        "AMD GPU arch (%s) is not RDNA3-family - refusing to load a tile format "
+                        "this host cannot run",
+                        __func__, fname.c_str(), tile_meta.arch.c_str(),
+                        tile_meta.parent.empty() ? "none" : tile_meta.parent.c_str(),
+                        host_arch.c_str()));
+                }
+            }
         }
 
         get_key(llm_kv(LLM_KV_GENERAL_ARCHITECTURE), arch_name, false);
