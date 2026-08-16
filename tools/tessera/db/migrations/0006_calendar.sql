@@ -19,5 +19,5 @@
 -- 0005 are unchanged.
 
 CREATE INDEX IF NOT EXISTS idx_entities_event_start
-    ON graph_entities (entity_type, body->>'startAt')
+    ON graph_entities (entity_type, (body->>'startAt'))
     WHERE entity_type = 'calendar_event';

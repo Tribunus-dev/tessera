@@ -1,0 +1,221 @@
+{
+  "fixtures" : [
+    {
+      "axisScores" : [
+        {
+          "axis" : "cellValues",
+          "expected" : 4,
+          "survived" : 4
+        }
+      ],
+      "fixtureName" : "basic-cells.ods",
+      "material" : "calc",
+      "status" : "scored"
+    },
+    {
+      "axisScores" : [
+        {
+          "axis" : "cellValues",
+          "expected" : 3,
+          "survived" : 3
+        }
+      ],
+      "fixtureName" : "sum-formula.ods",
+      "material" : "calc",
+      "status" : "scored"
+    },
+    {
+      "axisScores" : [
+        {
+          "axis" : "cellValues",
+          "expected" : 9,
+          "survived" : 9
+        }
+      ],
+      "fixtureName" : "multi-column.ods",
+      "material" : "calc",
+      "status" : "scored"
+    },
+    {
+      "axisScores" : [
+        {
+          "axis" : "slideCount",
+          "expected" : 1,
+          "survived" : 1
+        },
+        {
+          "axis" : "slideTitles",
+          "expected" : 1,
+          "survived" : 0
+        },
+        {
+          "axis" : "slideNotes",
+          "expected" : 0,
+          "survived" : 0
+        },
+        {
+          "axis" : "masterBackgrounds",
+          "expected" : 0,
+          "survived" : 0
+        }
+      ],
+      "fixtureName" : "title-slide.odp",
+      "material" : "impress",
+      "status" : "scored"
+    },
+    {
+      "axisScores" : [
+        {
+          "axis" : "slideCount",
+          "expected" : 2,
+          "survived" : 2
+        },
+        {
+          "axis" : "slideTitles",
+          "expected" : 2,
+          "survived" : 0
+        },
+        {
+          "axis" : "slideNotes",
+          "expected" : 0,
+          "survived" : 0
+        },
+        {
+          "axis" : "masterBackgrounds",
+          "expected" : 0,
+          "survived" : 0
+        }
+      ],
+      "fixtureName" : "master-theme-slides.odp",
+      "material" : "impress",
+      "status" : "scored"
+    },
+    {
+      "axisScores" : [
+        {
+          "axis" : "slideCount",
+          "expected" : 1,
+          "survived" : 1
+        },
+        {
+          "axis" : "slideTitles",
+          "expected" : 1,
+          "survived" : 0
+        },
+        {
+          "axis" : "slideNotes",
+          "expected" : 0,
+          "survived" : 0
+        },
+        {
+          "axis" : "masterBackgrounds",
+          "expected" : 0,
+          "survived" : 0
+        }
+      ],
+      "fixtureName" : "title-slide.pptx",
+      "material" : "impress",
+      "status" : "scored"
+    },
+    {
+      "axisScores" : [
+        {
+          "axis" : "slideCount",
+          "expected" : 2,
+          "survived" : 2
+        },
+        {
+          "axis" : "slideTitles",
+          "expected" : 2,
+          "survived" : 0
+        },
+        {
+          "axis" : "slideNotes",
+          "expected" : 0,
+          "survived" : 0
+        },
+        {
+          "axis" : "masterBackgrounds",
+          "expected" : 0,
+          "survived" : 0
+        }
+      ],
+      "fixtureName" : "master-theme-slides.pptx",
+      "material" : "impress",
+      "status" : "scored"
+    },
+    {
+      "axisScores" : [
+        {
+          "axis" : "shapeKinds",
+          "expected" : 1,
+          "survived" : 1
+        },
+        {
+          "axis" : "layers",
+          "expected" : 5,
+          "survived" : 5
+        },
+        {
+          "axis" : "connectors",
+          "expected" : 0,
+          "survived" : 0
+        }
+      ],
+      "fixtureName" : "rectangle-shape.odg",
+      "material" : "draw",
+      "status" : "scored"
+    },
+    {
+      "axisScores" : [
+        {
+          "axis" : "shapeKinds",
+          "expected" : 3,
+          "survived" : 3
+        },
+        {
+          "axis" : "layers",
+          "expected" : 7,
+          "survived" : 7
+        },
+        {
+          "axis" : "connectors",
+          "expected" : 1,
+          "survived" : 1
+        }
+      ],
+      "fixtureName" : "layered-shapes.odg",
+      "material" : "draw",
+      "status" : "scored"
+    },
+    {
+      "axisScores" : [
+
+      ],
+      "detail" : "subprocessError(exitCode: 0, stderr: \"No module named \\'lxml\\'\")",
+      "fixtureName" : "bold-run.odt",
+      "material" : "writer",
+      "status" : "failed"
+    },
+    {
+      "axisScores" : [
+
+      ],
+      "detail" : "subprocessError(exitCode: 0, stderr: \"No module named \\'lxml\\'\")",
+      "fixtureName" : "paragraph-heading.odt",
+      "material" : "writer",
+      "status" : "failed"
+    },
+    {
+      "axisScores" : [
+
+      ],
+      "detail" : "subprocessError(exitCode: 0, stderr: \"No module named \\'lxml\\'\")",
+      "fixtureName" : "table-and-footnote.odt",
+      "material" : "writer",
+      "status" : "failed"
+    }
+  ],
+  "probedAt" : "2025-08-15T00:00:00Z",
+  "sofficeVersionDescription" : "LibreOffice 26.2.5.2 (cd7284b4cbbfeb507e630c1aac019f4157393acb)"
+}

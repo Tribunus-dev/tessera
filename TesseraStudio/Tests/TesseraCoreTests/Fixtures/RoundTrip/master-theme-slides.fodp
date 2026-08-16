@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<office:document
+    xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+    xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"
+    xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+    xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"
+    xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0"
+    xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0"
+    xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"
+    xmlns:xlink="http://www.w3.org/1999/xlink"
+    xmlns:dc="http://purl.org/dc/elements/1.1/"
+    xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0"
+    office:version="1.3"
+    office:mimetype="application/vnd.oasis.opendocument.presentation">
+  <office:meta>
+    <dc:title>Master Theme Fixture</dc:title>
+  </office:meta>
+  <office:automatic-styles>
+    <style:style style:name="TitlePH" style:family="presentation"/>
+    <style:style style:name="MasterA-style" style:family="drawing-page">
+      <style:drawing-page-properties draw:fill="solid" draw:fill-color="#1155cc"/>
+    </style:style>
+    <style:style style:name="MasterB-style" style:family="drawing-page">
+      <style:drawing-page-properties draw:fill="solid" draw:fill-color="#38761d"/>
+    </style:style>
+  </office:automatic-styles>
+  <office:master-styles>
+    <style:master-page style:name="MasterA" style:display-name="Corporate Blue" draw:style-name="MasterA-style"/>
+    <style:master-page style:name="MasterB" style:display-name="Nature Green" draw:style-name="MasterB-style"/>
+  </office:master-styles>
+  <office:body>
+    <office:presentation>
+      <draw:page draw:name="Slide1" draw:master-page-name="MasterA">
+        <draw:frame presentation:style-name="TitlePH"
+            presentation:class="title"
+            presentation:placeholder="true"
+            svg:x="1cm" svg:y="1cm" svg:width="20cm" svg:height="3cm">
+          <draw:text-box>
+            <text:p>Blue Master Slide</text:p>
+          </draw:text-box>
+        </draw:frame>
+        <presentation:notes>
+          <draw:page>
+            <draw:frame presentation:class="notes">
+              <draw:text-box>
+                <text:p>Speaker notes for the blue master slide.</text:p>
+              </draw:text-box>
+            </draw:frame>
+          </draw:page>
+        </presentation:notes>
+      </draw:page>
+      <draw:page draw:name="Slide2" draw:master-page-name="MasterB">
+        <draw:frame presentation:style-name="TitlePH"
+            presentation:class="title"
+            presentation:placeholder="true"
+            svg:x="1cm" svg:y="1cm" svg:width="20cm" svg:height="3cm">
+          <draw:text-box>
+            <text:p>Green Master Slide</text:p>
+          </draw:text-box>
+        </draw:frame>
+      </draw:page>
+    </office:presentation>
+  </office:body>
+</office:document>

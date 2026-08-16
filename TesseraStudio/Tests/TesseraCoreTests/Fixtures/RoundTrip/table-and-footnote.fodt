@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<office:document
+    xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+    xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"
+    xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+    xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
+    xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"
+    xmlns:xlink="http://www.w3.org/1999/xlink"
+    xmlns:dc="http://purl.org/dc/elements/1.1/"
+    xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0"
+    office:version="1.3"
+    office:mimetype="application/vnd.oasis.opendocument.text">
+  <office:automatic-styles>
+    <style:style style:name="FixtureTable" style:family="table"/>
+  </office:automatic-styles>
+  <office:body>
+    <office:text>
+      <text:p>A paragraph with a footnote reference<text:note text:note-class="footnote">
+          <text:note-citation>1</text:note-citation>
+          <text:note-body>
+            <text:p>This is the footnote body text.</text:p>
+          </text:note-body>
+        </text:note> right after the reference mark.</text:p>
+      <table:table table:name="FixtureTable" table:style-name="FixtureTable">
+        <table:table-column table:number-columns-repeated="2"/>
+        <table:table-row>
+          <table:table-cell office:value-type="string">
+            <text:p>Name</text:p>
+          </table:table-cell>
+          <table:table-cell office:value-type="string">
+            <text:p>Quantity</text:p>
+          </table:table-cell>
+        </table:table-row>
+        <table:table-row>
+          <table:table-cell office:value-type="string">
+            <text:p>Widget</text:p>
+          </table:table-cell>
+          <table:table-cell office:value-type="float" office:value="42">
+            <text:p>42</text:p>
+          </table:table-cell>
+        </table:table-row>
+      </table:table>
+    </office:text>
+  </office:body>
+</office:document>

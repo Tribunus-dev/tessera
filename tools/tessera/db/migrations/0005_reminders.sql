@@ -25,5 +25,5 @@
 -- tasks / calendar material that reminders link to).
 
 CREATE INDEX IF NOT EXISTS idx_entities_reminder_trigger
-    ON graph_entities (entity_type, body->>'triggerAt')
+    ON graph_entities (entity_type, (body->>'triggerAt'))
     WHERE entity_type = 'reminder';

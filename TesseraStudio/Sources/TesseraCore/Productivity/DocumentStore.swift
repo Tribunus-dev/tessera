@@ -21,9 +21,15 @@ import Foundation
 public struct DocumentStore: Sendable {
 
     private let dataLayer: TesseraDataLayer
+    private let signer: ReceiptSigner
 
-    public init(dataLayer: TesseraDataLayer) {
+    /// `signer` defaults to the Keychain-backed ``ReceiptSigner()``
+    /// (production behavior, unchanged for every existing call
+    /// site). Tests inject a ``ReceiptSigner(signingKey:)`` so
+    /// `apply`/`applyBatch` don't need a real Keychain entry.
+    public init(dataLayer: TesseraDataLayer, signer: ReceiptSigner = ReceiptSigner()) {
         self.dataLayer = dataLayer
+        self.signer = signer
     }
 
     // MARK: - Load / save AST
@@ -134,7 +140,7 @@ public struct DocumentStore: Sendable {
         // 3. Sign the receipt. The signer composes with the
         //    Keychain-backed volume password (or the injected
         //    key in tests).
-        let signer = ReceiptSigner()
+        let signer = self.signer
         let contentHash = try ast.contentHash()
 
         // 4. Look up the prior receipt id. The most recent
@@ -251,7 +257,21 @@ public struct DocumentStore: Sendable {
             )
         }
         // Convert [String: Any] to [String: JSONValue] recursively.
-        return convert(obj) as? [String: JSONValue] ?? [:]
+        // `convert` always returns a `JSONValue`, never a raw
+        // `[String: JSONValue]` - `convert(obj) as? [String: JSONValue]`
+        // can never succeed (a `JSONValue.object(...)` is not itself a
+        // `[String: JSONValue]`), so that cast silently discarded every
+        // receipt's payload down to `[:]` until this fix. Unwrap the
+        // `.object` case instead (guaranteed here since `obj` is already
+        // proven `[String: Any]` above, so `convert` always takes that
+        // branch).
+        guard case let .object(converted) = convert(obj) else {
+            throw DocumentStoreError.invalidBody(
+                documentID: receipt.documentID,
+                reason: "encoded receipt did not convert to a JSON object"
+            )
+        }
+        return converted
     }
 
     /// Recursively convert a Foundation JSON value to a

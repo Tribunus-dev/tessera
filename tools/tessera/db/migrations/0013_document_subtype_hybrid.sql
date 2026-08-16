@@ -8,9 +8,18 @@
 -- lookup. This migration extends hybrid_search to return the
 -- subtype alongside the existing columns.
 --
--- Idempotent: CREATE OR REPLACE. Re-applying is safe.
--- No new tables or indexes; the existing idx_entities_subtype
--- (0001) already covers subtype.
+-- Idempotent: CREATE OR REPLACE, preceded by an explicit DROP.
+-- Re-applying is safe. No new tables or indexes; the existing
+-- idx_entities_subtype (0001) already covers subtype.
+--
+-- The DROP is required, not decorative: this migration's
+-- RETURNS TABLE shape adds a `subtype` column ahead of `body`,
+-- which changes the OUT-parameter row type from 0001's version.
+-- Postgres rejects a CREATE OR REPLACE that changes the return
+-- row type ("cannot change return type of existing function")
+-- unless the old function is dropped first.
+
+DROP FUNCTION IF EXISTS hybrid_search(uuid, text, vector(1536), int);
 
 CREATE OR REPLACE FUNCTION hybrid_search(
     p_anchor         uuid,

@@ -75,6 +75,15 @@ public enum DoctrineTimeout {
     /// Allowance for empirical probes (rule 10) that shell out to
     /// external tools such as `soffice --convert-to`.
     public static let probe: TimeInterval = 120
+    /// Whole-test allowance for a probe that runs MANY `probe`-scale
+    /// external-tool calls in sequence (a fixture corpus, not a single
+    /// round trip). Deliberately NOT just `probe` reused: a test with
+    /// N sequential `withDoctrineTimeout(seconds: .probe)` calls inside
+    /// it needs an outer watchdog bigger than any single one of them,
+    /// or the outer bound fires on ordinary cumulative wall-clock time
+    /// with nothing actually hung (P2-0 finding: this is exactly what
+    /// happened to the first version of RoundTripCorpusTests).
+    public static let corpusProbe: TimeInterval = 900
 }
 
 /// Thrown by `withDoctrineTimeout` when `operation` does not complete

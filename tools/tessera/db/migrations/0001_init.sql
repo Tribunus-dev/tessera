@@ -46,15 +46,19 @@ CREATE TABLE IF NOT EXISTS graph_entities (
     entity_type     text NOT NULL,
     subtype         text,
     label           text NOT NULL,
-    body            text,
+    body            jsonb,
     source_url      text,
     created_at      timestamptz NOT NULL DEFAULT now(),
     updated_at      timestamptz NOT NULL DEFAULT now(),
     -- Generated tsvector: label weighted A (high), body weighted B.
     -- Weights feed into ts_rank_cd in hybrid_search (keyword_score).
+    -- body is jsonb (see below); cast to text for the tsvector input
+    -- since to_tsvector('english', jsonb) would index every JSON key
+    -- name and structural punctuation alongside the values, not just
+    -- the content we want ranked.
     search_tsv      tsvector GENERATED ALWAYS AS (
         setweight(to_tsvector('english', coalesce(label, '')), 'A') ||
-        setweight(to_tsvector('english', coalesce(body, '')),  'B')
+        setweight(to_tsvector('english', coalesce(body::text, '')),  'B')
     ) STORED,
     -- 1536 dims matches OpenAI text-embedding-3-small; for local
     -- embeddings we re-embed to whatever the user's model produces.

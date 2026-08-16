@@ -88,7 +88,9 @@ final class ThemeTests: DoctrineTestCase {
 
     func testThemeEncodeDecodeIsIdentity() throws {
         let theme = Theme(name: "Corporate", colors: [.accent1: "#112233", .dk1: "#000000"], majorFont: "Georgia", minorFont: "Verdana")
-        let data = try JSONEncoder().encode(theme)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(theme)
         let decoded = try JSONDecoder().decode(Theme.self, from: data)
         XCTAssertEqual(decoded, theme)
     }
@@ -120,13 +122,16 @@ final class ThemeTests: DoctrineTestCase {
         deck = deck.settingTheme(themeA)
         deck = deck.settingTheme(themeB)
 
+        let sortedKeysEncoder = JSONEncoder()
+        sortedKeysEncoder.outputFormatting = [.sortedKeys]
+
         deck = deck.settingActiveThemeID(themeA.id)
         let resolvedUnderA = deck.activeTheme.map { $0.resolve(master.backgroundColorHex!) }
-        let masterJSONUnderA = try JSONEncoder().encode(deck.effectiveMasterPages[master.id.uuidString]!.backgroundColorHex)
+        let masterJSONUnderA = try sortedKeysEncoder.encode(deck.effectiveMasterPages[master.id.uuidString]!.backgroundColorHex)
 
         deck = deck.settingActiveThemeID(themeB.id)
         let resolvedUnderB = deck.activeTheme.map { $0.resolve(master.backgroundColorHex!) }
-        let masterJSONUnderB = try JSONEncoder().encode(deck.effectiveMasterPages[master.id.uuidString]!.backgroundColorHex)
+        let masterJSONUnderB = try sortedKeysEncoder.encode(deck.effectiveMasterPages[master.id.uuidString]!.backgroundColorHex)
 
         XCTAssertEqual(resolvedUnderA, "#111111")
         XCTAssertEqual(resolvedUnderB, "#222222")

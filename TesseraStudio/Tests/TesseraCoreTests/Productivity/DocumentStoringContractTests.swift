@@ -1,56 +1,24 @@
 import XCTest
 @testable import TesseraCore
-import CryptoKit
 
-// MARK: - DocumentStoreTests
-//
-// Contract: DocumentStore.swift's own doc comments - "Apply one mutation
-// to a document, persist the updated AST, and append a signed receipt to
-// the chain" (doctrine rule 1); "if any [mutation] fails, none of them are
-// persisted and the document is unchanged" (the batch-atomicity contract).
-//
-// GATING (doctrine rule 11): `DocumentStore.loadDocument`/`saveDocument`/
-// `history` genuinely need a live `TesseraDataLayer` (Postgres), so these
-// stay gated on TESSERA_DB_INTEGRATION=1. `DocumentStore(dataLayer:signer:)`
-// now takes an injected `ReceiptSigner` (same `.injected(...)` KeySource
-// ReceiptExportServiceTests uses) so `apply`/`applyBatch` don't also need a
-// real Keychain entry - the DB gate below is the only remaining gate. The
-// same contracts get an ungated shadow against `InMemoryDocumentStore` in
-// DocumentStoringContractTests.swift, so the wiring logic itself runs in
-// a plain `swift test`. The pure engine underneath every decision this
-// store makes (`MutationEngine`) has full ungated coverage of its own in
-// `MutationEngineTests.swift`.
+// Contract source: DocumentStore.swift's own doc comments (same contract
+// DocumentStoreTests.swift pins under TESSERA_DB_INTEGRATION=1) -- "Apply
+// one mutation to a document, persist the updated AST, and append a
+// signed receipt to the chain"; "if any [mutation] fails, none of them
+// are persisted and the document is unchanged"; "history... oldest
+// first". Doctrine rule 11's ungated shadow: the exact same contracts,
+// exercised against `InMemoryDocumentStore` so the wiring runs in a
+// plain `swift test`, no TESSERA_DB_INTEGRATION and no Keychain needed.
+// The real store's Postgres wiring stays separately verified by
+// DocumentStoreTests.swift.
 
-final class DocumentStoreTests: DoctrineTestCase {
-
-    private func requireDBIntegration() throws {
-        guard ProcessInfo.processInfo.environment["TESSERA_DB_INTEGRATION"] == "1" else {
-            throw XCTSkip("gated: set TESSERA_DB_INTEGRATION=1 to run DocumentStore against a live Postgres/Valkey - see docs/.scratch/test-rewrite-findings-writer.md")
-        }
-    }
-
-    private func makeStore() async throws -> (store: DocumentStore, dataLayer: TesseraDataLayer) {
-        let dataLayer = TesseraDataLayer()
-        _ = await dataLayer.start()
-        let signer = ReceiptSigner(signingKey: Curve25519.Signing.PrivateKey())
-        return (DocumentStore(dataLayer: dataLayer, signer: signer), dataLayer)
-    }
-
-    private func seedEmptyDocument(dataLayer: TesseraDataLayer, id: UUID) async throws {
-        let emptyASTJSON = String(data: try DocumentAST.empty.jsonData(), encoding: .utf8)!
-        _ = try await dataLayer.upsertEntity(GraphEntityUpsert(
-            id: id, entityType: "document", subtype: "doc", label: "Mutation Test",
-            body: emptyASTJSON
-        ))
-    }
+final class DocumentStoringContractTests: DoctrineTestCase {
 
     // MARK: - apply: one mutation -> one receipt, persisted
 
     func testApplyInsertBlockPersistsAndEmitsExactlyOneReceipt() async throws {
-        try requireDBIntegration()
-        let (store, dataLayer) = try await makeStore()
+        let store = InMemoryDocumentStore()
         let docID = UUID()
-        try await seedEmptyDocument(dataLayer: dataLayer, id: docID)
 
         let newBlockID = UUID()
         let mutation = Mutation.insertBlockAfter(
@@ -70,10 +38,8 @@ final class DocumentStoreTests: DoctrineTestCase {
     // MARK: - applyBatch: atomicity - one failing mutation leaves nothing persisted
 
     func testApplyBatchWithAnInvalidMutationPersistsNothingAndAppendsNoReceipt() async throws {
-        try requireDBIntegration()
-        let (store, dataLayer) = try await makeStore()
+        let store = InMemoryDocumentStore()
         let docID = UUID()
-        try await seedEmptyDocument(dataLayer: dataLayer, id: docID)
 
         let validBlockID = UUID()
         let mutations: [Mutation] = [
@@ -95,10 +61,8 @@ final class DocumentStoreTests: DoctrineTestCase {
     }
 
     func testApplyBatchOnEmptyMutationListThrowsWithoutPersistingOrAppending() async throws {
-        try requireDBIntegration()
-        let (store, dataLayer) = try await makeStore()
+        let store = InMemoryDocumentStore()
         let docID = UUID()
-        try await seedEmptyDocument(dataLayer: dataLayer, id: docID)
 
         do {
             _ = try await store.applyBatch(mutations: [], to: docID, actor: .user(UUID()))
@@ -113,10 +77,8 @@ final class DocumentStoreTests: DoctrineTestCase {
     // MARK: - history: oldest first, decodes to typed Receipt
 
     func testHistoryReturnsReceiptsOldestFirst() async throws {
-        try requireDBIntegration()
-        let (store, dataLayer) = try await makeStore()
+        let store = InMemoryDocumentStore()
         let docID = UUID()
-        try await seedEmptyDocument(dataLayer: dataLayer, id: docID)
 
         let firstBlockID = UUID()
         let secondBlockID = UUID()
@@ -126,5 +88,51 @@ final class DocumentStoreTests: DoctrineTestCase {
         let history = try await store.history(of: docID)
         XCTAssertEqual(history.count, 2)
         XCTAssertTrue(history[0].timestamp <= history[1].timestamp, "history must be oldest-first")
+    }
+
+    // MARK: - loadDocument: unseeded document returns empty AST (no error)
+
+    func testLoadDocumentOfNeverSeenIDReturnsEmptyAST() async throws {
+        let store = InMemoryDocumentStore()
+        let ast = try await store.loadDocument(id: UUID())
+        XCTAssertTrue(ast.blocks.isEmpty)
+        XCTAssertTrue(ast.rootChildren.isEmpty)
+    }
+
+    // MARK: - chat queue round-trip
+
+    func testSaveChatQueueThenLoadReturnsTheSameQueue() async throws {
+        let store = InMemoryDocumentStore()
+        let docID = UUID()
+        let queue = ChatQueue.empty
+        try await store.saveChatQueue(queue, documentID: docID)
+        let loaded = try await store.loadChatQueue(documentID: docID)
+        XCTAssertEqual(loaded, queue)
+    }
+
+    func testLoadChatQueueOfNeverSavedDocumentReturnsEmptyQueue() async throws {
+        let store = InMemoryDocumentStore()
+        let loaded = try await store.loadChatQueue(documentID: UUID())
+        XCTAssertEqual(loaded, ChatQueue.empty)
+    }
+
+    // MARK: - Failure injection (denial-path style)
+
+    func testForcedErrorPropagatesFromApplyWithoutPersisting() async {
+        let store = InMemoryDocumentStore()
+        let docID = UUID()
+        struct Boom: Error {}
+        store.forcedError = Boom()
+        do {
+            _ = try await store.apply(
+                mutation: .insertBlockAfter(parentID: nil, anchorID: nil, block: Block(id: UUID(), type: .paragraph)),
+                to: docID, actor: .user(UUID())
+            )
+            XCTFail("expected the forced error to propagate")
+        } catch is Boom {
+            // expected
+        } catch {
+            XCTFail("expected Boom, got \(error)")
+        }
     }
 }

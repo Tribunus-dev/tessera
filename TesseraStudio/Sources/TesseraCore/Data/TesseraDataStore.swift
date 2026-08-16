@@ -528,7 +528,7 @@ public actor TesseraDataStore {
         let query: PostgresQuery = """
             INSERT INTO graph_entities (id, entity_type, subtype, label, body, source_url, embedding)
             VALUES (COALESCE(\(input.id), gen_random_uuid()), \(input.entityType),
-                    \(input.subtype), \(input.label), \(input.body), \(input.sourceURL),
+                    \(input.subtype), \(input.label), \(input.body)::jsonb, \(input.sourceURL),
                     \(embeddingText)::vector)
             ON CONFLICT (id) DO UPDATE SET
                 entity_type = EXCLUDED.entity_type,
@@ -1273,6 +1273,7 @@ public actor TesseraDataStore {
     private static let jsonEncoder: JSONEncoder = {
         let e = JSONEncoder()
         e.dateEncodingStrategy = .iso8601
+        e.outputFormatting = [.sortedKeys]
         return e
     }()
 
