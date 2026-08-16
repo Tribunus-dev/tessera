@@ -325,6 +325,68 @@ public struct DrawingStore: Sendable {
         return drawing
     }
 
+    /// Sets (or clears, via `nil`) a shape's extrusion (item 2.17).
+    /// Unlike `setGeometry`/`setFill`/`setStroke`/`setText` above, this
+    /// does NOT go through `mutatingShape` - that helper has no
+    /// no-op guard (a pre-existing gap testing-doctrine.md itself names
+    /// as "the DrawingStore no-op-receipt defect" lesson), and the
+    /// receipts law is binding for every new store method. An identical
+    /// `extrusion` value (including nil == nil) is a no-op: zero
+    /// receipts, zero persistence.
+    @discardableResult
+    public func setExtrusion(_ extrusion: ShapeExtrusion?, forShape shapeID: UUID, in drawingID: UUID) async throws -> Drawing {
+        var drawing = try await loadOrFail(id: drawingID)
+        guard var shape = drawing.shape(id: shapeID) else {
+            throw DrawingStoreError.shapeNotFound(id: shapeID)
+        }
+        guard shape.extrusion != extrusion else { return drawing }
+        shape.extrusion = extrusion
+        drawing = drawing.updatingShape(shape)
+        drawing.updatedAt = Date()
+        _ = try await upsert(drawing)
+        try await appendReceipt(
+            entityID: drawingID,
+            receiptType: DrawingReceiptType.setExtrusion.rawValue,
+            payload: [
+                "shapeID": .string(shapeID.uuidString),
+                "depth": extrusion.map { .number($0.depth) } ?? .null,
+                "bevelDepth": extrusion.map { .number($0.bevelDepth) } ?? .null,
+                "metalness": extrusion.map { .number($0.metalness) } ?? .null,
+                "roughness": extrusion.map { .number($0.roughness) } ?? .null,
+            ]
+        )
+        return drawing
+    }
+
+    /// Sets a `.bezier` shape's custom path (item 2.3). Same no-op-
+    /// guard shape as `setExtrusion` above, for the same reason - an
+    /// identical `path` value is a no-op: zero receipts, zero
+    /// persistence. Called once per completed
+    /// `BezierPathController` operation, never per intermediate drag
+    /// frame (see `BezierPathController.swift`'s own header).
+    @discardableResult
+    public func setPath(_ path: ShapePath, forShape shapeID: UUID, in drawingID: UUID) async throws -> Drawing {
+        var drawing = try await loadOrFail(id: drawingID)
+        guard var shape = drawing.shape(id: shapeID) else {
+            throw DrawingStoreError.shapeNotFound(id: shapeID)
+        }
+        guard shape.path != path else { return drawing }
+        shape.path = path
+        drawing = drawing.updatingShape(shape)
+        drawing.updatedAt = Date()
+        _ = try await upsert(drawing)
+        try await appendReceipt(
+            entityID: drawingID,
+            receiptType: DrawingReceiptType.setPath.rawValue,
+            payload: [
+                "shapeID": .string(shapeID.uuidString),
+                "subpathCount": .number(Double(path.subpaths.count)),
+                "segmentCount": .number(Double(path.subpaths.reduce(0) { $0 + $1.segments.count })),
+            ]
+        )
+        return drawing
+    }
+
     @discardableResult
     public func setZOrder(_ move: ShapeZOrder.Move, forShape shapeID: UUID, in drawingID: UUID) async throws -> Drawing {
         var drawing = try await loadOrFail(id: drawingID)
