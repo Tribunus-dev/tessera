@@ -16,16 +16,71 @@
 #endif
 #include <Accelerate/Accelerate.h>
 #define TS_HAS_CBLAS 1
+// Not enabling TS_HAS_LAPACKE here: Apple's Accelerate exposes LAPACK via
+// its own (non-LAPACKE-prefixed) interface elsewhere in this codebase
+// (see tessera-linalg.cpp's ts_linalg_sym_eig), and this session has no
+// way to verify whether LAPACKE_spotrf's exact symbol/calling convention
+// is actually available through Accelerate without an Apple build to test
+// against - the scalar fallback below is correct either way, just slower.
 #elif defined(GGML_USE_OPENBLAS)
 #include <cblas.h>
 #define TS_HAS_CBLAS 1
+#if __has_include(<lapacke.h>)
+#include <lapacke.h>
+#define TS_HAS_LAPACKE 1
+#endif
 #endif
 
 #include <algorithm>
 #include <cmath>
+#include <condition_variable>
 #include <cstdint>
 #include <cstring>
+#include <mutex>
 #include <vector>
+
+// The banded-Hessian compensation path below allocates ~6 full
+// (in_dim x in_dim) float buffers (H, L, B, Hinv, L2, M) per call - up to
+// ~256 MiB each for the largest tensors (ffn_down, in_dim ~8192), so
+// ~1.5 GiB per concurrent call. export-ternary's per-tensor work-stealing
+// pool runs up to hardware_concurrency() threads (commonly 16+); if
+// several land on large tensors' SEPTQ measurement simultaneously - a real
+// occurrence, not a corner case, since every tensor with calib_X gets
+// measured regardless of whether SEPTQ ends up winning - peak RSS scales
+// to tens of GiB, which has been observed to push a shared host into swap
+// (and, once, to a write failure on financially-unrelated I/O elsewhere in
+// the same process, most likely from tmpfs page allocation failing under
+// acute memory pressure). Throttle concurrent entries into this specific
+// block with a small counting semaphore, independent of the thread pool's
+// own size - this only serializes the memory-heavy inversion step; AWQ/
+// DartQuant/FLRQ measurements on other threads are unaffected.
+namespace {
+class ts_septq_inversion_gate {
+public:
+    explicit ts_septq_inversion_gate(int max_concurrent) : slots_(max_concurrent) {}
+    void acquire() {
+        std::unique_lock<std::mutex> lock(mutex_);
+        cv_.wait(lock, [this] { return slots_ > 0; });
+        slots_--;
+    }
+    void release() {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            slots_++;
+        }
+        cv_.notify_one();
+    }
+private:
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    int slots_;
+};
+ts_septq_inversion_gate g_septq_inversion_gate(3);
+struct ts_septq_inversion_guard {
+    ts_septq_inversion_guard() { g_septq_inversion_gate.acquire(); }
+    ~ts_septq_inversion_guard() { g_septq_inversion_gate.release(); }
+};
+}  // namespace
 
 // --- Tile640 layout constants (match tools/tile640/quantize_v3.py) ---
 static const int64_t TS_TILE640_PAGE_SIZE      = 640;
@@ -122,6 +177,34 @@ static void ts_septq_full_cholesky(const float * H, int64_t n, float * L) {
     // np.linalg.cholesky to within f32 rounding for the fallback path
     // (the fallback path is only used when the banded factorization fails;
     // its outputs flow through _septq_gptq_M unchanged).
+#if defined(TS_HAS_LAPACKE)
+    // ts_septq_gptq_M's fix (correct GPTQ-M via chol_upper(H^-1)) made this
+    // the HOT path for every banded-Hessian call, not just the rare
+    // banded-factorization-failed fallback its comment above describes -
+    // called twice per tensor (once for L=chol(H), once inside gptq_M for
+    // L2=chol(Hinv)). The scalar O(n^3) loop below took minutes per call on
+    // the largest tensors (ffn_down, in_dim~8192), scalar-bottlenecking the
+    // whole pipeline even with everything else BLAS-accelerated. LAPACKE_
+    // spotrf computes the identical factorization (same algorithm, just
+    // multithreaded/vectorized), typically 10-50x faster at this size.
+    std::memcpy(L, H, sizeof(float) * (size_t)(n * n));
+    lapack_int info = LAPACKE_spotrf(LAPACK_ROW_MAJOR, 'L', (lapack_int)n, L, (lapack_int)n);
+    if (info == 0) {
+        // spotrf leaves the strict upper triangle untouched (garbage, from
+        // the H copy); every caller here expects a clean lower-triangular L.
+        for (int64_t i = 0; i < n; i++) {
+            for (int64_t j = i + 1; j < n; j++) {
+                L[i * n + j] = 0.0f;
+            }
+        }
+        return;
+    }
+    // info > 0: not positive-definite at that leading minor (matches the
+    // scalar path's "clamp to tiny positive" contract for a rank-deficient
+    // H) - info < 0: bad argument, shouldn't happen given fixed types/n>0
+    // above. Either way, fall through to the scalar path below, which is
+    // already written to degrade gracefully rather than fail hard.
+#endif
     std::memset(L, 0, sizeof(float) * (size_t)(n * n));
     for (int64_t j = 0; j < n; j++) {
         double s = 0.0;
@@ -644,6 +727,7 @@ int ts_septq_quantize_2d(const float * weights, int64_t out_dim, int64_t in_dim,
     // W_compensated = W - E @ M  (banded) or W (diagonal).
     std::vector<float> W_comp((size_t)n);
     if (banded) {
+        ts_septq_inversion_guard inversion_guard;
         std::vector<float> H((size_t)(in_dim * in_dim));
         ts_septq_build_hessian(in_dim, act_scales, activations, n_tokens,
                                params->ridge_fraction, H.data());
