@@ -1,4 +1,5 @@
 #include "tessera-awq.h"
+#include "tessera-awq-fitness.h"
 #include "tessera-sharded-map.h"
 #include "tessera-convergence.h"
 
@@ -313,13 +314,22 @@ int ts_awq_evolve(const ts_awq_layer * layer,
     // independent; the weight buffer (layer->weights) is shared read-only.
     // gen is the generation index (-1 = initial population) so the optional
     // eval_recorder callback can stream rows tagged with the right generation.
+    //
+    // Each worker thread holds a stack-local ts_awq_eval_cache that the
+    // wrapper uses to stage the layer's stable fields once on the first
+    // candidate and reuse across subsequent candidates in the same batch.
+    // The cache slots are pooled (rocBLAS slot pool), so the per-thread cost
+    // is device memory that is already allocated; no new residency per
+    // thread. On cblas / scalar builds the wrapper is a no-op pass-through.
     const int32_t n_eval = std::max((int32_t)1, params->n_eval_threads);
     auto eval_population = [&](std::vector<std::pair<int64_t,int64_t>> & tasks,
                                int64_t gen) {
         const bool has_recorder = (params->eval_recorder != nullptr);
         if (n_eval <= 1 || (int64_t)tasks.size() <= 1) {
+            ts_awq_eval_cache cache;
             for (auto & t : tasks) {
-                scores[t.first][t.second] = eval(&pops[t.first][t.second], layer, eval_ctx);
+                scores[t.first][t.second] = ts_awq_eval_with_cache(
+                    &pops[t.first][t.second], layer, eval_ctx, eval, &cache);
                 evaluations++;
                 if (has_recorder) {
                     params->eval_recorder(layer, (int32_t)gen, (int32_t)t.first,
@@ -329,15 +339,21 @@ int ts_awq_evolve(const ts_awq_layer * layer,
                                           params->eval_recorder_user);
                 }
             }
+            ts_awq_eval_with_cache_release(&cache);
             return;
         }
         std::atomic<size_t> next(0);
         auto worker = [&]() {
+            // Per-thread cache: holds the staged device buffers for the
+            // duration of this thread's work on the task batch. Released
+            // at thread exit (here, at function return after the join).
+            ts_awq_eval_cache cache;
             for (;;) {
                 size_t k = next.fetch_add(1, std::memory_order_relaxed);
-                if (k >= tasks.size()) return;
+                if (k >= tasks.size()) break;
                 auto & t = tasks[k];
-                scores[t.first][t.second] = eval(&pops[t.first][t.second], layer, eval_ctx);
+                scores[t.first][t.second] = ts_awq_eval_with_cache(
+                    &pops[t.first][t.second], layer, eval_ctx, eval, &cache);
                 evaluations.fetch_add(1, std::memory_order_relaxed);
                 if (has_recorder) {
                     params->eval_recorder(layer, (int32_t)gen, (int32_t)t.first,
@@ -347,6 +363,7 @@ int ts_awq_evolve(const ts_awq_layer * layer,
                                           params->eval_recorder_user);
                 }
             }
+            ts_awq_eval_with_cache_release(&cache);
         };
         std::vector<std::thread> pool;
         pool.reserve((size_t)std::min(n_eval, (int32_t)tasks.size()));

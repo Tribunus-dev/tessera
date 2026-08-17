@@ -73,6 +73,13 @@ GGML_API void dequantize_row_tessera_t1024_with_meta(const void * GGML_RESTRICT 
                                                     const float * GGML_RESTRICT lane_scale_in,
                                                     int64_t k,
                                                     float * GGML_RESTRICT y);
+// W3 task 3.7 (amd-tile-format-spec.md 3.4): AMD RDNA3 native-WMMA tile.
+// Same 2-level page/lane hierarchical scale structure as Tile640, with i8
+// quantized elements (criterion 19's amd.tile.quant="i8") instead of
+// ternary trits. Buffer layout: [i8 packed values][f16 page_scales]
+// [i8 lane_scales], pages = ceil(k / TILE_AMD_RDNA3_PAGE_SIZE).
+GGML_API void quantize_row_tessera_t_rdna3_ref(const float * GGML_RESTRICT x, void * GGML_RESTRICT y, int64_t k);
+GGML_API void dequantize_row_tessera_t_rdna3(const void * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k);
 GGML_API void dequantize_row_q4_0(const block_q4_0 * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k);
 GGML_API void dequantize_row_q4_1(const block_q4_1 * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k);
 GGML_API void dequantize_row_q5_0(const block_q5_0 * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k);

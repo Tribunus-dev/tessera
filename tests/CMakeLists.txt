@@ -338,6 +338,33 @@ llama_build(test-telemetry-jsonl.cpp)
 llama_test(test-telemetry-jsonl)
 llama_build(test-tessera-config.cpp)
 llama_test(test-tessera-config)
+# W3 task 3.1 (host-amd-implementation-plan): unit test for
+# ts_classify_amd_arch_name(), the pure-string half of AMD arch detection.
+# Builds tile-detect.cpp directly (it lives in tools/quantize/tessera,
+# compiled into llama-quantize-impl, not into llama-common) so this stays
+# a small, portable ctest with no ROCm/HIP dependency - see the file header
+# comment in test-tessera-tile-detect-amd.cpp.
+llama_build(test-tessera-tile-detect-amd.cpp
+    ${PROJECT_SOURCE_DIR}/tools/quantize/tessera/tile-detect.cpp)
+llama_test(test-tessera-tile-detect-amd)
+target_include_directories(test-tessera-tile-detect-amd PRIVATE
+    ${PROJECT_SOURCE_DIR}/tools/quantize/tessera
+    ${PROJECT_SOURCE_DIR}/ggml/src)
+# W3 task 3.3: gap-safety audit for the GGML_TYPE_COUNT 47->64 enum landing
+# (GGML_TYPE_TESSERA_T_RDNA3 = 63). Links the real ggml library so the
+# check exercises the actual type_traits[] table, not a stub.
+llama_build(test-tessera-type-gap-audit.cpp)
+llama_test(test-tessera-type-gap-audit)
+# W3 task 3.5: `pack --quant=host-amd` resolution + amd.tile.* GGUF
+# metadata keys. ts_resolve_host_amd_quant_tile lives in tessera-quant.cpp,
+# part of llama-quantize-impl (not llama-common) - link that library
+# directly rather than pulling in its transitive tessera-vec/tessera-metal/
+# tessera-septq dependency graph as extra sources.
+llama_build(test-tessera-quant-host-amd.cpp)
+llama_test(test-tessera-quant-host-amd)
+target_include_directories(test-tessera-quant-host-amd PRIVATE
+    ${PROJECT_SOURCE_DIR}/tools/quantize/tessera)
+target_link_libraries(test-tessera-quant-host-amd PRIVATE llama-quantize-impl)
 llama_build(test-dflash-loader.cpp)
 llama_test(test-dflash-loader)
 target_include_directories(test-dflash-loader PRIVATE ${PROJECT_SOURCE_DIR}/src)
@@ -748,6 +775,10 @@ if (NOT GGML_BACKEND_DL)
     # because it only checks the L1 dequant sidecar, never the
     # matmul output. This test is the dedicated output-writeback
     # gate; future kernel parameter additions must keep it green.
+    # Apple-only: ggml_backend_metal_init is only defined on Apple +
+    # GGML_METAL. Without this gate the Linux CI link fails with an
+    # unresolved symbol.
+    if (APPLE)
     llama_build_and_test(test-tile640-matmul-output.cpp)
     if (TARGET test-tile640-matmul-output)
         target_include_directories(test-tile640-matmul-output PRIVATE
@@ -761,12 +792,14 @@ if (NOT GGML_BACKEND_DL)
     # header is emitted, (c) the rset label includes the buffer size
     # so the leak is identifiable. If a future change reverts the
     # drain to a hard assert, this test fails (process aborts, no
-    # log captured, exit code != 0).
+    # log captured, exit code != 0). Apple-only, same gate as the
+    # tile640 matmul output test above.
     llama_build_and_test(test-metal-rset-leak.cpp)
     if (TARGET test-metal-rset-leak)
         target_include_directories(test-metal-rset-leak PRIVATE
             ${PROJECT_SOURCE_DIR}/ggml/src)
     endif()
+    endif() # APPLE
     # Phase 2 (iPhone demo): GGUF -> IOSurface weight streamer
     # unit test. Validates open/close, header parse, per-tensor
     # accessors, and stream_layer against a synthetic 6-tensor

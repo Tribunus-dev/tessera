@@ -8,6 +8,7 @@
 
 #include "tessera-dflash-train-data.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <fstream>

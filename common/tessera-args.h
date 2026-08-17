@@ -19,7 +19,20 @@ struct common_tessera_params {
     int         evolve_population = 16;
     bool        evolve_only = false;
     bool        calibrate_only = false;
-    float       outlier_frac = 0.005f;
+    // Target fraction of a tensor's elements to keep as exact-value
+    // outliers (ts_select_repair_residuals, tools/quantize) - NOT an
+    // absolute residual-magnitude cutoff, despite the CLI flag's name;
+    // see quantize.cpp's qp_base.outlier_thresh comment for the fix that
+    // made this interpretation load-bearing (an earlier bug used the raw
+    // value as an absolute cutoff, catching 35-65% of every tensor's
+    // elements instead of a sparse exception set - gap ledger
+    // CORRECTION-w3-6). 0.02 chosen over the original 0.005 spec default
+    // after a direct measurement on Granite 4.1 3B: 2% outliers gave a
+    // real, meaningful end-to-end fidelity recovery (cosine 0.34 -> 0.40,
+    // frobenius_rel 1.54 -> 1.40) for roughly double the outlier-specific
+    // storage overhead (still small relative to the whole ternary
+    // tensor - an outlier costs ~6 bytes vs ~1.6 bits for a trit).
+    float       outlier_frac = 0.02f;
     std::string awq_alpha = "auto";
     float       awq_clip = 1.0f;
     std::string ternary_threshold = "auto";
@@ -176,6 +189,28 @@ struct common_tessera_params {
     // stats file (GGUF or .npz).
     std::string export_in;
     std::string export_out;
+    // export-ternary mixed-precision escape (progressive-mixed-precision.py):
+    // export_escape_list is a path to a file of tensor names (one per line,
+    // '#'-comments and blank lines skipped) to force to BF16 passthrough
+    // regardless of what ts_regime_infer_family's name-pattern match would
+    // otherwise decide - empty/unset reproduces today's exact ternary-vs-
+    // passthrough behavior (ts_export_is_weight, quantize.cpp). export_
+    // sensitivity_out, when set, writes a {tensor_name: score} JSON sidecar
+    // (ts_l5_imatrix_magnitude, tessera-l5.h) after export completes, used
+    // by the search script to rank escape candidates.
+    std::string export_escape_list;
+    std::string export_sensitivity_out;
+    // export_reuse_ttt: path to a prior round's own .ttt output directory.
+    // When set, any tensor NOT in export_escape_list is first looked up by
+    // name in that directory (ts_read_ttt) and, if found, its already-
+    // computed ts_ternary_tensor is copied verbatim instead of rerunning
+    // weight dequant + the 4-way AWQ/SEPTQ/DartQuant/FLRQ selection - a
+    // >90% wall-clock cut for progressive-mixed-precision.py's rounds 1+,
+    // since its escape-list only grows round over round, so round 0's
+    // full computation is a strict superset of every later round's
+    // ternary-tensor needs. Falls back to full computation for any tensor
+    // not found in the reuse source (e.g. unset, or genuinely new).
+    std::string export_reuse_ttt;
     // pack subcommand: read a .ttt directory, pack each tensor to the
     // target tile geometry via ts_pack_ternary_to_tile, write a GGUF.
     // pack_in is the source .ttt dir, pack_out is the destination GGUF.
@@ -184,6 +219,19 @@ struct common_tessera_params {
     std::string pack_in;
     std::string pack_out;
     std::string pack_tile = "t640";
+    // true iff --tile was explicitly passed on the command line (not just
+    // left at its "t640" default) - lets --quant=host-amd's auto-resolution
+    // know when an explicit --tile must win instead (W3 task 3.5,
+    // criterion 18: "Explicit --tile wins").
+    bool        pack_tile_explicit = false;
+    // pack subcommand: --quant selects a higher-level, host-aware quant
+    // mode instead of naming a tile geometry directly. Currently only
+    // "host-amd" is recognized: probes this host's AMD GPU arch
+    // (ts_detect_amd_arch) and resolves to the matching tile-amd-* config,
+    // falling back to t640 with a stderr warning on a non-AMD-RDNA3-family
+    // host. Empty means "no --quant mode requested" (unchanged pack_tile
+    // resolution).
+    std::string pack_quant;
     // Structured progress reporting for the quantize pipeline. When
     // progress_file is non-empty, the dispatch writes one NDJSON event per
     // tick to that path for the Studio UI to tail.

@@ -66,7 +66,12 @@ void llama_model_granite::load_arch_tensors(llama_model_loader &) {
         layer.attn_norm = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0);
 
         create_tensor_qkv(layer, i, n_embd, n_embd_head_k * n_head, n_embd_k_gqa, n_embd_v_gqa, 0);
-        layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd_head_k * n_head, n_embd}, 0);
+        // W3 task 3.9/3.10: create_tensor_or_tile_rdna3 falls back to a
+        // plain create_tensor when no "*_packed" sibling exists in the
+        // GGUF (i.e. every existing, non-tile-packed Granite GGUF loads
+        // exactly as before), and only takes the AMD RDNA3 tile-cluster
+        // path when one does.
+        layer.wo = create_tensor_or_tile_rdna3(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd_head_k * n_head, n_embd}, 0);
 
         // optional bias tensors
         layer.wo_b = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "bias", i), {n_embd}, TENSOR_NOT_REQUIRED);
@@ -82,9 +87,10 @@ void llama_model_granite::load_arch_tensors(llama_model_loader &) {
         }
 
         if (n_expert == 0) {
-            layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff}, 0);
-            layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
-            layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);
+            // W3 task 3.9/3.10: same tile-packed/plain fallback as wo above.
+            layer.ffn_gate = create_tensor_or_tile_rdna3(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff}, 0);
+            layer.ffn_down = create_tensor_or_tile_rdna3(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
+            layer.ffn_up   = create_tensor_or_tile_rdna3(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);
 
             // optional MLP bias
             layer.ffn_gate_b = create_tensor(tn(LLM_TENSOR_FFN_GATE, "bias", i), {n_ff}, TENSOR_NOT_REQUIRED);
@@ -202,8 +208,15 @@ ggml_tensor * llama_model_granite::graph::build_attention_layer(
     const int64_t                 n_embd_head,
     const int                     il) {
 
+    // W3 task 3.9/3.10: AMD RDNA3 tile-cluster lookups, reused below for wo
+    // too - build_qkv/build_attn dispatch to build_tile_rdna3_lora_mm
+    // internally when the corresponding *_tile_rdna3 pointer is non-null.
+    const LLM_TN gtn(model.arch);
     auto [Qcur, Kcur, Vcur] = build_qkv(model.layers[il], cur,
-            n_embd_head, hparams.n_head(il), hparams.n_head_kv(il), il);
+            n_embd_head, hparams.n_head(il), hparams.n_head_kv(il), il,
+            model.get_tile_rdna3_tensor(gtn(LLM_TENSOR_ATTN_Q, "weight", il).str()),
+            model.get_tile_rdna3_tensor(gtn(LLM_TENSOR_ATTN_K, "weight", il).str()),
+            model.get_tile_rdna3_tensor(gtn(LLM_TENSOR_ATTN_V, "weight", il).str()));
 
     const bool use_rope = hparams.rope_finetuned;
     if (use_rope) {
@@ -226,9 +239,20 @@ ggml_tensor * llama_model_granite::graph::build_attention_layer(
     cb(Vcur, "Vcur", il);
 
     const float kq_scale = hparams.f_attention_scale == 0.0f ? 1.0f/sqrtf(float(n_embd_head)) : hparams.f_attention_scale;
+    // W3 task 3.9/3.10: when wo is AMD RDNA3 tile-packed (create_tensor_or_
+    // tile_rdna3 left model.layers[il].wo null and populated
+    // tile_rdna3_tensors instead), pass wo=nullptr into build_attn so it
+    // returns the raw pre-projection attention output (build_attn already
+    // skips the projection when wo is null - the same convention
+    // gemma4-assistant.cpp's Tile640 wiring relies on), then apply the
+    // tile matmul explicitly.
+    const auto * wo_rdna3 = model.get_tile_rdna3_tensor(gtn(LLM_TENSOR_ATTN_OUT, "weight", il).str());
     cur = build_attn(inp_attn,
-            model.layers[il].wo, model.layers[il].wo_b, model.layers[il].wo_s,
+            wo_rdna3 ? nullptr : model.layers[il].wo, model.layers[il].wo_b, model.layers[il].wo_s,
             Qcur, Kcur, Vcur, nullptr, nullptr, nullptr, kq_scale, il);
+    if (wo_rdna3) {
+        cur = build_tile_rdna3_lora_mm(wo_rdna3->packed, wo_rdna3->page_scales, wo_rdna3->lane_scales, cur);
+    }
             cb(cur, "attn_out", il);
     return cur;
 }
@@ -254,12 +278,20 @@ ggml_tensor * llama_model_granite::graph::build_layer_ffn(
                 LLM_NORM_RMS, il);
                 cb(cur, "ffn_norm", il);
 
+        // W3 task 3.9/3.10: same AMD RDNA3 tile-cluster fallback as wo in
+        // build_attention_layer above - build_ffn dispatches to
+        // build_tile_rdna3_lora_mm internally whenever the plain tensor is
+        // null and its *_tile_rdna3 counterpart is non-null.
+        const LLM_TN gtn(model.arch);
         cur = build_ffn(cur,
                 model.layers[il].ffn_up,   model.layers[il].ffn_up_b,   NULL,
                 model.layers[il].ffn_gate, model.layers[il].ffn_gate_b, NULL,
                 model.layers[il].ffn_down, model.layers[il].ffn_down_b, NULL,
                 NULL,
-                LLM_FFN_SILU, LLM_FFN_PAR, il);
+                LLM_FFN_SILU, LLM_FFN_PAR, il,
+                model.get_tile_rdna3_tensor(gtn(LLM_TENSOR_FFN_UP,   "weight", il).str()),
+                model.get_tile_rdna3_tensor(gtn(LLM_TENSOR_FFN_GATE, "weight", il).str()),
+                model.get_tile_rdna3_tensor(gtn(LLM_TENSOR_FFN_DOWN, "weight", il).str()));
                 cb(cur, "ffn_out", il);
 
     } else {

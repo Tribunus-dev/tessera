@@ -220,8 +220,33 @@ static inline int tile_flex_words_per_page(int lanes) { return lanes*2; }
 // constructors cover the formats implemented today; future per-GPU tiles add
 // constructors without changing the on-wire format.
 enum ts_packing_kind {
-    TS_PACK_RADIX243, // T640: 5 trits/group, 4 groups/lane, 1 word/lane
-    TS_PACK_2BIT,     // T512/T1024: 2 bits/trit, 16 trits/word, 2 words/lane
+    TS_PACK_RADIX243,  // T640: 5 trits/group, 4 groups/lane, 1 word/lane
+    TS_PACK_2BIT,      // T512/T1024: 2 bits/trit, 16 trits/word, 2 words/lane
+    TS_PACK_AMD_RDNA3, // Tile-RDNA3-16x16x16-i8: native WMMA lane layout,
+                       // no repacking (docs/amd-tile-format-spec.md 3.4)
+};
+
+// Per-arch dispatch key for ts_tile_config (amd-tile-format-spec.md 9(v),
+// decision (b), RATIFIED 2026-08-15): orthogonal to `packing` (packing is
+// the wire format; arch_target is what the runtime dispatches a kernel on
+// - Section 11.8's registry key is (arch_target, dtype, sparse, microscale,
+// M, N, K)). The AMD subset of this enum is also tile-detect.{h,cpp}'s
+// hardware-probe result type: there is exactly one arch taxonomy shared by
+// the format dispatcher and the runtime detector, not two.
+enum ts_arch_target {
+    TS_ARCH_APPLE = 0,
+    TS_ARCH_INTEL,
+    TS_ARCH_AMD_GCN,
+    TS_ARCH_AMD_RDNA1,
+    TS_ARCH_AMD_RDNA2,
+    TS_ARCH_AMD_RDNA3,
+    TS_ARCH_AMD_RDNA35,
+    TS_ARCH_AMD_RDNA4,
+    TS_ARCH_AMD_CDNA1,
+    TS_ARCH_AMD_CDNA2,
+    TS_ARCH_AMD_CDNA3,
+    TS_ARCH_AMD_CDNA4,
+    TS_ARCH_UNKNOWN,
 };
 
 struct ts_tile_config {
@@ -230,6 +255,7 @@ struct ts_tile_config {
     int             lanes_per_page;
     int             words_per_page;
     enum ts_packing_kind packing;
+    enum ts_arch_target  arch_target;
 };
 
 static inline struct ts_tile_config ts_tile_config_t640(void) {
@@ -239,6 +265,7 @@ static inline struct ts_tile_config ts_tile_config_t640(void) {
     c.lanes_per_page = TILE640_LANES_PER_PAGE;
     c.words_per_page = TILE640_WORDS_PER_PAGE;
     c.packing = TS_PACK_RADIX243;
+    c.arch_target = TS_ARCH_APPLE;
     return c;
 }
 static inline struct ts_tile_config ts_tile_config_t512(void) {
@@ -248,6 +275,7 @@ static inline struct ts_tile_config ts_tile_config_t512(void) {
     c.lanes_per_page = TILE512_LANES_PER_PAGE;
     c.words_per_page = TILE512_WORDS_PER_PAGE;
     c.packing = TS_PACK_2BIT;
+    c.arch_target = TS_ARCH_INTEL;
     return c;
 }
 static inline struct ts_tile_config ts_tile_config_t1024(void) {
@@ -257,8 +285,34 @@ static inline struct ts_tile_config ts_tile_config_t1024(void) {
     c.lanes_per_page = TILE1024_LANES_PER_PAGE;
     c.words_per_page = TILE1024_WORDS_PER_PAGE;
     c.packing = TS_PACK_2BIT;
+    c.arch_target = TS_ARCH_INTEL;
     return c;
 }
+
+// AMD RDNA3 native WMMA tile: [16,16,16] result tile, 32 lanes x 8
+// elements/lane = 256 elements/page (amd-tile-format-spec.md 3.4). Also
+// covers RDNA 3.5 iGPUs (gfx1103/1150/1151) via amd.tile.parent routing -
+// no separate wire format (spec 3.6).
+#define TILE_AMD_RDNA3_PAGE_SIZE      256
+#define TILE_AMD_RDNA3_LANE_SIZE      8
+#define TILE_AMD_RDNA3_LANES_PER_PAGE 32
+#define TILE_AMD_RDNA3_WORDS_PER_PAGE 64
+#define QK_AMD_RDNA3                  16
+
+static inline struct ts_tile_config ts_tile_config_amd_rdna3(void) {
+    struct ts_tile_config c;
+    c.page_size = TILE_AMD_RDNA3_PAGE_SIZE;
+    c.lane_size = TILE_AMD_RDNA3_LANE_SIZE;
+    c.lanes_per_page = TILE_AMD_RDNA3_LANES_PER_PAGE;
+    c.words_per_page = TILE_AMD_RDNA3_WORDS_PER_PAGE;
+    c.packing = TS_PACK_AMD_RDNA3;
+    c.arch_target = TS_ARCH_AMD_RDNA3;
+    return c;
+}
+static_assert(TILE_AMD_RDNA3_PAGE_SIZE == TILE_AMD_RDNA3_LANE_SIZE * TILE_AMD_RDNA3_LANES_PER_PAGE,
+              "amd rdna3 tile: page_size must equal lane_size * lanes_per_page");
+static_assert(TILE_AMD_RDNA3_PAGE_SIZE % QK_AMD_RDNA3 == 0,
+              "amd rdna3 tile: page_size must be a multiple of QK_AMD");
 
 #define QK1_0 128
 typedef struct {

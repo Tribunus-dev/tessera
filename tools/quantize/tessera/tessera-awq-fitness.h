@@ -54,6 +54,54 @@ double ts_awq_relative_output_error(const float * activations,
                                     int64_t out_dim,
                                     const float * reference_or_null);
 
+// Device-resident variant of ts_awq_relative_output_error. Inputs are
+// device pointers (from the GA eval cache: activations_dev, W_dev,
+// reconstructed_dev, optional reference_or_null_dev); output approx_host is
+// a caller-owned host buffer. On cblas / scalar builds this falls back to
+// the host matmul path. On rocBLAS the inputs are uploaded once per worker
+// thread by the eval cache (see ts_awq_eval_with_cache), so each call only
+// pays the cost of one H2D copy (reconstructed, which is per-candidate)
+// and one D2H copy (approx). Pair with ts_awq_eval_with_cache and
+// ts_awq_eval_with_cache_release.
+// W_bf16_dev: optional (may be null) cache-hoisted bf16 copy of W_dev's
+// weights (W2 move 3 - ts_awq_eval_cache::bf16_weights). Declared as a
+// generic pointer here (this header is included regardless of
+// TS_USE_ROCBLAS) and cast to rocblas_bfloat16* internally where the type
+// is available; ignored on cblas/scalar builds. No current caller supplies
+// one - see ts_awq_eval_with_cache's own doc comment for why the cache-
+// aware evaluator is not yet wired into the live GA loop.
+double ts_awq_relative_output_error_device(
+        const float * activations_dev,
+        const float * W_dev,
+        const void * W_bf16_dev,
+        const float * reconstructed_dev,
+        const float * reference_or_null_dev,
+        float * approx_host,
+        int64_t n_tokens,
+        int64_t in_dim,
+        int64_t out_dim);
+
+// Wrapper around a host-supplied evaluator (ts_awq_default_eval or any
+// ts_awq_eval_fn) that maintains a per-thread device cache of the layer's
+// stable fields. On first call the cache acquires ts_rblas_buf slots and
+// H2D-copies weights / train_activations / heldout_activations /
+// ref_train_output / ref_heldout_output. Subsequent calls reuse the
+// device-side buffers via ts_awq_relative_output_error_device. Pair with
+// ts_awq_eval_with_cache_release at the end of the worker scope.
+//
+// On cblas / scalar builds the cache is a no-op (the eval path stays
+// scalar); the wrapper exists so the GA caller can write one code path
+// that works on both lanes.
+ts_awq_score ts_awq_eval_with_cache(const ts_awq_candidate * cand,
+                                     const ts_awq_layer * layer,
+                                     void * ctx,
+                                     ts_awq_eval_fn eval,
+                                     ts_awq_eval_cache * cache);
+
+// Releases the device slots held by an eval cache. Safe on an unacquired
+// cache. Pairs with ts_awq_eval_with_cache.
+void ts_awq_eval_with_cache_release(ts_awq_eval_cache * cache);
+
 // Per-layer score (port of _evaluate_layer + _layer_features).
 // Computes the importance vector from the layer's moments/max_abs on the fly,
 // reconstructs via _ternary_reconstruct, then fills out->mse (train_error),

@@ -2,339 +2,611 @@
 # Tessera C++ port integration test suite.
 # Usage: bash tools/quantize/tessera/test_all.sh
 # Run from the repository root.
+#
+# Two-phase driver:
+#   1. Compile every test in parallel (xargs -P nproc, default-nproc unless
+#      TESSERA_TEST_JOBS=N is set), keyed by a content-hash cache so repeat
+#      runs skip work.
+#   2. Run every test serially in the same order they were declared.
+#
+# Per-test result line: "<name>\t<status>\t<log_path>" where status is one of
+#   pass | fail | skip | compile_fail. Workers write to a shared sink; the
+#   driver prints in declaration order so the per-test column matches the
+#   source order.
 
 set -e
+set -o pipefail
+
 PASS=0
 FAIL=0
+SKIP=0
 ERRORS=""
 
 T=tools/quantize/tessera
 C=common/tessera-debug
 BIN=/tmp/tessera_test_bin
-CXX="clang++ -std=c++17 -O2"
+CXX="g++ -std=c++17 -O2"
+CXX_PRELUDE="g++ -std=c++17 -O2"
 TS_DUCKDB_DIR=third-party/duckdb
+UNAME=$(uname)
 
-mkdir -p "$BIN"
+# Platform-aware link-line tokens. $TS_BLAS is empty on macOS (the legacy
+# shape) and "-I/usr/include/openblas" on Linux. Tests that call Accelerate-
+# only paths fall back to scalar when neither is present (tessera-vec.cpp /
+# tessera-linalg.cpp both compile-gate the BLAS paths).
+if [ "$UNAME" = "Darwin" ]; then
+    TS_BLAS="$TS_BLAS"
+else
+    TS_BLAS="-I/usr/include/openblas"
+fi
 
-run_test() {
+# Parallelism: TESSERA_TEST_JOBS overrides nproc. Default to all cores so a
+# 4- or 8-core box uses them all.
+if [ -n "${TESSERA_TEST_JOBS:-}" ]; then
+    JOBS="$TESSERA_TEST_JOBS"
+else
+    JOBS=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+fi
+[ "$JOBS" -ge 1 ] || JOBS=1
+
+mkdir -p "$BIN/cache" "$BIN/build"
+# Generated header consumed by l15 and l1_sidecar via -I "$BIN".
+printf '#pragma once\n#define TESSERA_KERNEL_VERSION "test"\n#define TESSERA_MAIN_TIP "test"\n' \
+    > "$BIN/tessera-build-info.h"
+
+# --- Cache key helper --------------------------------------------------------
+# Compute a sha1 over (canonicalized CXX args) + (g++ -MM -MG dep output) for
+# a given argv. Output: 40-char hex key on stdout. The dep-scan happens via
+# ONE g++ -MM -MG invocation listing every .cpp/.cc source in argv (each
+# source produces its own ".o:" rule in the output). The raw g++ output
+# (with line-continuation backslashes) is fully deterministic across runs,
+# so hashing it directly is sound and avoids brittle multi-line parsing.
+#
+# Cost: ~40ms per test (one g++ -MM -MG invocation). With JOBS=N parallel
+# xargs, the total wall-clock for the cache-key phase is ~num_tests/N*40ms.
+#
+# Side effect: writes a single file used by cache_put() on a cache miss:
+#   $BIN/build/<name>.canon - the canonicalized argv + name + platform + BLAS
+#                            + the raw g++ -MM -MG output (joined).
+cache_key() {
     local name="$1"
     shift
-    printf "  %-30s" "$name"
-    if "$@" > /tmp/tessera_test_$name.log 2>&1; then
-        echo "PASS"
-        PASS=$((PASS + 1))
+    local prelude="$CXX_PRELUDE"
+    local args=("$@")
+
+    {
+        echo "name=$name"
+        echo "uname=$UNAME"
+        echo "TS_BLAS=$TS_BLAS"
+        printf '%s\n' "${args[@]}" | sort -u
+    } > "$BIN/build/$name.canon"
+
+    # Build list of .cpp/.cc sources and run g++ -MM -MG ONCE with all of
+    # them. -x c++ lets us accept sources that are explicit (the rest of the
+    # argv is flags + paths). -MG suppresses abort on missing headers.
+    : > "$BIN/build/$name.deps"
+    local src
+    local sources=()
+    for src in "${args[@]}"; do
+        case "$src" in
+            *.cpp|*.cc) sources+=("$src") ;;
+        esac
+    done
+    if [ "${#sources[@]}" -gt 0 ]; then
+        $prelude -MM -MG -x c++ "${args[@]}" "${sources[@]}" 2>/dev/null \
+            >> "$BIN/build/$name.deps" || true
+    fi
+
+    {
+        cat "$BIN/build/$name.canon"
+        cat "$BIN/build/$name.deps"
+    } | sha1sum | awk '{print $1}'
+}
+
+# --- Cache lookup / populate -------------------------------------------------
+# Look up a cached binary for name with the given cache key. Echoes "hit" or
+# "miss". On miss, nothing is done (worker will compile and populate).
+cache_get() {
+    local name="$1"
+    local key="$2"
+    if [ -n "$key" ] && [ -x "$BIN/cache/$key/$name" ]; then
+        # Restore the executable bit (cp via cat below keeps it; explicit
+        # chmod guards against an existing cache entry from a different umask).
+        cp -p "$BIN/cache/$key/$name" "$BIN/$name" 2>/dev/null \
+            || cp "$BIN/cache/$key/$name" "$BIN/$name"
+        chmod +x "$BIN/$name"
+        echo hit
     else
-        echo "FAIL"
-        FAIL=$((FAIL + 1))
-        ERRORS="$ERRORS\n  $name: see /tmp/tessera_test_$name.log"
+        echo miss
     fi
 }
 
-# compile_and_run <name> <source...> [extra flags...]
-compile_and_run() {
+# Populate cache after a successful compile. Stores cmd line + dep list for
+# debug alongside the binary.
+cache_put() {
+    local name="$1"
+    local key="$2"
+    mkdir -p "$BIN/cache/$key"
+    cp -p "$BIN/$name" "$BIN/cache/$key/$name" 2>/dev/null \
+        || cp "$BIN/$name" "$BIN/cache/$key/$name"
+    chmod +x "$BIN/cache/$key/$name"
+    [ -f "$BIN/build/$name.canon" ] && cp "$BIN/build/$name.canon" "$BIN/cache/$key/cmd.txt"
+    [ -f "$BIN/build/$name.deps" ]  && cp "$BIN/build/$name.deps"  "$BIN/cache/$key/deps.txt"
+}
+
+# --- The worker invoked by xargs ---------------------------------------------
+# Reads a job-spec line from stdin of the form: "<name>|<key>|<args...>"
+# Args are space-separated, already shell-split safe (we use printf '%q'
+# below when enqueuing). Runs the compile; copies into cache; writes one
+# result line.
+ts_compile_worker() {
+    # COMPILE_FILE is TAB-separated: <name>\t<key>\t<args...>. We use a
+    # sentinel: the compile line starts with a literal "compile:" prefix to
+    # distinguish it from other data; the args are already shell-quoted via
+    # printf %q at enqueue time.
+    local line="$1"
+    if [[ "$line" != compile:* ]]; then
+        return 1
+    fi
+    local body="${line#compile:}"
+    local name="${body%%$'\t'*}"
+    local rest="${body#*$'\t'}"
+    local key="${rest%%$'\t'*}"
+    local args="${rest#*$'\t'}"
+    local src_log="/tmp/tessera_build_${name}.log"
+
+    # Reassemble argv (args is shell-quoted via printf %q at enqueue time).
+    # shellcheck disable=SC2086
+    if $CXX_PRELUDE $args -o "$BIN/$name" > "$src_log" 2>&1; then
+        cache_put "$name" "$key"
+        printf '%s\tcompiled\t%s\n' "$name" "$src_log"
+    else
+        printf '%s\tcompile_fail\t%s\n' "$name" "$src_log"
+    fi
+}
+export -f ts_compile_worker cache_put cache_get cache_key
+# ts_key_worker is exported after its definition further below.
+
+# --- Run a single test binary, log to /tmp/tessera_test_<name>.log ----------
+ts_run_one() {
+    local name="$1"
+    local log="/tmp/tessera_test_${name}.log"
+    if [ ! -x "$BIN/$name" ]; then
+        # Compile failed; surface build log via ERRORS at end.
+        printf '%s' "$name"
+        return 1
+    fi
+    if "$BIN/$name" > "$log" 2>&1; then
+        printf '%s' "$name"
+        return 0
+    fi
+    printf '%s' "$name"
+    return 1
+}
+
+# --- Job staging ------------------------------------------------------------
+# Declaration model: each test appends ONE line to $DECL_FILE in the form
+# "<name>|<reason>|quote1 args quote2 args ...". `reason` is "plain" for an
+# unconditional run, or the SKIP message (e.g. "needs CMake build for libgguf")
+# for a gated test whose gate fails - but the gate is evaluated LAZILY at
+# stage 2 so failure can skip the cache_key scan.
+#
+# Cache-key resolution happens in parallel at stage 2 (xargs -P $JOBS
+# running cache_key across every declared job at once). At stage 3 we
+# fold the keys + gate decisions back into $RESULTS_FILE / $COMPILE_FILE
+# in original declaration order, so phase-4's printing matches the source.
+DECL_FILE="$BIN/build/decls.tmp"
+KEYS_FILE="$BIN/build/keys.tmp"
+RESULTS_FILE="$BIN/build/results.tmp"
+COMPILE_FILE="$BIN/build/compile.tmp"
+# Final ordered record (one line per declared test, in declaration order).
+# Produced by phase 4.5 from $RESULTS_FILE + $DECL_FILE.
+DECL_FINAL_FILE="$BIN/build/decls.final.tmp"
+: > "$DECL_FILE"
+: > "$KEYS_FILE"
+: > "$RESULTS_FILE"
+: > "$COMPILE_FILE"
+: > "$DECL_FINAL_FILE"
+
+# Stage 1 helpers: stage a job declaration.
+
+job_plain() {
     local name="$1"
     shift
-    if ! $CXX "$@" -o "$BIN/$name" > /tmp/tessera_build_$name.log 2>&1; then
-        printf "  %-30s" "$name"
-        echo "FAIL (compile)"
-        FAIL=$((FAIL + 1))
-        ERRORS="$ERRORS\n  $name: compile error, see /tmp/tessera_build_$name.log"
-        return
-    fi
-    run_test "$name" "$BIN/$name"
+    local args_quoted
+    args_quoted=$(printf '%q ' "$@")
+    printf '%s|plain|%s\n' "$name" "$args_quoted" >> "$DECL_FILE"
 }
+
+job_skip() {
+    local name="$1"
+    shift
+    local gate_reason="$1"
+    shift
+    local gate_test="$1"
+    shift
+    local args_quoted
+    args_quoted=$(printf '%q ' "$@")
+    printf '%s|skip|%s|%s|%s\n' "$name" "$gate_reason" "$gate_test" \
+        "$args_quoted" >> "$DECL_FILE"
+}
+
+# Stage 2 worker: compute the cache key for a plain job (or evaluate the
+# gate for a skip job and emit "SKIP" without a key scan). Writes a single
+# line to $KEYS_FILE: "<name>|<gate_decision>|<key>" where gate_decision is
+# "run" (proceed to cache lookup), "skip" (gate failed, do not compile), or
+# "nokey" (degenerate; rarely used).
+#
+# Invoked as: xargs -P $JOBS -L 1 -I {} bash -c 'ts_key_worker "$@"' _ {}
+ts_key_worker() {
+    local line="$1"
+    local name="${line%%|*}"
+    local rest="${line#*|}"
+    local kind="${rest%%|*}"
+    local args_quoted
+    local gate_test gate_reason
+
+    case "$kind" in
+        plain)
+            args_quoted="${rest#*|}"
+            # Reconstruct the argv from the quoted form for cache_key.
+            # shellcheck disable=SC2086
+            local key
+            key=$(eval "set -- $args_quoted; cache_key \"$name\" \"\$@\"")
+            printf '%s|run|%s\n' "$name" "$key"
+            ;;
+        skip)
+            local payload="${rest#*|}"
+            gate_reason="${payload%%|*}"
+            local rest2="${payload#*|}"
+            gate_test="${rest2%%|*}"
+            if eval "$gate_test" >/dev/null 2>&1; then
+                args_quoted="${rest2#*|}"
+                # shellcheck disable=SC2086
+                local key
+                key=$(eval "set -- $args_quoted; cache_key \"$name\" \"\$@\"")
+                printf '%s|run|%s\n' "$name" "$key"
+            else
+                printf '%s|skip|%s\n' "$name" "$gate_reason"
+            fi
+            ;;
+    esac
+}
+export -f ts_key_worker
+export BIN CXX_PRELUDE UNAME TS_BLAS
+
+# --- Duckdb amalgamation (one-shot, before workers) -------------------------
+DUCKDB_O="$BIN/duckdb.o"
+# Hash includes the contents of duckdb.cpp plus -DNDEBUG; computed only if the
+# file's content hash differs from the cached .o's recorded key. Keep the key
+# in DUCKDB_KEY so ga_model_role can include it in its own cache key.
+DUCKDB_KEY_FILE="$BIN/build/duckdb.key"
+if [ -f "$BIN/duckdb.o" ] && [ -f "$DUCKDB_KEY_FILE" ]; then
+    DUCKDB_KEY=$(cat "$DUCKDB_KEY_FILE")
+else
+    DUCKDB_KEY=""
+fi
+DUCKDB_NEEDED_KEY=$( {
+    echo "uname=$UNAME"
+    echo "CXX=$CXX"
+    echo "-DNDEBUG"
+    echo "-I third-party/duckdb"
+    echo "src=$TS_DUCKDB_DIR/duckdb.cpp"
+    sha1sum "$TS_DUCKDB_DIR/duckdb.cpp" 2>/dev/null | awk '{print $1}'
+} | sha1sum | awk '{print $1}')
+
+if [ -f "$BIN/duckdb.o" ] && [ "$DUCKDB_KEY" = "$DUCKDB_NEEDED_KEY" ]; then
+    : # cache hit
+elif [ "${TESSERA_SKIP_DUCKDB:-0}" = "1" ]; then
+    : # operator opted out (e.g. to validate parallel path without paying
+      # the 9-minute single-threaded duckdb compile).
+    rm -f "$BIN/duckdb.o" "$DUCKDB_KEY_FILE"
+else
+    if $CXX_PRELUDE -DNDEBUG -I third-party/duckdb \
+            -c "$TS_DUCKDB_DIR/duckdb.cpp" -o "$BIN/duckdb.o" \
+            > /tmp/tessera_build_duckdb.log 2>&1; then
+        printf '%s' "$DUCKDB_NEEDED_KEY" > "$DUCKDB_KEY_FILE"
+    else
+        printf "  %-30s" "duckdb_amalgamation"
+        echo "FAIL (compile, see /tmp/tessera_build_duckdb.log)"
+        FAIL=$((FAIL + 1))
+        ERRORS="$ERRORS"$'\n'"  duckdb_amalgamation: see /tmp/tessera_build_duckdb.log"
+        rm -f "$BIN/duckdb.o"
+    fi
+fi
 
 echo "Tessera integration tests"
 echo ""
 
+# ============================================================================
+# Job declarations - one block per test, in declaration order. The order is
+# preserved end-to-end so PASS/SKIP lines and the column alignment match the
+# pre-refactor output exactly.
+# ============================================================================
+
 # --- Standalone (test + own module) ---
-compile_and_run linalg      $T/test_linalg.cpp      $T/tessera-linalg.cpp -framework Accelerate
-compile_and_run lbfgs       $T/test_lbfgs.cpp       $T/tessera-lbfgs.cpp
-compile_and_run awq         $T/test_awq.cpp         $T/tessera-awq.cpp $T/tessera-awq-fitness.cpp $T/tessera-policy.cpp -I common -I vendor -framework Accelerate
-# AWQ GA fitness port (parity vs Python awq-evolve.py + GA convergence).
-# Links the standalone port against tessera-policy (for ts_policy_genes) +
-# the awq sources + nlohmann/json (fixture loader).
-compile_and_run awq_fitness $T/test_awq_fitness.cpp $T/tessera-awq.cpp $T/tessera-awq-fitness.cpp $T/tessera-policy.cpp -I common -I vendor -framework Accelerate
-# FLRQ outlier-aware low-rank port (parity vs Python flrq_bcl; loads the
-# Python sketch basis from the fixture so the deterministic BLC core is pinned
-# bit-for-bit). Needs tessera-linalg (sym-eig for the sketch basis) + vendor.
-compile_and_run flrq        $T/test_flrq.cpp        $T/tessera-flrq.cpp $T/tessera-linalg.cpp -I vendor -framework Accelerate
-compile_and_run l5          $T/test_l5.cpp          $T/tessera-l5.cpp
-compile_and_run imatrix     $T/test_imatrix.cpp     $T/tessera-imatrix.cpp
-compile_and_run corpus      $T/test_corpus.cpp      $T/tessera-corpus.cpp
-compile_and_run ppl         $T/test_ppl.cpp         $T/tessera-ppl.cpp
+job_plain linalg $T/test_linalg.cpp $T/tessera-linalg.cpp $TS_BLAS
+job_plain lbfgs $T/test_lbfgs.cpp $T/tessera-lbfgs.cpp
+job_plain awq $T/test_awq.cpp $T/tessera-awq.cpp $T/tessera-awq-fitness.cpp $T/tessera-policy.cpp -I common -I vendor $TS_BLAS
+job_plain awq_fitness $T/test_awq_fitness.cpp $T/tessera-awq.cpp $T/tessera-awq-fitness.cpp $T/tessera-policy.cpp -I common -I vendor $TS_BLAS
+job_plain flrq $T/test_flrq.cpp $T/tessera-flrq.cpp $T/tessera-linalg.cpp -I vendor $TS_BLAS
+job_plain l5 $T/test_l5.cpp $T/tessera-l5.cpp $T/tessera-septq.cpp -I vendor $TS_BLAS
+# imatrix needs libgguf (for gguf_init_from_file in common_imatrix_load);
+# skip in the standalone harness - covered by the CMake build.
+job_skip imatrix "needs CMake build for libgguf" \
+    '[ -f build/ggml/src/libgguf.a ] || [ -f build/ggml/src/libgguf.dylib ]' \
+    $T/test_imatrix.cpp $T/tessera-imatrix.cpp common/imatrix-loader.cpp \
+    -I common -I include -I ggml/include -I ggml/src \
+    -L build/ggml/src -lgguf -lggml $TS_BLAS
+job_plain corpus $T/test_corpus.cpp $T/tessera-corpus.cpp
+job_plain ppl $T/test_ppl.cpp $T/tessera-ppl.cpp
+# l5_joint and ppl_harness need a CMake-built libggml.dylib; the
+# build-ane path is the default link line. (Same shape as pre-refactor.)
+job_skip l5_joint "needs CMake build for libggml" \
+    '[ -f build-ane/bin/libggml.dylib ] || [ -f build/bin/libggml.dylib ]' \
+    -I ../../common -I ggml/include -I ggml/src -I vendor -I $C -I $T \
+    -L build-ane/bin -lggml -lggml-base
+job_skip ppl_harness "needs CMake build for libggml" \
+    '[ -f build-ane/bin/libggml.dylib ] || [ -f build/bin/libggml.dylib ]' \
+    -I ../../common -I ggml/include -I ggml/src -I vendor -I $C -I $T \
+    -L build-ane/bin -lggml -lggml-base
+# Real per-tensor activation capture sidecar (origin/main "pipeline refactor
+# stage 2"): write/read round-trip for the v3-format-compatible train/heldout
+# activation sidecar produced by llama-imatrix --activation-capture. Needs
+# libggml for ggml_fp32_to_fp16/ggml_fp16_to_fp32 (test fixture data only).
+job_skip activation_sidecar "needs CMake build for libggml" \
+    '[ -f build-ane/bin/libggml.dylib ] || [ -f build/bin/libggml.dylib ]' \
+    $T/test_activation_sidecar.cpp $T/tessera-activation-sidecar.cpp $C/tessera-sidecar-v3.cpp \
+    -I common -I $C -I ggml/include \
+    -L build-ane/bin -lggml -lggml-base
+# Real per-tensor activation capture reservoir sampling (origin/main
+# "pipeline refactor stage 5"): Vitter's Algorithm R, header-only, no
+# ggml/llama dependency.
+job_plain activation_reservoir $T/test_activation_reservoir.cpp -I $T
+job_plain gen_joint_calib $T/gen_joint_calib.cpp
+job_plain ab_harness $T/test_ab_harness.cpp $T/tessera-ab-harness.cpp
+job_plain acceptance $T/test_acceptance.cpp $T/tessera-acceptance.cpp $T/tessera-ab-harness.cpp
+job_plain higgs $T/test_higgs.cpp $T/tessera-higgs.cpp
+job_plain regime $T/test_regime.cpp $T/tessera-regime.cpp
+job_plain peqat $T/test_peqat.cpp $T/tessera-peqat.cpp
+job_plain septq $T/test_septq.cpp $T/tessera-septq.cpp -I vendor $TS_BLAS
+job_plain vec $T/test_vec.cpp $T/tessera-vec.cpp $TS_BLAS
+# tessera-quant.cpp holds unguarded ts_metal_* calls; link the stub so the
+# symbol resolves on a non-HIP box. tessera-septq.cpp is also pulled in
+# because tessera-quant.cpp now dispatches into SEPTQ when params->use_septq
+# (operative-routing's FLRQ profile and the w4a4 activation-aware path).
+job_plain quant $T/test_quant.cpp $T/tessera-quant.cpp $T/tessera-vec.cpp $T/tessera-metal-stub.cpp $T/tessera-septq.cpp -I ggml/src -I vendor $TS_BLAS
+job_plain w4a4 $T/test_w4a4.cpp $T/tessera-w4a4.cpp $T/tessera-quant.cpp $T/tessera-vec.cpp $T/tessera-metal-stub.cpp $T/tessera-septq.cpp -I ggml/src -I vendor $TS_BLAS
+job_plain moe_shapes $T/test_moe_shapes.cpp $T/tessera-quant.cpp $T/tessera-vec.cpp $T/tessera-metal-stub.cpp $T/tessera-septq.cpp -I ggml/src -I vendor $TS_BLAS
+job_plain operative_routing $T/test_operative_routing.cpp $T/tessera-regime.cpp $T/tessera-quant.cpp $T/tessera-vec.cpp $T/tessera-metal-stub.cpp $T/tessera-septq.cpp -I ggml/src -I vendor $TS_BLAS
+job_skip dispatch "needs CMake build for libgguf" \
+    '[ -f build/ggml/src/libgguf.a ] || [ -f build/ggml/src/libgguf.dylib ]' \
+    $T/test_dispatch.cpp $T/tessera-dispatch.cpp $T/tessera-quant.cpp $T/tessera-vec.cpp $T/tessera-awq.cpp $T/tessera-awq-fitness.cpp \
+    -I common -I ggml/include -I ggml/src -L build/ggml/src -lgguf -lggml $TS_BLAS
+# T640 core=nullptr transport parity. 4-way libggml gate; needs -lggml-cpu.
+# Inner-pick of $GGML_LIB is implicit in the picked -L/-l/-Wl args recorded
+# below. The actual link args depend on which build artifact is present; we
+# emit them in the GA from the gate test so the orchestrator never sees
+# $GGML_LIB as a free variable.
+job_skip t640_core_reconstruct_parity "needs CMake build for libggml" \
+    '[ -f build/ggml/src/libggml.a ] || [ -f build-ffi/ggml/src/libggml.a ] || [ -f build-ane/bin/libggml.dylib ] || [ -f build/bin/libggml.dylib ]' \
+    $T/test_t640_core_reconstruct_parity.cpp $T/tessera-quant.cpp $T/tessera-vec.cpp $T/tile-detect.cpp $T/tessera-metal-stub.cpp \
+    -I ggml/include -I ggml/src -I $T \
+    -L build-ane/bin -lggml -lggml-base -lggml-cpu
+job_skip l5_dispatch "needs CMake build for libgguf" \
+    '[ -f build/ggml/src/libgguf.a ] || [ -f build/ggml/src/libgguf.dylib ]' \
+    $T/test_l5_dispatch.cpp $T/tessera-dispatch.cpp $T/tessera-quant.cpp $T/tessera-vec.cpp $T/tessera-awq.cpp $T/tessera-awq-fitness.cpp $T/tessera-l2-diff.cpp $T/tessera-l3-coherence.cpp $T/tessera-l5.cpp $T/tessera-ppl.cpp $C/tessera-sidecar-v3.cpp \
+    -I common -I ggml/include -I ggml/src -I vendor -I $C -L build/ggml/src -lgguf -lggml $TS_BLAS
+job_plain search $T/test_search.cpp $T/tessera-lrq.cpp $T/tessera-dartquant.cpp $T/tessera-flrq.cpp $T/tessera-champq.cpp $T/tessera-archive.cpp $T/tessera-linalg.cpp $T/tessera-lbfgs.cpp -I vendor $TS_BLAS
+job_plain champq $T/test_champq.cpp $T/tessera-champq.cpp $T/tessera-lbfgs.cpp -I vendor $TS_BLAS
+job_plain map_elites $T/test_map_elites.cpp $T/tessera-lrq.cpp $T/tessera-dartquant.cpp $T/tessera-flrq.cpp $T/tessera-champq.cpp $T/tessera-archive.cpp $T/tessera-linalg.cpp $T/tessera-lbfgs.cpp -I vendor $TS_BLAS
+job_plain modality_routing $T/test_modality_routing.cpp $T/tessera-regime.cpp $T/tessera-lrq.cpp $T/tessera-dartquant.cpp $T/tessera-flrq.cpp $T/tessera-champq.cpp $T/tessera-archive.cpp $T/tessera-linalg.cpp $T/tessera-lbfgs.cpp -I vendor $TS_BLAS
+job_plain higgs_integration $T/test_higgs_integration.cpp $T/tessera-higgs.cpp $T/tessera-higgs-cache.cpp $T/tessera-lrq.cpp $T/tessera-dartquant.cpp $T/tessera-flrq.cpp $T/tessera-champq.cpp $T/tessera-archive.cpp $T/tessera-linalg.cpp $T/tessera-lbfgs.cpp $T/tessera-quant.cpp $T/tessera-vec.cpp $T/tessera-metal-stub.cpp $T/tessera-septq.cpp -I vendor -I ggml/src $TS_BLAS
+job_plain l15 $T/test_l15.cpp $T/tessera-l15.cpp $C/tessera-debug.cpp $C/tessera-sidecar-v3.cpp $T/tessera-vec.cpp -I $C -I "$BIN" $TS_BLAS
+job_plain l1_fitness $T/test_l1_fitness.cpp $T/tessera-l1-fitness.cpp $C/tessera-sidecar-v3.cpp $T/tessera-metal-stub.cpp -I $C
+job_plain l1_fitness_tail $T/test_l1_fitness_tail.cpp $T/tessera-l1-fitness.cpp $C/tessera-sidecar-v3.cpp $T/tessera-metal-stub.cpp -I $C
+job_plain l2l5 $T/test_l2l5.cpp $T/tessera-l2-diff.cpp $T/tessera-l3-coherence.cpp $T/tessera-l5.cpp $T/tessera-ppl.cpp $T/tessera-linalg.cpp $T/tessera-septq.cpp $C/tessera-sidecar-v3.cpp -I vendor -I $C $TS_BLAS
+job_plain policy $T/test_policy.cpp $T/tessera-policy.cpp -I vendor
+job_plain capability_loop $T/test_capability_loop.cpp $T/tessera-capability-eval.cpp $T/tessera-adapt.cpp -I vendor
+job_plain anonymizer $T/test_anonymizer.cpp $T/tessera-anonymizer.cpp -I vendor
+job_plain scrub $T/test_scrub.cpp $T/tessera-scrub.cpp
+job_plain throughput $T/test_throughput.cpp $T/tessera-throughput.cpp -I vendor
+job_plain lk_loss $T/test_lk_loss.cpp $T/tessera-lk-loss.cpp
+job_plain dataset $T/test_dataset.cpp $T/tessera-dataset.cpp $T/tessera-dpace.cpp -I vendor
+job_plain dpace $T/test_dpace.cpp $T/tessera-dpace.cpp
+job_plain features $T/test_features.cpp $T/tessera-features.cpp -I vendor
+job_plain lk_train_data $T/test_lk_train_data.cpp $T/tessera-lk-train-data.cpp $T/tessera-lk-loss.cpp -I vendor
+job_plain dflash_train_data $T/test_dflash_train_data.cpp $T/tessera-dflash-train-data.cpp -I vendor
+job_plain imatrix_drafter_features $T/test_imatrix_drafter_features.cpp $T/tessera-features.cpp -I vendor
+job_plain dartquant $T/test_dartquant.cpp $T/tessera-dartquant.cpp $T/tessera-linalg.cpp -I vendor $TS_BLAS
+job_plain sidecar_v3 $C/test_sidecar_v3.cpp $C/tessera-sidecar-v3.cpp -I $C
+job_plain l1_sidecar $T/test_l1_sidecar.cpp $C/tessera-debug.cpp $C/tessera-sidecar-v3.cpp -I $C -I "$BIN"
+# tessera_db_indexes and ga_model_role both consume $BIN/duckdb.o so the
+# duckdb amalgamation is compiled once in phase 0, not 2x (or 3x) inside
+# the parallel pool (which would serialize itself on the same disk).
+job_plain tessera_db_indexes $T/test_tessera_db_indexes.cpp $T/tessera-quantize-db.cpp $T/tessera-db-buffer.cpp "$BIN/duckdb.o" -I $TS_DUCKDB_DIR -I $T
+job_plain coreml_bridge $T/test_coreml_bridge.cpp $T/tessera-coreml.cpp $T/tessera-coreml-builder.cpp $T/tessera-coreml-metadata.cpp $T/tessera-coreml-mil.cpp $T/tessera-coreml-telemetry.cpp -I ggml/include
+job_plain coreml_mil $T/test_coreml_mil.cpp $T/tessera-coreml-mil.cpp $T/tessera-coreml-telemetry.cpp $T/tessera-coreml-builder.cpp $T/tessera-coreml.cpp -I ggml/include
+# ga_model_role uses the cached $BIN/duckdb.o (or is converted to SKIP if
+# the duckdb.o build failed). Each job_* call resolves the gate immediately
+# and writes to $RESULTS_FILE / $COMPILE_FILE in declaration order.
+job_plain ga_model_role tests/test-tessera-ga-model-role.cpp $T/tessera-quantize-db.cpp $T/tessera-db-buffer.cpp "$BIN/duckdb.o" -I third-party/duckdb -I $T -I vendor
 
-# --- L5 joint search loop (v2/v3/v4 of plan-sess_57d0ae24-05b7-4442-b516-8175bc46df1d) ---
-# Case 1: target-only. Case 2: full 5-model joint. Case 3: strict-mode
-# acceptance gate (--tessera-l5-strict at 0.25%).
-printf "  %-30s" "l5_joint"
-if [ -f build-ane/bin/libggml.dylib ] || [ -f build/bin/libggml.dylib ]; then
-    if [ -f build-ane/bin/libggml.dylib ]; then
-        GGML_LIB="-L build-ane/bin -Wl,-rpath,build-ane/bin -lggml -lggml-base"
-    else
-        GGML_LIB="-L build/bin -Wl,-rpath,build/bin -lggml -lggml-base"
-    fi
-    compile_and_run l5_joint \
-        $T/test_l5_joint.cpp \
-        $T/tessera-ppl.cpp \
-        ../../common/tessera-ppl-harness.cpp \
-        ../../common/tessera-l5-joint.cpp \
-        -I ../../common -I ggml/include -I ggml/src -I vendor -I $C -I $T \
-        $GGML_LIB -framework Accelerate
-else
-    echo "SKIP (needs CMake build for libggml)"
+# ============================================================================
+# Stage 2: parallel compute-keys (xargs -P $JOBS). Each declaration in
+# $DECL_FILE becomes one ts_key_worker invocation. Output is in arbitrary
+# order; the fold at stage 3 joins it back to declaration order.
+# ============================================================================
+if [ -s "$DECL_FILE" ]; then
+    xargs -P "$JOBS" -I {} bash -c 'ts_key_worker "$@"' _ {} \
+        < "$DECL_FILE" > "$KEYS_FILE"
 fi
 
-# --- L5 joint PPL harness (v1 of plan-sess_57d0ae24-05b7-4442-b516-8175bc46df1d) ---
-# Joint forward pass across target + 3 drafters + talker; per-model PPL
-# extraction; per-model AND-gate at --tessera-l5-epsilon. v1 sanity:
-# 5 synthetic all-zero-logits models, FP PPL == vocab size exactly.
-printf "  %-30s" "ppl_harness"
-if [ -f build-ane/bin/libggml.dylib ] || [ -f build/bin/libggml.dylib ]; then
-    if [ -f build-ane/bin/libggml.dylib ]; then
-        GGML_LIB="-L build-ane/bin -Wl,-rpath,build-ane/bin -lggml -lggml-base"
-    else
-        GGML_LIB="-L build/bin -Wl,-rpath,build/bin -lggml -lggml-base"
-    fi
-    compile_and_run ppl_harness \
-        $T/test_ppl_harness.cpp \
-        $T/tessera-ppl.cpp \
-        ../../common/tessera-ppl-harness.cpp \
-        -I ../../common -I ggml/include -I ggml/src -I vendor -I $C -I $T \
-        $GGML_LIB -framework Accelerate
-else
-    echo "SKIP (needs CMake build for libggml)"
+# ============================================================================
+# Stage 3: fold $DECL_FILE + $KEYS_FILE -> $RESULTS_FILE + $COMPILE_FILE
+# (in declaration order). Each plain/runnable job becomes either a
+# (cache_hit, -) result or a (pending, key, args) compile entry.
+# ============================================================================
+declare -A KEY_FOR=()
+declare -A REASON_FOR=()
+# KEYS_FILE is <name>|<decision>|<value>. KEYS_FILE has 3 pipe-separated
+# fields but the value (3rd) may itself contain a pipe (e.g. a quoted gate
+# reason like "needs CMake build for libgguf"). Use `read -d ''` so the
+# value slurps the rest of the line including any pipes it contains.
+while IFS='|' read -r n d r; do
+    KEY_FOR["$n"]="$r"
+    REASON_FOR["$n"]="$d"
+done < "$KEYS_FILE"
+
+while IFS='|' read -r name kind rest; do
+    case "$kind" in
+        plain)
+            local_key="${KEY_FOR[$name]}"
+            local_args="$rest"
+            if [ "${REASON_FOR[$name]}" = "skip" ]; then
+                printf '%s\tskip_gate\t%s\n' "$name" "${KEY_FOR[$name]}" \
+                    >> "$RESULTS_FILE"
+            elif [ "$(cache_get "$name" "$local_key")" = "hit" ]; then
+                printf '%s\tcache_hit\t-\n' "$name" >> "$RESULTS_FILE"
+            else
+                # COMPILE_FILE entries are "compile:"-prefixed; see worker.
+                # Do NOT write a "pending" stub to RESULTS_FILE here — the
+                # xargs pool is the sole writer of compiled / compile_fail
+                # records, and phase 4.5 folds all status entries back into
+                # declaration order using DECL_FILE.
+                printf 'compile:%s\t%s\t%s\n' "$name" "$local_key" "$local_args" \
+                    >> "$COMPILE_FILE"
+            fi
+            ;;
+        skip)
+            if [ "${REASON_FOR[$name]}" = "skip" ]; then
+                printf '%s\tskip_gate\t%s\n' "$name" "${KEY_FOR[$name]}" \
+                    >> "$RESULTS_FILE"
+            else
+                local_key="${KEY_FOR[$name]}"
+                # Skip past "<reason>|<gate_test>|" prefix.
+                local_args="${rest#*|*|*|}"
+                if [ "$(cache_get "$name" "$local_key")" = "hit" ]; then
+                    printf '%s\tcache_hit\t-\n' "$name" >> "$RESULTS_FILE"
+                else
+                    printf 'compile:%s\t%s\t%s\n' "$name" "$local_key" "$local_args" \
+                        >> "$COMPILE_FILE"
+                fi
+            fi
+            ;;
+    esac
+done < "$DECL_FILE"
+
+# ============================================================================
+# Special handling for ga_model_role: it depends on $BIN/duckdb.o, which the
+# duckdb_amalgamation step above either produced (or refreshed) or failed to
+# produce. Convert the cached/pending entry to SKIP if the .o is absent.
+# ============================================================================
+if [ ! -f "$BIN/duckdb.o" ]; then
+    # tessera_db_indexes and ga_model_role both consume $BIN/duckdb.o. Skip
+    # both if it didn't build, with the original driver message. In the new
+    # pipeline these tests have COMPILE_FILE entries (no RESULTS_FILE entry
+    # yet, since pending stubs are no longer emitted); we add skip_gate
+    # records directly here and drop their COMPILE_FILE entries.
+    printf 'tessera_db_indexes\tskip_gate\tduckdb amalgamation build failed\n' \
+        >> "$RESULTS_FILE"
+    printf 'ga_model_role\tskip_gate\tduckdb amalgamation build failed\n' \
+        >> "$RESULTS_FILE"
+    awk -F'\t' '$1!="tessera_db_indexes" && $1!="ga_model_role" { print }' \
+        "$COMPILE_FILE" > "$COMPILE_FILE.tmp" && mv "$COMPILE_FILE.tmp" "$COMPILE_FILE"
 fi
 
-# --- Real per-tensor activation capture sidecar (pipeline refactor stage 2) ---
-# Write/read round-trip for the v3-format-compatible train/heldout
-# activation sidecar consumed by ts_dispatch_run_gaprep (stage 3) and
-# produced by llama-imatrix --activation-capture (stage 5). Needs libggml
-# for ggml_fp32_to_fp16/ggml_fp16_to_fp32 (test fixture data only; the
-# sidecar itself has no ggml dependency).
-printf "  %-30s" "activation_sidecar"
-if [ -f build-ane/bin/libggml.dylib ] || [ -f build/bin/libggml.dylib ]; then
-    if [ -f build-ane/bin/libggml.dylib ]; then
-        GGML_LIB="-L build-ane/bin -Wl,-rpath,build-ane/bin -lggml -lggml-base"
-    else
-        GGML_LIB="-L build/bin -Wl,-rpath,build/bin -lggml -lggml-base"
-    fi
-    compile_and_run activation_sidecar \
-        $T/test_activation_sidecar.cpp \
-        $T/tessera-activation-sidecar.cpp \
-        $C/tessera-sidecar-v3.cpp \
-        -I common -I $C -I ggml/include \
-        $GGML_LIB
-else
-    echo "SKIP (needs CMake build for libggml)"
+# ============================================================================
+# Phase 4: parallel compile (xargs -P $JOBS).
+# ============================================================================
+if [ -s "$COMPILE_FILE" ]; then
+    xargs -P "$JOBS" -I {} bash -c 'ts_compile_worker "$@"' _ {} \
+        < "$COMPILE_FILE" >> "$RESULTS_FILE"
 fi
 
-# --- Real per-tensor activation capture reservoir sampling (pipeline refactor stage 5) ---
-# Unit tests for the bounded reservoir sampling algorithm (Vitter's
-# Algorithm R) tools/imatrix/imatrix.cpp's collector uses to harvest a
-# real, bounded sample of captured activations. Header-only, no ggml/
-# llama dependency -- tested in isolation from the graph-harvesting
-# machinery around it, which needs a real model to exercise end to end.
-compile_and_run activation_reservoir $T/test_activation_reservoir.cpp -I $T
+# ============================================================================
+# Phase 4.5: fold RESULTS_FILE back onto declaration order. RESULTS_FILE
+# currently holds (a) cache_hit / skip_gate entries from stage 3 in
+# declaration order, and (b) compile results from xargs in arbitrary order.
+# Build an associative array of "latest status per name" and walk $DECL_FILE
+# (which is in declaration order) emitting one final record per name.
+# ============================================================================
+declare -A FINAL_STATUS=()
+declare -A FINAL_LOG=()
+while IFS=$'\t' read -r n s lp; do
+    FINAL_STATUS["$n"]="$s"
+    FINAL_LOG["$n"]="$lp"
+done < "$RESULTS_FILE"
 
-# --- L5 joint calibration set generator (v1 of plan-sess_57d0ae24-05b7-4442-b516-8175bc46df1d) ---
-# Writes JSONL with synthetic text + synthetic audio targets. v3 wires
-# the real text-to-audio target mapping. Schema-only at v1.
-printf "  %-30s" "gen_joint_calib"
-compile_and_run gen_joint_calib $T/gen_joint_calib.cpp
-compile_and_run ab_harness  $T/test_ab_harness.cpp  $T/tessera-ab-harness.cpp
-compile_and_run acceptance  $T/test_acceptance.cpp  $T/tessera-acceptance.cpp $T/tessera-ab-harness.cpp
-compile_and_run higgs       $T/test_higgs.cpp       $T/tessera-higgs.cpp
-compile_and_run regime      $T/test_regime.cpp      $T/tessera-regime.cpp
-compile_and_run peqat       $T/test_peqat.cpp       $T/tessera-peqat.cpp
-# SEPTQ banded-Cholesky quantizer parity (B3): standalone, links the septq
-# port + nlohmann/json for the fixture loader.
-compile_and_run septq       $T/test_septq.cpp       $T/tessera-septq.cpp -I vendor -framework Accelerate
+: > "$DECL_FINAL_FILE"
+while IFS='|' read -r name kind rest; do
+    s="${FINAL_STATUS[$name]:-pending}"
+    lp="${FINAL_LOG[$name]:--}"
+    printf '%s\t%s\t%s\n' "$name" "$s" "$lp" >> "$DECL_FINAL_FILE"
+done < "$DECL_FILE"
 
-# --- Needs vec (Accelerate) ---
-compile_and_run vec         $T/test_vec.cpp         $T/tessera-vec.cpp -framework Accelerate
-compile_and_run quant       $T/test_quant.cpp       $T/tessera-quant.cpp $T/tessera-vec.cpp -framework Accelerate
-compile_and_run w4a4        $T/test_w4a4.cpp        $T/tessera-w4a4.cpp $T/tessera-quant.cpp $T/tessera-vec.cpp -framework Accelerate
-compile_and_run moe_shapes  $T/test_moe_shapes.cpp  $T/tessera-quant.cpp $T/tessera-vec.cpp -framework Accelerate
-compile_and_run operative_routing $T/test_operative_routing.cpp $T/tessera-regime.cpp $T/tessera-quant.cpp $T/tessera-vec.cpp -framework Accelerate
-# dispatch requires libgguf/libggml (full CMake build); skip in standalone mode
-printf "  %-30s" "dispatch"
-if [ -f build/ggml/src/libgguf.a ] || [ -f build/ggml/src/libgguf.dylib ]; then
-    compile_and_run dispatch $T/test_dispatch.cpp $T/tessera-dispatch.cpp $T/tessera-quant.cpp $T/tessera-vec.cpp $T/tessera-awq.cpp $T/tessera-awq-fitness.cpp -I common -I ggml/include -I ggml/src -L build/ggml/src -lgguf -lggml -framework Accelerate
-else
-    echo "SKIP (needs CMake build for libgguf)"
-fi
-
-# --- Tile640 core=nullptr transport parity (Aug 2026 transport cut)
-# Bit-exact gate for the 162G->33G tile-neutral transport compression at
-# commit 0e110f9fc (Aug 10, today). Packs the same ternary tensor with
-# and without core, dequantizes both, and asserts the radix-243+scales
-# reconstruction is within 1.5x between the two paths. Catches the
-# "core dropped silently degrades fidelity" class of bug at every commit.
-# Needs libggml (for the flat dequantize_row_tessera_t640 trait).
-printf "  %-30s" "t640_core_reconstruct_parity"
-if [ -f build/ggml/src/libggml.a ] || [ -f build-ffi/ggml/src/libggml.a ] || \
-   [ -f build-ane/bin/libggml.dylib ] || [ -f build/bin/libggml.dylib ]; then
-    # Pick the first available libggml.
-    if [ -f build-ffi/ggml/src/libggml.a ]; then
-        GGML_LIB="-L build-ffi/ggml/src -lggml -lggml-base -lggml-cpu"
-    elif [ -f build-ane/bin/libggml.dylib ]; then
-        GGML_LIB="-L build-ane/bin -Wl,-rpath,build-ane/bin -lggml -lggml-base -lggml-cpu"
-    elif [ -f build/bin/libggml.dylib ]; then
-        GGML_LIB="-L build/bin -Wl,-rpath,build/bin -lggml -lggml-base -lggml-cpu"
-    else
-        GGML_LIB="-L build/ggml/src -lggml -lggml-base -lggml-cpu"
-    fi
-    compile_and_run t640_core_reconstruct_parity \
-        $T/test_t640_core_reconstruct_parity.cpp \
-        $T/tessera-quant.cpp $T/tessera-vec.cpp $T/tile-detect.cpp $T/tessera-metal-stub.cpp \
-        -I ggml/include -I ggml/src -I $T \
-        $GGML_LIB -framework Accelerate
-else
-    echo "SKIP (needs CMake build for libggml)"
-fi
-
-# L5 dispatch integration test: same libgguf/libggml link line as dispatch,
-# plus the L2-diff/L5 modules the adaptive-requantize loop pulls in.
-printf "  %-30s" "l5_dispatch"
-if [ -f build/ggml/src/libgguf.a ] || [ -f build/ggml/src/libgguf.dylib ]; then
-    compile_and_run l5_dispatch $T/test_l5_dispatch.cpp $T/tessera-dispatch.cpp $T/tessera-quant.cpp $T/tessera-vec.cpp $T/tessera-awq.cpp $T/tessera-awq-fitness.cpp $T/tessera-l2-diff.cpp $T/tessera-l3-coherence.cpp $T/tessera-l5.cpp $T/tessera-ppl.cpp $C/tessera-sidecar-v3.cpp -I common -I ggml/include -I ggml/src -I vendor -I $C -L build/ggml/src -lgguf -lggml -framework Accelerate
-else
-    echo "SKIP (needs CMake build for libgguf)"
-fi
-
-# --- Needs linalg + lbfgs (search pulls in vendor/nlohmann for the archive JSON) ---
-compile_and_run search      $T/test_search.cpp      $T/tessera-lrq.cpp $T/tessera-dartquant.cpp $T/tessera-flrq.cpp $T/tessera-champq.cpp $T/tessera-archive.cpp $T/tessera-linalg.cpp $T/tessera-lbfgs.cpp -I vendor -framework Accelerate
-
-# --- CHAMP-Q L-BFGS permutation port (parity vs Python champq_permute.py) ---
-compile_and_run champq      $T/test_champq.cpp      $T/tessera-champq.cpp $T/tessera-lbfgs.cpp -I vendor -framework Accelerate
-
-# --- MAP-Elites archive (search + linalg + lbfgs + vendor/nlohmann) ---
-compile_and_run map_elites  $T/test_map_elites.cpp  $T/tessera-lrq.cpp $T/tessera-dartquant.cpp $T/tessera-flrq.cpp $T/tessera-champq.cpp $T/tessera-archive.cpp $T/tessera-linalg.cpp $T/tessera-lbfgs.cpp -I vendor -framework Accelerate
-
-# --- Modality as operative regime axis (regime + search + linalg + lbfgs + vendor) ---
-compile_and_run modality_routing $T/test_modality_routing.cpp $T/tessera-regime.cpp $T/tessera-lrq.cpp $T/tessera-dartquant.cpp $T/tessera-flrq.cpp $T/tessera-champq.cpp $T/tessera-archive.cpp $T/tessera-linalg.cpp $T/tessera-lbfgs.cpp -I vendor -framework Accelerate
-
-# --- HIGGS integration (higgs + cache + search + quant + vec) ---
-compile_and_run higgs_integration $T/test_higgs_integration.cpp $T/tessera-higgs.cpp $T/tessera-higgs-cache.cpp $T/tessera-lrq.cpp $T/tessera-dartquant.cpp $T/tessera-flrq.cpp $T/tessera-champq.cpp $T/tessera-archive.cpp $T/tessera-linalg.cpp $T/tessera-lbfgs.cpp $T/tessera-quant.cpp $T/tessera-vec.cpp -I vendor -framework Accelerate
-
-# --- Needs sidecar + vec ---
-# L1.5 test exercises both the F32 (back-compat) and the FP16 ground
-# truth paths, and the L1 F32 writer regression check. Links
-# tessera-debug.cpp for the sidecar writer (open_dequant_writer,
-# open_fp16_reference_writer, write_fp16_reference_row, etc.) and
-# the sidecar v3 reader for the FP16/F32 dispatch on read. The
-# tessera-build-info.h stub is generated by the l1_sidecar test
-# runner below; we reproduce it here so the l15 build is
-# self-contained.
-printf '#pragma once\n#define TESSERA_KERNEL_VERSION "test"\n#define TESSERA_MAIN_TIP "test"\n' > "$BIN/tessera-build-info.h"
-compile_and_run l15         $T/test_l15.cpp         $T/tessera-l15.cpp $C/tessera-debug.cpp $C/tessera-sidecar-v3.cpp $T/tessera-vec.cpp -I $C -I "$BIN" -framework Accelerate
-
-# --- Needs sidecar (L1 kernel-direct fitness) ---
-compile_and_run l1_fitness  $T/test_l1_fitness.cpp  $T/tessera-l1-fitness.cpp $C/tessera-sidecar-v3.cpp -I $C
-
-# --- L1 tail-weighted kernel-direct t_l^2 (L6 v3.1, §11 of the spec) ---
-# Pure-math on the t2 path, but ts_l1_load_sidecar (in
-# tessera-l1-fitness.cpp) is the v3 sidecar reader and pulls in
-# ts_sidecar_v3_read from common/tessera-debug. Link the sidecar
-# source so the test can run the l6-tail assertion path end-to-end.
-compile_and_run l1_fitness_tail $T/test_l1_fitness_tail.cpp $T/tessera-l1-fitness.cpp $C/tessera-sidecar-v3.cpp -I $C
-
-# L1.5 dispatch-time capture (v3.1, §3 of the spec) is built via
-# CMake (test-tessera-l15-capture target) because it needs ggml/gguf
-# headers plus a chunk of the dispatch source tree. See
-# tools/quantize/CMakeLists.txt.
-
-# --- L2-L5 runtime-aware pipeline (L2 diff + L3 coherence + L5 adaptive) ---
-# L2 needs vendor/nlohmann (JSON report); L3 needs the sidecar reader;
-# L2 spectral metrics need tessera-linalg for ts_linalg_svd_topk.
-compile_and_run l2l5        $T/test_l2l5.cpp        $T/tessera-l2-diff.cpp $T/tessera-l3-coherence.cpp $T/tessera-l5.cpp $T/tessera-ppl.cpp $T/tessera-linalg.cpp $T/tessera-septq.cpp $C/tessera-sidecar-v3.cpp -I vendor -I $C -framework Accelerate
-
-# --- Needs vendor (nlohmann/json) ---
-compile_and_run policy      $T/test_policy.cpp      $T/tessera-policy.cpp -I vendor
-
-# --- Self-improving capability loop (capability-eval + adapt; needs vendor) ---
-compile_and_run capability_loop $T/test_capability_loop.cpp $T/tessera-capability-eval.cpp $T/tessera-adapt.cpp -I vendor
-
-# --- Tier-2 anonymizer (needs vendor/nlohmann for the de-anonymization map) ---
-compile_and_run anonymizer    $T/test_anonymizer.cpp  $T/tessera-anonymizer.cpp -I vendor
-
-# --- Text secret redactor (standalone; no vendor needed) ---
-compile_and_run scrub         $T/test_scrub.cpp       $T/tessera-scrub.cpp
-
-# --- North-star throughput harness (needs vendor/nlohmann for workload+receipt JSON) ---
-compile_and_run throughput    $T/test_throughput.cpp  $T/tessera-throughput.cpp -I vendor
-
-# --- Drafter training pipeline: LK loss (pure math, no vendor) ---
-compile_and_run lk_loss       $T/test_lk_loss.cpp     $T/tessera-lk-loss.cpp
-
-# --- Drafter training pipeline: dataset prep (needs vendor/nlohmann + dpace weights) ---
-compile_and_run dataset       $T/test_dataset.cpp     $T/tessera-dataset.cpp $T/tessera-dpace.cpp -I vendor
-
-# --- Drafter training pipeline: D-PACE loss (pure math, no vendor) ---
-compile_and_run dpace         $T/test_dpace.cpp       $T/tessera-dpace.cpp
-
-# --- Drafter training pipeline: offline feature-capture file format (needs vendor) ---
-compile_and_run features      $T/test_features.cpp    $T/tessera-features.cpp -I vendor
-
-# --- Drafter training pipeline: LK training-data builder (needs vendor + lk-loss densify) ---
-compile_and_run lk_train_data $T/test_lk_train_data.cpp $T/tessera-lk-train-data.cpp $T/tessera-lk-loss.cpp -I vendor
-
-# --- Drafter training pipeline: DFlash training-data builder (needs vendor; weight schemes dpace|decay) ---
-compile_and_run dflash_train_data $T/test_dflash_train_data.cpp $T/tessera-dflash-train-data.cpp -I vendor
-
-# --- Drafter training pipeline: imatrix features file from the DFlash driver consumer side ---
-compile_and_run imatrix_drafter_features $T/test_imatrix_drafter_features.cpp $T/tessera-features.cpp -I vendor
-
-# --- DartQuant QR-Orth + Whip loss port (parity vs Python dartquant_qr_orth; needs vendor/nlohmann for fixture) ---
-compile_and_run dartquant $T/test_dartquant.cpp $T/tessera-dartquant.cpp $T/tessera-linalg.cpp -I vendor -framework Accelerate
-
-# --- common/tessera-debug ---
-compile_and_run sidecar_v3  $C/test_sidecar_v3.cpp  $C/tessera-sidecar-v3.cpp -I $C
-
-# L1 sidecar writer end-to-end (needs a stub tessera-build-info.h)
-printf '#pragma once\n#define TESSERA_KERNEL_VERSION "test"\n#define TESSERA_MAIN_TIP "test"\n' > "$BIN/tessera-build-info.h"
-compile_and_run l1_sidecar  $T/test_l1_sidecar.cpp  $C/tessera-debug.cpp $C/tessera-sidecar-v3.cpp -I $C -I "$BIN"
-
-# --- Phase 16.7: per-component (model_role, name) covering index + audit sidecar ---
-# 7 CREATE INDEX IF NOT EXISTS lines on open; smoke benchmark; the
-# model_role_migration.json sidecar written when a pre-Phase-16 DB is
-# opened. Standalone DuckDB test (no GGUF, no dispatch). Links the
-# duckdb amalgamation directly.
-compile_and_run tessera_db_indexes $T/test_tessera_db_indexes.cpp \
-    $T/tessera-quantize-db.cpp $T/tessera-db-buffer.cpp \
-    $TS_DUCKDB_DIR/duckdb.cpp -I $TS_DUCKDB_DIR -I $T -w
-
-# --- CoreML bridge (builder pulls in the MIL + telemetry modules) ---
-compile_and_run coreml_bridge $T/test_coreml_bridge.cpp $T/tessera-coreml.cpp $T/tessera-coreml-builder.cpp $T/tessera-coreml-metadata.cpp $T/tessera-coreml-mil.cpp $T/tessera-coreml-telemetry.cpp -I ggml/include
-
-# --- CoreML MIL builder + weight serialization + IOReport telemetry scaffold ---
-compile_and_run coreml_mil $T/test_coreml_mil.cpp $T/tessera-coreml-mil.cpp $T/tessera-coreml-telemetry.cpp $T/tessera-coreml-builder.cpp $T/tessera-coreml.cpp -I ggml/include
-
-# --- Phase 16 follow-up: GA walk model_role plumb-through on tensor_stats ---
-# Standalone DuckDB test (mirrors the existing test_quantize_db
-# build line that CMake uses; the duckdb amalgamation is the
-# slow part so we cache the .o between runs when possible).
-DUCKDB_O="$BIN/duckdb.o"
-if [ ! -f "$DUCKDB_O" ]; then
-    $CXX -DNDEBUG -I third-party/duckdb -c third-party/duckdb/duckdb.cpp -o "$DUCKDB_O" \
-        > /tmp/tessera_build_duckdb.log 2>&1 || {
-            printf "  %-30s" "duckdb_amalgamation"
-            echo "FAIL (compile, see /tmp/tessera_build_duckdb.log)"
+# ============================================================================
+# Phase 5: ordered serial run. Iterate RESULTS_FILE (which is in declaration
+# order) and print PASS / FAIL / SKIP for each.
+# ============================================================================
+while IFS=$'\t' read -r name status log_path; do
+    case "$status" in
+        cache_hit|compiled)
+            # Execute and convert to pass / fail.
+            if [ -x "$BIN/$name" ]; then
+                test_log="/tmp/tessera_test_${name}.log"
+                if "$BIN/$name" > "$test_log" 2>&1; then
+                    printf "  %-30s" "$name"
+                    echo "PASS"
+                    PASS=$((PASS + 1))
+                else
+                    printf "  %-30s" "$name"
+                    echo "FAIL"
+                    FAIL=$((FAIL + 1))
+                    ERRORS="$ERRORS"$'\n'"  $name: see $test_log"
+                fi
+            else
+                printf "  %-30s" "$name"
+                echo "FAIL (compile, see $log_path)"
+                FAIL=$((FAIL + 1))
+                ERRORS="$ERRORS"$'\n'"  $name: compile error, see $log_path"
+            fi
+            ;;
+        skip_gate)
+            printf "  %-30s" "$name"
+            # `log_path` slot carries the human-readable reason text.
+            if [ -n "$log_path" ]; then
+                echo "SKIP ($log_path)"
+            else
+                echo "SKIP"
+            fi
+            SKIP=$((SKIP + 1))
+            ;;
+        compile_fail)
+            printf "  %-30s" "$name"
+            echo "FAIL (compile, see $log_path)"
             FAIL=$((FAIL + 1))
-            ERRORS="$ERRORS\n  duckdb_amalgamation: see /tmp/tessera_build_duckdb.log"
-        }
-fi
-if [ -f "$DUCKDB_O" ]; then
-    compile_and_run ga_model_role tests/test-tessera-ga-model-role.cpp $T/tessera-quantize-db.cpp $T/tessera-db-buffer.cpp "$DUCKDB_O" -I third-party/duckdb -I $T -I vendor
-else
-    printf "  %-30s" "ga_model_role"
-    echo "SKIP (duckdb amalgamation build failed)"
-fi
+            ERRORS="$ERRORS"$'\n'"  $name: compile error, see $log_path"
+            ;;
+        pending)
+            # Compile pool never produced a result for this name (should not
+            # happen in the new pipeline; surface loudly if it does).
+            printf "  %-30s" "$name"
+            echo "FAIL (compile never ran)"
+            FAIL=$((FAIL + 1))
+            ERRORS="$ERRORS"$'\n'"  $name: compile pool produced no result"
+            ;;
+    esac
+done < "$DECL_FINAL_FILE"
 
+# ============================================================================
+# Phase 6: summary.
+# ============================================================================
 echo ""
-echo "Results: $PASS passed, $FAIL failed"
-if [ $FAIL -gt 0 ]; then
-    printf "$ERRORS\n"
+echo "Results: $PASS passed, $SKIP skipped, $FAIL failed"
+if [ -n "$ERRORS" ]; then
+    printf '%s\n' "$ERRORS"
+fi
+if [ "$FAIL" -gt 0 ]; then
     exit 1
 fi

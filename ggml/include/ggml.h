@@ -434,7 +434,15 @@ extern "C" {
         GGML_TYPE_TESSERA_T640_3D = 44, // 3D expert bank marker; same physical encoding as T640
         GGML_TYPE_TESSERA_T512    = 45, // 2D Tile512 Intel-native 16×32 ternary (first-class Linux export)
         GGML_TYPE_TESSERA_T1024   = 46, // 2D Tile1024 Intel-native 32×32 ternary (first-class Linux export)
-        GGML_TYPE_COUNT   = 47,
+        // 47-62 reserved (amd-tile-format-spec.md 9(v)/9(vii)): gap slots for
+        // the AMD tile family this wave does not implement (GCN/RDNA1/RDNA2/
+        // RDNA4/CDNA1-4) plus W4's KCACHE/VCACHE. type_traits[47..62] carry
+        // explicit placeholder entries (blck_size=0, type_size=0) so any
+        // accidental use is rejected the same way the codebase already
+        // rejects the removed Q4_0_4_4-family types above, not left to
+        // silently zero-initialize.
+        GGML_TYPE_TESSERA_T_RDNA3 = 63, // AMD RDNA3 native WMMA [16,16,16] tile; see docs/amd-tile-format-spec.md 3.4
+        GGML_TYPE_COUNT   = 64,
     };
 
     // precision
@@ -580,6 +588,7 @@ extern "C" {
         GGML_OP_DSV4_HC_PRE,
         GGML_OP_DSV4_HC_POST,
         GGML_OP_TILE640_MATMUL,
+        GGML_OP_TILE640_MATMUL_INTERLEAVED,
         GGML_OP_TILE640_MATMUL_ID,
         GGML_OP_TILE640_GET_ROWS,
         GGML_OP_TILE640_DEQUANT,
@@ -591,6 +600,20 @@ extern "C" {
         GGML_OP_TILE1024_MATMUL_ID,
         GGML_OP_TILE1024_GET_ROWS,
         GGML_OP_TILE1024_DEQUANT,
+        // W3 task 3.7: AMD RDNA3 native-WMMA tile matmul. CPU reference
+        // always runs (ggml_compute_forward_tile_rdna3_matmul); the HIP
+        // backend additionally dispatches to the WMMA kernel when
+        // TS_TILE_GPU != 0 (ggml-cuda/tile-amd-rdna3.cu, mirrors the
+        // TILE640_MATMUL_INTERLEAVED GPU-dispatch pattern).
+        GGML_OP_TILE_RDNA3_MATMUL,
+        // Sparse CSR outlier addback, packing-format-agnostic: dst = base
+        // + (outlier correction). See ggml_sparse_outlier_add below.
+        // CPU-only (no CUDA/HIP dispatch case, so the scheduler
+        // automatically places it on CPU - same pattern GGML_OP_
+        // IMATRIX_OBSERVER already uses for its own Metal-only backend
+        // support); outliers are a small (~2%) fraction of elements so
+        // this is cheap regardless of device.
+        GGML_OP_SPARSE_OUTLIER_ADD,
         GGML_OP_IMATRIX_OBSERVER,
 
         GGML_OP_UNARY,
@@ -2648,6 +2671,23 @@ extern "C" {
             struct ggml_tensor  * A_outlier_vals,
             struct ggml_tensor  * B);
 
+    // Interleaved Tile640 matmul (temporal ALU interleaving). Same input
+    // contract as ggml_tile640_matmul; produces a tensor with
+    // GGML_OP_TILE640_MATMUL_INTERLEAVED so the Metal / HIP backend can
+    // dispatch kernel_TILE640_MATMUL_INTERLEAVED. Feature-gated: dispatch
+    // is only wired on Metal + HIP when TESSERA_TILE640_INTERLEAVED is
+    // set in the environment. Without it, callers should use the base
+    // ggml_tile640_matmul.
+    GGML_API struct ggml_tensor * ggml_tile640_matmul_interleaved(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * A_packed,
+            struct ggml_tensor  * A_page_scales,
+            struct ggml_tensor  * A_lane_scales,
+            struct ggml_tensor  * A_outlier_rows,
+            struct ggml_tensor  * A_outlier_cols,
+            struct ggml_tensor  * A_outlier_vals,
+            struct ggml_tensor  * B);
+
     // Per-expert variant of Tile640 matmul for MoE FFN.
     //   A_packed       : I32  shape [n_experts, out_dim, pages_per_row, 32]
     //   A_page_scales  : F16  shape [n_experts, out_dim, pages_per_row]
@@ -2789,17 +2829,62 @@ extern "C" {
             int64_t               ne2,
             int64_t               ne3);
 
+    // W3 task 3.7: AMD RDNA3 native-WMMA tile matmul. A is a 3-tensor
+    // cluster: A_packed (I8, symmetric linear quant), A_page_scales (F16,
+    // one per 256-element page), A_lane_scales (I8, one per 8-element
+    // lane, [1,127]) - see docs/amd-tile-format-spec.md 3.4. No outlier
+    // correction (unlike Tile640/Tile1024). B is activations, [in_dim,
+    // n_tokens, ...]. Output: F32, [out_dim, n_tokens, ...].
+    GGML_API struct ggml_tensor * ggml_tile_rdna3_matmul(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * A_packed,
+            struct ggml_tensor  * A_page_scales,
+            struct ggml_tensor  * A_lane_scales,
+            struct ggml_tensor  * B);
+
+    // Packing-format-agnostic sparse CSR outlier addback: dst[i,j,b,s] =
+    // base[i,j,b,s] + sum over row i's outliers of
+    //   outlier_val[k] * B[outlier_cols[k], j, b, s]
+    // outlier_vals are the ORIGINAL (un-rescaled) weight value at that
+    // position (tessera-quant.cpp's ts_quantize_2d_ternary), so B must be
+    // the matching original activation - a caller that pre-scales
+    // activations for AWQ (e.g. build_tile640_lora_mm/build_tile_rdna3_
+    // lora_mm's w_act_scale multiply) must pass the PRE-scale tensor here,
+    // not the post-scale one the main tile matmul consumes.
+    //   base:                   F32   [out_dim, n_tokens, n_batch, n_seqs]
+    //   A_outlier_row_offsets:  I32   [out_dim + 1]  (CSR)
+    //   A_outlier_cols:         I32   [total_outliers]
+    //   A_outlier_vals:         F16   [total_outliers]
+    //   B:                      F16 or F32   [in_dim, n_tokens, n_batch, n_seqs]
+    // Output: F32, same shape as base. CPU-only (see GGML_OP_SPARSE_
+    // OUTLIER_ADD's comment) - outliers are ~2% of elements, cheap
+    // regardless of device.
+    GGML_API struct ggml_tensor * ggml_sparse_outlier_add(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * base,
+            struct ggml_tensor  * A_outlier_row_offsets,
+            struct ggml_tensor  * A_outlier_cols,
+            struct ggml_tensor  * A_outlier_vals,
+            struct ggml_tensor  * B);
+
     // Graph-resident importance-matrix observer. The output is F32
-    // [4*channels + 1, experts], where each expert row contains per-channel
-    // sum(x^2), sum(abs(x)), sum(x^4), max(abs(x)), followed by the routed
-    // sample count. When ids is NULL the observer is dense and experts must
-    // be 1.
+    // [4*channels + 1 + channels*capture_tokens, experts], where each expert
+    // row contains per-channel sum(x^2), sum(abs(x)), sum(x^4), max(abs(x)),
+    // the routed sample count, then (dense/ids==NULL only - capture_tokens
+    // is ignored, always 0 output rows, for the routed/MoE case) the first
+    // min(count, capture_tokens) raw activation rows, row-major
+    // [capture_tokens][channels] - real per-token calibration samples for
+    // export-ternary's SEPTQ/DartQuant/Hessian-sensitivity paths
+    // (llama-imatrix's --calib-tokens). capture_tokens=0 reproduces the
+    // exact prior output shape and kernel cost. When ids is NULL the
+    // observer is dense and experts must be 1.
     GGML_API struct ggml_tensor * ggml_imatrix_observer(
             struct ggml_context * ctx,
             struct ggml_tensor  * activations,
             struct ggml_tensor  * ids,
             struct ggml_tensor  * weight_anchor,
-            int32_t               experts);
+            int32_t               experts,
+            int32_t               capture_tokens);
 
     // Fused dense observation and F32-to-F16 cast. One scheduler-owned
     // allocation contains an F16 activation prefix and an aligned F32

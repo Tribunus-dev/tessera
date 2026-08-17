@@ -2097,6 +2097,24 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             params.features_warmup = value;
         }
     ).set_examples({LLAMA_EXAMPLE_IMATRIX}));
+    add_opt(common_arg(
+        {"--calib-tokens"}, "N",
+        string_format(
+            "[imatrix] per-tensor number of raw calibration activation rows "
+            "to capture and store as an optional \"<name>.calib_x\" GGUF "
+            "tensor [in_dim, N], alongside the usual aggregate sums/counts "
+            "stats (default: %d, 0 = disabled - no calib_x tensors written, "
+            "same output as today). Consumed by export-ternary's SEPTQ "
+            "banded-Hessian quantizer, DartQuant's training loop, and the "
+            "--sensitivity-out Hessian-based ranking; all three otherwise "
+            "fall back to weaker proxies. Captured from the exact same "
+            "per-tensor matmul-input activations already flowing through "
+            "the sums accumulation below, just the first N rows seen.",
+            params.calib_x_tokens),
+        [](common_params & params, int value) {
+            params.calib_x_tokens = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_IMATRIX}));
     add_opt(common_arg({ "-fa", "--flash-attn" }, "[on|off|auto]",
                        string_format("set Flash Attention use ('on', 'off', or 'auto', default: '%s')",
                                      llama_flash_attn_type_name(params.flash_attn_type)),
@@ -4857,6 +4875,41 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             tessera_params.imatrix = value;
         }
     ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_EXPORT_TERNARY}));
+    add_opt(common_arg(
+        {"--escape-list"}, "PATH",
+        "Tessera (export-ternary): file of tensor names (one per line,\n"
+        "'#'-comments and blank lines skipped) to force to BF16 passthrough\n"
+        "instead of ternary quantization, regardless of the usual name-\n"
+        "pattern decision. Optional; omitted or empty reproduces the\n"
+        "default all-ternary-eligible behavior. Used by\n"
+        "scripts/progressive-mixed-precision.py's sensitivity search.",
+        [](common_params &, const std::string & value) {
+            tessera_params.export_escape_list = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_EXPORT_TERNARY}));
+    add_opt(common_arg(
+        {"--sensitivity-out"}, "PATH",
+        "Tessera (export-ternary): write a {tensor_name: score} JSON\n"
+        "sidecar (ts_l5_imatrix_magnitude) ranking each ternary-eligible\n"
+        "tensor's sensitivity, for scripts/progressive-mixed-precision.py\n"
+        "to prioritize escape candidates. Optional.",
+        [](common_params &, const std::string & value) {
+            tessera_params.export_sensitivity_out = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_EXPORT_TERNARY}));
+    add_opt(common_arg(
+        {"--reuse-ttt"}, "PATH",
+        "Tessera (export-ternary): a prior round's own .ttt output\n"
+        "directory. Tensors not in --escape-list are looked up there first\n"
+        "and reused verbatim instead of recomputing, skipping weight\n"
+        "dequant and the 4-way algorithm selection entirely. Optional;\n"
+        "used by scripts/progressive-mixed-precision.py's rounds 1+ (its\n"
+        "escape-list only grows, so round 0's ttt output already has\n"
+        "everything every later round needs).",
+        [](common_params &, const std::string & value) {
+            tessera_params.export_reuse_ttt = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_EXPORT_TERNARY}));
 
     // ----- `pack` subcommand -----
     // Reads a tile-neutral safetensors directory, packs each tensor to the
@@ -4881,9 +4934,22 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         {"--tile"}, "{t640|t512|t1024|auto}",
         "Tessera (pack): target tile geometry (default: t640). \"auto\"\n"
         "probes the Metal device family and maps Apple Silicon to T640,\n"
-        "Intel to T512, unknown to T640.",
+        "Intel to T512, unknown to T640. Wins over --quant when both are\n"
+        "given.",
         [](common_params &, const std::string & value) {
             tessera_params.pack_tile = value;
+            tessera_params.pack_tile_explicit = true;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_PACK}));
+    add_opt(common_arg(
+        {"--quant"}, "{host-amd}",
+        "Tessera (pack): host-aware quant mode. \"host-amd\" probes this\n"
+        "host's AMD GPU arch and resolves to the matching tile-amd-*\n"
+        "config (RDNA3/RDNA3.5 only this wave), falling back to t640 with\n"
+        "a stderr warning on any other host. Ignored if --tile is also\n"
+        "given.",
+        [](common_params &, const std::string & value) {
+            tessera_params.pack_quant = value;
         }
     ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_PACK}));
 

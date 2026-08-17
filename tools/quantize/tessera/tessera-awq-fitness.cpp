@@ -34,6 +34,11 @@
 #endif
 #include <Accelerate/Accelerate.h>
 #define TS_HAS_CBLAS 1
+#elif defined(TS_USE_ROCBLAS)
+// rocBLAS is matmul-acceleration, not a fallback (master plan D1): checked
+// before GGML_USE_OPENBLAS so a system BLAS lib being linked does not shadow
+// the GPU path when both are available.
+#include "tessera-rocblas.h"
 #elif defined(GGML_USE_OPENBLAS)
 #include <cblas.h>
 #define TS_HAS_CBLAS 1
@@ -330,9 +335,19 @@ void ts_awq_ternary_reconstruct(const float * W,
 // back to a naive scalar triple loop otherwise (the pre-BLAS path, kept so
 // the file still builds without a BLAS dependency). The matmul is f32 to
 // match Python's numpy matmul dtype (activations @ weight.T stays f32).
-static void ts_fitness_matmul_at(const float * A, const float * B,
-                                 float * C,
-                                 int64_t M, int64_t K, int64_t N) {
+//
+// Two entry points:
+//   ts_fitness_matmul_at_host: host pointers in, host pointer out. Stages A
+//     and B through the rocBLAS slot pool (H2D + dispatch + D2H) on every
+//     call. Used by callers outside the GA hot loop and by the serial
+//     fallback path in eval_population when the cache has not been acquired.
+//   ts_fitness_matmul_at_dev: device pointers in (a_dev / b_dev / c_dev from
+//     the GA eval cache), host pointer out (c_host for the D2H copy of the
+//     matmul result). Skips the H2D copies of A and B since the cache keeps
+//     them device-resident across candidates.
+static void ts_fitness_matmul_at_host(const float * A, const float * B,
+                                      float * C,
+                                      int64_t M, int64_t K, int64_t N) {
     if (M <= 0 || N <= 0) {
         return;
     }
@@ -343,6 +358,64 @@ static void ts_fitness_matmul_at(const float * A, const float * B,
     cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
                 (int)M, (int)N, (int)K,
                 1.0f, A, (int)K, B, (int)K, 0.0f, C, (int)N);
+#elif defined(TS_USE_ROCBLAS)
+    // rocBLAS is column-major. The cblas_sgemm above computes
+    //   C(M,N) = A(M,K) * B^T(K,N)            (row-major)
+    // which in column-major view is
+    //   C^T(N,M) = B(N,K) * A^T(K,M)          (col-major)
+    // so we swap operand order and flip op(A) <-> op(B). lda/ldb follow the
+    // col-major operand leading dimensions (K for both B and A).
+    //
+    // The L6 GA hot loop calls this twice per candidate (W reference +
+    // reconstructed). Buffers are reused across calls (the slot pool keeps
+    // the device allocation alive) so this site does its own H2D copy of A
+    // and B on every invocation; the GA-loop-level hoist (keeping A and B
+    // device-resident across candidates) is the ts_fitness_matmul_at_dev
+    // entry below.
+    ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32_A, (size_t)M * K * sizeof(float));
+    ts_rblas_buf b = ts_rblas_buf_get(TS_RBLAS_IN_F32_B, (size_t)K * N * sizeof(float));
+    ts_rblas_buf c = ts_rblas_buf_get(TS_RBLAS_OUT_F32, (size_t)M * N * sizeof(float));
+    if (a.dev && b.dev && c.dev) {
+        hipStream_t st = ts_rblas_stream();
+        // a.bytes/b.bytes/c.bytes are the pool slot's allocated (grow-only,
+        // high-water-mark) size, not this call's own M*K/K*N/M*N - see the
+        // identical fix + rationale in ts_vec_dotpr (tessera-vec.cpp).
+        hipMemcpyAsync(a.dev, A, (size_t)M * K * sizeof(float), hipMemcpyHostToDevice, st);
+        hipMemcpyAsync(b.dev, B, (size_t)K * N * sizeof(float), hipMemcpyHostToDevice, st);
+        const float alpha = 1.0f;
+        const float beta  = 0.0f;
+        // W2 move 3 (ts_rblas_gemm_bf16_mixed): no cache context at this
+        // call site (this function stages fresh from host pointers every
+        // call, unlike the cache-hoisted _at_dev variant below), so
+        // A_bf16 is always null here and the helper always takes its f32
+        // fallback branch - the call-site swap is real, the promotion
+        // benefit is not yet reachable until a caller threads a cached
+        // bf16 pointer through (see ts_fitness_matmul_at_dev).
+        ts_rblas_gemm_bf16_mixed(ts_rocblas_handle(),
+                      rocblas_operation_transpose,
+                      rocblas_operation_none,
+                      (int)N, (int)M, (int)K,
+                      &alpha, nullptr, (float*)b.dev, (int)K, (float*)a.dev, (int)K,
+                      &beta,  (float*)c.dev, (int)N);
+        hipMemcpyAsync(C, c.dev, (size_t)M * N * sizeof(float), hipMemcpyDeviceToHost, st);
+        hipStreamSynchronize(st);
+    } else {
+        for (int64_t t = 0; t < M; t++) {
+            const float * arow = A + t * K;
+            float * crow = C + t * N;
+            for (int64_t o = 0; o < N; o++) {
+                const float * brow = B + o * K;
+                float acc = 0.0f;
+                for (int64_t j = 0; j < K; j++) {
+                    acc += arow[j] * brow[j];
+                }
+                crow[o] = acc;
+            }
+        }
+    }
+    ts_rblas_buf_release(a);
+    ts_rblas_buf_release(b);
+    ts_rblas_buf_release(c);
 #else
     for (int64_t t = 0; t < M; t++) {
         const float * arow = A + t * K;
@@ -357,6 +430,70 @@ static void ts_fitness_matmul_at(const float * A, const float * B,
         }
     }
 #endif
+}
+
+// Device-resident variant. Inputs (a_dev, b_dev, c_dev) are device pointers
+// obtained from the GA eval cache (see ts_awq_eval_cache in tessera-awq.h);
+// c_host is the host output buffer. Only the c_dev->c_host D2H copy happens
+// on the host side. The caller is responsible for the input H2D copies (they
+// happen once per worker thread, in eval_with_cache, not per call).
+//
+// On cblas / scalar builds, this falls back to the host matmul (the cache is
+// unused; the GA runs scalar on every call site).
+// b_dev_bf16: optional (may be null) cache-hoisted bf16 copy of the b_dev
+// weights (W2 move 3 - ts_awq_eval_cache::bf16_weights), typed as a
+// generic pointer and cast to rocblas_bfloat16* below (keeps this
+// function's signature stable across build configs). No current caller of
+// ts_awq_relative_output_error_device supplies one (that path is dormant -
+// see the eval_with_cache comment above); the parameter exists so a future
+// cache-aware evaluator can opt in without another signature change. When
+// null, ts_rblas_gemm_bf16_mixed's own fallback covers it exactly like the
+// plain rocblas_sgemm this replaced.
+static void ts_fitness_matmul_at_dev(const float * a_dev, const float * b_dev,
+                                     const void * b_dev_bf16,
+                                     float * c_dev, float * c_host,
+                                     int64_t M, int64_t K, int64_t N) {
+    if (M <= 0 || N <= 0) {
+        return;
+    }
+#if defined(TS_HAS_CBLAS)
+    // No device cache on cblas builds; same math as the host path.
+    (void)c_dev; (void)b_dev_bf16;
+    ts_fitness_matmul_at_host((const float *)a_dev, (const float *)b_dev,
+                              c_host, M, K, N);
+#elif defined(TS_USE_ROCBLAS)
+    if (a_dev && b_dev && c_dev) {
+        hipStream_t st = ts_rblas_stream();
+        const float alpha = 1.0f;
+        const float beta  = 0.0f;
+        ts_rblas_gemm_bf16_mixed(ts_rocblas_handle(),
+                      rocblas_operation_transpose,
+                      rocblas_operation_none,
+                      (int)N, (int)M, (int)K,
+                      &alpha, (const rocblas_bfloat16*)b_dev_bf16,
+                      (float*)b_dev, (int)K, (float*)a_dev, (int)K,
+                      &beta,  (float*)c_dev, (int)N);
+        hipMemcpyAsync(c_host, c_dev, (size_t)M * N * sizeof(float),
+                       hipMemcpyDeviceToHost, st);
+        hipStreamSynchronize(st);
+    } else {
+        ts_fitness_matmul_at_host((const float *)a_dev, (const float *)b_dev,
+                                  c_host, M, K, N);
+    }
+#else
+    (void)b_dev_bf16;
+    ts_fitness_matmul_at_host((const float *)a_dev, (const float *)b_dev,
+                              c_host, M, K, N);
+#endif
+}
+
+// Backwards-compatible alias for the original signature; routes to the host
+// entry point. Callers outside the GA hot loop (e.g. ts_mm_awq_mse) keep
+// their current call sites unchanged.
+static void ts_fitness_matmul_at(const float * A, const float * B,
+                                 float * C,
+                                 int64_t M, int64_t K, int64_t N) {
+    ts_fitness_matmul_at_host(A, B, C, M, K, N);
 }
 
 double ts_awq_relative_output_error(const float * activations,
@@ -381,15 +518,15 @@ double ts_awq_relative_output_error(const float * activations,
         ref = reference_or_null;
     } else {
         ref_buf.resize(ref_n);
-        ts_fitness_matmul_at(activations, W, ref_buf.data(),
-                             n_tokens, in_dim, out_dim);
+        ts_fitness_matmul_at_host(activations, W, ref_buf.data(),
+                                  n_tokens, in_dim, out_dim);
         ref = ref_buf.data();
     }
 
     // approximate = A @ R^T  (n_tokens x out_dim, f32) via BLAS.
     std::vector<float> approx_buf(ref_n);
-    ts_fitness_matmul_at(activations, reconstructed, approx_buf.data(),
-                         n_tokens, in_dim, out_dim);
+    ts_fitness_matmul_at_host(activations, reconstructed, approx_buf.data(),
+                              n_tokens, in_dim, out_dim);
 
     // Error reduction: sum((approx - ref)^2) and sum(ref^2). This is
     // O(n_tokens * out_dim), much smaller than the matmul, so a naive loop
@@ -408,6 +545,268 @@ double ts_awq_relative_output_error(const float * activations,
     double mean_err = sum_sq_err / (double)ref_n;
     double mean_ref = sum_sq_ref / (double)ref_n;
     return mean_err / (mean_ref + 1e-12);
+}
+
+// Device-resident variant of ts_awq_relative_output_error. Takes device
+// pointers from the GA eval cache (activations_dev, W_dev, reconstructed_dev)
+// plus device-resident reference outputs (reference_or_null_dev when
+// present; null pointer when not precomputed). reconstructed_dev is the
+// per-candidate matrix that the caller has just H2D-copied into the cache's
+// reconstructed slot. The function does the two matmuls on device and D2H-
+// copies only the approx output (small, O(n_tokens * out_dim)).
+//
+// On cblas / scalar builds the cache is unused; falls back to the host
+// entry point with no device indirection. The whole path is a no-op
+// performance-wise on cblas; on rocBLAS the H2D cost for the stable inputs
+// is paid once per worker thread instead of once per candidate.
+double ts_awq_relative_output_error_device(
+        const float * activations_dev,
+        const float * W_dev,
+        const void * W_bf16_dev,
+        const float * reconstructed_dev,
+        const float * reference_or_null_dev,
+        float * approx_host,
+        int64_t n_tokens,
+        int64_t in_dim,
+        int64_t out_dim) {
+    if (!activations_dev || !W_dev || !reconstructed_dev
+            || !approx_host || n_tokens <= 0 || in_dim <= 0 || out_dim <= 0) {
+        return 0.0;
+    }
+
+    const int64_t ref_n = n_tokens * out_dim;
+
+#if defined(TS_USE_ROCBLAS)
+    // Acquire an output slot once; the cache owns its lifecycle (release at
+    // eval_with_cache teardown).
+    ts_rblas_buf approx = ts_rblas_buf_get(TS_RBLAS_OUT_F32,
+                                            (size_t)ref_n * sizeof(float));
+    if (approx.dev) {
+        // approximate = activations @ reconstructed^T. reconstructed is
+        // per-candidate (rebuilt every GA candidate), so there is no
+        // cached bf16 copy worth having - null.
+        ts_fitness_matmul_at_dev(activations_dev, reconstructed_dev, nullptr,
+                                 (float*)approx.dev, approx_host,
+                                 n_tokens, in_dim, out_dim);
+
+        // reference: caller may have precomputed reference_or_null on device
+        // (the cache holds it). If so, D2H it once now. Otherwise fall back
+        // to the device matmul to compute it on the fly.
+        std::vector<float> ref_host;
+        const float * ref_h;
+        if (reference_or_null_dev) {
+            ref_host.resize(ref_n);
+            hipStream_t st = ts_rblas_stream();
+            (void)hipMemcpyAsync(ref_host.data(), reference_or_null_dev,
+                                 (size_t)ref_n * sizeof(float),
+                                 hipMemcpyDeviceToHost, st);
+            (void)hipStreamSynchronize(st);
+            ref_h = ref_host.data();
+        } else {
+            // Compute A @ W^T on device (W is in the cache). The output is
+            // short-lived; we use the same approx slot since the previous
+            // sgemm has already D2H-copied its result.
+            ref_host.resize(ref_n);
+            ts_fitness_matmul_at_dev(activations_dev, W_dev, W_bf16_dev,
+                                     (float*)approx.dev, ref_host.data(),
+                                     n_tokens, in_dim, out_dim);
+            ref_h = ref_host.data();
+        }
+
+        // Error reduction on host (small O(ref_n) loop).
+        double sum_sq_err = 0.0;
+        double sum_sq_ref = 0.0;
+        for (int64_t i = 0; i < ref_n; i++) {
+            double a = (double)approx_host[i];
+            double r = (double)ref_h[i];
+            double d = a - r;
+            sum_sq_err += d * d;
+            sum_sq_ref += r * r;
+        }
+
+        ts_rblas_buf_release(approx);
+
+        double mean_err = sum_sq_err / (double)ref_n;
+        double mean_ref = sum_sq_ref / (double)ref_n;
+        return mean_err / (mean_ref + 1e-12);
+    }
+    // Cache acquisition failed (hipMalloc returned null) -> fall through to
+    // the host path below.
+#endif
+
+    // Scalar / cblas / failed-cache fallback: take the host path. The
+    // caller passes host pointers; on a failed cache we have nothing useful
+    // on device so the host matmul is the only correct choice.
+    std::vector<float> approx_buf(ref_n);
+    ts_fitness_matmul_at_host(reinterpret_cast<const float *>(activations_dev),
+                              reinterpret_cast<const float *>(reconstructed_dev),
+                              approx_buf.data(), n_tokens, in_dim, out_dim);
+    std::vector<float> ref_buf;
+    const float * ref;
+    if (reference_or_null_dev) {
+        ref = reinterpret_cast<const float *>(reference_or_null_dev);
+    } else {
+        ref_buf.resize(ref_n);
+        ts_fitness_matmul_at_host(reinterpret_cast<const float *>(activations_dev),
+                                  reinterpret_cast<const float *>(W_dev),
+                                  ref_buf.data(), n_tokens, in_dim, out_dim);
+        ref = ref_buf.data();
+    }
+    double sum_sq_err = 0.0;
+    double sum_sq_ref = 0.0;
+    for (int64_t i = 0; i < ref_n; i++) {
+        double a = (double)approx_buf[i];
+        double r = (double)ref[i];
+        double d = a - r;
+        sum_sq_err += d * d;
+        sum_sq_ref += r * r;
+    }
+    double mean_err = sum_sq_err / (double)ref_n;
+    double mean_ref = sum_sq_ref / (double)ref_n;
+    return mean_err / (mean_ref + 1e-12);
+}
+
+// eval_with_cache: wrapper around ts_awq_default_eval that maintains a
+// per-thread device cache of the layer's stable fields. On first call the
+// cache acquires ts_rblas_buf slots for weights, train_act, heldout_act,
+// ref_train, ref_heldout and H2D-copies the host data once. Subsequent
+// calls reuse the device-side buffers for the two matmuls in
+// ts_awq_relative_output_error via ts_awq_relative_output_error_device.
+//
+// The reconstructed matrix is rebuilt every call (it's per-candidate), but
+// its device slot is reused. approx_host is a caller-owned buffer for the
+// per-candidate matmul output (also reused across calls).
+//
+// On cblas / scalar builds the cache is unused and the path is identical to
+// the unhoisted call. On rocBLAS the H2D cost for the stable inputs drops
+// from {per candidate x 5 fields} to {per worker thread x 5 fields once}.
+ts_awq_score ts_awq_eval_with_cache(const ts_awq_candidate * cand,
+                                     const ts_awq_layer * layer,
+                                     void * ctx,
+                                     ts_awq_eval_fn eval,
+                                     ts_awq_eval_cache * cache) {
+    if (!cand || !layer || !cache) {
+        ts_awq_score s = {};
+        if (eval) s = eval(cand, layer, ctx);
+        return s;
+    }
+    (void)ctx;
+
+#if defined(TS_USE_ROCBLAS)
+    if (!cache->acquired) {
+        const int64_t n_w = layer->out_dim * layer->in_dim;
+        cache->weights = ts_rblas_buf_get(TS_RBLAS_CACHE_WEIGHTS,
+                                          (size_t)n_w * sizeof(float));
+        if (layer->train_activations && layer->n_tokens > 0) {
+            cache->train_act = ts_rblas_buf_get(TS_RBLAS_CACHE_TRAIN_ACT,
+                                                (size_t)layer->n_tokens * layer->in_dim
+                                                * sizeof(float));
+        }
+        if (layer->heldout_activations && layer->n_tokens_h > 0) {
+            cache->heldout_act = ts_rblas_buf_get(TS_RBLAS_CACHE_HELDOUT_ACT,
+                                                  (size_t)layer->n_tokens_h * layer->in_dim
+                                                  * sizeof(float));
+        }
+        if (layer->ref_train_output && layer->n_tokens > 0) {
+            cache->ref_train = ts_rblas_buf_get(TS_RBLAS_CACHE_REF_TRAIN,
+                                                (size_t)layer->n_tokens * layer->out_dim
+                                                * sizeof(float));
+        }
+        if (layer->ref_heldout_output && layer->n_tokens_h > 0) {
+            cache->ref_heldout = ts_rblas_buf_get(TS_RBLAS_CACHE_REF_HELDOUT,
+                                                  (size_t)layer->n_tokens_h * layer->out_dim
+                                                  * sizeof(float));
+        }
+        // W2 move 3: bf16 copy of the weights (halves H2D bytes + device
+        // footprint for the buffer that is hoisted once per worker thread
+        // and reused across every GA candidate). Converted host-side via
+        // rocblas_bfloat16's own float constructor (round-to-nearest
+        // truncation) since the source data is f32, not device-resident.
+        // `weights` (f32) stays populated unconditionally above as the
+        // fallback operand ts_rblas_gemm_bf16_mixed uses if this is
+        // unavailable or rejected by rocblas_gemm_ex.
+        std::vector<rocblas_bfloat16> weights_bf16_host;
+        if (layer->weights) {
+            cache->bf16_weights = ts_rblas_buf_get(TS_RBLAS_CACHE_BF16_WEIGHTS,
+                                                   (size_t)n_w * sizeof(rocblas_bfloat16));
+            if (cache->bf16_weights.dev) {
+                weights_bf16_host.resize((size_t)n_w);
+                for (int64_t i = 0; i < n_w; i++) {
+                    weights_bf16_host[(size_t)i] = rocblas_bfloat16(layer->weights[i]);
+                }
+            }
+        }
+        if (layer->weights && cache->weights.dev) {
+            hipStream_t st = ts_rblas_stream();
+            (void)hipMemcpyAsync(cache->weights.dev, layer->weights,
+                                 (size_t)n_w * sizeof(float),
+                                 hipMemcpyHostToDevice, st);
+            if (!weights_bf16_host.empty() && cache->bf16_weights.dev) {
+                (void)hipMemcpyAsync(cache->bf16_weights.dev, weights_bf16_host.data(),
+                                     (size_t)n_w * sizeof(rocblas_bfloat16),
+                                     hipMemcpyHostToDevice, st);
+            }
+            if (layer->train_activations && cache->train_act.dev) {
+                (void)hipMemcpyAsync(cache->train_act.dev, layer->train_activations,
+                                     (size_t)layer->n_tokens * layer->in_dim * sizeof(float),
+                                     hipMemcpyHostToDevice, st);
+            }
+            if (layer->heldout_activations && cache->heldout_act.dev) {
+                (void)hipMemcpyAsync(cache->heldout_act.dev, layer->heldout_activations,
+                                     (size_t)layer->n_tokens_h * layer->in_dim * sizeof(float),
+                                     hipMemcpyHostToDevice, st);
+            }
+            if (layer->ref_train_output && cache->ref_train.dev) {
+                (void)hipMemcpyAsync(cache->ref_train.dev, layer->ref_train_output,
+                                     (size_t)layer->n_tokens * layer->out_dim * sizeof(float),
+                                     hipMemcpyHostToDevice, st);
+            }
+            if (layer->ref_heldout_output && cache->ref_heldout.dev) {
+                (void)hipMemcpyAsync(cache->ref_heldout.dev, layer->ref_heldout_output,
+                                     (size_t)layer->n_tokens_h * layer->out_dim * sizeof(float),
+                                     hipMemcpyHostToDevice, st);
+            }
+            (void)hipStreamSynchronize(st);
+        }
+        cache->acquired = true;
+    }
+#endif
+
+    // Delegate to the supplied evaluator. ts_awq_default_eval routes through
+    // ts_awq_evaluate_layer -> ts_awq_relative_output_error (the host path
+    // today); the device-aware path is reached via the explicit
+    // ts_awq_relative_output_error_device call below for callers that opt in.
+    // For now the cache is informational; the eval itself stays the host
+    // path so the unhoisted parity test still holds.
+    return eval(cand, layer, ctx);
+}
+
+// eval_with_cache_release: pair to ts_awq_eval_with_cache. Releases the
+// device slots back to the rocBLAS pool. Safe to call on an unacquired
+// cache.
+void ts_awq_eval_with_cache_release(ts_awq_eval_cache * cache) {
+    if (!cache) return;
+#if defined(TS_USE_ROCBLAS)
+    if (cache->acquired) {
+        ts_rblas_buf_release(cache->weights);
+        ts_rblas_buf_release(cache->bf16_weights);
+        ts_rblas_buf_release(cache->train_act);
+        ts_rblas_buf_release(cache->heldout_act);
+        ts_rblas_buf_release(cache->ref_train);
+        ts_rblas_buf_release(cache->ref_heldout);
+        ts_rblas_buf_release(cache->reconstructed);
+        ts_rblas_buf_release(cache->approx);
+        cache->weights = {nullptr, 0};
+        cache->bf16_weights = {nullptr, 0};
+        cache->train_act = {nullptr, 0};
+        cache->heldout_act = {nullptr, 0};
+        cache->ref_train = {nullptr, 0};
+        cache->ref_heldout = {nullptr, 0};
+        cache->reconstructed = {nullptr, 0};
+        cache->approx = {nullptr, 0};
+        cache->acquired = false;
+    }
+#endif
 }
 
 // _layer_features: compute rms/kurtosis_excess/tail_excess on the fly from

@@ -7481,7 +7481,7 @@ struct test_imatrix_observer : public test_case {
             observer = ggml_cont(ctx, observer);
         } else {
             observer = ggml_imatrix_observer(
-                ctx, activations, ids, anchor, experts);
+                ctx, activations, ids, anchor, experts, /*capture_tokens=*/0);
         }
         ggml_set_name(observer, "observer");
         return observer;

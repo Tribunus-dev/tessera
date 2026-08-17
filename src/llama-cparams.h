@@ -69,6 +69,7 @@ struct llama_cparams {
     void * cb_eval_user_data;
     bool imatrix_observers;
     bool imatrix_activation_capture;
+    int32_t calib_x_tokens = 0;
 
     // Per-scope observer state. Each scope keeps its own filter, user_data,
     // and epoch so that multiple llama_context instances in the same process

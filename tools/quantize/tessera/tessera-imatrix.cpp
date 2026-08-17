@@ -13,6 +13,11 @@
 #include <cmath>
 #include <algorithm>
 
+// Forward-declared so both loaders can store keys in the same normalized
+// form ts_imatrix_lookup queries with (definition + rationale below, next
+// to ts_imatrix_lookup itself).
+static std::string ts_imatrix_normalize_name(const char * tensor_name);
+
 // ---------------------------------------------------------------------------
 // minimal ZIP local-file-header reader (stored entries only, no compression)
 // ---------------------------------------------------------------------------
@@ -223,7 +228,7 @@ int ts_imatrix_load_npz(const char * path, ts_imatrix * out, std::string * err_m
             continue; // skip non-f32 or malformed entries
         }
 
-        out->data[key] = std::move(vals);
+        out->data[ts_imatrix_normalize_name(key.c_str())] = std::move(vals);
     }
 
     out->source_path = path;
@@ -251,6 +256,15 @@ int ts_imatrix_load_gguf(const char * path, ts_imatrix * out, std::string * err_
     }
 
     for (const auto & kv : loaded.entries) {
+        // loaded.entries keys keep the GGUF tensor's full name (e.g.
+        // "blk.0.attn_v.weight" - only the ".in_sum2"/".counts"/etc. suffix
+        // was stripped by common_imatrix_load). ts_imatrix_lookup queries
+        // with ".weight" already stripped (ts_imatrix_normalize_name), so
+        // storage must be normalized the same way here or every GGUF-sourced
+        // lookup silently misses (confirmed empirically: act_scales was
+        // nullptr for every tensor despite have_imatrix=true and a
+        // successfully-populated `data` map under the un-normalized key).
+        const std::string name = ts_imatrix_normalize_name(kv.first.c_str());
         const auto & entry = kv.second;
         const size_t n = entry.sums.size();
         if (n == 0) {
@@ -262,7 +276,7 @@ int ts_imatrix_load_gguf(const char * path, ts_imatrix * out, std::string * err_
             float denom = (c > 0) ? (float)c : 1.0f;
             vals[i] = entry.sums[i] / denom;
         }
-        out->data[kv.first] = std::move(vals);
+        out->data[name] = std::move(vals);
 
         // Per-channel max |activation| (.in_maxabs). The producer always
         // collects this; the loader's optional-field path leaves the vector
@@ -270,7 +284,17 @@ int ts_imatrix_load_gguf(const char * path, ts_imatrix * out, std::string * err_
         // off this, so we surface it verbatim - no counts scaling applies
         // (max is non-additive by definition).
         if (!entry.max_abs.empty()) {
-            out->max_abs[kv.first] = entry.max_abs;
+            out->max_abs[name] = entry.max_abs;
+        }
+
+        // Raw calibration activation rows (llama-imatrix's --calib-tokens),
+        // when the producer collected them. Absent for GGUFs written
+        // without --calib-tokens - callers must treat that as "no real
+        // calibration activations available" via ts_imatrix_lookup_calib_x
+        // returning nullptr, same convention as max_abs above.
+        if (!entry.calib_x.empty() && entry.calib_x_tokens > 0) {
+            out->calib_x[name] = entry.calib_x;
+            out->calib_x_tokens[name] = entry.calib_x_tokens;
         }
     }
 
@@ -331,6 +355,35 @@ const float * ts_imatrix_lookup_max_abs(const ts_imatrix * imatrix,
 
     if (out_dim) {
         *out_dim = (int64_t)it->second.size();
+    }
+    return it->second.data();
+}
+
+const float * ts_imatrix_lookup_calib_x(const ts_imatrix * imatrix,
+                                        const char * tensor_name,
+                                        int64_t * out_n_tokens,
+                                        int64_t * out_in_dim) {
+    if (!imatrix || !tensor_name || imatrix->calib_x.empty()) {
+        return nullptr;
+    }
+
+    const std::string name = ts_imatrix_normalize_name(tensor_name);
+
+    auto it = imatrix->calib_x.find(name);
+    if (it == imatrix->calib_x.end()) {
+        return nullptr;
+    }
+    auto tok_it = imatrix->calib_x_tokens.find(name);
+    if (tok_it == imatrix->calib_x_tokens.end() || tok_it->second <= 0) {
+        return nullptr;
+    }
+
+    const int64_t n_tokens = tok_it->second;
+    if (out_n_tokens) {
+        *out_n_tokens = n_tokens;
+    }
+    if (out_in_dim) {
+        *out_in_dim = (int64_t) it->second.size() / n_tokens;
     }
     return it->second.data();
 }

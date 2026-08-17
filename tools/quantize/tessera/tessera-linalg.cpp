@@ -14,6 +14,9 @@
 #endif
 #include <Accelerate/Accelerate.h>
 #define TS_HAS_CBLAS 1
+#elif defined(TS_USE_ROCBLAS)
+// rocBLAS before GGML_USE_OPENBLAS: matmul-acceleration, not fallback (D1).
+#include "tessera-rocblas.h"
 #elif defined(GGML_USE_OPENBLAS)
 #include <cblas.h>
 #define TS_HAS_CBLAS 1
@@ -60,6 +63,31 @@ static void ts_matmul(const float * A, const float * B, float * C,
     cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
                 (int)m, (int)n, (int)k,
                 1.0f, A, (int)k, B, (int)n, 0.0f, C, (int)n);
+#elif defined(TS_USE_ROCBLAS)
+    // Col-major: C^T(n,m) = B^T(n,k) * A^T(k,m).
+    {
+    const float alpha = 1.0f;
+    const float beta  = 0.0f;
+    rocblas_status st = ts_rblas_sgemm_bf16acc(
+        rocblas_operation_none, rocblas_operation_none,
+        (int)n, (int)m, (int)k,
+        &alpha,
+        B, (int)n, (size_t)k * n,
+        A, (int)k, (size_t)m * k,
+        &beta,
+        C, (int)n, (size_t)m * n);
+    if (st != rocblas_status_success) {
+        for (int64_t i = 0; i < m; i++) {
+            for (int64_t j = 0; j < n; j++) {
+                float s = 0.0f;
+                for (int64_t p = 0; p < k; p++) {
+                    s += A[i*k + p] * B[p*n + j];
+                }
+                C[i*n + j] = s;
+            }
+        }
+    }
+    }
 #else
     for (int64_t i = 0; i < m; i++) {
         for (int64_t j = 0; j < n; j++) {
@@ -83,6 +111,37 @@ static void ts_matmul_atb(const float * A, const float * B, float * C,
     cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
                 (int)n, (int)k, (int)m,
                 1.0f, A, (int)n, B, (int)k, 0.0f, C, (int)k);
+#elif defined(TS_USE_ROCBLAS)
+    // Row-major C(n x k) = A(m x n)^T @ B(m x k) via C^T = B^T @ A: the
+    // as-stored buffers, reinterpreted column-major, already ARE B^T/A^T,
+    // so this needs NO transpose on the B-derived operand and Transpose
+    // on the A-derived operand - (transpose, none) has this backwards.
+    // Same bug, same fix, as tessera-dartquant.cpp's ts_dq_matmul_atb -
+    // verified against the same standalone rocBLAS-linked ground-truth
+    // test before fixing (see gap ledger).
+    {
+    const float alpha = 1.0f;
+    const float beta  = 0.0f;
+    rocblas_status st = ts_rblas_sgemm_bf16acc(
+        rocblas_operation_none, rocblas_operation_transpose,
+        (int)k, (int)n, (int)m,
+        &alpha,
+        B, (int)k, (size_t)m * k,
+        A, (int)n, (size_t)m * n,
+        &beta,
+        C, (int)k, (size_t)n * k);
+    if (st != rocblas_status_success) {
+        for (int64_t i = 0; i < n; i++) {
+            for (int64_t j = 0; j < k; j++) {
+                float s = 0.0f;
+                for (int64_t r = 0; r < m; r++) {
+                    s += A[r*n + i] * B[r*k + j];
+                }
+                C[i*k + j] = s;
+            }
+        }
+    }
+    }
 #else
     for (int64_t i = 0; i < n; i++) {
         for (int64_t j = 0; j < k; j++) {
@@ -269,6 +328,36 @@ void ts_linalg_svd_topk(const float * A, float * U, float * S, float * V,
     for (int64_t i = 0; i < n; i++)
         for (int64_t j = i + 1; j < n; j++)
             AtA[j*n + i] = AtA[i*n + j];
+#elif defined(TS_USE_ROCBLAS)
+    // rocBLAS is column-major; row-major "Upper + Trans" maps to col-major
+    // "Lower + NoTrans". The fill pattern is symmetric so the upper->lower
+    // copy below produces the same full matrix as the cblas path.
+    ts_rblas_buf a = ts_rblas_buf_get(TS_RBLAS_IN_F32_A, (size_t)m * n * sizeof(float));
+    ts_rblas_buf c = ts_rblas_buf_get(TS_RBLAS_OUT_F32, (size_t)n * n * sizeof(float));
+    if (a.dev && c.dev) {
+        hipStream_t st = ts_rblas_stream();
+        // a.bytes/c.bytes are the pool slot's allocated (grow-only,
+        // high-water-mark) size, not this call's own m*n/n*n - see the
+        // identical fix + rationale in ts_vec_dotpr (tessera-vec.cpp).
+        hipMemcpyAsync(a.dev, A, (size_t)m * n * sizeof(float), hipMemcpyHostToDevice, st);
+        const float alpha = 1.0f;
+        const float beta  = 0.0f;
+        rocblas_ssyrk(ts_rocblas_handle(),
+                      rocblas_fill_lower,
+                      rocblas_operation_none,
+                      (int)n, (int)m,
+                      &alpha, (float*)a.dev, (int)n,
+                      &beta,  (float*)c.dev, (int)n);
+        hipMemcpyAsync(AtA.data(), c.dev, (size_t)n * n * sizeof(float), hipMemcpyDeviceToHost, st);
+        hipStreamSynchronize(st);
+        for (int64_t i = 0; i < n; i++)
+            for (int64_t j = i + 1; j < n; j++)
+                AtA[j*n + i] = AtA[i*n + j];
+    } else {
+        ts_matmul_atb(A, A, AtA.data(), m, n, n);
+    }
+    ts_rblas_buf_release(a);
+    ts_rblas_buf_release(c);
 #else
     ts_matmul_atb(A, A, AtA.data(), m, n, n);
 #endif

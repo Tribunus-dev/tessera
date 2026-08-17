@@ -135,6 +135,95 @@ void ts_gguf_write_tensor_cluster(struct gguf_context * ctx,
     }
 }
 
+#define TS_AMD_RDNA3_PAGE_SIZE      256
+#define TS_AMD_RDNA3_LANES_PER_PAGE 32
+
+void ts_gguf_write_tensor_cluster_amd_rdna3(struct gguf_context * ctx,
+                                            struct ggml_context * gctx,
+                                            const char * base_name,
+                                            const void * result,
+                                            int64_t out_dim, int64_t in_dim,
+                                            const uint16_t * dartquant_rotation,
+                                            int64_t dartquant_block_size) {
+    const auto * res = static_cast<const ts_quant_result_2d *>(result);
+
+    const int64_t pages_per_row = (in_dim + TS_AMD_RDNA3_PAGE_SIZE - 1) / TS_AMD_RDNA3_PAGE_SIZE;
+    const int64_t words_per_row = pages_per_row * TS_AMD_RDNA3_PAGE_SIZE;
+    const int64_t lane_cols     = pages_per_row * TS_AMD_RDNA3_LANES_PER_PAGE;
+
+    char base[GGML_MAX_NAME];
+    ts_cluster_base(base, sizeof(base), base_name);
+
+    struct ggml_tensor * t;
+
+    // weight_packed: i8 [out_dim * pages_per_row * TS_AMD_RDNA3_PAGE_SIZE] -
+    // matches ggml_tile_rdna3_matmul's A_packed size assertion exactly.
+    t = ggml_new_tensor_1d(gctx, GGML_TYPE_I8, out_dim * words_per_row);
+    ggml_format_name(t, "%s.weight_packed", base);
+    t->data = (void *)res->packed_i8.data();
+    gguf_add_tensor(ctx, t);
+
+    // weight_page_scales: f16 [out_dim * pages_per_row]
+    t = ggml_new_tensor_1d(gctx, GGML_TYPE_F16, out_dim * pages_per_row);
+    ggml_format_name(t, "%s.weight_page_scales", base);
+    t->data = (void *)res->page_scales.data();
+    gguf_add_tensor(ctx, t);
+
+    // weight_lane_scales: i8 [out_dim * pages_per_row * TS_AMD_RDNA3_LANES_PER_PAGE]
+    t = ggml_new_tensor_1d(gctx, GGML_TYPE_I8, out_dim * lane_cols);
+    ggml_format_name(t, "%s.weight_lane_scales", base);
+    t->data = (void *)res->lane_scales.data();
+    gguf_add_tensor(ctx, t);
+
+    // weight_dartquant_rotation: f16 [K, K] (optional). Presence signals
+    // the model loader/graph builder should block-diagonally rotate this
+    // tensor's activations by R^T before the tile matmul - see
+    // tessera-ternary.h and llama-graph.cpp's DartQuant wiring. Absence
+    // (the common case) means no rotation.
+    if (dartquant_rotation != nullptr && dartquant_block_size > 0) {
+        t = ggml_new_tensor_2d(gctx, GGML_TYPE_F16, dartquant_block_size, dartquant_block_size);
+        ggml_format_name(t, "%s.weight_dartquant_rotation", base);
+        t->data = (void *)dartquant_rotation;
+        gguf_add_tensor(ctx, t);
+    }
+
+    // weight_outlier_row_offsets/cols/vals + weight_act_scale: same fields
+    // and layout ts_gguf_write_tensor_cluster writes above for Tile640 -
+    // ts_pack_ternary_to_tile's RDNA3 branch now populates res->outlier_*/
+    // act_scale the same way (previously cleared unconditionally here,
+    // silently dropping both for every RDNA3-packed model - see
+    // CORRECTION-w3-7 in the gap ledger). outlier_cols/vals ship a
+    // length-1 placeholder when there are zero outliers, same reason as
+    // the generic writer above (gguf can't store empty tensors).
+    const int64_t n_outliers = (int64_t) res->outlier_cols.size();
+    static const int32_t     empty_i32 = 0;
+    static const ggml_fp16_t empty_f16 = 0;
+
+    t = ggml_new_tensor_1d(gctx, GGML_TYPE_I32, out_dim + 1);
+    ggml_format_name(t, "%s.weight_outlier_row_offsets", base);
+    t->data = (void *) res->outlier_row_offsets.data();
+    gguf_add_tensor(ctx, t);
+
+    t = ggml_new_tensor_1d(gctx, GGML_TYPE_I32, n_outliers > 0 ? n_outliers : 1);
+    ggml_format_name(t, "%s.weight_outlier_cols", base);
+    t->data = (n_outliers > 0) ? (void *) res->outlier_cols.data()
+                               : (void *) &empty_i32;
+    gguf_add_tensor(ctx, t);
+
+    t = ggml_new_tensor_1d(gctx, GGML_TYPE_F16, n_outliers > 0 ? n_outliers : 1);
+    ggml_format_name(t, "%s.weight_outlier_vals", base);
+    t->data = (n_outliers > 0) ? (void *) res->outlier_vals.data()
+                               : (void *) &empty_f16;
+    gguf_add_tensor(ctx, t);
+
+    if (!res->act_scale.empty()) {
+        t = ggml_new_tensor_1d(gctx, GGML_TYPE_F16, in_dim);
+        ggml_format_name(t, "%s.weight_act_scale", base);
+        t->data = (void *) res->act_scale.data();
+        gguf_add_tensor(ctx, t);
+    }
+}
+
 int ts_gguf_repoint_tensor_cluster(struct ggml_context * gctx,
                                    const char * base_name,
                                    const void * result) {

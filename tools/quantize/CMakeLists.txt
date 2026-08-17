@@ -215,6 +215,10 @@ target_link_libraries(${TARGET} PUBLIC llama-common llama ${CMAKE_THREAD_LIBS_IN
 if(APPLE)
     target_link_libraries(${TARGET} PUBLIC "-framework Accelerate")
 
+    # The Metal lane is always wired on Apple; marks the GPU lane as active
+    # so the parity test below builds.
+    set(TS_GPU_LANE TRUE)
+
     # ---- Metal acceleration for the Tessera quantize pipeline ----
     # Build wiring (only on Apple; non-Apple builds use the vDSP/scalar
     # fallback transparently via the ts_metal_available() runtime check):
@@ -274,19 +278,150 @@ if(APPLE)
         install(FILES ${TS_METAL_LIB} DESTINATION ${CMAKE_INSTALL_BINDIR})
     endif()
 else()
-    # Non-Apple: link the no-op stub so ts_quantize_2d's Metal-gated calls
-    # resolve and the build still works (ts_metal_available() returns 0).
-    target_sources(${TARGET} PRIVATE tessera/tessera-metal-stub.cpp)
+    # Non-Apple GPU lane: when ROCm/HIP is present, implement the same
+    # ts_metal_* ABI over HIP (tessera-metal-hip.cpp); otherwise link the
+    # no-op stub so ts_quantize_2d's Metal-gated calls resolve and the
+    # build falls back to the CPU path (ts_metal_available() returns 0).
+    if(NOT DEFINED ROCM_PATH)
+        if(DEFINED ENV{ROCM_PATH})
+            set(ROCM_PATH $ENV{ROCM_PATH})
+        elseif(EXISTS /opt/rocm)
+            set(ROCM_PATH /opt/rocm)
+        else()
+            set(ROCM_PATH /usr)
+        endif()
+    endif()
+    list(APPEND CMAKE_PREFIX_PATH ${ROCM_PATH} "${ROCM_PATH}/lib64/cmake")
+    find_package(hip QUIET)
+    if(hip_FOUND)
+        enable_language(HIP)
+        # Same (AMD)GPU_TARGETS forwarding convention as ggml-hip, plus a
+        # rocminfo probe of the local GPU so a bare configure still targets
+        # the host device (CMake errors at generate time when the target
+        # architecture list is empty).
+        if(AMDGPU_TARGETS AND NOT GPU_TARGETS)
+            set(GPU_TARGETS ${AMDGPU_TARGETS})
+        endif()
+        if(GPU_TARGETS AND NOT CMAKE_HIP_ARCHITECTURES)
+            set(CMAKE_HIP_ARCHITECTURES ${GPU_TARGETS})
+        endif()
+        if(NOT CMAKE_HIP_ARCHITECTURES)
+            find_program(TS_ROCMINFO rocminfo PATHS "${ROCM_PATH}/bin" /usr/bin)
+            if(TS_ROCMINFO)
+                execute_process(COMMAND ${TS_ROCMINFO}
+                                OUTPUT_VARIABLE TS_ROCMINFO_OUT
+                                ERROR_QUIET
+                                OUTPUT_STRIP_TRAILING_WHITESPACE)
+                string(REGEX MATCH "Name:[ ]+gfx[0-9]+" TS_GFX_MATCH "${TS_ROCMINFO_OUT}")
+                string(REGEX REPLACE "Name:[ ]+" "" TS_GFX "${TS_GFX_MATCH}")
+            endif()
+            if(TS_GFX)
+                set(CMAKE_HIP_ARCHITECTURES ${TS_GFX})
+                message(STATUS "Tessera: HIP target auto-detected from rocminfo (${TS_GFX})")
+            else()
+                set(CMAKE_HIP_ARCHITECTURES gfx1103)
+                message(STATUS "Tessera: no GPU target detected - defaulting to gfx1103 "
+                               "(set GPU_TARGETS to override)")
+            endif()
+        endif()
+        # ${TARGET} pulls in HIP device object code via TARGET_OBJECTS below
+        # (tessera-metal-hip, tessera-rocblas), which triggers a HIP device
+        # link step on ${TARGET} itself. ${TARGET} was add_library()'d before
+        # HIP was enabled in this scope, so it never got a HIP_ARCHITECTURES
+        # default - set it explicitly or the device link has nothing to
+        # build for.
+        set_target_properties(${TARGET} PROPERTIES HIP_ARCHITECTURES "${CMAKE_HIP_ARCHITECTURES}")
+        # The HIP kernels compile in their own OBJECT library (same pattern
+        # as duckdb-amalgamation above). Two things make mixing them into the
+        # CXX quantize-impl library unsafe, and this split avoids both:
+        #   1. A LANGUAGE HIP source in a CXX target applies the -x hip
+        #      compile rule target-wide.
+        #   2. hip::device carries a CXX-gated "-x hip" interface compile
+        #      option (hip-config-amd.cmake), so linking it into a g++-CXX
+        #      target breaks every CXX source. Only the HIP-language object
+        #      lib links hip::device; the impl lib links the plain runtime
+        #      (hip::host -> hip::amdhip64) for symbol resolution.
+        add_library(tessera-metal-hip OBJECT tessera/tessera-metal-hip.cpp)
+        set_target_properties(tessera-metal-hip PROPERTIES POSITION_INDEPENDENT_CODE ON)
+        set_source_files_properties(tessera/tessera-metal-hip.cpp PROPERTIES LANGUAGE HIP)
+        target_include_directories(tessera-metal-hip PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tessera)
+        target_link_libraries(tessera-metal-hip PRIVATE hip::device)
+        target_sources(${TARGET} PRIVATE $<TARGET_OBJECTS:tessera-metal-hip>)
+        target_link_libraries(${TARGET} PRIVATE hip::host)
+        # Gates the ts_metal_* HIP bridge call sites in
+        # tessera-imatrix.cpp / tessera-l1-fitness.cpp / ggml-quants.c.
+        # Mirrors TS_USE_ROCBLAS at line 364. Only the ${TARGET} link unit
+        # gets the strong ts_metal_* symbols from tessera-metal-hip.o, so
+        # consumer libs (libggml-base, llama-imatrix) keep their bridge
+        # call sites compile-time-gated off and stay link-clean without
+        # needing the HIP source attached to them.
+        target_compile_definitions(${TARGET} PUBLIC TS_USE_TESSERA_METAL)
+        set(TS_GPU_LANE TRUE)
+        message(STATUS "Tessera: HIP GPU lane enabled (ROCm ${hip_VERSION})")
+
+        # Third BLAS dispatch lane: rocBLAS. Selected at runtime via the
+        # TS_USE_ROCBLAS define; falls back to the cblas / OpenBLAS / scalar
+        # path when rocBLAS is missing (or when rocblas.h is not on the
+        # include path). Same OBJECT-library + LANGUAGE-HIP split as
+        # tessera-metal-hip above so rocBLAS's HIP-bound compilation does
+        # not poison the CXX-only ${TARGET} compile graph.
+        # rocblas-config.cmake calls find_dependency(hip) which resets the
+        # search path; forward the hip cmake dir we already located so the
+        # dependency resolves. Same role for the include path - rocblas.h
+        # ships under <prefix>/include/rocblas/rocblas.h, not the top-level.
+        if(EXISTS "${ROCM_PATH}/lib64/cmake/hip/hip-config.cmake")
+            set(hip_DIR "${ROCM_PATH}/lib64/cmake/hip")
+        endif()
+        find_package(rocblas QUIET)
+        find_path(TS_ROCBLAS_INCLUDE_DIR NAMES rocblas.h PATH_SUFFIXES rocblas)
+        if(rocblas_FOUND AND TS_ROCBLAS_INCLUDE_DIR)
+            add_library(tessera-rocblas OBJECT tessera/tessera-rocblas.cpp)
+            set_target_properties(tessera-rocblas PROPERTIES POSITION_INDEPENDENT_CODE ON)
+            set_source_files_properties(tessera/tessera-rocblas.cpp PROPERTIES LANGUAGE HIP)
+            target_include_directories(tessera-rocblas PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/tessera
+                ${TS_ROCBLAS_INCLUDE_DIR})
+            target_link_libraries(tessera-rocblas PRIVATE hip::device roc::rocblas)
+            target_sources(${TARGET} PRIVATE $<TARGET_OBJECTS:tessera-rocblas>)
+            # Propagate the rocBLAS include path + definition to the parent
+            # CXX target so call sites that include tessera-rocblas.h
+            # directly (tessera-vec, tessera-linalg, etc.) can resolve
+            # <rocblas.h> and <hip/hip_runtime.h> without re-staging them.
+            # The OBJECT lib above sets the path only for itself (LANGUAGE
+            # HIP); CXX files need it propagated explicitly.
+            target_include_directories(${TARGET} PUBLIC ${TS_ROCBLAS_INCLUDE_DIR})
+            target_link_libraries(${TARGET} PUBLIC roc::rocblas)
+            target_compile_definitions(${TARGET} PUBLIC TS_USE_ROCBLAS)
+            message(STATUS "Tessera: rocBLAS BLAS lane enabled (${rocblas_VERSION})")
+        else()
+            message(STATUS "Tessera: rocBLAS not found - cblas / OpenBLAS BLAS lane in use")
+        endif()
+    else()
+        target_sources(${TARGET} PRIVATE tessera/tessera-metal-stub.cpp)
+        message(STATUS "Tessera: HIP not found - GPU lane stubbed (CPU fallback)")
+    endif()
 endif()
 
 if(UNIX AND NOT APPLE)
     find_package(BLAS)
     if(BLAS_FOUND)
         target_link_libraries(${TARGET} PUBLIC ${BLAS_LIBRARIES})
+        # The cblas fast paths (tessera-vec/-linalg/-champq/-flrq/-dartquant/
+        # -septq/-awq-fitness) compile only when GGML_USE_OPENBLAS is defined
+        # and <cblas.h> is reachable; linking the library alone leaves them
+        # on the scalar fallback. Fedora ships the header under openblas/.
+        find_path(TS_BLAS_INCLUDE_DIR NAMES cblas.h PATH_SUFFIXES openblas flexiblas)
+        if(TS_BLAS_INCLUDE_DIR)
+            target_include_directories(${TARGET} PRIVATE ${TS_BLAS_INCLUDE_DIR})
+            target_compile_definitions(${TARGET} PRIVATE GGML_USE_OPENBLAS)
+        else()
+            message(WARNING "BLAS found but cblas.h is missing - scalar fallback "
+                            "(install openblas-devel or flexiblas-devel)")
+        endif()
         if(BLAS_LIBRARIES MATCHES "mkl" OR GGML_BLAS_VENDOR MATCHES "Intel")
             message(STATUS "Tessera: Intel MKL lane enabled via BLAS (${BLAS_LIBRARIES})")
         else()
-            message(STATUS "Tessera: Intel lane enabled via BLAS (${BLAS_LIBRARIES}) - OpenBLAS/Generic")
+            message(STATUS "Tessera: CPU BLAS lane enabled (${BLAS_LIBRARIES}) - OpenBLAS/Generic")
         endif()
     else()
         message(STATUS "BLAS not found - tessera will use scalar fallback")
@@ -458,11 +593,12 @@ if(LLAMA_TOOLS_INSTALL)
     install(TARGETS ${TARGET} RUNTIME)
 endif()
 
-# tessera-metal: standalone correctness test for the Metal acceleration path.
-# Compares the three Metal kernels (scale_clip_ternarize, awq_grid_search,
-# dequant_mse_recon) against the CPU reference. macOS-only; the test exits 0
-# with a SKIP message when no Metal device is present.
-if(APPLE)
+# tessera-metal: standalone correctness test for the GPU acceleration lane.
+# Compares the three lane kernels (scale_clip_ternarize, awq_grid_search,
+# dequant_mse_recon) against the CPU reference. Built whenever a GPU lane is
+# wired (Metal on Apple, HIP elsewhere); the test exits 0 with a SKIP message
+# when no device is present at runtime.
+if(TS_GPU_LANE)
     set(TARGET test-tessera-metal)
     add_executable(${TARGET} tessera/test_metal.cpp)
     target_link_libraries(${TARGET} PRIVATE llama-quantize-impl)

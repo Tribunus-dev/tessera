@@ -28,5 +28,20 @@ struct ts_lrq_params {
     uint32_t  seed;
 };
 
+// calib_X/n_tokens: optional real per-token calibration activations
+// (row-major [n_tokens][in_dim]). When non-null, the training loss weights
+// each input channel's reconstruction error by that channel's mean squared
+// activation (the same diag(X^T X)/n signal SEPTQ's diagonal Hessian uses),
+// so U/V learn to protect columns that actually move the layer's output
+// instead of treating every weight element as equally important. nullptr/0
+// reproduces the prior uniform-weight loss exactly.
 int ts_train_lrq(const float * weights, int64_t out_dim, int64_t in_dim,
-                 const ts_lrq_params * params, ts_lrq_result * result);
+                 const ts_lrq_params * params, ts_lrq_result * result,
+                 const float * calib_X = nullptr, int64_t n_tokens = 0);
+
+// S_out[out_dim x in_dim] = result->U @ result->V, the learned multiplicative
+// pre-scale. Callers (ts_quantize_2d_ternary's FLRQ dispatch) apply it as
+// scaled[i] = weights[i] * S_out[i] before ternarizing. Uses the same
+// CBLAS/rocBLAS-accelerated matmul as the training loop itself.
+void ts_lrq_reconstruct_scale(const ts_lrq_result * result,
+                              int64_t out_dim, int64_t in_dim, float * S_out);

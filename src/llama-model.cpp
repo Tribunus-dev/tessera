@@ -2488,6 +2488,11 @@ const llama_tile640_tensor * llama_model::get_tile640_tensor(const std::string &
     return it == tile640_tensors.end() ? nullptr : &it->second;
 }
 
+const llama_tile_rdna3_tensor * llama_model::get_tile_rdna3_tensor(const std::string & name) const {
+    const auto it = tile_rdna3_tensors.find(name);
+    return it == tile_rdna3_tensors.end() ? nullptr : &it->second;
+}
+
 float llama_model::get_rope_freq_base (const llama_cparams & cparams, int il) const {
     return hparams.is_swa(il) ? hparams.rope_freq_base_train_swa : cparams.rope_freq_base;
 }
@@ -3297,6 +3302,93 @@ ggml_tensor * llama_model_base::create_tensor_or_tile640(
     return nullptr;
 }
 
+ggml_tensor * llama_model_base::create_tensor_or_tile_rdna3(
+        const LLM_TN_IMPL & tn,
+        const std::initializer_list<int64_t> & ne,
+        int flags) {
+    GGML_ASSERT(ml != nullptr);
+
+    const std::string logical_name = tn.str();
+    const std::string stem = tn.suffix ? tn.suffix : "weight";
+    const std::string packed_suffix = stem + "_packed";
+    const LLM_TN_IMPL packed_tn(tn.arch, tn.tensor, packed_suffix.c_str(), tn.bid, tn.xid);
+    if (ml->get_tensor_meta(packed_tn.str().c_str()) == nullptr) {
+        return create_tensor(tn, ne, flags);
+    }
+
+    std::array<int64_t, 4> shape = { 1, 1, 1, 1 };
+    size_t rank = 0;
+    for (const int64_t dim : ne) {
+        GGML_ASSERT(rank < shape.size() && dim > 0);
+        shape[rank++] = dim;
+    }
+    // Local geometry constants, same convention create_tensor_or_tile640
+    // above uses (PAGE_SIZE/LANES_PER_PAGE/WORDS_PER_PAGE hardcoded there
+    // too) - these mirror TILE_AMD_RDNA3_PAGE_SIZE/LANES_PER_PAGE from
+    // ggml/src/ggml-common.h, an internal ggml header not reachable from
+    // this file; docs/amd-tile-format-spec.md 3.4 is the source of truth.
+    constexpr int64_t PAGE_SIZE      = 256;
+    constexpr int64_t LANES_PER_PAGE = 32;
+
+    const int64_t row_width = shape[0];
+    const int64_t n_rows = shape[1] * shape[2] * shape[3];
+    const int64_t pages_per_row = (row_width + PAGE_SIZE - 1) / PAGE_SIZE;
+
+    auto component = [&](const char * tail, std::initializer_list<int64_t> dims) {
+        const std::string suffix = stem + tail;
+        return create_tensor(
+            LLM_TN_IMPL(tn.arch, tn.tensor, suffix.c_str(), tn.bid, tn.xid),
+            dims, flags & (TENSOR_NOT_REQUIRED | TENSOR_DUPLICATED));
+    };
+
+    llama_tile_rdna3_tensor value;
+    value.ne = shape;
+    value.packed      = component("_packed",      { n_rows * pages_per_row * PAGE_SIZE });
+    value.page_scales = component("_page_scales", { n_rows * pages_per_row });
+    value.lane_scales = component("_lane_scales", { n_rows * pages_per_row * LANES_PER_PAGE });
+
+    // Optional DartQuant rotation (tessera-gguf-writer.cpp's
+    // "%s.weight_dartquant_rotation", written only for DartQuant-quantized
+    // tensors). Shape is read from the GGUF's own metadata (K is per-tensor,
+    // not derivable from `ne`) rather than guessed - absent for every
+    // tensor that didn't use DartQuant, which is the common case.
+    const std::string rotation_suffix = stem + "_dartquant_rotation";
+    const LLM_TN_IMPL rotation_tn(tn.arch, tn.tensor, rotation_suffix.c_str(), tn.bid, tn.xid);
+    const ggml_tensor * rotation_meta = ml->get_tensor_meta(rotation_tn.str().c_str());
+    if (rotation_meta != nullptr) {
+        value.dartquant_rotation = create_tensor(
+            rotation_tn, { rotation_meta->ne[0], rotation_meta->ne[1] }, TENSOR_NOT_REQUIRED);
+    }
+
+    // Optional outlier CSR + AWQ act_scale - same loading pattern
+    // create_tensor_or_tile640 above uses. outlier_cols/outlier_vals share
+    // a size only known from the GGUF's own metadata (total outlier count
+    // is per-tensor, not derivable from `ne`); the writer always emits a
+    // length-1 placeholder even for zero outliers (tessera-gguf-writer.cpp),
+    // so outlier_row_offsets' presence alone gates all three.
+    const std::string row_off_suffix = stem + "_outlier_row_offsets";
+    const LLM_TN_IMPL row_off_tn(tn.arch, tn.tensor, row_off_suffix.c_str(), tn.bid, tn.xid);
+    if (ml->get_tensor_meta(row_off_tn.str().c_str()) != nullptr) {
+        value.outlier_row_offsets = create_tensor(
+            row_off_tn, { n_rows + 1 }, TENSOR_NOT_REQUIRED);
+
+        const std::string cols_suffix = stem + "_outlier_cols";
+        const LLM_TN_IMPL cols_tn(tn.arch, tn.tensor, cols_suffix.c_str(), tn.bid, tn.xid);
+        const auto * outlier_meta = ml->require_tensor_meta(cols_tn.str());
+        value.outlier_cols = create_tensor(
+            cols_tn, { outlier_meta->ne[0] }, TENSOR_NOT_REQUIRED);
+        value.outlier_vals = component("_outlier_vals", { outlier_meta->ne[0] });
+    }
+    const std::string act_suffix = stem + "_act_scale";
+    const LLM_TN_IMPL act_tn(tn.arch, tn.tensor, act_suffix.c_str(), tn.bid, tn.xid);
+    if (ml->get_tensor_meta(act_tn.str().c_str()) != nullptr) {
+        value.act_scale = create_tensor(act_tn, { row_width }, TENSOR_NOT_REQUIRED);
+    }
+
+    tile_rdna3_tensors.emplace(logical_name, value);
+    return nullptr;
+}
+
 void llama_model_base::create_tensor_gate_up_exps(llama_layer & layer, int bid, int64_t n_embd_, int64_t n_ff_, int64_t n_expert_, int flags) {
     layer.ffn_gate_up_exps = create_tensor(tn(LLM_TENSOR_FFN_GATE_UP_EXPS, "weight", bid), {n_embd_, n_ff_ * 2, n_expert_}, TENSOR_NOT_REQUIRED);
     if (layer.ffn_gate_up_exps == nullptr) {
@@ -3337,10 +3429,24 @@ void llama_model_base::create_tensor_qkv(llama_layer & layer, int bid,
         const std::string q_packed_name = tn(LLM_TENSOR_ATTN_Q, "weight_packed", bid).str();
         const std::string k_packed_name = tn(LLM_TENSOR_ATTN_K, "weight_packed", bid).str();
         const std::string v_packed_name = tn(LLM_TENSOR_ATTN_V, "weight_packed", bid).str();
-        const bool q_tile640 = ml->get_tensor_meta(q_packed_name.c_str()) != nullptr;
-        const bool k_tile640 = ml->get_tensor_meta(k_packed_name.c_str()) != nullptr;
-        const bool v_tile640 = ml->get_tensor_meta(v_packed_name.c_str()) != nullptr;
-        if (!q_tile640) {
+        const ggml_tensor * q_packed_meta = ml->get_tensor_meta(q_packed_name.c_str());
+        const ggml_tensor * k_packed_meta = ml->get_tensor_meta(k_packed_name.c_str());
+        const ggml_tensor * v_packed_meta = ml->get_tensor_meta(v_packed_name.c_str());
+        // W3 task 3.9/3.10: an AMD RDNA3-packed "*_packed" sibling is I8
+        // (WMMA-native, docs/amd-tile-format-spec.md 3.4); a T640-packed
+        // one is I32 (radix-243 words). Disambiguate by dtype so an
+        // RDNA3-packed GGUF doesn't fall into the T640 branch below and
+        // get sized with T640's PAGE_SIZE/WORDS_PER_PAGE (wrong element
+        // count and wrong element type both).
+        const bool q_rdna3   = q_packed_meta && q_packed_meta->type == GGML_TYPE_I8;
+        const bool k_rdna3   = k_packed_meta && k_packed_meta->type == GGML_TYPE_I8;
+        const bool v_rdna3   = v_packed_meta && v_packed_meta->type == GGML_TYPE_I8;
+        const bool q_tile640 = q_packed_meta && !q_rdna3;
+        const bool k_tile640 = k_packed_meta && !k_rdna3;
+        const bool v_tile640 = v_packed_meta && !v_rdna3;
+        if (q_rdna3) {
+            create_tensor_or_tile_rdna3(tn(LLM_TENSOR_ATTN_Q, "weight", bid), {n_embd_, n_embd_q_}, flags);
+        } else if (!q_tile640) {
             layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q, "weight", bid), {n_embd_, n_embd_q_}, flags);
         } else {
             constexpr int64_t PAGE_SIZE = 640, LANES_PER_PAGE = 32, WORDS_PER_PAGE = 32;
@@ -3354,7 +3460,9 @@ void llama_model_base::create_tensor_qkv(llama_layer & layer, int bid,
             layer.wq_outlier_vals = create_tensor(tn(LLM_TENSOR_ATTN_Q, "weight_outlier_vals", bid), {outlier_meta->ne[0]}, TENSOR_NOT_REQUIRED);
             layer.wq_act_scale = create_tensor(tn(LLM_TENSOR_ATTN_Q, "weight_act_scale", bid), {n_embd_}, TENSOR_NOT_REQUIRED);
         }
-        if (!k_tile640) {
+        if (k_rdna3) {
+            create_tensor_or_tile_rdna3(tn(LLM_TENSOR_ATTN_K, "weight", bid), {n_embd_, n_embd_k_}, flags);
+        } else if (!k_tile640) {
             layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K, "weight", bid), {n_embd_, n_embd_k_}, flags);
         } else {
             constexpr int64_t PAGE_SIZE = 640, LANES_PER_PAGE = 32, WORDS_PER_PAGE = 32;
@@ -3368,7 +3476,9 @@ void llama_model_base::create_tensor_qkv(llama_layer & layer, int bid,
             layer.wk_outlier_vals = create_tensor(tn(LLM_TENSOR_ATTN_K, "weight_outlier_vals", bid), {outlier_meta->ne[0]}, TENSOR_NOT_REQUIRED);
             layer.wk_act_scale = create_tensor(tn(LLM_TENSOR_ATTN_K, "weight_act_scale", bid), {n_embd_}, TENSOR_NOT_REQUIRED);
         }
-        if (!v_tile640) {
+        if (v_rdna3) {
+            create_tensor_or_tile_rdna3(tn(LLM_TENSOR_ATTN_V, "weight", bid), {n_embd_, n_embd_v_}, flags);
+        } else if (!v_tile640) {
             layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V, "weight", bid), {n_embd_, n_embd_v_}, flags);
         } else {
             constexpr int64_t PAGE_SIZE = 640, LANES_PER_PAGE = 32, WORDS_PER_PAGE = 32;

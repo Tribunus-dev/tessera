@@ -19,6 +19,7 @@ struct ggml_tensor;
 struct llama_cparams;
 struct llama_layer;
 struct llama_tile640_tensor;
+struct llama_tile_rdna3_tensor;
 
 struct llama_memory_context_i;
 
@@ -1044,6 +1045,31 @@ struct llm_graph_context {
               ggml_tensor * w_act_scale,  // optional F16[in_dim], or nullptr
               ggml_tensor * cur) const;
 
+    // do matmul with an AMD RDNA3 WMMA-native tile-packed weight: 3 tensors
+    // (packed, page_scales, lane_scales), plus optional outlier CSR and
+    // AWQ act_scale (see CORRECTION-w3-7 in the gap ledger: both are now
+    // shipped/loaded for RDNA3 tensors the same as Tile640, previously
+    // silently dropped). LoRA adapters are not supported for RDNA3 tile
+    // weights, same as Tile640.
+    // dartquant_rotation: optional (nullptr = no rotation, the common
+    // case). When present, block-diagonally rotates `cur` by its
+    // transpose before the tile matmul - see llama-graph.cpp and
+    // tessera-ternary.h's dartquant_rotation comment.
+    // w_outlier_row_offsets/cols/vals: optional CSR (nullptr = no outliers
+    // selected for this tensor, the common case at the current 2% budget).
+    // w_act_scale: optional F16[in_dim] (nullptr = AWQ's alpha resolved to
+    // 0, i.e. no per-channel pre-scale was applied at quantize time).
+    ggml_tensor * build_tile_rdna3_lora_mm(
+              ggml_tensor * w_packed,
+              ggml_tensor * w_page_scales,
+              ggml_tensor * w_lane_scales,
+              ggml_tensor * cur,
+              ggml_tensor * dartquant_rotation = nullptr,
+              ggml_tensor * w_outlier_row_offsets = nullptr,
+              ggml_tensor * w_outlier_cols = nullptr,
+              ggml_tensor * w_outlier_vals = nullptr,
+              ggml_tensor * w_act_scale = nullptr) const;
+
     // Per-expert variant of build_tile640_lora_mm for MoE FFN.
     // out_dim is the per-expert output dim (rows of each expert matrix).
     // w_act_scale is shared across experts (all experts see the same input).
@@ -1082,7 +1108,14 @@ struct llm_graph_context {
                   int64_t   n_embd_head,
                   int64_t   n_head,
                   int64_t   n_head_kv,
-                      int   il) const;
+                      int   il,
+        // W3 task 3.9/3.10: AMD RDNA3 tile-packed alternative to
+        // layer.wq/wk/wv - see build_ffn's *_tile_rdna3 params for the
+        // same convention (null tensor + non-null cluster => dispatch
+        // through build_tile_rdna3_lora_mm). Purely additive.
+        const llama_tile_rdna3_tensor * wq_tile_rdna3 = nullptr,
+        const llama_tile_rdna3_tensor * wk_tile_rdna3 = nullptr,
+        const llama_tile_rdna3_tensor * wv_tile_rdna3 = nullptr) const;
 
     ggml_tensor * build_ffn(
              ggml_tensor * cur,
@@ -1098,7 +1131,16 @@ struct llm_graph_context {
              ggml_tensor * act_scales,
          llm_ffn_op_type   type_op,
        llm_ffn_gate_type   type_gate,
-                     int   il) const;
+                     int   il,
+             // W3 task 3.9/3.10: AMD RDNA3 tile-packed alternative to
+             // up/gate/down above - when the plain tensor is nullptr
+             // (tile-packed at load time, see create_tensor_or_tile_rdna3)
+             // and its *_tile_rdna3 counterpart is non-null, dispatch
+             // through build_tile_rdna3_lora_mm instead. Purely additive
+             // (defaults to nullptr): existing callers are unaffected.
+             const llama_tile_rdna3_tensor * up_tile_rdna3 = nullptr,
+             const llama_tile_rdna3_tensor * gate_tile_rdna3 = nullptr,
+             const llama_tile_rdna3_tensor * down_tile_rdna3 = nullptr) const;
 
     // build MoE FFN without bias tensors
     ggml_tensor * build_moe_ffn(

@@ -68,6 +68,8 @@
 #include "ggml-cuda/cumsum.cuh"
 #include "ggml-cuda/fill.cuh"
 #include "ggml-cuda/lightning-indexer.cuh"
+#include "ggml-cuda/tile640-interleaved.cuh"
+#include "ggml-cuda/tile-amd-rdna3.cuh"
 #include "ggml.h"
 
 #include <algorithm>
@@ -2341,6 +2343,15 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
         case GGML_OP_DSV4_HC_POST:
             ggml_cuda_op_dsv4_hc_post(ctx, dst);
             break;
+        case GGML_OP_TILE640_MATMUL_INTERLEAVED:
+            // P0-only path; P1 (drafter) / P2 (KV) buffers stay null until
+            // the graph wire-up passes non-null drafter / KV pointers in
+            // src[7..]. See tile640-interleaved.cu.
+            ggml_cuda_op_tile640_matmul_interleaved(ctx, dst->src[0], dst->src[6], dst);
+            break;
+        case GGML_OP_TILE_RDNA3_MATMUL:
+            ggml_cuda_op_tile_rdna3_matmul(ctx, dst->src[0], dst->src[3], dst);
+            break;
         case GGML_OP_RWKV_WKV7:
             ggml_cuda_op_rwkv_wkv7(ctx, dst);
             break;
@@ -4486,6 +4497,20 @@ void ggml_backend_cuda_get_device_description(int device, char * description, si
     snprintf(description, description_size, "%s", ggml_cuda_device_description(device).c_str());
 }
 
+void ggml_backend_cuda_get_device_arch(int device, char * arch, size_t arch_size) {
+    if (arch_size > 0) {
+        arch[0] = '\0';
+    }
+#if defined(GGML_USE_HIP)
+    cudaDeviceProp prop;
+    if (cudaGetDeviceProperties(&prop, ggml_cuda_get_physical_device(device)) == cudaSuccess) {
+        snprintf(arch, arch_size, "%s", prop.gcnArchName);
+    }
+#else
+    GGML_UNUSED(device);
+#endif
+}
+
 static int ggml_cuda_physical_device_share_count(int device) {
     const ggml_cuda_device_info & info = ggml_cuda_info();
     GGML_ASSERT(device >= 0 && device < info.device_count);
@@ -5166,6 +5191,10 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
             return true;
         case GGML_OP_LIGHTNING_INDEXER:
             return ggml_cuda_lightning_indexer_supported(dev_ctx->device, op);
+        case GGML_OP_TILE_RDNA3_MATMUL:
+            return op->src[0]->type == GGML_TYPE_I8 &&
+                (op->src[3]->type == GGML_TYPE_F16 || op->src[3]->type == GGML_TYPE_F32) &&
+                op->type == GGML_TYPE_F32;
 
         default:
             return false;
@@ -5345,6 +5374,9 @@ static void * ggml_backend_cuda_reg_get_proc_address(ggml_backend_reg_t reg, con
     }
     if (strcmp(name, "ggml_backend_get_features") == 0) {
         return (void *)ggml_backend_cuda_get_features;
+    }
+    if (strcmp(name, "ggml_backend_cuda_get_device_arch") == 0) {
+        return (void *)ggml_backend_cuda_get_device_arch;
     }
     return nullptr;
 }

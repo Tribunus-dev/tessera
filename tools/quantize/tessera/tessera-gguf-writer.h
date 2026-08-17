@@ -50,6 +50,29 @@ void ts_gguf_write_tensor_cluster(struct gguf_context * ctx,
                                   const void * result,
                                   int64_t out_dim, int64_t in_dim);
 
+// Write the 3-component AMD RDNA3 tensor cluster for one WMMA-native
+// tile-packed weight (docs/amd-tile-format-spec.md 3.4): weight_packed
+// (I8), weight_page_scales (F16), weight_lane_scales (I8). No outlier
+// correction cluster and no act_scale, unlike ts_gguf_write_tensor_cluster's
+// T640/radix-243 layout - ggml_tile_rdna3_matmul's 3-tensor signature has
+// no outlier inputs at all. `result`'s packed_i8/page_scales/lane_scales
+// fields are stored by data pointer (same lifetime contract as
+// ts_gguf_write_tensor_cluster - must outlive the eventual
+// gguf_write_to_file).
+// dartquant_rotation/dartquant_block_size: optional K x K learned rotation
+// (tessera-ternary.h's ts_ternary_tensor::dartquant_rotation) to carry
+// through as an extra "%s.weight_dartquant_rotation" F16 [K,K] GGUF tensor.
+// Pass nullptr/0 (the common case) to skip it - absence at load time means
+// "no rotation", matching every other optional cluster member's contract.
+// Data is stored by pointer, same lifetime contract as the other buffers.
+void ts_gguf_write_tensor_cluster_amd_rdna3(struct gguf_context * ctx,
+                                            struct ggml_context * gctx,
+                                            const char * base_name,
+                                            const void * result,
+                                            int64_t out_dim, int64_t in_dim,
+                                            const uint16_t * dartquant_rotation = nullptr,
+                                            int64_t dartquant_block_size = 0);
+
 // Repoint the data pointers of an existing tensor cluster (written by an
 // earlier ts_gguf_write_tensor_cluster call) at the buffers of `result`.
 // Used by the L5 adaptive-requantize loop, which re-quantizes a tensor

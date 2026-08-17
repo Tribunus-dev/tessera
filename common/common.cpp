@@ -1880,6 +1880,7 @@ struct llama_context_params common_context_params_to_llama(const common_params &
     cparams.cb_eval_user_data = params.cb_eval_user_data;
     cparams.imatrix_observers = params.imatrix_observers;
     cparams.imatrix_activation_capture = params.imatrix_activation_capture;
+    cparams.calib_x_tokens    = params.calib_x_tokens;
     cparams.offload_kqv       = !params.no_kv_offload;
     cparams.no_perf           = params.no_perf;
     cparams.op_offload        = !params.no_op_offload;

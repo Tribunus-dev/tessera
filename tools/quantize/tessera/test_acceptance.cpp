@@ -127,6 +127,11 @@ int main() {
     // the four tensors identically and tau=1.0 for every one of the 10
     // method pairs (awq/rot/lr/hess/champq -- champq defaults to
     // mirroring hess, itself monotonic, so it participates the same way).
+    // composite_t2 (make_tensor's first arg) is a direct, independent
+    // input field on ts_acceptance_tensor, not derived from the other
+    // proxies - held constant here at 0.01, far below every proxy's mean
+    // (0.25-0.28), so composite_wins holds by a wide, non-borderline
+    // margin rather than a fragile one.
     // ------------------------------------------------------------------
     {
         ts_acceptance_tensor tensors[4] = {

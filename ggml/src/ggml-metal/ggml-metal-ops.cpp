@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <limits>
 #include <cmath>
+#include <cstdlib>
 
 #ifdef GGML_USE_ANE
 // ANE cross-backend IOSurface buffer helpers (defined in ggml-ane.mm,
@@ -397,7 +398,19 @@ static int ggml_metal_op_encode_impl(ggml_metal_op_t ctx, int idx) {
             } break;
         case GGML_OP_TILE640_MATMUL:
             {
-                n_fuse = ggml_metal_op_tile640_matmul(ctx, idx);
+                // Single dispatch-point gate: when TESSERA_TILE640_INTERLEAVED
+                // is set, route to the interleaved kernel (drafter + KV
+                // quantization injected between activation loads). Otherwise
+                // the base path is byte-for-byte unchanged.
+                static const bool tile640i_env = []() {
+                    const char * e = getenv("TESSERA_TILE640_INTERLEAVED");
+                    return e != nullptr && e[0] != '\0';
+                }();
+                if (tile640i_env) {
+                    n_fuse = ggml_metal_op_tile640_matmul_interleaved(ctx, idx);
+                } else {
+                    n_fuse = ggml_metal_op_tile640_matmul(ctx, idx);
+                }
             } break;
         case GGML_OP_TILE640_MATMUL_ID:
             {
@@ -1862,6 +1875,88 @@ int ggml_metal_op_tile640_matmul(ggml_metal_op_t ctx, int idx) {
     // single token and only SIMD group zero performs useful work.  Shrink the
     // threadgroup in that phase instead of paying for three idle SIMD groups.
     // Prompt prefill retains the four-group shape that amortizes page decode.
+    const int simdgroups_per_tg = std::min(token_tile, std::max(1, n_tokens));
+    ggml_metal_encoder_dispatch_threadgroups(
+        enc, out_dim, (n_tokens + token_tile - 1) / token_tile,
+        n_batch * n_seqs, 32, simdgroups_per_tg, 1);
+
+    return 1;
+}
+
+int ggml_metal_op_tile640_matmul_interleaved(ggml_metal_op_t ctx, int idx) {
+    ggml_tensor * op = ctx->node(idx);
+
+    ggml_metal_library_t lib = ctx->lib;
+    ggml_metal_encoder_t enc = ctx->enc;
+
+    const int32_t out_dim = ggml_get_op_params_i32(op, 0);
+    const int32_t n_tokens = (int32_t) op->src[6]->ne[1];
+    const int32_t in_dim = (int32_t) op->src[6]->ne[0];
+
+    const int32_t pages_per_row = (in_dim + 639) / 640;
+    const int32_t words_per_page =
+        (int32_t) (op->src[0]->ne[0] / (out_dim * pages_per_row));
+    GGML_ASSERT(words_per_page == 32 || words_per_page == 40);
+    const int32_t n_outliers = (int32_t) op->src[4]->ne[0];
+
+    auto pipeline = ggml_metal_library_get_pipeline_tile640_matmul_interleaved(lib, op);
+
+    // tile640_matmul_kargs (mirror of struct in ggml-metal-tile640-interleaved.metal).
+    // With drafter_enabled = kv_enabled = 0 in the iargs bytes below, P0 output is
+    // bit-identical to the base kernel: the interleaved loop skips the P1/P2 work.
+    ggml_metal_kargs_tile640_matmul args = {
+        /*.ne12 =*/ n_tokens,
+        /*.ne13 =*/ n_outliers,
+        /*.ne14 =*/ words_per_page == 40 ? 1 : 0,
+    };
+
+    // interleaved_args mirror. Defaults: both lanes disabled; the dispatch gate
+    // selects this op only when TESSERA_TILE640_INTERLEAVED is set, but the
+    // drafter / KV lanes stay opt-in per call site (the future P1/P2 callers
+    // will populate these fields).
+    struct {
+        uint32_t drafter_enabled;
+        uint32_t drafter_hidden_dim;
+        uint32_t drafter_vocab_slice;
+        uint32_t drafter_n_tokens;
+        uint32_t kv_enabled;
+        uint32_t kv_seq_start;
+        uint32_t kv_seq_count;
+        uint32_t kv_head_dim;
+    } iargs = {};
+
+    const uint32_t modality_id = 0;
+
+    ggml_metal_encoder_set_pipeline(enc, pipeline);
+    ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
+    // buf 1..7: weight components + input B (same as base)
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1);  // packed
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[1]), 2);  // page_scales
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[2]), 3);  // lane_scales
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[3]), 4);  // outlier_row_offsets
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[4]), 5);  // outlier_cols
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[5]), 6);  // outlier_vals
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[6]), 7);  // input B
+    // buf 8: act_scale — leave unbound so the kernel's `if (act_scale != nullptr)`
+    // gate skips the scale multiplication, matching the base kernel's behavior
+    // when no activation scaling is provided.
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         9);  // dst
+    ggml_metal_encoder_set_bytes   (enc, &modality_id, sizeof(modality_id), 10);
+    // buf 11..14: drafter (currently aliased to dst; kernel never reads them with drafter_enabled = 0)
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op), 11);
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op), 12);
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op), 13);
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op), 14);
+    // buf 15..17: KV (same aliasing)
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op), 15);
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op), 16);
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op), 17);
+    ggml_metal_encoder_set_bytes   (enc, &iargs, sizeof(iargs), 18);
+
+    // Same threadgroup grid as base: (out_dim, ceil(n_tokens / 4), n_batch * n_seqs).
+    const int n_batch = (int) op->src[6]->ne[2];
+    const int n_seqs  = (int) op->src[6]->ne[3];
+    constexpr int token_tile = 4;
     const int simdgroups_per_tg = std::min(token_tile, std::max(1, n_tokens));
     ggml_metal_encoder_dispatch_threadgroups(
         enc, out_dim, (n_tokens + token_tile - 1) / token_tile,

@@ -149,10 +149,40 @@ void ts_collect_arrays(const std::string & name,
     ts_add_array(out, name + ".awq_scale",           "F32", t.awq_scale,             {in_dim});
     ts_add_array(out, name + ".awq_input_scale",     "F32", t.awq_input_scale,       {in_dim});
 
+    // row_scale/lane_scale: cheap (out_dim, and out_dim*ceil(in_dim/8)
+    // respectively - a few tenths of a percent and a few percent of the
+    // tensor's own byte size) magnitude hints the packer's scale-fitting
+    // step uses instead of collapsing to one whole-tensor global_amp value
+    // - see tessera-ternary.h for the full rationale/measurements. Only
+    // written when populated (a caller that hasn't been updated to
+    // compute them yields empty vectors here, same optional-array
+    // convention act_scale already uses below) - the reader treats
+    // absence as "fall back to global_amp", so this is purely additive
+    // and backward compatible with tile-neutral safetensors directories
+    // written before this field existed.
+    if (!t.row_scale.empty()) {
+        ts_add_array(out, name + ".row_scale", "F16", t.row_scale, {out_dim});
+    }
+    if (!t.lane_scale.empty()) {
+        const int64_t lanes_per_row = (in_dim + TS_TRANSPORT_LANE_SIZE - 1) / TS_TRANSPORT_LANE_SIZE;
+        ts_add_array(out, name + ".lane_scale", "F16", t.lane_scale, {out_dim * lanes_per_row});
+    }
+
+    // dartquant_rotation: the learned K x K rotation, shape-encoded (K is
+    // recovered from the array's own [K, K] shape at read time, no
+    // separate scalar needed). Only written when a DartQuant-quantized
+    // tensor populated it - see tessera-ternary.h. Absence means "no
+    // rotation", exactly like row_scale/lane_scale's own optional
+    // convention above.
+    if (!t.dartquant_rotation.empty()) {
+        const int64_t K = t.dartquant_block_size;
+        ts_add_array(out, name + ".dartquant_rotation", "F16", t.dartquant_rotation, {K, K});
+    }
+
     // core is NOT shipped: the transport artifact carries trits + global_amp
-    // + outliers, which is sufficient for the packer to reconstruct page/lane
-    // scales for any tile geometry. This keeps the transport at ~half the BF16
-    // size instead of 2.5x.
+    // + outliers + row_scale/lane_scale, which is sufficient for the packer
+    // to reconstruct page/lane scales for any tile geometry. This keeps the
+    // transport at ~half the BF16 size instead of 2.5x.
     // (empty when AWQ alpha resolved to 0). The reader treats its absence as
     // "no act_scale" and leaves the vector empty.
     if (!t.act_scale.empty()) {
@@ -272,7 +302,8 @@ json ts_hparam_to_json(const std::string & v) {
 // promote numerics to typed JSON so the file reads as a real model config.
 std::string ts_build_config_json(const std::string & arch,
                                  const std::map<std::string, std::string> & hparams,
-                                 const json & tensors_json) {
+                                 const json & tensors_json,
+                                 const std::map<std::string, std::vector<std::string>> & array_hparams = {}) {
     json cfg = json::object();
 
     // Standard HF model config keys.
@@ -295,6 +326,14 @@ std::string ts_build_config_json(const std::string & arch,
     // pack path's GGUF header is lossless.
     for (const auto & kv : hparams) {
         cfg[kv.first] = ts_hparam_to_json(kv.second);
+    }
+    // String-array GGUF KVs (tokenizer.ggml.tokens, .merges, general.tags,
+    // ...) - nlohmann::json converts a std::vector<std::string> to a native
+    // JSON array directly. Same dotted-key namespace as the scalar hparams
+    // above, so ts_parse_config's reverse pass recovers them by key without
+    // needing a separate marker.
+    for (const auto & kv : array_hparams) {
+        cfg[kv.first] = kv.second;
     }
 
     cfg["ternary_tensors"] = tensors_json;
@@ -705,6 +744,25 @@ void ts_spool_collect_arrays(std::ofstream & spoolf,
     ts_spool_add_array(spoolf, out, name + ".awq_scale",           "F32", t.awq_scale,             {in_dim}, err, ok);
     ts_spool_add_array(spoolf, out, name + ".awq_input_scale",     "F32", t.awq_input_scale,       {in_dim}, err, ok);
 
+    // row_scale/lane_scale: see ts_collect_arrays' comment (ts_write_ttt,
+    // above) for the full rationale - mirrored here so the streaming and
+    // in-memory paths emit identical keys/shapes/dtypes, same as every
+    // other array in this function.
+    if (!t.row_scale.empty()) {
+        ts_spool_add_array(spoolf, out, name + ".row_scale", "F16", t.row_scale, {out_dim}, err, ok);
+    }
+    if (!t.lane_scale.empty()) {
+        const int64_t lanes_per_row = (in_dim + TS_TRANSPORT_LANE_SIZE - 1) / TS_TRANSPORT_LANE_SIZE;
+        ts_spool_add_array(spoolf, out, name + ".lane_scale", "F16", t.lane_scale, {out_dim * lanes_per_row}, err, ok);
+    }
+
+    // dartquant_rotation: see ts_collect_arrays' comment above - mirrored
+    // here for the streaming path.
+    if (!t.dartquant_rotation.empty()) {
+        const int64_t K = t.dartquant_block_size;
+        ts_spool_add_array(spoolf, out, name + ".dartquant_rotation", "F16", t.dartquant_rotation, {K, K}, err, ok);
+    }
+
     // core is NOT shipped (see ts_write_ttt comment).
     // (empty when AWQ alpha resolved to 0). The reader treats its absence as
     // "no act_scale" and leaves the vector empty.
@@ -723,7 +781,9 @@ int ts_write_ttt_stream(const ts_ttt_tensor_source & source,
                         const std::map<std::string, std::string> & hparams,
                         const std::string & out_dir,
                         const std::string & tokenizer_path,
-                        const std::string & chat_template_path) {
+                        const std::string & chat_template_path,
+                        const std::map<std::string, std::vector<std::string>> & array_hparams,
+                        const ts_ttt_passthrough_source & passthrough_source) {
     if (out_dir.empty()) {
         fprintf(stderr, "ts_write_ttt_stream: empty output directory\n");
         return 1;
@@ -799,6 +859,41 @@ int ts_write_ttt_stream(const ts_ttt_tensor_source & source,
         n_tensors++;
     }
 
+    // Passthrough tensors (architect-directed, see task 3.9 evidence):
+    // tensors deliberately excluded from ternary quantization (embeddings,
+    // norms, output projection - standard practice, matching every real
+    // quantization scheme) still need to travel through the tile-neutral
+    // safetensors directory as plain raw tensors, or the model this
+    // produces can never be a complete, loadable one. One spool_entry per
+    // tensor (no sub-array decomposition, unlike the ternary cluster) -
+    // NOT added to tensors_json, so the reader can tell "quantized" (name
+    // present in ternary_tensors) from "passthrough" (name present in the
+    // safetensors file's own header but absent from ternary_tensors)
+    // without a separate marker.
+    if (ok && passthrough_source) {
+        std::string pt_name;
+        std::string pt_dtype;
+        std::vector<int64_t> pt_shape;
+        std::vector<uint8_t> pt_data;
+        while (ok) {
+            pt_dtype.clear();
+            pt_shape.clear();
+            pt_data.clear();
+            pt_name = passthrough_source(pt_dtype, pt_shape, pt_data);
+            if (pt_name.empty()) break;
+
+            const int64_t begin = (int64_t) entries.size();
+            ts_spool_add_array(spoolf, entries, pt_name, pt_dtype, pt_data, pt_shape, err, ok);
+            const int64_t end = (int64_t) entries.size();
+            if (!ok) break;
+
+            int64_t bytes = 0;
+            for (int64_t k = begin; k < end; k++) bytes += entries[(size_t)k].nbytes;
+            tensor_ranges.push_back({begin, end, bytes});
+            total_size += bytes;
+        }
+    }
+
     if (!ok) {
         fprintf(stderr, "ts_write_ttt_stream: %s\n", err.c_str());
         spoolf.close();
@@ -812,7 +907,7 @@ int ts_write_ttt_stream(const ts_ttt_tensor_source & source,
 
     // config.json (written after the spool pass so the inventory is complete).
     {
-        const std::string cfg = ts_build_config_json(arch, hparams, tensors_json);
+        const std::string cfg = ts_build_config_json(arch, hparams, tensors_json, array_hparams);
         std::ofstream f(cfg_path, std::ios::binary | std::ios::trunc);
         if (!f) {
             fprintf(stderr, "ts_write_ttt_stream: cannot open %s for writing\n", cfg_path.c_str());

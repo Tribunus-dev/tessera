@@ -17,6 +17,10 @@
 // offline DFlash feature-capture file format (shared with the training driver)
 #include "tessera-features.h"
 
+// HIP/Metal acceleration for the imatrix inner loops (kernel + shim live in
+// tools/quantize/tessera/tessera-metal-hip.cpp; declared in tessera-metal.h).
+#include "tessera-metal.h"
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -175,6 +179,15 @@ struct Stats {
     std::vector<float>   fourth_values;
     std::vector<float>   max_values;
     std::vector<int64_t> counts;
+
+    // Raw calibration activation rows for export-ternary's SEPTQ/DartQuant/
+    // Hessian-sensitivity paths (--calib-tokens). Row-major [captured, in_dim]
+    // (one row per calibration token, matching what a dense MUL_MAT's src1
+    // already provides per row), capped at calib_x_target rows; capture stops
+    // once the cap is reached but the regular values/counts accumulation
+    // above is untouched and keeps running for the tensor's full chunk count.
+    std::vector<float> calib_x;
+    int64_t            calib_x_captured = 0;
 };
 
 struct tensor_statistics {
@@ -331,6 +344,7 @@ private:
         int64_t experts;
         size_t offset;
         int scope;  // enum llama_observer_scope the snapshot was collected under
+        int64_t capture_tokens;  // raw-sample rows appended after the compact stats (0 = none)
     };
 
     bool reduce_graph_observers(
@@ -492,9 +506,16 @@ static std::string filter_tensor_name(const char * name) {
 
 static int32_t imatrix_op_param_i32(
         const ggml_tensor * tensor, size_t index) {
-    int32_t value;
-    memcpy(&value, tensor->op_params + index * sizeof(value), sizeof(value));
-    return value;
+    // tensor->op_params is int32_t[] (ggml.h), so pointer arithmetic on it
+    // already scales by sizeof(int32_t) - the previous
+    // `tensor->op_params + index * sizeof(value)` therefore advanced
+    // index*4 ELEMENTS = index*16 BYTES, a 4x-overadvance bug. It only
+    // ever landed on an unused (zero) slot for the sole caller that
+    // existed before this file wired up a real, non-zero value at
+    // index=2 (--calib-tokens capture_tokens) and needed it read back
+    // correctly - a plain element index (matching ggml's own
+    // ggml_get_op_params_i32 convention) is correct here.
+    return ((const int32_t *) tensor->op_params)[index];
 }
 
 static void process_tensor_name(const std::string & input, std::string & layer, std::string & tensor) {
@@ -817,11 +838,44 @@ bool IMatrixCollector::collect_imatrix(struct ggml_tensor * t, bool ask, void * 
 
                     e.counts[ex]++;
 
-                    for (int64_t j = 0; j < src1->ne[0]; ++j) {
-                        e.values[e_start + j] += x[j] * x[j];
-                        if (!std::isfinite((float)e.values[e_start + j])) {
-                            LOG_ERR("%f detected in %s\n", (float)e.values[e_start + j], wname.c_str());
-                            exit(1);
+                    // MoE branch: each surviving row is a non-contiguous slice
+                    // (rows stride by src1->nb[2] for fixed idx), so call the
+                    // shim per-row. The HIP path replaces the inner for-j loop
+                    // and the isfinite check runs after the dispatch on the
+                    // post-accumulation values (same correctness invariant as
+                    // the scalar loop, just deferred to after the full sum).
+                    // Gated by TS_USE_TESSERA_METAL: ts_metal_available() and
+                    // ts_metal_imatrix_sumsq resolve only inside the quantize
+                    // link unit; standalone llama-imatrix keeps the scalar
+                    // body and stays link-clean without the stub attached.
+#ifdef TS_USE_TESSERA_METAL
+                    if (ts_metal_available() == 1) {
+                        if (ts_metal_imatrix_sumsq(x, (int64_t)src1->ne[0], (int64_t)1,
+                                                   e.values.data(), (int64_t)e_start) == 0) {
+                            for (int64_t j = 0; j < src1->ne[0]; ++j) {
+                                if (!std::isfinite((float)e.values[e_start + j])) {
+                                    LOG_ERR("%f detected in %s\n", (float)e.values[e_start + j], wname.c_str());
+                                    exit(1);
+                                }
+                            }
+                        } else {
+                            for (int64_t j = 0; j < src1->ne[0]; ++j) {
+                                e.values[e_start + j] += x[j] * x[j];
+                                if (!std::isfinite((float)e.values[e_start + j])) {
+                                    LOG_ERR("%f detected in %s\n", (float)e.values[e_start + j], wname.c_str());
+                                    exit(1);
+                                }
+                            }
+                        }
+                    } else
+#endif
+                    {
+                        for (int64_t j = 0; j < src1->ne[0]; ++j) {
+                            e.values[e_start + j] += x[j] * x[j];
+                            if (!std::isfinite((float)e.values[e_start + j])) {
+                                LOG_ERR("%f detected in %s\n", (float)e.values[e_start + j], wname.c_str());
+                                exit(1);
+                            }
                         }
                     }
                 }
@@ -872,14 +926,65 @@ bool IMatrixCollector::collect_imatrix(struct ggml_tensor * t, bool ask, void * 
                 const int64_t mat_id = (i3 % src0->ne[3]) * src0->ne[2] + (i2 % src0->ne[2]);
                 const int64_t mat_start = mat_id * src1->ne[0];
 
-                for (int64_t row = 0; row < src1->ne[1]; ++row) {
-                    const float * x = (const float *) (data + row * src1->nb[1] + i2 * src1->nb[2] + i3 * src1->nb[3]);
-                    for (int64_t j = 0; j < src1->ne[0]; ++j) {
-                        e.values[mat_start + j] += x[j] * x[j];
-                        if (!std::isfinite((float)e.values[j])) {
-                            LOG_ERR("%f detected in %s\n", (float)e.values[j], wname.c_str());
-                            exit(1);
+                // dense branch: contiguous [src1->ne[1], src1->ne[0]] block for fixed
+                // (i3, i2). The HIP path replaces the per-row loop with one
+                // shim call; the scalar path keeps the per-row loop.
+                // Gated by TS_USE_TESSERA_METAL: same rationale as the MoE
+                // branch above.
+#ifdef TS_USE_TESSERA_METAL
+                if (ts_metal_available() == 1) {
+                    const float * x = (const float *) (data + 0 * src1->nb[1] + i2 * src1->nb[2] + i3 * src1->nb[3]);
+                    if (ts_metal_imatrix_sumsq(x, (int64_t)src1->ne[0], (int64_t)src1->ne[1],
+                                               e.values.data(), (int64_t)mat_start) == 0) {
+                        for (int64_t j = 0; j < src1->ne[0]; ++j) {
+                            if (!std::isfinite((float)e.values[j])) {
+                                LOG_ERR("%f detected in %s\n", (float)e.values[j], wname.c_str());
+                                exit(1);
+                            }
                         }
+                    } else {
+                        for (int64_t row = 0; row < src1->ne[1]; ++row) {
+                            const float * xrow = (const float *) (data + row * src1->nb[1] + i2 * src1->nb[2] + i3 * src1->nb[3]);
+                            for (int64_t j = 0; j < src1->ne[0]; ++j) {
+                                e.values[mat_start + j] += xrow[j] * xrow[j];
+                                if (!std::isfinite((float)e.values[j])) {
+                                    LOG_ERR("%f detected in %s\n", (float)e.values[j], wname.c_str());
+                                    exit(1);
+                                }
+                            }
+                        }
+                    }
+                } else
+#endif
+                {
+                    for (int64_t row = 0; row < src1->ne[1]; ++row) {
+                        const float * xrow = (const float *) (data + row * src1->nb[1] + i2 * src1->nb[2] + i3 * src1->nb[3]);
+                        for (int64_t j = 0; j < src1->ne[0]; ++j) {
+                            e.values[mat_start + j] += xrow[j] * xrow[j];
+                            if (!std::isfinite((float)e.values[j])) {
+                                LOG_ERR("%f detected in %s\n", (float)e.values[j], wname.c_str());
+                                exit(1);
+                            }
+                        }
+                    }
+                }
+
+                // --calib-tokens: capture raw rows from the first mat block
+                // only (i2==0, i3==0 - matches this branch's own "single
+                // count per dense tensor" simplification above), stopping
+                // once the target is reached. Persists in e.calib_x across
+                // however many chunks/calls it takes to fill, same as
+                // e.values/e.counts above.
+                if (m_params.calib_x_tokens > 0 && i2 == 0 && i3 == 0 &&
+                    e.calib_x_captured < m_params.calib_x_tokens) {
+                    if (e.calib_x.empty()) {
+                        e.calib_x.reserve((size_t) (m_params.calib_x_tokens * src1->ne[0]));
+                    }
+                    for (int64_t row = 0; row < src1->ne[1] &&
+                                          e.calib_x_captured < m_params.calib_x_tokens; ++row) {
+                        const float * xrow = (const float *) (data + row * src1->nb[1]);
+                        e.calib_x.insert(e.calib_x.end(), xrow, xrow + src1->ne[0]);
+                        e.calib_x_captured++;
                     }
                 }
             }
@@ -997,11 +1102,19 @@ bool IMatrixCollector::collect_graph_observers() {
         if (!observer_buffer && observer->view_src) {
             observer_buffer = observer->view_src->buffer;
         }
+        // capture_tokens (raw-sample rows appended after the compact
+        // stats, --calib-tokens): 0 for the fused_cast variant (which
+        // never carries them - see ggml_imatrix_observer_cast) and for
+        // any observer built before this field existed. Must be read
+        // BEFORE channels below, since it changes ne[0]'s own formula:
+        // ne[0] = channels*(4+capture_tokens) + 1, not the old channels*4+1.
+        const int64_t capture_tokens = fused_cast
+            ? 0 : (int64_t) imatrix_op_param_i32(observer, 2);
         const int64_t channels = fused_cast
             ? imatrix_op_param_i32(observer->view_src, 2)
-            : (observer->ne[0] - 1) / 4;
+            : (observer->ne[0] - 1) / (4 + capture_tokens);
         const int64_t experts = fused_cast ? 1 : observer->ne[1];
-        GGML_ASSERT(fused_cast || (observer->ne[0] - 1) % 4 == 0);
+        GGML_ASSERT(fused_cast || (observer->ne[0] - 1) % (4 + capture_tokens) == 0);
         snapshots.push_back({
             filter_tensor_name(observer->name),
             ggml_backend_buffer_name(observer_buffer),
@@ -1009,6 +1122,7 @@ bool IMatrixCollector::collect_graph_observers() {
             experts,
             m_observer_offsets[observer_index++],
             m_observer_scope,
+            capture_tokens,
         });
     }
 
@@ -1268,9 +1382,9 @@ bool IMatrixCollector::reduce_graph_observers(
                 return false;
             }
 
+            const int64_t row_stride = 4 * channels + 1 + channels * snapshot.capture_tokens;
             for (int64_t expert = 0; expert < experts; ++expert) {
-                const float * row =
-                    compact + expert * (4 * channels + 1);
+                const float * row = compact + expert * row_stride;
                 for (int64_t channel = 0; channel < channels; ++channel) {
                     const int64_t index = expert * channels + channel;
                     entry.values[index] += row[channel];
@@ -1283,6 +1397,23 @@ bool IMatrixCollector::reduce_graph_observers(
                 }
                 entry.counts[expert] +=
                     (int64_t) llroundf(row[4 * channels]);
+                // Raw calibration rows (--calib-tokens): copied verbatim
+                // into this per-graph delta, uncapped here (each snapshot
+                // contributes at most snapshot.capture_tokens rows, a
+                // bounded amount - e.g. <= capture_tokens*channels*4 bytes).
+                // The real cap against the configured target must be
+                // enforced once against the PERSISTENT m_stats entry below
+                // (under m_mutex), not here: delta is a fresh, per-call map
+                // that starts empty every time reduce_graph_observers runs
+                // (once per ubatch/chunk, several hundred times over a real
+                // run), so a check against delta's own count can't see how
+                // much has already been captured by earlier chunks.
+                if (snapshot.capture_tokens > 0) {
+                    const float * capture_rows = row + 4 * channels + 1;
+                    entry.calib_x.insert(entry.calib_x.end(), capture_rows,
+                                         capture_rows + snapshot.capture_tokens * channels);
+                    entry.calib_x_captured += snapshot.capture_tokens;
+                }
             }
             if (name_end == std::string::npos) {
                 break;
@@ -1349,6 +1480,28 @@ bool IMatrixCollector::reduce_graph_observers(
             m_last_chunk = std::max(
                 m_last_chunk,
                 (int32_t) (destination.counts[i] / chunk_size));
+        }
+
+        // Raw calibration rows: this is the one place the cap against the
+        // configured target (m_params.calib_x_tokens) is actually
+        // meaningful, since destination persists across every call to
+        // reduce_graph_observers for the whole run (unlike delta/source,
+        // fresh every call - see the comment where source.calib_x was
+        // built above). channels isn't stored directly on Stats; derive it
+        // the same way its own row width is implied elsewhere (values.size()
+        // == channels * experts, counts.size() == experts).
+        if (!source.calib_x.empty() && !source.counts.empty() &&
+            destination.calib_x_captured < (int64_t) m_params.calib_x_tokens) {
+            const int64_t channels = (int64_t) source.values.size() / (int64_t) source.counts.size();
+            const int64_t remaining =
+                (int64_t) m_params.calib_x_tokens - destination.calib_x_captured;
+            const int64_t take = std::min(remaining, source.calib_x_captured);
+            if (take > 0 && channels > 0) {
+                destination.calib_x.insert(destination.calib_x.end(),
+                                           source.calib_x.begin(),
+                                           source.calib_x.begin() + take * channels);
+                destination.calib_x_captured += take;
+            }
         }
     }
     m_observer_reduce_seconds += reduce_seconds;
@@ -1766,6 +1919,9 @@ void IMatrixCollector::save_imatrix(int32_t n_chunk) const {
             data_size += GGML_PAD(ggml_tensor_overhead() + sizeof(float) * kv.second.max_values.size(), GGML_MEM_ALIGN);
         }
         data_size += GGML_PAD(ggml_tensor_overhead() + sizeof(float) * kv.second.counts.size(), GGML_MEM_ALIGN);
+        if (!kv.second.calib_x.empty()) {
+            data_size += GGML_PAD(ggml_tensor_overhead() + sizeof(float) * kv.second.calib_x.size(), GGML_MEM_ALIGN);
+        }
     }
 
     // deterministic tensor name order
@@ -1838,6 +1994,24 @@ void IMatrixCollector::save_imatrix(int32_t n_chunk) const {
                 gguf_add_tensor(ctx_gguf, in_sumabs);
                 gguf_add_tensor(ctx_gguf, in_sum4);
                 gguf_add_tensor(ctx_gguf, in_maxabs);
+            }
+
+            // --calib-tokens: optional raw calibration activation rows.
+            // stat.calib_x is row-major [captured][in_dim] (token-major, one
+            // row per captured calibration token) - GGML's ne0-fastest
+            // convention with ne0=in_dim, ne1=captured lays out identically,
+            // so the copy below is a straight element-for-element pass, no
+            // transpose. This is exactly the (n_tokens x in_dim) row-major
+            // contract ts_septq_build_hessian/ts_dartquant_qr_orth/
+            // ts_awq_scale_search_layer_output already expect.
+            if (stat.calib_x_captured > 0 &&
+                stat.calib_x.size() == (size_t) (stat.calib_x_captured * (nval / nmat))) {
+                struct ggml_tensor * calib_x = ggml_new_tensor_2d(
+                    ctx, GGML_TYPE_F32, nval / nmat, (int64_t) stat.calib_x_captured);
+                ggml_format_name(calib_x, "%s.calib_x", name.c_str());
+                std::memcpy(calib_x->data, stat.calib_x.data(),
+                           sizeof(float) * stat.calib_x.size());
+                gguf_add_tensor(ctx_gguf, calib_x);
             }
         }
     }
@@ -2636,6 +2810,20 @@ static bool compute_imatrix(llama_context * ctx, const common_params & params, c
                     hb_batch.load() + 1, num_batches);
         }
     });
+    // The loop below has several early `return false;` paths (eval failure,
+    // flush_graph_observers() failure). Without this guard those paths skip
+    // the manual join below and destroy a still-joinable hb_thread, which
+    // calls std::terminate() directly (no active exception to report).
+    struct join_on_exit {
+        std::atomic<bool> & done;
+        std::thread & thread;
+        ~join_on_exit() {
+            done.store(true, std::memory_order_relaxed);
+            if (thread.joinable()) {
+                thread.join();
+            }
+        }
+    } hb_join_guard{hb_done, hb_thread};
 
     std::vector<std::thread> workers(std::thread::hardware_concurrency() - 1);
 

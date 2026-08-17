@@ -20,10 +20,14 @@
 #include "tessera/tessera-quant.h"
 #include "tessera/tessera-imatrix.h"
 #include "tessera/tessera-regime.h"
+#include "tessera/tessera-l5.h"
 #include "tessera/ttt-writer.h"
 #include "tessera/ttt-reader.h"
 #include "tessera/tessera-gguf-writer.h"
 #include "tessera/tile-detect.h"
+#if defined(TS_USE_ROCBLAS)
+#include "tessera/tessera-rocblas.h"
+#endif
 
 #include "gguf.h"
 
@@ -42,8 +46,12 @@
 #include <vector>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <fstream>
 #include <filesystem>
+#include <atomic>
+#include <mutex>
+#include <thread>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -807,7 +815,17 @@ static size_t ts_export_physmem_bytes() {
 // (attn/ffn/...) and a registered dequant path. Matches ts_is_quantizable
 // in tessera-dispatch.cpp; duplicated here so the export path does not
 // pull the dispatch's full header surface into quantize.cpp.
-static bool ts_export_is_weight(const char * name, enum ggml_type type, int n_dims) {
+//
+// escape_set (progressive-mixed-precision.py): tensor names to force to
+// BF16 passthrough regardless of the family-pattern decision below - checked
+// FIRST so a tensor the mixed-precision search flagged as ternary-intolerant
+// is excluded before any other logic runs. Empty set reproduces the
+// function's pre-existing behavior exactly.
+static bool ts_export_is_weight(const char * name, enum ggml_type type, int n_dims,
+                                const std::unordered_set<std::string> & escape_set) {
+    if (escape_set.count(name) != 0) {
+        return false;
+    }
     if (type == GGML_TYPE_TESSERA_T640) {
         return false;
     }
@@ -820,9 +838,46 @@ static bool ts_export_is_weight(const char * name, enum ggml_type type, int n_di
     if (n_dims != 2 && n_dims != 3) {
         return false;
     }
+    // ts_regime_infer_family returns the literal string "unknown" (never
+    // "") for a name that matches no family pattern - embeddings, output
+    // projection, and anything else outside attn/ffn/ssm land here. This is
+    // the real exclusion gate: "other" never appears in ts_family_patterns
+    // and so this check used to be dead code, silently letting token_embd.
+    // weight and output.weight fall through to ternary quantization instead
+    // of the passthrough path. Kept alongside "unknown" (rather than
+    // replacing it outright) in case a future family entry is literally
+    // named "other".
     std::string family = ts_regime_infer_family(name);
-    if (family.empty() || family == "other") {
+    if (family.empty() || family == "other" || family == "unknown") {
         return false;
+    }
+    return true;
+}
+
+// Loads a --escape-list file (one tensor name per line, '#'-comments and
+// blank lines skipped) into `out`. Returns true on success (including a
+// missing/empty path, which is the common case - `out` stays empty and
+// ts_export_is_weight's behavior is unchanged). Returns false only on a
+// real I/O error for an explicitly-supplied path, with `err` set.
+static bool ts_export_load_escape_set(const std::string & path,
+                                      std::unordered_set<std::string> & out,
+                                      std::string & err) {
+    if (path.empty()) {
+        return true;
+    }
+    std::ifstream f(path);
+    if (!f) {
+        err = "failed to open --escape-list file: " + path;
+        return false;
+    }
+    std::string line;
+    while (std::getline(f, line)) {
+        size_t start = line.find_first_not_of(" \t\r\n");
+        if (start == std::string::npos || line[start] == '#') {
+            continue;
+        }
+        size_t end = line.find_last_not_of(" \t\r\n");
+        out.insert(line.substr(start, end - start + 1));
     }
     return true;
 }
@@ -935,9 +990,19 @@ static struct gguf_context * ts_export_open_gguf(const std::string & path,
 // matching gguf_set_val_* type). String KVs keep their value; numerics
 // are stringified via the json dump. Also writes "general.architecture"
 // to *arch when present.
+//
+// array_hparams collects string-array KVs (tokenizer.ggml.tokens, .merges,
+// general.tags, ...) separately, since they cannot be flattened into a
+// single string the way scalars are. Missing this was a real bug (found by
+// running W3 task 3.9's validate-host-amd.sh against a real model
+// end-to-end): every export-ternary output was silently dropping
+// tokenizer.ggml.tokens/.merges, so the packed GGUF failed to load at all
+// ("cannot find tokenizer merges in model file") - this had apparently
+// never been exercised by an actual load-the-final-GGUF test before.
 static void ts_export_collect_hparams(struct gguf_context * ctx,
                                       std::string & arch,
-                                      std::map<std::string, std::string> & hparams) {
+                                      std::map<std::string, std::string> & hparams,
+                                      std::map<std::string, std::vector<std::string>> & array_hparams) {
     const int64_t n_kv = gguf_get_n_kv(ctx);
     for (int64_t i = 0; i < n_kv; i++) {
         const char * key = gguf_get_key(ctx, i);
@@ -959,7 +1024,21 @@ static void ts_export_collect_hparams(struct gguf_context * ctx,
             case GGUF_TYPE_FLOAT32: val = std::to_string(gguf_get_val_f32(ctx, i)); break;
             case GGUF_TYPE_FLOAT64: val = std::to_string(gguf_get_val_f64(ctx, i)); break;
             case GGUF_TYPE_BOOL:    val = gguf_get_val_bool(ctx, i) ? "true" : "false"; break;
-            default: continue;  // arrays are not hparams
+            case GGUF_TYPE_ARRAY: {
+                if (gguf_get_arr_type(ctx, i) != GGUF_TYPE_STRING) {
+                    continue; // only string arrays round-trip; see the writer/reader comments
+                }
+                const size_t n = gguf_get_arr_n(ctx, i);
+                std::vector<std::string> arr;
+                arr.reserve(n);
+                for (size_t j = 0; j < n; j++) {
+                    const char * s = gguf_get_arr_str(ctx, i, j);
+                    arr.emplace_back(s ? s : "");
+                }
+                array_hparams[key] = std::move(arr);
+                continue;
+            }
+            default: continue;
         }
         hparams[key] = std::move(val);
         if (std::string(key) == "general.architecture") {
@@ -979,7 +1058,34 @@ static void ts_pack_set_hparam(struct gguf_context * ctx,
         gguf_set_val_bool(ctx, key.c_str(), val == "true");
         return;
     }
-    // integer?
+    // integer? Non-negative values default to u32, not i32: standard
+    // llama.cpp GGUF convention stores essentially every count-style
+    // hyperparameter (context_length, embedding_length, block_count,
+    // head_count, general.file_type, general.quantization_version, ...)
+    // as u32, and llama_model_loader::get_key<uint32_t> reads them
+    // strictly - a value written as i32 is rejected outright ("key ...
+    // has wrong type i32 but expected type u32"), not silently
+    // reinterpreted. Found by running task 3.9's validate-host-amd.sh
+    // against a real model end-to-end: this generic hparam copier applies
+    // to every `pack` output regardless of --tile/--quant choice, so it
+    // was already broken for any source model whose export carried a
+    // plain non-negative integer hparam, not a new regression from the
+    // host-amd path specifically. Only genuinely negative values (rare
+    // for hparams, but not impossible) fall back to signed i32/i64.
+    {
+        char * end = nullptr;
+        errno = 0;
+        unsigned long long uv = std::strtoull(val.c_str(), &end, 10);
+        if (end != val.c_str() && *end == '\0' && errno == 0 && val[0] != '-') {
+            if (uv <= UINT32_MAX) {
+                gguf_set_val_u32(ctx, key.c_str(), (uint32_t) uv);
+            } else {
+                gguf_set_val_u64(ctx, key.c_str(), (uint64_t) uv);
+            }
+            return;
+        }
+    }
+    // integer (negative)?
     {
         char * end = nullptr;
         errno = 0;
@@ -1050,6 +1156,37 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
         have_imatrix = !imatrix.data.empty();
     }
 
+    // mixed-precision escape set (progressive-mixed-precision.py): tensor
+    // names to force to BF16 passthrough regardless of the usual family-
+    // pattern decision. Empty/unset reproduces today's exact behavior.
+    std::unordered_set<std::string> escape_set;
+    if (!tp.export_escape_list.empty()) {
+        std::string eerr;
+        if (!ts_export_load_escape_set(tp.export_escape_list, escape_set, eerr)) {
+            fprintf(stderr, "error: export-ternary: %s\n", eerr.c_str());
+            return 1;
+        }
+        fprintf(stderr, "export-ternary: --escape-list: %zu tensor(s) forced to passthrough\n",
+                escape_set.size());
+    }
+
+    // reuse-ttt (progressive-mixed-precision.py): a prior round's own .ttt
+    // output, loaded once up front so process_item's per-tensor lookups
+    // below are simple read-only std::map queries (thread-safe across the
+    // pool with no locking needed - see ts_ternary_model's own comment).
+    ts_ternary_model reuse_model;
+    bool have_reuse_ttt = false;
+    if (!tp.export_reuse_ttt.empty()) {
+        if (ts_read_ttt(tp.export_reuse_ttt, reuse_model) != 0) {
+            fprintf(stderr, "error: export-ternary: --reuse-ttt: failed to read '%s'\n",
+                    tp.export_reuse_ttt.c_str());
+            return 1;
+        }
+        have_reuse_ttt = true;
+        fprintf(stderr, "export-ternary: --reuse-ttt: loaded %zu tensor(s) from %s\n",
+                reuse_model.tensors.size(), tp.export_reuse_ttt.c_str());
+    }
+
     // open + mmap the source GGUF. ts_export_open_gguf uses a lazy MAP_PRIVATE
     // mmap (no prefetch, POSIX_MADV_RANDOM) so opening a 65 GB file on a 17 GB
     // host does not page anything in until a tensor is touched.
@@ -1080,7 +1217,8 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
 
     std::string arch;
     std::map<std::string, std::string> hparams;
-    ts_export_collect_hparams(in_ctx, arch, hparams);
+    std::map<std::string, std::vector<std::string>> array_hparams;
+    ts_export_collect_hparams(in_ctx, arch, hparams, array_hparams);
     if (arch.empty()) {
         arch = "llama";
     }
@@ -1142,60 +1280,552 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
     // quantize each 2D weight via ts_quantize_2d_ternary. 3D MoE experts
     // are exported as one ternary tensor per expert (flattened name suffix
     // .E<j>), matching the dispatch's per-expert quantize convention.
-    ts_quant_params_2d qp{};
-    qp.alpha          = 0.0f;   // auto-search
-    qp.clip           = 1.0f;
-    qp.max_outliers   = 0;
-    qp.outlier_thresh = tp.outlier_frac;
-    qp.use_imatrix    = false;
-    qp.use_septq      = false;
-    qp.awq_grid       = 20;
+    //
+    // Parallelized across CPU threads: mirrors the atomic-work-stealing
+    // pool tessera-dispatch.cpp's acceptance-gate re-quantize already uses
+    // (tessera-dispatch.cpp:3679-3798) - a fast sequential pre-pass
+    // enumerates every exportable (base) tensor into `work` (metadata
+    // only, no dequant), then a fixed-size thread pool claims items via an
+    // atomic index, dequantizes + quantizes each one (all experts of a 3D
+    // MoE tensor together, so the base tensor is dequantized once per
+    // work item, not once per expert), and writes into a pre-sized
+    // `results` slot. ts_export_tensor_to_f32/ts_quantize_2d_ternary/
+    // ts_imatrix_lookup are all pure/reentrant (fresh local buffers, const
+    // inputs) - verified by direct code reading, not assumed - so no
+    // locking is needed beyond the atomic work-stealing index itself.
+    //
+    // This trades the original per-tensor RSS-bounded streaming design
+    // for holding the whole ternary-exported model in RAM at once (~half
+    // the source BF16 size, see ttt-writer.cpp:152-155) - fine at this
+    // model's scale (a few GB) on this host; a genuinely RAM-constrained
+    // host would need a bounded producer/consumer window instead of this
+    // all-at-once buffer, not implemented here.
+    ts_quant_params_2d qp_base{};
+    qp_base.alpha          = 0.0f;   // auto-search
+    qp_base.clip           = 1.0f;
+    // outlier_thresh holds tp.outlier_frac's value but is used pipeline-wide
+    // as a TARGET FRACTION of elements to keep as exact-value outliers
+    // (max_outliers = ceil(outlier_thresh * n) below), NOT as an absolute
+    // residual-magnitude cutoff - the earlier "uncap outliers" change
+    // (before this session) removed the count cap and left outlier_thresh
+    // as the sole selector, but 0.005 as an ABSOLUTE cutoff turned out to
+    // catch 35-65% of every tensor's elements (weight/residual magnitudes
+    // commonly sit in that same range), not a sparse exception set -
+    // measured directly from a real export-ternary run's shipped
+    // .outlier_cols array sizes. An outlier costs ~6 bytes (f16 value +
+    // i32 column) vs ~1.6 bits for a trit, so that silently defeated
+    // ternary compression for most of the model. See gap ledger.
+    qp_base.outlier_thresh = tp.outlier_frac;
+    // use_imatrix/use_septq: real calibration data (AWQ act_scales, and
+    // SEPTQ's diagonal-Hessian proxy which is built from those same
+    // act_scales - see ts_septq_quantize_2d's hessian_mode fallback) only
+    // exists when the caller actually supplied --imatrix. Without one,
+    // these degenerate to nothing useful (SEPTQ's diagonal mode with a
+    // null act_scales, AWQ's scale search with no per-channel signal), so
+    // gate both on have_imatrix rather than turning them on unconditionally.
+    qp_base.use_imatrix    = have_imatrix;
+    qp_base.use_septq      = have_imatrix;
+    qp_base.awq_grid       = 20;
+    // seed=0 is ts_dartquant_qr_orth's documented "start at identity"
+    // testing mode (tessera-dartquant.h), not a generic default - at R=I
+    // the whip-loss gradient (W^T @ diag(diff) @ W) is symmetric by
+    // construction, and the Stiefel tangent-space projection correctly
+    // zeros a symmetric input (it isn't a valid tangent direction), so
+    // every optimization step is a null move forever. Root-caused via a
+    // standalone diagnostic against a real tensor (||R-I||=0 after 30
+    // iterations with seed=0; ||R-I||=1.42 with a nonzero seed) after
+    // DartQuant won 0 of 280 tensors in a live export-ternary run with
+    // suspiciously AWQ-identical t2 scores. A nonzero seed starts from a
+    // Haar-uniform random rotation instead, avoiding the degeneracy.
+    qp_base.seed           = 42;
 
-    // Streaming source state: the source lambda is called once per exported
-    // (sub)tensor and advances through the GGUF. `cur_*` cache the current
-    // source tensor so a 3D MoE weight yields one call per expert without
-    // re-dequantizing. `full` holds the dequantized F32 buffer for the
-    // current tensor and is cleared (and its mmap pages evicted) once all
-    // experts are emitted.
     int64_t n_exported = 0;
     int64_t n_skipped  = 0;
-    int64_t gguf_idx   = 0;
-    int64_t expert_idx = 0;
-    int64_t n_experts  = 0;
-    int64_t in_dim     = 0;
-    int64_t out_dim    = 0;
-    int     n_dims     = 0;
-    const float * act_scales = nullptr;
-    std::string cur_name;
-    std::vector<float> full;
-    struct ggml_tensor * cur_t = nullptr;
 
-    // Drop residence for the current source tensor's mmap range. Called once
-    // the last expert has been quantized so the next tensor's pages can
-    // reuse the memory. madvise DONTNEED is a hint; on macOS it instructs
-    // the pager to drop the (clean, read-only) pages.
-    auto evict_current = [&]() {
-        if (cur_t && cur_t->data && mm.mapped) {
-            const size_t nbytes = ggml_nbytes(cur_t);
-            (void) posix_madvise(cur_t->data, nbytes, POSIX_MADV_DONTNEED);
+    struct ts_export_work_item {
+        struct ggml_tensor * t;
+        std::string          base_name;
+        int64_t               out_dim;
+        int64_t               in_dim;
+        int                    n_dims;
+        int64_t               n_experts;
+    };
+    std::vector<ts_export_work_item> work;
+    work.reserve((size_t) n_tensors);
+    for (int64_t i = 0; i < n_tensors; i++) {
+        const char * name = gguf_get_tensor_name(in_ctx, i);
+        const enum ggml_type type = gguf_get_tensor_type(in_ctx, i);
+        const int64_t * ne = gguf_get_tensor_ne(in_ctx, i);
+        int nd = GGML_MAX_DIMS;
+        while (nd > 1 && ne[nd - 1] == 1) {
+            nd--;
+        }
+        if (!ts_export_is_weight(name, type, nd, escape_set)) {
+            n_skipped++;
+            continue;
+        }
+        struct ggml_tensor * t = ggml_get_tensor(ggml_ctx, name);
+        if (t == nullptr) {
+            fprintf(stderr, "export-ternary: warning: '%s' not in ggml ctx, skipping\n", name);
+            n_skipped++;
+            continue;
+        }
+        ts_export_work_item item;
+        item.t         = t;
+        item.base_name = name;
+        item.in_dim    = ne[0];
+        item.out_dim   = ne[1];
+        item.n_dims    = nd;
+        item.n_experts = (nd == 3) ? ne[2] : 1;
+        work.push_back(std::move(item));
+    }
+
+    struct ts_export_result {
+        std::string       name;
+        ts_ternary_tensor tensor;
+    };
+    std::vector<std::vector<ts_export_result>> results(work.size());
+    std::vector<int64_t> item_skipped(work.size(), 0);
+    // Sensitivity scoring (--sensitivity-out, progressive-mixed-precision.py):
+    // records each work item's own act_scales pointer (into `imatrix`'s
+    // storage, alive for the whole function) + in_dim, one write per idx from
+    // that idx's own thread - thread-safe, same pattern as results[idx]/
+    // item_skipped[idx]. Left {nullptr,0} for items with no calibration
+    // signal; ts_l5_imatrix_magnitude is only run over the populated subset
+    // after the loop joins.
+    std::vector<std::pair<const float *, int64_t>> sensitivity_inputs(
+        work.size(), {nullptr, 0});
+    // Real Hessian-based (OBQ) sensitivity, computed per work item when
+    // --sensitivity-out + real calib_X are both available - see the block
+    // below process_item's per-expert loop. -1.0f (the default) means "no
+    // real calib_X for this tensor"; the --sensitivity-out block falls back
+    // to the mean(|act|) signal (sensitivity_inputs above) for those.
+    std::vector<float> hessian_scores(work.size(), -1.0f);
+
+    const int32_t n_threads = std::max(1, std::min(
+        (int32_t) std::thread::hardware_concurrency(),
+        (int32_t) work.size()));
+    printf("export-ternary: quantizing %zu tensors across %d threads\n", work.size(), (int) n_threads);
+
+    // Dequantizes + quantizes one base tensor (all its experts, if any).
+    // Everything touched here is either work[idx]-local, a fresh local
+    // buffer, or a read-only shared input (in_ctx/ggml_ctx/imatrix) - safe
+    // to call concurrently for different idx values from different threads.
+    auto process_item = [&](size_t idx) {
+        const ts_export_work_item & item = work[idx];
+        struct ggml_tensor * t = item.t;
+
+        // --reuse-ttt fast path: this tensor stays ternary (not in
+        // escape_set) and a prior round already computed it - copy that
+        // result verbatim instead of touching the mmap'd weight at all.
+        // Per-expert names must match exactly what the results-push below
+        // constructs (base_name, or base_name+".E{e}" for a 3D/MoE work
+        // item); if ANY expert is missing from the reuse source, fall
+        // through to full computation for the whole item rather than
+        // mixing reused and freshly-computed experts.
+        if (have_reuse_ttt && !escape_set.count(item.base_name)) {
+            std::vector<std::pair<std::string, const ts_ternary_tensor *>> reused;
+            reused.reserve((size_t) item.n_experts);
+            bool all_found = true;
+            for (int64_t e = 0; e < item.n_experts; e++) {
+                std::string tname = item.base_name;
+                if (item.n_dims == 3) {
+                    tname += ".E" + std::to_string(e);
+                }
+                auto it = reuse_model.tensors.find(tname);
+                if (it == reuse_model.tensors.end()) {
+                    all_found = false;
+                    break;
+                }
+                reused.push_back({tname, &it->second});
+            }
+            if (all_found) {
+                for (auto & [tname, tn_ptr] : reused) {
+                    results[idx].push_back({tname, *tn_ptr});
+                }
+                return;
+            }
+        }
+
+        // WILLNEED/DONTNEED act on this tensor's own disjoint mmap byte
+        // range, so concurrent calls for different tensors don't race.
+        if (t->data) {
+            (void) posix_madvise(t->data, ggml_nbytes(t), POSIX_MADV_WILLNEED);
+        }
+        std::vector<float> full = ts_export_tensor_to_f32(t);
+        if (full.empty()) {
+            fprintf(stderr, "export-ternary: warning: unsupported type for '%s', skipping\n",
+                    item.base_name.c_str());
+            item_skipped[idx]++;
+            if (t->data) {
+                (void) posix_madvise(t->data, ggml_nbytes(t), POSIX_MADV_DONTNEED);
+            }
+            return;
+        }
+
+        // KV-joint reconstruction item 5: fold attn_q/attn_output's migrated
+        // D/E scale before anything else touches `full`. MoE experts
+        // (n_dims == 3) are never attn_q/attn_output, so this only ever
+        // applies to n_dims == 2. No-op when kv_db is null or no kv_stats
+        // row exists yet. kv_db is safe to call concurrently here -
+        // ts_tessera_db_read_kv_stat serializes internally via
+        // db->eval_cache_mutex (same pattern the AWQ eval cache uses for
+        // this same worker pool).
+        if (item.n_dims == 2 && kv_db != nullptr) {
+            ts_kv_migrate_apply_to_tensor(
+                kv_db, kv_model_hash, kv_model_role,
+                item.base_name, full.data(), item.out_dim, item.in_dim,
+                ts_kv_migrate_params{}, nullptr);
+        }
+
+        const float * act_scales = nullptr;
+        if (have_imatrix) {
+            int64_t act_n = 0;
+            act_scales = ts_imatrix_lookup(&imatrix, item.base_name.c_str(), &act_n);
+            if (act_scales != nullptr && act_n != item.in_dim) {
+                act_scales = nullptr;
+            }
+        }
+        if (act_scales != nullptr) {
+            sensitivity_inputs[idx] = {act_scales, item.in_dim};
+        }
+
+        // Real per-token calibration activations (llama-imatrix's
+        // --calib-tokens), when the imatrix was collected with them.
+        // Absent (the common case for older imatrix files) means calib_X
+        // stays nullptr and every consumer below falls back to its
+        // existing act_scales-only or unweighted behavior - same as
+        // before this was wired in.
+        const float * calib_X  = nullptr;
+        int64_t       n_tokens = 0;
+        if (have_imatrix) {
+            int64_t calib_in_dim = 0;
+            calib_X = ts_imatrix_lookup_calib_x(&imatrix, item.base_name.c_str(),
+                                                &n_tokens, &calib_in_dim);
+            if (calib_X != nullptr && calib_in_dim != item.in_dim) {
+                calib_X  = nullptr;
+                n_tokens = 0;
+            }
+        }
+
+        const int64_t per = item.out_dim * item.in_dim;
+        for (int64_t e = 0; e < item.n_experts; e++) {
+            const float * wptr = full.data() + (size_t)(e * per);
+            std::vector<float> expert_weights;
+            if (item.n_dims == 3) {
+                // per-expert slice needs contiguous storage independent of `full`
+                expert_weights.assign(wptr, wptr + per);
+                wptr = expert_weights.data();
+            }
+            std::string tname = item.base_name;
+            if (item.n_dims == 3) {
+                tname += ".E" + std::to_string(e);
+            }
+
+            // Local copy per call: qp.max_outliers is per-tensor-sized and
+            // must not be a shared struct mutated by concurrent workers.
+            // ts_select_repair_residuals treats max_outliers<=0 as "no
+            // outliers, return immediately" (tessera-quant.cpp), which is
+            // what silently disabled outlier repair for every export-
+            // ternary run before the earlier "uncap outliers" fix. That fix
+            // removed the count cap entirely (max_outliers = per, the full
+            // element count) and relied on qp_base.outlier_thresh's raw
+            // value (0.005) as an absolute residual-magnitude cutoff to be
+            // the sole selector - measured directly against a real run's
+            // shipped .outlier_cols array sizes, this caught 35-65% of
+            // every tensor's elements, not a sparse exception set (see
+            // qp_base.outlier_thresh's own comment above). max_outliers is
+            // now derived as the fraction outlier_thresh actually
+            // represents, restoring a genuine, bounded outlier budget.
+            ts_quant_params_2d qp = qp_base;
+            qp.max_outliers = std::max<int64_t>(
+                1, (int64_t) std::ceil((double) qp_base.outlier_thresh * (double) per));
+
+            // ref_output[t,o] = calib_X @ weights^T: the original unquantized
+            // layer's output over the calibration set. Computed once per
+            // tensor/expert and reused by every call below that resolves an
+            // AWQ alpha (the AWQ candidate's own measurement, the SEPTQ
+            // measurement's internal alpha pre-scale, and the final shipping
+            // call) so each uses the true layer-output-MSE search
+            // (ts_awq_scale_search_layer_output) instead of the coarser
+            // weight-magnitude proxy (ts_awq_scale_search) whenever real
+            // calib_X is available. Empty (nullptr) when calib_X is absent -
+            // every consumer already falls back correctly in that case.
+            std::vector<float> ref_output;
+            if (calib_X != nullptr) {
+                ref_output.resize((size_t) n_tokens * (size_t) item.out_dim);
+                ts_awq_compute_ref_output(wptr, calib_X, item.out_dim, item.in_dim,
+                                          n_tokens, ref_output.data());
+            }
+            const float * ref_output_ptr = ref_output.empty() ? nullptr : ref_output.data();
+
+            // Live per-tensor algorithm selection: measure AWQ/SEPTQ (via
+            // ts_measure_true_t2, which runs the REAL dispatch through
+            // ts_quantize_2d_ternary and reconstructs the actual shippable
+            // output - NOT ts_dispatch_forced_t2, which routes both AWQ
+            // and SEPTQ through ts_quantize_mse_streaming, a function with
+            // no use_septq awareness at all; it only varies alpha_scale/
+            // clip_scale, which are identical between AWQ's and SEPTQ's
+            // default profiles, so forced_t2 is structurally incapable of
+            // telling them apart - confirmed empirically: identical t2 for
+            // every tensor in a live run, and since ties break toward
+            // whichever candidate was inserted first, SEPTQ could never
+            // actually be selected. See gap ledger) and DartQuant/FLRQ
+            // (via ts_dispatch_tier2_t2, which actually runs their
+            // trainers) against this tensor, then ship whichever yields
+            // the lowest measured t2. Only meaningful with real
+            // calibration signal, so gated on have_imatrix like use_septq
+            // already was above.
+            if (have_imatrix) {
+                struct ts_algo_candidate { ts_expert_id expert; float t2; };
+                std::vector<ts_algo_candidate> cands;
+                float t2;
+                t2 = ts_measure_true_t2(wptr, act_scales, item.out_dim, item.in_dim,
+                                        /*use_septq=*/false, qp_base.alpha, qp_base.clip,
+                                        qp_base.outlier_thresh, qp_base.seed,
+                                        calib_X, n_tokens, ref_output_ptr);
+                if (t2 >= 0.0f) cands.push_back({TS_EXPERT_AWQ, t2});
+                t2 = ts_measure_true_t2(wptr, act_scales, item.out_dim, item.in_dim,
+                                        /*use_septq=*/true, qp_base.alpha, qp_base.clip,
+                                        qp_base.outlier_thresh, qp_base.seed,
+                                        calib_X, n_tokens, ref_output_ptr);
+                if (t2 >= 0.0f) cands.push_back({TS_EXPERT_SEPTQ, t2});
+                t2 = ts_dispatch_tier2_t2(TS_EXPERT_DARTQUANT, wptr, act_scales,
+                                          item.out_dim, item.in_dim,
+                                          qp_base.alpha, qp_base.clip, qp_base.seed,
+                                          calib_X, n_tokens);
+                if (t2 >= 0.0f) cands.push_back({TS_EXPERT_DARTQUANT, t2});
+                t2 = ts_dispatch_tier2_t2(TS_EXPERT_FLRQ, wptr, act_scales,
+                                          item.out_dim, item.in_dim,
+                                          qp_base.alpha, qp_base.clip, qp_base.seed,
+                                          calib_X, n_tokens);
+                if (t2 >= 0.0f) cands.push_back({TS_EXPERT_FLRQ, t2});
+
+                if (!cands.empty()) {
+                    const ts_algo_candidate & best = *std::min_element(
+                        cands.begin(), cands.end(),
+                        [](const ts_algo_candidate & a, const ts_algo_candidate & b) {
+                            return a.t2 < b.t2;
+                        });
+                    qp.use_septq     = (best.expert == TS_EXPERT_SEPTQ);
+                    qp.use_flrq      = (best.expert == TS_EXPERT_FLRQ);
+                    qp.use_dartquant = (best.expert == TS_EXPERT_DARTQUANT);
+
+                    static const char * expert_name[] = {"AWQ", "LRQ", "DARTQUANT", "FLRQ", "CHAMPQ", "SEPTQ"};
+                    static std::mutex log_mutex;
+                    std::lock_guard<std::mutex> lg(log_mutex);
+                    fprintf(stderr, "export-ternary: %-40s winner=%-10s t2=%.4g  (",
+                            tname.c_str(), expert_name[best.expert], best.t2);
+                    for (size_t i = 0; i < cands.size(); i++) {
+                        fprintf(stderr, "%s%s=%.4g", i ? " " : "", expert_name[cands[i].expert], cands[i].t2);
+                    }
+                    fprintf(stderr, ")\n");
+                }
+            }
+
+            ts_ternary_tensor tn;
+            int rc = ts_quantize_2d_ternary(wptr, act_scales,
+                                            calib_X, ref_output_ptr, nullptr,
+                                            item.out_dim, item.in_dim, n_tokens,
+                                            &qp, &tn);
+            if (rc != 0) {
+                fprintf(stderr, "export-ternary: warning: quantize failed for '%s', skipping\n",
+                        tname.c_str());
+                item_skipped[idx]++;
+                continue;
+            }
+
+            // Real Hessian (OBQ) sensitivity for --sensitivity-out, when
+            // real calib_X is available. e==0 only (dense-model
+            // assumption already made by sensitivity_inputs/calib_X above,
+            // both looked up once per work item on item.base_name, not
+            // per-expert). Skipped entirely unless --sensitivity-out was
+            // actually requested - ts_l5_hessian_factorize_inverse's full
+            // Cholesky is O(in_dim^3), real cost for in_dim=8192 tensors,
+            // not something to pay on every quantize.
+            if (e == 0 && calib_X != nullptr && !tp.export_sensitivity_out.empty()) {
+                std::vector<float> H_inv_diag((size_t) item.in_dim);
+                std::vector<float> H_scratch((size_t) (item.in_dim * item.in_dim));
+                if (ts_l5_hessian_factorize_inverse(item.in_dim, calib_X, n_tokens,
+                                                    /*ridge_fraction=*/1e-4f,
+                                                    H_inv_diag.data(), nullptr,
+                                                    H_scratch.data()) == 0) {
+                    std::vector<float> recon((size_t) per);
+                    ts_ternary_tensor_reconstruct(tn, item.out_dim, item.in_dim, recon.data());
+                    // omega_ij = (w_ij - quant(w_ij))^2 / H_inv_diag[col] -
+                    // OBQ criterion (Frantar & Alistarh), tensor score =
+                    // mean over all (row, col). H_inv_diag is indexed by
+                    // input channel (col), matching wptr/recon's own
+                    // [out_dim, in_dim] row-major layout directly - no
+                    // transpose needed (ts_l5_hessian_sensitivity's own
+                    // batched API expects a different (in_dim, out_dim)
+                    // storage convention that doesn't fit this per-tensor,
+                    // per-work-item computation, so this reimplements its
+                    // documented formula directly rather than calling it).
+                    double sum_omega = 0.0;
+                    for (int64_t row = 0; row < item.out_dim; row++) {
+                        for (int64_t col = 0; col < item.in_dim; col++) {
+                            const double d = (double) wptr[row * item.in_dim + col] -
+                                             (double) recon[(size_t) (row * item.in_dim + col)];
+                            sum_omega += (d * d) /
+                                std::max((double) H_inv_diag[(size_t) col], 1e-12);
+                        }
+                    }
+                    hessian_scores[idx] = (float) (sum_omega / (double) per);
+                }
+            }
+
+            results[idx].push_back({ std::move(tname), std::move(tn) });
+        }
+
+        if (t->data) {
+            (void) posix_madvise(t->data, ggml_nbytes(t), POSIX_MADV_DONTNEED);
         }
     };
 
-    // Advance to the next exportable GGUF tensor and dequantize it into
-    // `full`. Returns true if a tensor was loaded, false at end-of-stream
-    // (or on a fatal dequant error). Skips non-weight tensors with a
-    // warning count. Issues WILLNEED before the dequant so the kernel pages
-    // the tensor in proactively rather than on the first byte read.
-    auto load_next_tensor = [&]() -> bool {
-        full.clear();
-        full.shrink_to_fit();
-        cur_t = nullptr;
-        cur_name.clear();
-        act_scales = nullptr;
-        n_experts  = 0;
-        expert_idx = 0;
-        while (gguf_idx < n_tensors) {
-            const int64_t i = gguf_idx++;
+    if (n_threads <= 1 || work.size() < 2) {
+        for (size_t idx = 0; idx < work.size(); idx++) {
+            process_item(idx);
+        }
+    } else {
+        std::atomic<size_t> next_idx(0);
+        auto worker = [&]() {
+            for (;;) {
+                size_t idx = next_idx.fetch_add(1, std::memory_order_relaxed);
+                if (idx >= work.size()) return;
+                process_item(idx);
+            }
+        };
+        std::vector<std::thread> pool;
+        pool.reserve((size_t) n_threads);
+        for (int32_t t = 0; t < n_threads; t++) pool.emplace_back(worker);
+        for (auto & th : pool) th.join();
+    }
+    for (int64_t s : item_skipped) {
+        n_skipped += s;
+    }
+
+    // --sensitivity-out: rank each work item by the best signal available -
+    // hessian_scores (real OBQ, see process_item above) when real calib_X
+    // was available for that tensor, else ts_l5_imatrix_magnitude's
+    // mean(|act|) fallback - then ts_l5_percentile_rank for an evenly-
+    // distributed [0,1] ranking signal (peak-normalization alone lets one
+    // dominant tensor compress everything else near 0). Threads have
+    // joined by this point, so sensitivity_inputs/hessian_scores/work are
+    // safe to walk sequentially. Only meaningful with real calibration
+    // data - skip (warn, not error) without one, same convention
+    // have_imatrix already uses elsewhere in this function.
+    if (!tp.export_sensitivity_out.empty()) {
+        if (!have_imatrix) {
+            fprintf(stderr, "export-ternary: warning: --sensitivity-out requires --imatrix; "
+                            "skipping sensitivity sidecar\n");
+        } else {
+            ts_score_map combined;
+            int64_t n_hessian = 0;
+
+            // Fallback subset: tensors without a real hessian_scores entry
+            // (no --calib-tokens at imatrix time, or a per-tensor mismatch)
+            // still get ranked via the existing mean(|act|) signal, kept in
+            // its own ts_l5_imatrix_magnitude call so its internal peak-
+            // normalization is relative to just this subset - a known,
+            // accepted imprecision when mixing with the Hessian subset
+            // below (different metrics, different scales); rare in
+            // practice once an imatrix is regenerated with --calib-tokens,
+            // since collection covers every tensor uniformly.
+            {
+                std::vector<float>       concat_act;
+                std::vector<int64_t>     tensor_dims;
+                std::vector<std::string> tensor_names_storage;
+                for (size_t idx = 0; idx < work.size(); idx++) {
+                    if (hessian_scores[idx] >= 0.0f) {
+                        continue;
+                    }
+                    const float * ptr    = sensitivity_inputs[idx].first;
+                    const int64_t in_dim = sensitivity_inputs[idx].second;
+                    if (ptr == nullptr || in_dim <= 0) {
+                        continue;
+                    }
+                    concat_act.insert(concat_act.end(), ptr, ptr + in_dim);
+                    tensor_dims.push_back(in_dim);
+                    tensor_names_storage.push_back(work[idx].base_name);
+                }
+                if (!tensor_names_storage.empty()) {
+                    std::vector<const char *> tensor_names_c;
+                    tensor_names_c.reserve(tensor_names_storage.size());
+                    for (const std::string & n : tensor_names_storage) {
+                        tensor_names_c.push_back(n.c_str());
+                    }
+                    ts_score_map raw = ts_l5_imatrix_magnitude(
+                        concat_act.data(), tensor_names_c.data(), tensor_dims.data(),
+                        (int64_t) tensor_names_storage.size());
+                    combined.insert(raw.begin(), raw.end());
+                }
+            }
+            for (size_t idx = 0; idx < work.size(); idx++) {
+                if (hessian_scores[idx] >= 0.0f) {
+                    combined[work[idx].base_name] = hessian_scores[idx];
+                    n_hessian++;
+                }
+            }
+
+            if (combined.empty()) {
+                fprintf(stderr, "export-ternary: warning: --sensitivity-out: no tensor had "
+                                "usable calibration data; skipping sidecar\n");
+            } else {
+                ts_score_map ranked = ts_l5_percentile_rank(&combined);
+                nlohmann::json j;
+                for (const auto & kv : ranked) {
+                    j[kv.first] = kv.second;
+                }
+                std::ofstream sf(tp.export_sensitivity_out);
+                if (!sf) {
+                    fprintf(stderr, "export-ternary: warning: failed to write --sensitivity-out '%s'\n",
+                            tp.export_sensitivity_out.c_str());
+                } else {
+                    sf << j.dump(2);
+                    fprintf(stderr, "export-ternary: wrote sensitivity scores for %zu tensor(s) "
+                                    "(%lld via real Hessian, %zu via mean(|act|) fallback) to %s\n",
+                            combined.size(), (long long) n_hessian,
+                            combined.size() - (size_t) n_hessian, tp.export_sensitivity_out.c_str());
+                }
+            }
+        }
+    }
+
+    // Sequential replay into ts_write_ttt_stream: all the expensive work
+    // (dequant + AWQ/SEPTQ) already happened above in parallel; this just
+    // walks the pre-computed `results` in original tensor order so the
+    // writer's single serial spool-file cursor sees the same deterministic
+    // tensor sequence the old streaming source produced.
+    size_t src_outer = 0, src_inner = 0;
+    ts_ttt_tensor_source source = [&](ts_ternary_tensor & tensor) -> std::string {
+        while (src_outer < results.size()) {
+            if (src_inner < results[src_outer].size()) {
+                ts_export_result & r = results[src_outer][src_inner++];
+                tensor = std::move(r.tensor);
+                n_exported++;
+                return r.name;
+            }
+            src_outer++;
+            src_inner = 0;
+        }
+        return std::string();
+    };
+
+    // Passthrough source (architect-directed, task 3.9 evidence): a second,
+    // independent pass over the source GGUF's tensors, this time yielding
+    // exactly the ones ts_export_is_weight() rejects (embeddings, norms,
+    // output projection - deliberately excluded from ternary quantization,
+    // standard practice) with their raw bytes verbatim, so the tile-neutral
+    // safetensors directory carries a genuinely complete model rather than
+    // silently dropping them. Reads straight from the mmap'd source (no
+    // dequant - passthrough tensors keep their original dtype exactly, no
+    // precision decision to make here).
+    int64_t passthrough_idx = 0;
+    auto passthrough_source = [&](std::string & dtype, std::vector<int64_t> & shape,
+                                  std::vector<uint8_t> & data) -> std::string {
+        while (passthrough_idx < n_tensors) {
+            const int64_t i = passthrough_idx++;
             const char * name = gguf_get_tensor_name(in_ctx, i);
             const enum ggml_type type = gguf_get_tensor_type(in_ctx, i);
             const int64_t * ne = gguf_get_tensor_ne(in_ctx, i);
@@ -1203,115 +1833,39 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
             while (nd > 1 && ne[nd - 1] == 1) {
                 nd--;
             }
-            if (!ts_export_is_weight(name, type, nd)) {
-                n_skipped++;
-                continue;
+            if (ts_export_is_weight(name, type, nd, escape_set)) {
+                continue; // ternary-quantized elsewhere; not passthrough
             }
             struct ggml_tensor * t = ggml_get_tensor(ggml_ctx, name);
-            if (t == nullptr) {
-                fprintf(stderr, "export-ternary: warning: '%s' not in ggml ctx, skipping\n", name);
-                n_skipped++;
-                continue;
+            if (t == nullptr || t->data == nullptr) {
+                continue; // same "not resolvable" cases the main pass already warns about
             }
-
-            // Hint the pager that we are about to read this tensor's pages.
-            // The mmap was created without WILLNEED/MAP_POPULATE, so without
-            // this hint the first dequant byte read would fault each page in
-            // on demand; WILLNEED lets the kernel start the readahead for
-            // just this tensor's byte range in parallel.
-            if (t->data) {
-                (void) posix_madvise(t->data, ggml_nbytes(t), POSIX_MADV_WILLNEED);
+            std::string dtype_str = ts_unified_qtype_to_string((int) type);
+            if (dtype_str.empty()) {
+                continue; // no safetensors dtype for this ggml type; skip rather than corrupt
             }
-
-            std::vector<float> dequant = ts_export_tensor_to_f32(t);
-            if (dequant.empty()) {
-                fprintf(stderr, "export-ternary: warning: unsupported type for '%s', skipping\n", name);
-                n_skipped++;
-                // Evict the pages we just hinted in for this unusable tensor.
-                if (t->data) {
-                    (void) posix_madvise(t->data, ggml_nbytes(t), POSIX_MADV_DONTNEED);
-                }
-                continue;
+            dtype = dtype_str;
+            // Safetensors shape is HF row-major (slowest-varying first), the
+            // reverse of ggml's ne[] (fastest-varying first, ne[0] = last HF
+            // dim) - same convention as the ternary inventory's {out_dim,
+            // in_dim} (out_dim = ne[1], in_dim = ne[0]).
+            shape.resize((size_t) nd);
+            for (int d = 0; d < nd; d++) {
+                shape[(size_t) d] = ne[nd - 1 - d];
             }
-
-            cur_t     = t;
-            cur_name  = name;
-            n_dims    = nd;
-            in_dim    = ne[0];
-            out_dim   = ne[1];
-            n_experts = (n_dims == 3) ? ne[2] : 1;
-            expert_idx = 0;
-            full = std::move(dequant);
-
-            // KV-joint reconstruction item 5: fold attn_q/attn_output's
-            // migrated D/E scale before anything else touches `full`.
-            // MoE experts (n_dims == 3) are never attn_q/attn_output, so
-            // this only ever applies to n_dims == 2. No-op when kv_db is
-            // null or no kv_stats row exists yet.
-            if (n_dims == 2 && kv_db != nullptr) {
-                ts_kv_migrate_apply_to_tensor(
-                    kv_db, kv_model_hash, kv_model_role,
-                    cur_name, full.data(), out_dim, in_dim,
-                    ts_kv_migrate_params{}, nullptr);
-            }
-
-            if (have_imatrix) {
-                int64_t act_n = 0;
-                act_scales = ts_imatrix_lookup(&imatrix, name, &act_n);
-                if (act_scales != nullptr && act_n != in_dim) {
-                    act_scales = nullptr;
-                }
-            }
-            return true;
+            const size_t nbytes = ggml_nbytes(t);
+            data.resize(nbytes);
+            (void) posix_madvise(t->data, nbytes, POSIX_MADV_WILLNEED);
+            std::memcpy(data.data(), t->data, nbytes);
+            (void) posix_madvise(t->data, nbytes, POSIX_MADV_DONTNEED);
+            return std::string(name);
         }
-        return false;
-    };
-
-    ts_ttt_tensor_source source = [&](ts_ternary_tensor & tensor) -> std::string {
-        for (;;) {
-            if (expert_idx < n_experts) {
-                const int64_t per = out_dim * in_dim;
-                const float * wptr = full.data() + (int64_t)(expert_idx * per);
-                std::vector<float> expert_weights;
-                if (n_dims == 3) {
-                    // per-expert slice needs contiguous storage independent of `full`
-                    expert_weights.assign(wptr, wptr + per);
-                    wptr = expert_weights.data();
-                }
-
-                std::string tname = cur_name;
-                if (n_dims == 3) {
-                    tname += ".E" + std::to_string(expert_idx);
-                }
-
-                expert_idx++;
-
-                ts_ternary_tensor tn;
-                int rc = ts_quantize_2d_ternary(wptr, act_scales,
-                                                nullptr, nullptr, nullptr,
-                                                out_dim, in_dim, 0,
-                                                &qp, &tn);
-                if (rc != 0) {
-                    fprintf(stderr, "export-ternary: warning: quantize failed for '%s', skipping\n",
-                            tname.c_str());
-                    n_skipped++;
-                    continue;
-                }
-                n_exported++;
-                tensor = std::move(tn);
-                return tname;
-            }
-            // Done with the current source tensor's experts: drop its pages
-            // so the next tensor can reuse the memory, then advance.
-            evict_current();
-            if (!load_next_tensor()) {
-                return std::string();
-            }
-        }
+        return std::string();
     };
 
     int rc = ts_write_ttt_stream(source, arch, hparams,
-                                 tp.export_out, tokenizer_path, chat_template_path);
+                                 tp.export_out, tokenizer_path, chat_template_path,
+                                 array_hparams, passthrough_source);
     // Drain the source so the export/skip tallies are accurate even when the
     // writer returns early on error (the source may not have been fully
     // consumed). The writer's spool is already removed by ts_write_ttt_stream
@@ -1329,7 +1883,26 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
     if (rc != 0) {
         fprintf(stderr, "error: export-ternary: ts_write_ttt_stream failed (rc=%d)\n", rc);
     } else {
+#if defined(TS_USE_ROCBLAS)
+        // A HW fault (e.g. this host's known "HW Exception ... GPU Hang"
+        // class of event - see the gap ledger's INCIDENT-w3-1) can occur
+        // at any point during the process's lifetime (including outside
+        // this export-ternary run's own compute, e.g. during the ROCm
+        // backend's startup device probe) without any prior step here
+        // returning a visible error - ts_write_ttt_stream reporting rc==0
+        // is necessary but not sufficient for a trustworthy result on this
+        // host. Check before declaring success rather than let a mid-run
+        // fault produce a silent, truncated-looking-complete .ttt export.
+        if (ts_rblas_check_device_health("export-ternary") != 0) {
+            fprintf(stderr, "error: export-ternary: HIP device fault detected after "
+                            "writing %s - output is not trustworthy\n", tp.export_out.c_str());
+            rc = 1;
+        } else {
+            printf("export-ternary: wrote %s\n", tp.export_out.c_str());
+        }
+#else
         printf("export-ternary: wrote %s\n", tp.export_out.c_str());
+#endif
     }
 
     if (!chat_template_path.empty()) {
@@ -1363,6 +1936,18 @@ static int ts_cli_pack(const common_tessera_params & tp) {
     if (tile.empty()) {
         tile = "auto";
     }
+    // W3 task 3.5 (criterion 18): --quant=host-amd overrides the tile
+    // string UNLESS the user also passed an explicit --tile ("explicit
+    // --tile wins" - pack_tile_explicit is only set by --tile's own CLI
+    // callback, never by the "t640" struct default).
+    if (!tp.pack_quant.empty() && !tp.pack_tile_explicit) {
+        if (tp.pack_quant != "host-amd") {
+            fprintf(stderr, "error: pack: --quant must be 'host-amd', got '%s'\n",
+                    tp.pack_quant.c_str());
+            return 1;
+        }
+        tile = ts_resolve_host_amd_quant_tile();
+    }
     struct ts_tile_config config;
     bool auto_detect = false;
     if (tile == "t640") {
@@ -1374,15 +1959,24 @@ static int ts_cli_pack(const common_tessera_params & tp) {
     } else if (tile == "auto") {
         config = ts_detect_tile_config();
         auto_detect = true;
+    } else if (tile == "tile-amd-rdna35" || tile == "tile-amd-rdna3") {
+        // RDNA 3.5 iGPUs (gfx1103/1150/1151) alias the RDNA3 wire format -
+        // no separate ts_tile_config (docs/amd-tile-format-spec.md 3.6).
+        config = ts_tile_config_amd_rdna3();
     } else {
-        fprintf(stderr, "error: pack: --tile must be one of t640|t512|t1024|auto, got '%s'\n",
+        fprintf(stderr, "error: pack: --tile must be one of "
+                "t640|t512|t1024|auto|tile-amd-rdna35|tile-amd-rdna3, got '%s'\n",
                 tile.c_str());
         return 1;
     }
+    const char * packing_label =
+        (config.packing == TS_PACK_RADIX243) ? "radix-243" :
+        (config.packing == TS_PACK_2BIT)     ? "2-bit"     :
+        /* TS_PACK_AMD_RDNA3 */                "amd-wmma";
     printf("pack: tile geometry = %s (%dx%d, %s)\n",
            auto_detect ? "auto" : tile.c_str(),
            config.page_size, config.lane_size,
-           config.packing == TS_PACK_RADIX243 ? "radix-243" : "2-bit");
+           packing_label);
 
     // open the safetensors directory for streaming
     ts_ttt_tensor_stream stream;
@@ -1397,12 +1991,42 @@ static int ts_cli_pack(const common_tessera_params & tp) {
     for (const auto & kv : stream.hparams()) {
         ts_pack_set_hparam(out_ctx, kv.first, kv.second);
     }
+    // String-array hparams (tokenizer.ggml.tokens, .merges, ...) - without
+    // these the packed GGUF has no vocabulary and fails to load at all
+    // ("cannot find tokenizer merges in model file"). See
+    // ts_export_collect_hparams's comment for how this was found.
+    for (const auto & kv : stream.array_hparams()) {
+        std::vector<const char *> c_strs;
+        c_strs.reserve(kv.second.size());
+        for (const auto & s : kv.second) {
+            c_strs.push_back(s.c_str());
+        }
+        gguf_set_arr_str(out_ctx, kv.first.c_str(), c_strs.data(), c_strs.size());
+    }
 
     // tessera provenance + tile-geometry stamp so the loader knows which
     // packer produced this GGUF.
     gguf_set_val_u32(out_ctx, "tessera.version", 1);
     gguf_set_val_str(out_ctx, "tessera.tile.geometry",
                      tile == "auto" ? "auto" : tile.c_str());
+    // W3 task 3.5 (master-plan criterion 19): the 8 amd.tile.* metadata
+    // keys, written only for the AMD tile-amd-* geometries. RDNA 3.5
+    // iGPUs get "parent" (aliasing to RDNA3's wire format, spec 3.6); a
+    // plain discrete RDNA3 card has no parent to alias, so that key is
+    // omitted rather than self-referencing.
+    if (tile == "tile-amd-rdna35" || tile == "tile-amd-rdna3") {
+        const bool is_rdna35 = (tile == "tile-amd-rdna35");
+        gguf_set_val_str (out_ctx, "amd.tile.arch", is_rdna35 ? "RDNA35" : "RDNA3");
+        if (is_rdna35) {
+            gguf_set_val_str(out_ctx, "amd.tile.parent", "RDNA3");
+        }
+        gguf_set_val_bool(out_ctx, "amd.tile.igpu", is_rdna35);
+        gguf_set_val_u32 (out_ctx, "amd.tile.block", QK_AMD_RDNA3);
+        gguf_set_val_str (out_ctx, "amd.tile.wmma.shape", "16x16x16");
+        gguf_set_val_str (out_ctx, "amd.tile.quant", "i8");
+        gguf_set_val_u32 (out_ctx, "amd.tile.version", 2);
+        gguf_set_val_str (out_ctx, "amd.tile.lane_map", "rdna3-wmma-16x16x16");
+    }
     {
         ts_gguf_writer_params wparams{};
         wparams.alpha = 0.0f;   // already-searched; the ternary carries best_alpha
@@ -1447,8 +2071,15 @@ static int ts_cli_pack(const common_tessera_params & tp) {
             ggml_free(out_ggml_ctx);
             return 1;
         }
-        ts_gguf_write_tensor_cluster(out_ctx, out_ggml_ctx, name.c_str(), &qr,
-                                     tn.out_dim, tn.in_dim);
+        if (config.packing == TS_PACK_AMD_RDNA3) {
+            ts_gguf_write_tensor_cluster_amd_rdna3(out_ctx, out_ggml_ctx, name.c_str(), &qr,
+                                                   tn.out_dim, tn.in_dim,
+                                                   tn.dartquant_rotation.empty() ? nullptr : tn.dartquant_rotation.data(),
+                                                   tn.dartquant_block_size);
+        } else {
+            ts_gguf_write_tensor_cluster(out_ctx, out_ggml_ctx, name.c_str(), &qr,
+                                         tn.out_dim, tn.in_dim);
+        }
         // The cluster descriptors are copied by value into out_ctx; the
         // ggml context pool is reset for the next tensor. The result
         // buffer stays alive in the deque for the eventual write.
@@ -1461,10 +2092,69 @@ static int ts_cli_pack(const common_tessera_params & tp) {
         }
         n_packed++;
     }
+
+    // Passthrough tensors (embeddings, norms, output projection -
+    // deliberately excluded from ternary quantization, see
+    // ts_export_is_weight in the export-ternary handler) travel through the
+    // tile-neutral safetensors file as plain single tensors under their
+    // original name/dtype. Copy each into the output GGUF verbatim so the
+    // packed model is genuinely complete rather than missing
+    // token_embd.weight and friends. Must run before stream.close() -
+    // passthrough_tensor_names()/read_passthrough_tensor() need the stream
+    // (and its open config.json/shard handles) still live.
+    std::deque<std::vector<uint8_t>> passthrough_buffers;
+    int64_t n_passthrough = 0;
+    for (const std::string & pname : stream.passthrough_tensor_names()) {
+        std::string p_dtype;
+        std::vector<int64_t> p_shape;
+        std::string p_err;
+        passthrough_buffers.emplace_back();
+        std::vector<uint8_t> & p_data = passthrough_buffers.back();
+        if (stream.read_passthrough_tensor(pname, p_dtype, p_shape, p_data, p_err) != 0) {
+            fprintf(stderr, "error: pack: read_passthrough_tensor failed for '%s': %s\n",
+                    pname.c_str(), p_err.c_str());
+            gguf_free(out_ctx);
+            ggml_free(out_ggml_ctx);
+            return 1;
+        }
+        const int p_type = ts_unified_qtype_from_string(p_dtype);
+        if (p_type == GGML_TYPE_COUNT) {
+            fprintf(stderr, "error: pack: unknown passthrough dtype '%s' for '%s'\n",
+                    p_dtype.c_str(), pname.c_str());
+            gguf_free(out_ctx);
+            ggml_free(out_ggml_ctx);
+            return 1;
+        }
+        // p_shape is HF row-major (slowest-varying first, written that way
+        // by the export-ternary passthrough_source); ggml's ne[] wants
+        // fastest-varying first - reverse back.
+        const int p_nd = (int) p_shape.size();
+        int64_t p_ne[GGML_MAX_DIMS] = {1, 1, 1, 1};
+        for (int d = 0; d < p_nd; d++) {
+            p_ne[d] = p_shape[(size_t)(p_nd - 1 - d)];
+        }
+        struct ggml_tensor * pt = ggml_new_tensor(out_ggml_ctx, (enum ggml_type) p_type, p_nd, p_ne);
+        ggml_set_name(pt, pname.c_str());
+        pt->data = (void *) p_data.data();
+        gguf_add_tensor(out_ctx, pt);
+        // Same reset-per-tensor discipline as the cluster loop above: the
+        // descriptor is copied by value into out_ctx, so the context pool
+        // can be reused; only the p_data buffer needs to outlive the
+        // eventual gguf_write_to_file (kept alive in passthrough_buffers).
+        ggml_free(out_ggml_ctx);
+        out_ggml_ctx = ggml_init(out_init);
+        if (out_ggml_ctx == nullptr) {
+            fprintf(stderr, "error: pack: ggml_init re-init failed (passthrough)\n");
+            gguf_free(out_ctx);
+            return 1;
+        }
+        n_passthrough++;
+    }
+
     stream.close();
 
-    printf("pack: %lld tensors packed -> %s\n",
-           (long long) n_packed, tp.pack_out.c_str());
+    printf("pack: %lld tensors packed, %lld passthrough tensors copied -> %s\n",
+           (long long) n_packed, (long long) n_passthrough, tp.pack_out.c_str());
 
     bool ok = gguf_write_to_file(out_ctx, tp.pack_out.c_str(), false);
     if (!ok) {
@@ -1477,6 +2167,19 @@ static int ts_cli_pack(const common_tessera_params & tp) {
 
     ggml_free(out_ggml_ctx);
     gguf_free(out_ctx);
+
+#if defined(TS_USE_ROCBLAS)
+    // Same rationale as export-ternary's post-write health check: a HIP
+    // fault can occur during this process's lifetime (e.g. at the ROCm
+    // backend's startup device probe) without any step above returning a
+    // visible error, so gguf_write_to_file succeeding is not by itself
+    // sufficient evidence the written file is trustworthy on this host.
+    if (ts_rblas_check_device_health("pack") != 0) {
+        fprintf(stderr, "error: pack: HIP device fault detected after writing %s - "
+                        "output is not trustworthy\n", tp.pack_out.c_str());
+        return 1;
+    }
+#endif
     return 0;
 }
 
@@ -2019,7 +2722,19 @@ int llama_quantize(int argc, char ** argv) {
 
     // parse command line arguments
     const std::string fname_inp = !model_input.empty() ? model_input : positionals[pos_i];
-    pos_i++;
+    // Only advance pos_i past a positional input path when one was
+    // actually consumed here. When --model already supplied fname_inp,
+    // positionals[pos_i] is the caller's NEXT positional (the output path,
+    // or the ftype if output is being auto-derived) - incrementing
+    // unconditionally silently discards it and shifts every subsequent
+    // positional (ftype, nthreads) left by one slot. (This is gpu-wave's
+    // fix for the same bug origin/main's phase4 positionals/pos_i refactor
+    // reintroduced by advancing unconditionally - ported onto the new
+    // positionals/pos_i model since the rest of this function already
+    // depends on it.)
+    if (model_input.empty()) {
+        pos_i++;
+    }
     std::string fname_out;
 
     std::string ftype_str;

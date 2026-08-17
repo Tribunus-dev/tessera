@@ -34,6 +34,10 @@
 #  include "ggml-metal.h"
 #endif
 
+#if defined(GGML_USE_HIP) || defined(TS_USE_ROCBLAS)
+#  include <hip/hip_runtime.h>
+#endif
+
 // Probe the highest supported Apple-family Metal GPU. Returns:
 //   family >= 1: the highest MTLGPUFamilyAppleN supported (Apple Silicon)
 //   0          : a Metal device exists but no Apple family (Intel Mac)
@@ -109,4 +113,75 @@ struct ts_tile_config ts_detect_tile_config() {
     // family == -1: no Metal backend (non-Apple host or probe failure).
     // We cannot tell Intel from unknown here, so use the safe T640 default.
     return ts_tile_config_t640();
+}
+
+// ---------------------------------------------------------------------------
+// W3 task 3.1: AMD arch taxonomy. See tile-detect.h for the design note on
+// why the string classifier and the device probe are separate functions.
+// ---------------------------------------------------------------------------
+
+enum ts_arch_target ts_classify_amd_arch_name(const char * gcn_arch_name) {
+    if (gcn_arch_name == nullptr) {
+        return TS_ARCH_UNKNOWN;
+    }
+    std::string name(gcn_arch_name);
+    // gcnArchName carries optional ":feature[+-]" suffixes (e.g.
+    // "gfx90a:sramecc+:xnack-"); only the gfx target itself selects the
+    // arch bucket.
+    const size_t colon = name.find(':');
+    const std::string gfx = (colon == std::string::npos) ? name : name.substr(0, colon);
+
+    // RDNA 3.5 iGPU family (D-W3-6, RATIFIED): gfx1103/1150/1151 tag as
+    // RDNA35 with parent=RDNA3 routing, not RDNA3 directly - the caller
+    // (ts_tile_config_amd_rdna3 dispatch) resolves the parent kernel.
+    if (gfx == "gfx1103" || gfx == "gfx1150" || gfx == "gfx1151") {
+        return TS_ARCH_AMD_RDNA35;
+    }
+    if (gfx == "gfx1100" || gfx == "gfx1101" || gfx == "gfx1102") {
+        return TS_ARCH_AMD_RDNA3;
+    }
+    if (gfx == "gfx1200" || gfx == "gfx1201") {
+        return TS_ARCH_AMD_RDNA4;
+    }
+    if (gfx == "gfx1030" || gfx == "gfx1031" || gfx == "gfx1032") {
+        return TS_ARCH_AMD_RDNA2;
+    }
+    if (gfx == "gfx1010" || gfx == "gfx1011" || gfx == "gfx1012") {
+        return TS_ARCH_AMD_RDNA1;
+    }
+    if (gfx == "gfx908") {
+        return TS_ARCH_AMD_CDNA1;
+    }
+    if (gfx == "gfx90a") {
+        return TS_ARCH_AMD_CDNA2;
+    }
+    if (gfx == "gfx942") {
+        return TS_ARCH_AMD_CDNA3;
+    }
+    if (gfx == "gfx950") {
+        return TS_ARCH_AMD_CDNA4;
+    }
+    // GCN legacy: gfx6xx..gfx900 (pre-Vega through Vega), excluding the
+    // CDNA gfx9-family codes already matched above.
+    if (gfx.rfind("gfx6", 0) == 0 || gfx.rfind("gfx7", 0) == 0 ||
+        gfx.rfind("gfx8", 0) == 0 || gfx == "gfx900") {
+        return TS_ARCH_AMD_GCN;
+    }
+    return TS_ARCH_UNKNOWN;
+}
+
+enum ts_arch_target ts_detect_amd_arch() {
+#if defined(GGML_USE_HIP) || defined(TS_USE_ROCBLAS)
+    int device_count = 0;
+    if (hipGetDeviceCount(&device_count) != hipSuccess || device_count <= 0) {
+        return TS_ARCH_UNKNOWN;
+    }
+    hipDeviceProp_t prop{};
+    if (hipGetDeviceProperties(&prop, 0) != hipSuccess) {
+        return TS_ARCH_UNKNOWN;
+    }
+    return ts_classify_amd_arch_name(prop.gcnArchName);
+#else
+    return TS_ARCH_UNKNOWN;
+#endif
 }

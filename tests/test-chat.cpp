@@ -5,6 +5,16 @@
 //
 //    cmake -B build && cmake --build build --parallel && ./build/bin/test-chat ../minja/build/tests/*.jinja 2>/dev/null
 //
+// This project's default CMake build is Release (-DNDEBUG), which compiles
+// a plain assert() to nothing - the check below would silently never run.
+// This file has no direct <cassert> include (assert() is pulled in
+// transitively by one of the headers below); undef NDEBUG and include
+// <cassert> explicitly, first, so the live macro wins regardless of which
+// header would otherwise have defined the no-op version. Matches the
+// pattern tests/test-tessera-config.cpp established.
+#undef NDEBUG
+#include <cassert>
+
 #include "../src/llama-grammar.h"
 #include "../src/unicode.h"
 #include "../tools/server/server-chat.h"

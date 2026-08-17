@@ -1,0 +1,16 @@
+Third-party notices for ggml-amd/
+
+ggml-amd/ck/ - Composable Kernel (ck_tile), include-only subset
+------------------------------------------------------------------
+SPDX-License-Identifier: MIT
+Copyright (c) 2018-2025, Advanced Micro Devices, Inc. All rights reserved.
+
+Vendored from the AITER workspace's clean upstream CK submodule checkout
+at commit f33252cebe5a52362ec1ee12c124dde7800dda3a. Full license text at
+ggml-amd/ck/LICENSE. Subset rationale and smoke-compile record at
+ggml-amd/ck/README.md.
+
+No other third-party source is vendored under ggml-amd/. The AITER
+gfx1103 work at /home/x/vllm-aiter-gfx1103/ is a studied reference only
+(spec 9(vi)) - no AITER .cu/.h/.py file is copied into this tree, so it
+carries no separate notice here.

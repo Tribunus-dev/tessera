@@ -155,4 +155,12 @@ endif()
 
 target_link_libraries(ggml-hip PRIVATE ggml-base hip::host roc::rocblas roc::hipblas)
 
+# Tessera Layer 1 instrumentation: cuda-dump-dequant.cu is globsed in above
+# (line 63) and needs tessera-debug.h. The cuda target already wires this
+# target; mirror the link so the HIP build can find the header.
+if (NOT TARGET llama-tessera-debug)
+    add_subdirectory(${CMAKE_SOURCE_DIR}/common/tessera-debug ${CMAKE_BINARY_DIR}/_deps/llama-tessera-debug)
+endif()
+target_link_libraries(ggml-hip PRIVATE llama-tessera-debug)
+
 target_compile_options(ggml-hip PRIVATE "$<$<COMPILE_LANGUAGE:HIP>:-ffast-math;-fno-finite-math-only>")

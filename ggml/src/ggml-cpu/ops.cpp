@@ -11354,6 +11354,199 @@ void ggml_compute_forward_tile640_matmul(
     ggml_compute_forward_tile640_matmul_f32(params, dst);
 }
 
+// ggml_compute_forward_tile_rdna3_matmul
+//
+// W3 task 3.7 (amd-tile-format-spec.md 3.4; master-plan criterion 20).
+// CPU reference for the AMD RDNA3 tile: dequantize_row_tessera_t_rdna3's
+// 2-level page/lane scale, applied per-element inline (no outlier
+// correction cluster - unlike Tile640, the RDNA3 layout has none), scalar
+// float accumulate. This is the ground truth the GPU WMMA kernel
+// (ggml-amd/tile/tile_amd_matmul_rdna3.cpp, ggml-cuda/tile-amd-rdna3.cu)
+// is checked against; it does not call the GPU path itself.
+static void ggml_compute_forward_tile_rdna3_matmul_f32(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+    const ggml_tensor * A_packed      = dst->src[0];
+    const ggml_tensor * A_page_scales = dst->src[1];
+    const ggml_tensor * A_lane_scales = dst->src[2];
+    const ggml_tensor * B             = dst->src[3];
+
+    GGML_ASSERT(ggml_is_contiguous(A_packed));
+    GGML_ASSERT(ggml_is_contiguous(A_page_scales));
+    GGML_ASSERT(ggml_is_contiguous(A_lane_scales));
+    GGML_ASSERT(ggml_is_contiguous(B));
+
+    const int32_t out_dim = ggml_get_op_params_i32(dst, 0);
+    const int64_t in_dim  = B->ne[0];
+
+    constexpr int64_t PAGE_SIZE       = TILE_AMD_RDNA3_PAGE_SIZE;
+    constexpr int64_t LANE_SIZE       = TILE_AMD_RDNA3_LANE_SIZE;
+    constexpr int64_t LANES_PER_PAGE  = TILE_AMD_RDNA3_LANES_PER_PAGE;
+    const int64_t pages_per_row = (in_dim + PAGE_SIZE - 1) / PAGE_SIZE;
+
+    const int64_t n_tokens = B->ne[1];
+    const int64_t n_batch  = B->ne[2];
+    const int64_t n_seqs   = B->ne[3];
+
+    const int8_t *      packed      = (const int8_t *)      A_packed->data;
+    const ggml_fp16_t * page_scales = (const ggml_fp16_t *) A_page_scales->data;
+    const int8_t *      lane_scales = (const int8_t *)      A_lane_scales->data;
+    const char * B_data = (const char *) B->data;
+    const size_t B_element_size = ggml_element_size(B);
+    const auto load_activation = [B](const char * value) {
+        return B->type == GGML_TYPE_F32
+            ? *(const float *) value
+            : ggml_fp16_to_fp32(*(const ggml_fp16_t *) value);
+    };
+
+    const int64_t words_per_row   = pages_per_row * PAGE_SIZE;
+    const int64_t n_lanes_per_row = pages_per_row * LANES_PER_PAGE;
+
+    GGML_ASSERT((int64_t) A_packed->ne[0]      == (int64_t) out_dim * words_per_row);
+    GGML_ASSERT((int64_t) A_page_scales->ne[0] == (int64_t) out_dim * pages_per_row);
+    GGML_ASSERT((int64_t) A_lane_scales->ne[0] == (int64_t) out_dim * n_lanes_per_row);
+
+    // Output layout: [out_dim, n_tokens, n_batch, n_seqs], same convention
+    // as ggml_compute_forward_tile640_matmul_f32 above.
+    const int64_t dst_row_stride   = out_dim;
+    const int64_t dst_batch_stride = (int64_t) n_tokens * out_dim;
+    const int64_t dst_seq_stride   = (int64_t) n_batch  * n_tokens * out_dim;
+
+    const int64_t n_rows_total  = (int64_t) out_dim * n_batch * n_seqs;
+    const int64_t n_per_thread  = (n_rows_total + params->nth - 1) / params->nth;
+    const int64_t ith           = params->ith;
+    const int64_t row_start     = ith * n_per_thread;
+    const int64_t row_end       = MIN(row_start + n_per_thread, n_rows_total);
+
+    float * dst_data = (float *) dst->data;
+
+    for (int64_t idx = row_start; idx < row_end; ++idx) {
+        const int64_t i = idx % out_dim;
+        const int64_t b = (idx / out_dim) % n_batch;
+        const int64_t s = idx / (out_dim * n_batch);
+
+        const int8_t *      A_row  = packed + (int64_t) i * words_per_row;
+        const ggml_fp16_t * ps_row = page_scales + (int64_t) i * pages_per_row;
+        const int8_t *      ls_row = lane_scales + (int64_t) i * n_lanes_per_row;
+
+        const char * B_slab = B_data +
+            (int64_t) (s * n_batch + b) * n_tokens * in_dim * B_element_size;
+
+        for (int64_t j = 0; j < n_tokens; ++j) {
+            const char * B_col = B_slab + (int64_t) j * in_dim * B_element_size;
+
+            float acc = 0.0f;
+
+            for (int64_t p = 0; p < pages_per_row; ++p) {
+                const float page_max = ggml_fp16_to_fp32(ps_row[p]);
+                for (int64_t l = 0; l < LANES_PER_PAGE; ++l) {
+                    const float scale = page_max * ((float) ls_row[p * LANES_PER_PAGE + l] * (1.0f / 127.0f));
+                    const int64_t col0    = p * PAGE_SIZE + l * LANE_SIZE;
+                    const int64_t col_end = (col0 + LANE_SIZE < in_dim) ? (col0 + LANE_SIZE) : in_dim;
+
+                    for (int64_t col = col0; col < col_end; ++col) {
+                        const int8_t q = A_row[p * PAGE_SIZE + l * LANE_SIZE + (col - col0)];
+                        if (q == 0) continue;
+                        acc += ((float) q * scale) * load_activation(B_col + col * B_element_size);
+                    }
+                }
+            }
+
+            const int64_t dst_idx = s * dst_seq_stride + b * dst_batch_stride + j * dst_row_stride + i;
+            dst_data[dst_idx] = acc;
+        }
+    }
+}
+
+void ggml_compute_forward_tile_rdna3_matmul(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+    const ggml_tensor * B = dst->src[3];
+    GGML_ASSERT(B->type == GGML_TYPE_F16 || B->type == GGML_TYPE_F32);
+    ggml_compute_forward_tile_rdna3_matmul_f32(params, dst);
+}
+
+// ggml_compute_forward_sparse_outlier_add
+//
+// Packing-format-agnostic sparse CSR outlier addback (ggml.h's
+// ggml_sparse_outlier_add). dst = base + correction, where
+// correction[i,j,b,s] = sum over row i's outliers of
+// outlier_val[k] * B[outlier_cols[k], j, b, s]. Row-partitioned across
+// threads, same convention as ggml_compute_forward_tile_rdna3_matmul_f32
+// above (this op's base/dst share that kernel's exact output layout).
+void ggml_compute_forward_sparse_outlier_add(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+    const ggml_tensor * base                  = dst->src[0];
+    const ggml_tensor * A_outlier_row_offsets = dst->src[1];
+    const ggml_tensor * A_outlier_cols        = dst->src[2];
+    const ggml_tensor * A_outlier_vals        = dst->src[3];
+    const ggml_tensor * B                     = dst->src[4];
+
+    const int64_t out_dim  = base->ne[0];
+    const int64_t n_tokens = base->ne[1];
+    const int64_t n_batch  = base->ne[2];
+    const int64_t n_seqs   = base->ne[3];
+    const int64_t in_dim   = B->ne[0];
+
+    const float *       base_data  = (const float *)       base->data;
+    const int32_t *      outlier_row_offsets = (const int32_t *) A_outlier_row_offsets->data;
+    const int32_t *      outlier_cols        = (const int32_t *) A_outlier_cols->data;
+    const ggml_fp16_t *  outlier_vals        = (const ggml_fp16_t *) A_outlier_vals->data;
+    const char * B_data = (const char *) B->data;
+    const size_t B_element_size = ggml_element_size(B);
+    const auto load_activation = [B](const char * value) {
+        return B->type == GGML_TYPE_F32
+            ? *(const float *) value
+            : ggml_fp16_to_fp32(*(const ggml_fp16_t *) value);
+    };
+
+    // zero-outlier tensors ship a length-1 cols/vals placeholder (GGUF
+    // cannot store empty tensors) - the CSR scan only indexes the per-row
+    // range [offsets[i], offsets[i+1]), so the placeholder is never read,
+    // same convention ggml_compute_forward_tile640_matmul_f32 relies on.
+    GGML_ASSERT((int64_t) A_outlier_row_offsets->ne[0] == out_dim + 1);
+
+    const int64_t dst_row_stride = out_dim;
+
+    const int64_t n_rows_total = out_dim * n_batch * n_seqs;
+    const int64_t n_per_thread = (n_rows_total + params->nth - 1) / params->nth;
+    const int64_t ith          = params->ith;
+    const int64_t row_start    = ith * n_per_thread;
+    const int64_t row_end      = MIN(row_start + n_per_thread, n_rows_total);
+
+    float * dst_data = (float *) dst->data;
+
+    for (int64_t idx = row_start; idx < row_end; ++idx) {
+        const int64_t i = idx % out_dim;
+        const int64_t b = (idx / out_dim) % n_batch;
+        const int64_t s = idx / (out_dim * n_batch);
+
+        const int64_t row_off_lo = outlier_row_offsets[i];
+        const int64_t row_off_hi = outlier_row_offsets[i + 1];
+        const int64_t K_i        = row_off_hi - row_off_lo;
+
+        const char * B_slab = B_data +
+            (int64_t) (s * n_batch + b) * n_tokens * in_dim * B_element_size;
+        const int64_t slab_off = (s * n_batch + b) * n_tokens * out_dim;
+
+        for (int64_t j = 0; j < n_tokens; ++j) {
+            const char * B_col = B_slab + (int64_t) j * in_dim * B_element_size;
+
+            float acc = 0.0f;
+            for (int64_t kk = 0; kk < K_i; ++kk) {
+                const int64_t gk  = row_off_lo + kk;
+                const int64_t col = (int64_t) outlier_cols[gk];
+                acc += ggml_fp16_to_fp32(outlier_vals[gk]) *
+                    load_activation(B_col + col * B_element_size);
+            }
+
+            const int64_t dst_idx = slab_off + j * dst_row_stride + i;
+            dst_data[dst_idx] = base_data[dst_idx] + acc;
+        }
+    }
+}
+
 
 // ggml_compute_forward_tile640_matmul_id
 //
@@ -11718,11 +11911,23 @@ void ggml_compute_forward_imatrix_observer(
     }
 
     const int64_t count = ggml_nrows(src);
+    // Optional raw-sample capture (llama-imatrix's --calib-tokens): the
+    // first min(count, capture_tokens) rows, row-major [capture_tokens]
+    // [channels], appended after the compact stats (see ggml_imatrix_
+    // observer's constructor comment in ggml.h). Each channel's own thread
+    // writes only its own column across these rows - disjoint from every
+    // other channel's writes, so this is thread-safe with no extra
+    // synchronization, same as the stats writes above.
+    const int32_t capture_tokens_param = ggml_get_op_params_i32(dst, 2);
+    const int64_t capture_tokens = std::min<int64_t>(
+        std::max<int64_t>(capture_tokens_param, 0), count);
+    const int64_t capture_base = 4 * channels + 1;
     for (int64_t channel = params->ith; channel < channels; channel += params->nth) {
         double sum2 = 0.0;
         double sumabs = 0.0;
         double sum4 = 0.0;
         float maxabs = 0.0f;
+        int64_t row_idx = 0;
         for (int64_t i3 = 0; i3 < src->ne[3]; ++i3) {
             for (int64_t i2 = 0; i2 < src->ne[2]; ++i2) {
                 for (int64_t i1 = 0; i1 < src->ne[1]; ++i1) {
@@ -11738,6 +11943,10 @@ void ggml_compute_forward_imatrix_observer(
                     sumabs += magnitude;
                     sum4 += square * square;
                     maxabs = std::max(maxabs, magnitude);
+                    if (row_idx < capture_tokens) {
+                        out[capture_base + row_idx * channels + channel] = value;
+                    }
+                    row_idx++;
                 }
             }
         }

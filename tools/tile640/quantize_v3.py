@@ -2029,27 +2029,42 @@ def _septq_banded_cholesky(H: np.ndarray, bandwidth: int) -> np.ndarray:
 def _septq_gptq_M(L: np.ndarray, bandwidth: int) -> np.ndarray:
     """Build the strictly upper-triangular GPTQ update matrix from L = chol(H).
 
-    With L lower triangular, (L^{-1})_{jj} = 1 / L[j, j], so the closed-form
-    per-column update is ``M[j, k] = (L^{-1})_{k, j} * L[j, j]`` for k > j.
-    M is upper triangular with bandwidth ``bandwidth`` (M[j, k] = 0 for
-    k - j > bandwidth). The banded portion of L^{-1} comes from a banded
-    forward-substitution: for each j, solve L x = e_j keeping only x[k] for
-    k in (j, j + bandwidth + 1). Cost is O(n * bandwidth^2).
+    CORRECTNESS NOTE (fixed post-hoc - see gap ledger "SEPTQ banded-Hessian
+    compensation" entry): an earlier version of this function built M from
+    (L^{-1}) directly, i.e. M[j,k] = (L^{-1})[k,j] * L[j,j]. That is NOT the
+    GPTQ update matrix. The sequential OBQ/GPTQ correction at step j needs
+    row j of H_j^{-1}, where H_j is the Schur complement of H after
+    eliminating indices 0..j-1 - equivalently (block matrix inversion lemma)
+    row j of the FULL H^{-1} restricted to columns > j, but expressed via a
+    Cholesky factor so per-step corrections compose linearly across steps
+    without re-deriving each Schur complement. That factor is the UPPER
+    Cholesky of H^{-1} (H^{-1} = U^T U, U upper triangular): M[j,k] =
+    U[j,k]/U[j,j]. (L^{-1})^T(L^{-1}) is A valid factorization of H^{-1},
+    but with L^{-1} lower triangular it corresponds to eliminating indices
+    in REVERSE order (n-1 first), not the forward 0,1,2,...,n-1 order this
+    matrix multiplies against - verified numerically against a from-scratch
+    brute-force sequential-elimination simulation, which matches chol_upper
+    (H^-1)-derived M to float64 machine precision (~1e-16) and disagrees
+    with the (L^-1)-derived M by a large margin (~0.1, same order as the
+    quantity itself). There is no cheap banded shortcut for chol_upper
+    (H^{-1}) given only the (possibly band-approximate) L - H^{-1} is
+    generally dense even when H is banded - so this explicitly inverts H
+    (via L) and re-factors, at O(n^3) cost regardless of bandwidth; only the
+    OUTPUT M is truncated to the requested band.
     """
     n = L.shape[0]
     if bandwidth < 0:
         raise ValueError(f"bandwidth must be >= 0, got {bandwidth}")
+    H_approx = L @ L.T
+    Hinv = np.linalg.inv(H_approx)
+    L2 = np.linalg.cholesky(Hinv)   # Hinv = L2 @ L2.T, L2 lower
+    U = L2.T                        # Hinv = U.T @ U, U upper triangular
+    diag = np.diag(U)
     M = np.zeros((n, n), dtype=L.dtype)
     for j in range(n):
-        x = np.zeros(n, dtype=L.dtype)
-        x[j] = 1.0 / L[j, j]
         k_max = min(n, j + bandwidth + 1)
-        for k in range(j + 1, k_max):
-            row_min = max(0, k - bandwidth)
-            s = -np.dot(L[k, row_min:k], x[row_min:k])
-            x[k] = s / L[k, k]
         if k_max > j + 1:
-            M[j, j + 1:k_max] = x[j + 1:k_max] * L[j, j]
+            M[j, j + 1:k_max] = U[j, j + 1:k_max] / diag[j]
     return M
 
 
@@ -2364,7 +2379,18 @@ def quantize_2d_septq(weights: np.ndarray, out_dim: int, in_dim: int,
         H = _septq_build_hessian(
             in_dim, act_scales, calibration_activations
         )
-        L = _septq_banded_cholesky(H, effective_bandwidth)
+        # _septq_gptq_M inverts (L @ L.T) to build the correct GPTQ update
+        # matrix - an O(n^3) step regardless of bandwidth (see its own
+        # docstring), so a banded L no longer saves any compute here; it
+        # only discards H's off-band energy before that inversion. Real
+        # calibration Hessians (few hundred tokens vs thousands of input
+        # channels) routinely have large off-band energy - exactly what
+        # _septq_banded_cholesky's own docstring says triggers its full-
+        # Cholesky fallback - so a banded L here silently corrupts the
+        # matrix being inverted. Use the full Cholesky directly;
+        # `effective_bandwidth` still truncates the OUTPUT M, which is
+        # where dropping long-range corrections is actually sound.
+        L = np.linalg.cholesky(H)
         M = _septq_gptq_M(L, effective_bandwidth)
         # W_compensated = W - E @ M. With banded M (b << in_dim) this is
         # a dense matmul that BLAS handles in well under a second on

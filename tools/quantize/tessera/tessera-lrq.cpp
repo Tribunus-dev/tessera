@@ -1,5 +1,20 @@
 #include "tessera-lrq.h"
 
+#if defined(__APPLE__)
+#ifndef ACCELERATE_NEW_LAPACK
+#define ACCELERATE_NEW_LAPACK
+#endif
+#include <Accelerate/Accelerate.h>
+#define TS_HAS_CBLAS 1
+#elif defined(TS_USE_ROCBLAS)
+// rocBLAS before GGML_USE_OPENBLAS: matmul-acceleration, not fallback (D1),
+// mirrors tessera-dartquant.cpp's own precedence.
+#include "tessera-rocblas.h"
+#elif defined(GGML_USE_OPENBLAS)
+#include <cblas.h>
+#define TS_HAS_CBLAS 1
+#endif
+
 #include <cmath>
 #include <cstring>
 #include <algorithm>
@@ -33,16 +48,117 @@ static void ts_ternarize_recon(const float * x, float * out, int64_t n) {
     }
 }
 
-// C = A @ B, A is (M x K), B is (K x N), C is (M x N)
-static void ts_matmul(const float * A, const float * B, float * C,
-                      int64_t M, int64_t K, int64_t N) {
-    for (int64_t i = 0; i < M; i++) {
-        for (int64_t j = 0; j < N; j++) {
-            float s = 0.0f;
-            for (int64_t k = 0; k < K; k++) {
-                s += A[i * K + k] * B[k * N + j];
+// ---------------------------------------------------------------------------
+// Matmul helpers (row-major), CBLAS/rocBLAS-accelerated with a scalar
+// fallback. Mirror tessera-dartquant.cpp's ts_dq_matmul/ts_dq_matmul_atb
+// pattern exactly (same rocBLAS row-major-via-column-major remap) rather
+// than re-deriving the transpose remap from scratch here: this training
+// loop's 3 hot matmuls (S=U@V forward, dU, dV backward) were previously
+// unaccelerated pure-scalar code -- by far the most expensive of the 4
+// regime experts (see gap ledger) -- and a wrong remap here would silently
+// degrade FLRQ's learned scale rather than crash, so correctness-by-reuse
+// beats a fresh derivation.
+// ---------------------------------------------------------------------------
+
+// C(m x n) = A(m x k) @ B(k x n).
+static void ts_lrq_matmul(const float * A, const float * B, float * C,
+                          int64_t m, int64_t k, int64_t n) {
+    if (m <= 0 || n <= 0) return;
+#if defined(TS_HAS_CBLAS)
+    std::vector<double> Ad((size_t)m * k), Bd((size_t)k * n), Cd((size_t)m * n);
+    for (int64_t i = 0; i < m * k; i++) Ad[i] = (double)A[i];
+    for (int64_t i = 0; i < k * n; i++) Bd[i] = (double)B[i];
+    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                (int)m, (int)n, (int)k,
+                1.0, Ad.data(), (int)k, Bd.data(), (int)n, 0.0, Cd.data(), (int)n);
+    for (int64_t i = 0; i < m * n; i++) C[i] = (float)Cd[i];
+#elif defined(TS_USE_ROCBLAS)
+    rocblas_status st = ts_rblas_dgemm_to_sgemm(
+        rocblas_operation_none, rocblas_operation_none,
+        (int)n, (int)m, (int)k, 1.0f,
+        B, (int)n, (size_t)k * n,
+        A, (int)k, (size_t)m * k,
+        C, (int)n, (size_t)m * n);
+    if (st != rocblas_status_success) {
+        for (int64_t i = 0; i < m; i++) {
+            for (int64_t j = 0; j < n; j++) {
+                double s = 0.0;
+                for (int64_t p = 0; p < k; p++) {
+                    s += (double)A[i*k + p] * (double)B[p*n + j];
+                }
+                C[i*n + j] = (float)s;
             }
-            C[i * N + j] = s;
+        }
+    }
+#else
+    for (int64_t i = 0; i < m; i++) {
+        for (int64_t j = 0; j < n; j++) {
+            double s = 0.0;
+            for (int64_t p = 0; p < k; p++) {
+                s += (double)A[i*k + p] * (double)B[p*n + j];
+            }
+            C[i*n + j] = (float)s;
+        }
+    }
+#endif
+}
+
+// C(n x k) = A(m x n)^T @ B(m x k)
+static void ts_lrq_matmul_atb(const float * A, const float * B, float * C,
+                              int64_t m, int64_t n, int64_t k) {
+    if (n <= 0 || k <= 0) return;
+#if defined(TS_HAS_CBLAS)
+    std::vector<double> Ad((size_t)m * n), Bd((size_t)m * k), Cd((size_t)n * k);
+    for (int64_t i = 0; i < m * n; i++) Ad[i] = (double)A[i];
+    for (int64_t i = 0; i < m * k; i++) Bd[i] = (double)B[i];
+    cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                (int)n, (int)k, (int)m,
+                1.0, Ad.data(), (int)n, Bd.data(), (int)k, 0.0, Cd.data(), (int)k);
+    for (int64_t i = 0; i < n * k; i++) C[i] = (float)Cd[i];
+#elif defined(TS_USE_ROCBLAS)
+    // Same fix as tessera-dartquant.cpp's ts_dq_matmul_atb (this function
+    // was copied from that pattern): transA/transB were backwards for the
+    // row-major-via-column-major identity C^T = B^T @ A - verified
+    // against a scalar ground truth with a standalone rocBLAS-linked test
+    // (rocblas_status_invalid_size at small scale, an unbounded-read GPU
+    // page fault at real pipeline scale) before fixing.
+    rocblas_status st = ts_rblas_dgemm_to_sgemm(
+        rocblas_operation_none, rocblas_operation_transpose,
+        (int)k, (int)n, (int)m, 1.0f,
+        B, (int)k, (size_t)m * k,
+        A, (int)n, (size_t)m * n,
+        C, (int)k, (size_t)n * k);
+    if (st != rocblas_status_success) {
+        for (int64_t i = 0; i < n; i++) {
+            for (int64_t j = 0; j < k; j++) {
+                double s = 0.0;
+                for (int64_t r = 0; r < m; r++) {
+                    s += (double)A[r*n + i] * (double)B[r*k + j];
+                }
+                C[i*k + j] = (float)s;
+            }
+        }
+    }
+#else
+    for (int64_t i = 0; i < n; i++) {
+        for (int64_t j = 0; j < k; j++) {
+            double s = 0.0;
+            for (int64_t r = 0; r < m; r++) {
+                s += (double)A[r*n + i] * (double)B[r*k + j];
+            }
+            C[i*k + j] = (float)s;
+        }
+    }
+#endif
+}
+
+// out(cols x rows) = in(rows x cols)^T. Memory-bound, not compute-bound --
+// no BLAS path needed; used to turn dU = d_s @ V^T into a plain A@B call
+// via ts_lrq_matmul instead of deriving a 3rd (ABT) rocBLAS remap.
+static void ts_lrq_transpose(const float * in, float * out, int64_t rows, int64_t cols) {
+    for (int64_t i = 0; i < rows; i++) {
+        for (int64_t j = 0; j < cols; j++) {
+            out[j * rows + i] = in[i * cols + j];
         }
     }
 }
@@ -69,7 +185,8 @@ static float ts_rng_gaussian(uint32_t * state) {
 // --- LRQ ---
 
 int ts_train_lrq(const float * weights, int64_t out_dim, int64_t in_dim,
-                 const ts_lrq_params * params, ts_lrq_result * result) {
+                 const ts_lrq_params * params, ts_lrq_result * result,
+                 const float * calib_X, int64_t n_tokens) {
     int64_t rank = params->rank;
     int64_t max_iters = params->max_iters > 0 ? params->max_iters : 200;
     float lr = params->lr > 0.0f ? params->lr : 1e-3f;
@@ -90,6 +207,38 @@ int ts_train_lrq(const float * weights, int64_t out_dim, int64_t in_dim,
     std::vector<float> S(n_w), scaled(n_w), w_q(n_w);
     std::vector<float> d_scaled(n_w), d_s(n_w);
     std::vector<float> dU(n_u), dV(n_v);
+    std::vector<float> Vt(n_v);  // V^T, (in_dim x rank), rebuilt each iter
+
+    // Per-input-channel loss weight from real calibration activations:
+    // w_col[j] = mean_t calib_X[t,j]^2, the same diag(X^T X)/n second-moment
+    // signal SEPTQ's diagonal Hessian and AWQ's act_scales are built from.
+    // Normalized to mean 1 so the loss magnitude (and therefore the fixed
+    // Adam lr) stays in the same range as the uncalibrated uniform-weight
+    // case below. calib_X == nullptr keeps w_col all-ones, reproducing the
+    // prior behavior exactly (byte-identical loss/gradient).
+    std::vector<float> w_col(in_dim, 1.0f);
+    if (calib_X != nullptr && n_tokens > 0) {
+        double sum = 0.0;
+        for (int64_t j = 0; j < in_dim; j++) {
+            double acc = 0.0;
+            for (int64_t t = 0; t < n_tokens; t++) {
+                double x = (double)calib_X[(size_t)(t * in_dim + j)];
+                acc += x * x;
+            }
+            double mean_sq = acc / (double)n_tokens;
+            w_col[(size_t)j] = (float)mean_sq;
+            sum += mean_sq;
+        }
+        double mean_w = sum / (double)in_dim;
+        if (mean_w > 0.0) {
+            float inv_mean = (float)(1.0 / mean_w);
+            for (int64_t j = 0; j < in_dim; j++) {
+                w_col[(size_t)j] *= inv_mean;
+            }
+        } else {
+            std::fill(w_col.begin(), w_col.end(), 1.0f);
+        }
+    }
 
     // init U, V so that S = U@V starts near 1 (identity scaling)
     uint32_t rng = seed;
@@ -113,7 +262,7 @@ int ts_train_lrq(const float * weights, int64_t out_dim, int64_t in_dim,
 
     for (int64_t it = 0; it < max_iters; it++) {
         // forward: S = U @ V
-        ts_matmul(U.data(), V.data(), S.data(), out_dim, rank, in_dim);
+        ts_lrq_matmul(U.data(), V.data(), S.data(), out_dim, rank, in_dim);
 
         // scaled = W * S (element-wise)
         for (int64_t i = 0; i < n_w; i++) {
@@ -123,11 +272,16 @@ int ts_train_lrq(const float * weights, int64_t out_dim, int64_t in_dim,
         // w_q = ternarize_recon(scaled)
         ts_ternarize_recon(scaled.data(), w_q.data(), n_w);
 
-        // loss = mean((w_q - W)^2)
+        // loss = mean(w_col[col] * (w_q - W)^2). w_col is all-ones when
+        // calib_X is absent, so this is byte-identical to the prior
+        // uncalibrated mean((w_q - W)^2).
         float loss = 0.0f;
-        for (int64_t i = 0; i < n_w; i++) {
-            float d = w_q[i] - weights[i];
-            loss += d * d;
+        for (int64_t row = 0; row < out_dim; row++) {
+            const int64_t base = row * in_dim;
+            for (int64_t col = 0; col < in_dim; col++) {
+                float d = w_q[(size_t)(base + col)] - weights[base + col];
+                loss += w_col[(size_t)col] * d * d;
+            }
         }
         loss /= (float)n_w;
 
@@ -137,9 +291,14 @@ int ts_train_lrq(const float * weights, int64_t out_dim, int64_t in_dim,
         }
         prev_loss = loss;
 
-        // backward (STE): d_loss/d_scaled = 2*(w_q - W) / n_w
-        for (int64_t i = 0; i < n_w; i++) {
-            d_scaled[i] = 2.0f * (w_q[i] - weights[i]) / (float)n_w;
+        // backward (STE): d_loss/d_scaled = 2*w_col[col]*(w_q - W) / n_w
+        for (int64_t row = 0; row < out_dim; row++) {
+            const int64_t base = row * in_dim;
+            for (int64_t col = 0; col < in_dim; col++) {
+                float d = w_q[(size_t)(base + col)] - weights[base + col];
+                d_scaled[(size_t)(base + col)] =
+                    2.0f * w_col[(size_t)col] * d / (float)n_w;
+            }
         }
 
         // d_loss/d_S = d_scaled * W
@@ -147,31 +306,15 @@ int ts_train_lrq(const float * weights, int64_t out_dim, int64_t in_dim,
             d_s[i] = d_scaled[i] * weights[i];
         }
 
-        // d_loss/d_U = d_s @ V^T: (out_dim x in_dim) @ (in_dim x rank)
-        ts_matmul(d_s.data(), V.data(), dU.data(), out_dim, in_dim, rank);
-        // note: V is (rank x in_dim), so V^T is (in_dim x rank)
-        // ts_matmul with B=V treats V as (in_dim x rank) which is wrong
-        // need: dU[i,j] = sum_k d_s[i,k] * V[j,k]
-        for (int64_t i = 0; i < out_dim; i++) {
-            for (int64_t j = 0; j < rank; j++) {
-                float s = 0.0f;
-                for (int64_t k = 0; k < in_dim; k++) {
-                    s += d_s[i * in_dim + k] * V[j * in_dim + k];
-                }
-                dU[i * rank + j] = s;
-            }
-        }
+        // d_loss/d_U = d_s @ V^T: (out_dim x in_dim) @ (in_dim x rank).
+        // V^T computed explicitly (rank x in_dim -> in_dim x rank, cheap
+        // O(rank*in_dim) transpose) so this reuses the proven A@B helper
+        // instead of a 3rd (ABT) rocBLAS remap.
+        ts_lrq_transpose(V.data(), Vt.data(), rank, in_dim);
+        ts_lrq_matmul(d_s.data(), Vt.data(), dU.data(), out_dim, in_dim, rank);
 
         // d_loss/d_V = U^T @ d_s: (rank x out_dim) @ (out_dim x in_dim)
-        for (int64_t i = 0; i < rank; i++) {
-            for (int64_t j = 0; j < in_dim; j++) {
-                float s = 0.0f;
-                for (int64_t k = 0; k < out_dim; k++) {
-                    s += U[k * rank + i] * d_s[k * in_dim + j];
-                }
-                dV[i * in_dim + j] = s;
-            }
-        }
+        ts_lrq_matmul_atb(U.data(), d_s.data(), dV.data(), out_dim, rank, in_dim);
 
         // Adam step
         float t = (float)(it + 1);
@@ -195,4 +338,9 @@ int ts_train_lrq(const float * weights, int64_t out_dim, int64_t in_dim,
     result->rank = rank;
     result->n_iters = max_iters;
     return 0;
+}
+
+void ts_lrq_reconstruct_scale(const ts_lrq_result * result,
+                              int64_t out_dim, int64_t in_dim, float * S_out) {
+    ts_lrq_matmul(result->U.data(), result->V.data(), S_out, out_dim, result->rank, in_dim);
 }

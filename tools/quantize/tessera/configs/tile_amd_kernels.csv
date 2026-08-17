@@ -1,0 +1,28 @@
+# tile_amd_kernels.csv - per-arch AMD tile kernel measurement table
+# (docs/amd-tile-format-spec.md 8.1a "Wave A.1: op registry + CSV skeleton",
+# 11.8.1). Mirrors the shape of AITER's
+# aiter/aiter/configs/model_configs/gptoss_a16w4_tuned_fmoe.csv (study
+# reference only - no AITER data copied).
+#
+# Columns: arch, dtype, sparse, microscale, M, N, K, BM, BN, BK, stages,
+# epilog, kernelName, anchor_hash
+#
+# M/N/K = 0 is a wildcard row ("no kernel for this arch, any shape falls
+# back to CPU"). anchor_hash is a content fingerprint of a row used to
+# detect when a re-tune is needed; empty means "not measured/autotuned
+# yet" - true for every row in this wave (W3 task 3.4 explicitly ships
+# with no autotune: the one real row's BM/BN/BK are the native WMMA tile
+# shape itself, not a measured blocking choice). ggml-amd/registry/
+# tile_amd_op_registry.cpp hand-mirrors this file; a later wave's
+# build_amd_kernels.py (spec 8.1a artifact 3) will generate the registry
+# table from this CSV once real cross-shape autotune data exists here.
+arch,dtype,sparse,microscale,M,N,K,BM,BN,BK,stages,epilog,kernelName,anchor_hash
+rdna3,bf16,false,false,16,16,16,16,16,16,1,gfx11_c_permute,tile_amd_matmul_rdna3_bf16_16x16x16,
+gcn,,false,false,0,0,0,0,0,0,0,,cpu_fallback_gcn,
+rdna1,,false,false,0,0,0,0,0,0,0,,cpu_fallback_rdna1,
+rdna2,,false,false,0,0,0,0,0,0,0,,cpu_fallback_rdna2,
+rdna4,,false,false,0,0,0,0,0,0,0,,cpu_fallback_rdna4,
+cdna1,,false,false,0,0,0,0,0,0,0,,cpu_fallback_cdna1,
+cdna2,,false,false,0,0,0,0,0,0,0,,cpu_fallback_cdna2,
+cdna3,,false,false,0,0,0,0,0,0,0,,cpu_fallback_cdna3,
+cdna4,,false,false,0,0,0,0,0,0,0,,cpu_fallback_cdna4,

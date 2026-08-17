@@ -21,6 +21,19 @@ size_t ggml_type_size(enum ggml_type type) { (void)type; return 0; }
 size_t ggml_row_size(enum ggml_type type, int64_t ne) { (void)type; (void)ne; return 0; }
 const char * ggml_type_name(enum ggml_type type) { (void)type; return "unknown"; }
 
+// W3 task 3.3 gap-type probe: this file links ggml-quants.c directly (not
+// ggml.c), so it cannot exercise the real type_traits[] table at runtime -
+// see tests/test-tessera-type-gap-audit.cpp for that. What this file CAN
+// verify at compile time is that the enum landing itself is exactly what
+// the master plan pins (criterion 17 context / amd-tile-format-spec.md
+// 9(v)/9(vii)): the gap range 47-62 is 16 slots wide and
+// GGML_TYPE_TESSERA_T_RDNA3 lands at the spec's fixed value 63, not
+// wherever the next free slot after GGML_TYPE_TESSERA_T1024 happened to be.
+_Static_assert(GGML_TYPE_TESSERA_T1024 == 46, "gap range must start right after T1024");
+_Static_assert(GGML_TYPE_TESSERA_T_RDNA3 == 63, "amd-tile-format-spec.md pins GGML_TYPE_TESSERA_T_RDNA3 = 63");
+_Static_assert(GGML_TYPE_COUNT == 64, "amd-tile-format-spec.md pins GGML_TYPE_COUNT = 64 after W3 task 3.3");
+_Static_assert(GGML_TYPE_TESSERA_T_RDNA3 - GGML_TYPE_TESSERA_T1024 - 1 == 16, "47..62 gap must be exactly 16 reserved slots");
+
 // bytes needed for one row of k elements in the packed format
 static size_t tessera_t640_row_bytes(int64_t k) {
     const int pages = (int)((k + TILE640_PAGE_SIZE - 1) / TILE640_PAGE_SIZE);

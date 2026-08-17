@@ -20,6 +20,11 @@ struct common_imatrix_entry {
     std::vector<float>   fourth_sums;
     std::vector<float>   max_abs;
     std::vector<int64_t> counts;
+    // Optional raw calibration activation rows (llama-imatrix's
+    // --calib-tokens), row-major [calib_x_tokens][in_dim]. Empty when the
+    // producer didn't collect them.
+    std::vector<float>   calib_x;
+    int64_t               calib_x_tokens = 0;
 };
 
 struct common_imatrix {

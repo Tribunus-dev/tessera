@@ -155,6 +155,24 @@ if (APPLE AND GGML_METAL)
     target_link_libraries(${TARGET} PRIVATE
         ggml ggml-base ggml-mtl-shared-events
         "-framework CoreML" "-framework Foundation" "-framework IOSurface" "-framework Metal")
+else()
+    # Non-Apple: link the no-op stub so speculative.cpp and the server's
+    # ANE-prefill path resolve and keep their ordinary-backend fallback.
+    target_sources(${TARGET} PRIVATE ane-mtp-stub.cpp)
+endif()
+
+# The XDNA surface targets the AMD Ryzen AI NPU through the amdxdna
+# driver's DRM UAPI (raw ioctl; no XRT, no libdrm). It is Linux-only and
+# degrades to the stub when the kernel headers lack drm/amdxdna_accel.h,
+# the same way the ANE block degrades to ane-mtp-stub.cpp off-Apple.
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_path(AMDXDNA_UAPI_INCLUDE_DIR NAMES drm/amdxdna_accel.h)
+endif()
+if (AMDXDNA_UAPI_INCLUDE_DIR)
+    target_sources(${TARGET} PRIVATE xdna-runtime.cpp xdna-runtime.h)
+    target_include_directories(${TARGET} PRIVATE ${AMDXDNA_UAPI_INCLUDE_DIR})
+else()
+    target_sources(${TARGET} PRIVATE xdna-runtime-stub.cpp)
 endif()
 
 set_target_properties(${TARGET} PROPERTIES
@@ -257,4 +275,15 @@ if (LLAMA_BUILD_TESTS)
     add_executable(${TS_EMIT_L3_TARGET} test_emit_l3_ndjson.cpp)
     target_link_libraries(${TS_EMIT_L3_TARGET} PRIVATE ${TARGET})
     target_compile_features(${TS_EMIT_L3_TARGET} PRIVATE cxx_std_17)
+
+    # Bring-up test for the AMD XDNA NPU runtime. The xclbin container
+    # checks run unconditionally against the in-repo kernel artifact; the
+    # device path skips (exit 0) when no amdxdna node is present.
+    set(TS_XDNA_TEST_TARGET test-xdna)
+    add_executable(${TS_XDNA_TEST_TARGET} test_xdna.cpp)
+    target_link_libraries(${TS_XDNA_TEST_TARGET} PRIVATE ${TARGET})
+    target_compile_features(${TS_XDNA_TEST_TARGET} PRIVATE cxx_std_17)
+    target_compile_definitions(${TS_XDNA_TEST_TARGET} PRIVATE
+        TS_XDNA_KERNELS_DIR="${CMAKE_SOURCE_DIR}/ggml/src/ggml-amd/xdna/kernels")
+    add_test(NAME ${TS_XDNA_TEST_TARGET} COMMAND ${TS_XDNA_TEST_TARGET})
 endif()

@@ -15,8 +15,18 @@
 #define ACCELERATE_NEW_LAPACK
 #endif
 #include <Accelerate/Accelerate.h>
-#elif defined(GGML_USE_OPENBLAS)
+#endif
+// Unlike the single-TS_HAS_CBLAS-flag files, this file's functions each pick
+// their own lane independently (some have no rocBLAS variant at all - norm2,
+// scale, ...), so both headers are included when both are available; the
+// GEMM/dot call sites below independently prefer TS_USE_ROCBLAS over
+// GGML_USE_OPENBLAS at their own #if chains (D1: matmul-acceleration, not
+// fallback) without gating header visibility on that preference.
+#if defined(GGML_USE_OPENBLAS)
 #include <cblas.h>
+#endif
+#if defined(TS_USE_ROCBLAS)
+#include "tessera-rocblas.h"
 #endif
 
 #include <cmath>
@@ -119,6 +129,39 @@ float ts_vec_dotpr(const float * a, const float * b, int64_t n) {
 #if defined(__APPLE__)
     float r;
     vDSP_dotpr(a, 1, b, 1, &r, (vDSP_Length)n);
+    return r;
+#elif defined(TS_USE_ROCBLAS)
+    ts_rblas_buf ax = ts_rblas_buf_get(TS_RBLAS_IN_F32_A, (size_t)n * sizeof(float));
+    ts_rblas_buf ay = ts_rblas_buf_get(TS_RBLAS_IN_F32_B, (size_t)n * sizeof(float));
+    ts_rblas_buf rs = ts_rblas_buf_get(TS_RBLAS_SCALAR_F32, sizeof(float));
+    float r = 0.0f;
+    if (ax.dev && ay.dev && rs.dev) {
+        hipStream_t s = ts_rblas_stream();
+        // ax.bytes/ay.bytes are the POOL SLOT's allocated size (grow-only,
+        // shared across every TS_RBLAS_IN_F32_A/_B caller process-wide -
+        // can be far larger than this call's own `n` if an earlier, bigger
+        // GEMM grew the slot). Copying that many bytes from `a`/`b` (each
+        // only n*sizeof(float) valid) reads past their end into whatever
+        // host memory follows - the exact host-side SDMA page-fault
+        // signature this was root-caused from. Must use the size actually
+        // requested just above, not the slot's high-water mark.
+        hipMemcpyAsync(ax.dev, a, (size_t)n * sizeof(float), hipMemcpyHostToDevice, s);
+        hipMemcpyAsync(ay.dev, b, (size_t)n * sizeof(float), hipMemcpyHostToDevice, s);
+        rocblas_sdot(ts_rocblas_handle(), (int)n,
+                     (float*)ax.dev, 1, (float*)ay.dev, 1, (float*)rs.dev);
+        hipMemcpyAsync(&r, rs.dev, sizeof(float), hipMemcpyDeviceToHost, s);
+        hipStreamSynchronize(s);
+    } else {
+        // Stage failed - fall back to a naive scalar dot on the host pointers.
+        float s_acc = 0.0f;
+        for (int64_t i = 0; i < n; i++) {
+            s_acc += a[i] * b[i];
+        }
+        r = s_acc;
+    }
+    ts_rblas_buf_release(ax);
+    ts_rblas_buf_release(ay);
+    ts_rblas_buf_release(rs);
     return r;
 #elif defined(GGML_USE_OPENBLAS)
     return cblas_sdot((int)n, a, 1, b, 1);
@@ -285,7 +328,38 @@ void ts_mat_mul(const float * A, const float * B, float * C,
     if (M <= 0 || N <= 0) {
         return;
     }
-#if defined(__APPLE__) || defined(GGML_USE_OPENBLAS)
+#if defined(TS_USE_ROCBLAS)
+    // rocBLAS before __APPLE__/GGML_USE_OPENBLAS: matmul-acceleration, not
+    // fallback (D1). rocBLAS is column-major. The cblas_sgemm below computes
+    //   C(M,N) = A(M,K) * B(K,N)                 (row-major)
+    // which in column-major view is
+    //   C^T(N,M) = B^T(N,K) * A^T(K,M)           (col-major)
+    // so we swap operand order; both A and B keep NoTrans because the
+    // col-major view sees them transposed already.
+    {
+    const float alpha = 1.0f;
+    const float beta  = 0.0f;
+    rocblas_status st = ts_rblas_sgemm_bf16acc(
+        rocblas_operation_none, rocblas_operation_none,
+        (int)N, (int)M, (int)K,
+        &alpha,
+        B, (int)N, (size_t)K * N,
+        A, (int)K, (size_t)M * K,
+        &beta,
+        C, (int)N, (size_t)M * N);
+    if (st != rocblas_status_success) {
+        for (int64_t i = 0; i < M; ++i) {
+            for (int64_t j = 0; j < N; ++j) {
+                float s = 0.0f;
+                for (int64_t k = 0; k < K; ++k) {
+                    s += A[i * K + k] * B[k * N + j];
+                }
+                C[i * N + j] = s;
+            }
+        }
+    }
+    }
+#elif defined(__APPLE__) || defined(GGML_USE_OPENBLAS)
     // C(M x N) = A(M x K) @ B(K x N), row-major
     cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
                 (int)M, (int)N, (int)K,
@@ -308,7 +382,40 @@ void ts_mat_mul_at(const float * A, const float * B, float * C,
     if (M <= 0 || N <= 0) {
         return;
     }
-#if defined(__APPLE__) || defined(GGML_USE_OPENBLAS)
+#if defined(TS_USE_ROCBLAS)
+    // rocBLAS before __APPLE__/GGML_USE_OPENBLAS: matmul-acceleration, not
+    // fallback (D1). rocBLAS is column-major. The cblas_sgemm below computes
+    //   C(M,N) = A^T(M,K) * B(K,N)               (row-major, A stored as KxM)
+    // which in column-major view is
+    //   C^T(N,M) = B^T(N,K) * A(M,K)             (col-major)
+    // B is read transposed (to match its col-major view of the row-major
+    // KxN storage); A is read as-is (its col-major view is the KxM transposed
+    // form, which is exactly what we want to be A(M,K)).
+    {
+    const float alpha = 1.0f;
+    const float beta  = 0.0f;
+    rocblas_status st = ts_rblas_sgemm_bf16acc(
+        rocblas_operation_transpose, rocblas_operation_none,
+        (int)N, (int)M, (int)K,
+        &alpha,
+        B, (int)N, (size_t)K * N,
+        A, (int)M, (size_t)K * M,
+        &beta,
+        C, (int)N, (size_t)M * N);
+    if (st != rocblas_status_success) {
+        // A stored as (K x M): element A[k][m] lives at A[k * M + m]
+        for (int64_t i = 0; i < M; ++i) {
+            for (int64_t j = 0; j < N; ++j) {
+                float s = 0.0f;
+                for (int64_t k = 0; k < K; ++k) {
+                    s += A[k * M + i] * B[k * N + j];
+                }
+                C[i * N + j] = s;
+            }
+        }
+    }
+    }
+#elif defined(__APPLE__) || defined(GGML_USE_OPENBLAS)
     // C(M x N) = A^T @ B, with A stored row-major as (K x M) and B as (K x N)
     cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
                 (int)M, (int)N, (int)K,

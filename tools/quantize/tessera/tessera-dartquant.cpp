@@ -28,6 +28,9 @@
 #endif
 #include <Accelerate/Accelerate.h>
 #define TS_HAS_CBLAS 1
+#elif defined(TS_USE_ROCBLAS)
+// rocBLAS before GGML_USE_OPENBLAS: matmul-acceleration, not fallback (D1).
+#include "tessera-rocblas.h"
 #elif defined(GGML_USE_OPENBLAS)
 #include <cblas.h>
 #define TS_HAS_CBLAS 1
@@ -86,6 +89,27 @@ static void ts_dq_matmul(const float * A, const float * B, float * C,
                 (int)m, (int)n, (int)k,
                 1.0, Ad.data(), (int)k, Bd.data(), (int)n, 0.0, Cd.data(), (int)n);
     for (int64_t i = 0; i < m * n; i++) C[i] = (float)Cd[i];
+#elif defined(TS_USE_ROCBLAS)
+    // W2 task 2.2: cast to sgemm (OQ-A) instead of promoting to f64 - uses
+    // A/B directly, no Ad/Bd double staging. Operand order matches the
+    // original col-major remap (C^T = B^T*A^T for row-major C=A@B).
+    rocblas_status st = ts_rblas_dgemm_to_sgemm(
+        rocblas_operation_none, rocblas_operation_none,
+        (int)n, (int)m, (int)k, 1.0f,
+        B, (int)n, (size_t)k * n,
+        A, (int)k, (size_t)m * k,
+        C, (int)n, (size_t)m * n);
+    if (st != rocblas_status_success) {
+        for (int64_t i = 0; i < m; i++) {
+            for (int64_t j = 0; j < n; j++) {
+                double s = 0.0;
+                for (int64_t p = 0; p < k; p++) {
+                    s += (double)A[i*k + p] * (double)B[p*n + j];
+                }
+                C[i*n + j] = (float)s;
+            }
+        }
+    }
 #else
     for (int64_t i = 0; i < m; i++) {
         for (int64_t j = 0; j < n; j++) {
@@ -111,6 +135,39 @@ static void ts_dq_matmul_atb(const float * A, const float * B, float * C,
                 (int)n, (int)k, (int)m,
                 1.0, Ad.data(), (int)n, Bd.data(), (int)k, 0.0, Cd.data(), (int)k);
     for (int64_t i = 0; i < n * k; i++) C[i] = (float)Cd[i];
+#elif defined(TS_USE_ROCBLAS)
+    // Row-major C(n x k) = A(m x n)^T @ B(m x k) via the column-major
+    // identity C^T = B^T @ A: the as-stored buffers, reinterpreted
+    // column-major, already ARE B^T (physical k x m, ld=k) and A^T
+    // (physical n x m, ld=n) - so achieving B^T @ A needs NO transpose on
+    // the first (B-derived) operand and Transpose on the second
+    // (A-derived) operand to undo its already-transposed interpretation
+    // back to A. (transpose, none) - what this used to say - has the two
+    // flags backwards: verified against a scalar ground truth with a
+    // standalone rocBLAS-linked test before fixing (rocblas_status_
+    // invalid_size at small scale; an unbounded-read GPU page fault at
+    // the ~2560x128 scale this pipeline actually runs at, since a wrong
+    // lda doesn't always fail validation before it corrupts a real
+    // kernel launch). Never previously exercised end-to-end (DartQuant
+    // was dead code from the live quantize path before this session -
+    // see gap ledger), so nothing had run this branch until now.
+    rocblas_status st = ts_rblas_dgemm_to_sgemm(
+        rocblas_operation_none, rocblas_operation_transpose,
+        (int)k, (int)n, (int)m, 1.0f,
+        B, (int)k, (size_t)m * k,
+        A, (int)n, (size_t)m * n,
+        C, (int)k, (size_t)n * k);
+    if (st != rocblas_status_success) {
+        for (int64_t i = 0; i < n; i++) {
+            for (int64_t j = 0; j < k; j++) {
+                double s = 0.0;
+                for (int64_t r = 0; r < m; r++) {
+                    s += (double)A[r*n + i] * (double)B[r*k + j];
+                }
+                C[i*k + j] = (float)s;
+            }
+        }
+    }
 #else
     for (int64_t i = 0; i < n; i++) {
         for (int64_t j = 0; j < k; j++) {
@@ -137,6 +194,25 @@ static void ts_dq_matmul_abt(const float * A, const float * B, float * C,
                 (int)m, (int)n, (int)k,
                 1.0, Ad.data(), (int)k, Bd.data(), (int)k, 0.0, Cd.data(), (int)n);
     for (int64_t i = 0; i < m * n; i++) C[i] = (float)Cd[i];
+#elif defined(TS_USE_ROCBLAS)
+    // W2 task 2.2: cast to sgemm (OQ-A), same remap pattern.
+    rocblas_status st = ts_rblas_dgemm_to_sgemm(
+        rocblas_operation_transpose, rocblas_operation_none,
+        (int)n, (int)m, (int)k, 1.0f,
+        B, (int)k, (size_t)n * k,
+        A, (int)k, (size_t)m * k,
+        C, (int)n, (size_t)m * n);
+    if (st != rocblas_status_success) {
+        for (int64_t i = 0; i < m; i++) {
+            for (int64_t j = 0; j < n; j++) {
+                double s = 0.0;
+                for (int64_t p = 0; p < k; p++) {
+                    s += (double)A[i*k + p] * (double)B[j*k + p];
+                }
+                C[i*n + j] = (float)s;
+            }
+        }
+    }
 #else
     for (int64_t i = 0; i < m; i++) {
         for (int64_t j = 0; j < n; j++) {
@@ -334,6 +410,27 @@ static float ts_output_mse_and_grad(const float * W, const float * R,
                     0.0, dL_dWp_d.data(), (int)K);
         for (int64_t i = 0; i < out_dim * K; i++)
             dL_dWp[i] = (float)dL_dWp_d[i];
+#elif defined(TS_USE_ROCBLAS)
+        // W2 task 2.2: cast to sgemm (OQ-A). Writes dL_dWp directly - no
+        // double staging buffer needed. alpha=inv (not the fixed 1.0 the
+        // other DARTQuant sites use).
+        rocblas_status st = ts_rblas_dgemm_to_sgemm(
+            rocblas_operation_none, rocblas_operation_none,
+            (int)K, (int)out_dim, (int)X_count, (float)inv,
+            X, (int)K, (size_t)X_count * K,
+            err.data(), (int)X_count, (size_t)out_dim * X_count,
+            dL_dWp.data(), (int)K, (size_t)out_dim * K);
+        if (st != rocblas_status_success) {
+            for (int64_t o = 0; o < out_dim; o++) {
+                for (int64_t j = 0; j < K; j++) {
+                    double s = 0.0;
+                    for (int64_t t = 0; t < X_count; t++) {
+                        s += (double)err[o*X_count + t] * (double)X[t*K + j];
+                    }
+                    dL_dWp[o*K + j] = (float)(inv * s);
+                }
+            }
+        }
 #else
         for (int64_t o = 0; o < out_dim; o++) {
             for (int64_t j = 0; j < K; j++) {
@@ -510,6 +607,38 @@ void ts_dartquant_apply(const float * W, const float * R,
         for (int64_t i = 0; i < out_dim; i++)
             for (int64_t j = 0; j < block_size; j++)
                 W_rot[i*in_dim + col_off + j] = (float)Cd[i*block_size + j];
+#elif defined(TS_USE_ROCBLAS)
+        // W2 task 2.2: cast to sgemm (OQ-A). W's column-block slice is
+        // still extracted into a contiguous scratch first (as the f64
+        // path did) rather than passed as a strided lda-view directly:
+        // ts_rblas_dgemm_to_sgemm's D2H write-back assumes a contiguous
+        // output buffer, which a strided W_rot destination is not (a
+        // straight memcpy would overwrite into the next row's data).
+        std::vector<float> Wf((size_t)out_dim * block_size);
+        std::vector<float> Cf((size_t)out_dim * block_size);
+        for (int64_t i = 0; i < out_dim; i++)
+            for (int64_t k = 0; k < block_size; k++)
+                Wf[i*block_size + k] = W[i*in_dim + col_off + k];
+        rocblas_status st = ts_rblas_dgemm_to_sgemm(
+            rocblas_operation_none, rocblas_operation_none,
+            (int)block_size, (int)out_dim, (int)block_size, 1.0f,
+            R, (int)block_size, (size_t)block_size * block_size,
+            Wf.data(), (int)block_size, (size_t)out_dim * block_size,
+            Cf.data(), (int)block_size, (size_t)out_dim * block_size);
+        if (st != rocblas_status_success) {
+            for (int64_t i = 0; i < out_dim; i++) {
+                for (int64_t j = 0; j < block_size; j++) {
+                    double s = 0.0;
+                    for (int64_t k = 0; k < block_size; k++) {
+                        s += (double)Wf[i*block_size + k] * (double)R[k*block_size + j];
+                    }
+                    Cf[i*block_size + j] = (float)s;
+                }
+            }
+        }
+        for (int64_t i = 0; i < out_dim; i++)
+            for (int64_t j = 0; j < block_size; j++)
+                W_rot[i*in_dim + col_off + j] = Cf[i*block_size + j];
 #else
         for (int64_t i = 0; i < out_dim; i++) {
             const float * w_row = W + i*in_dim + col_off;

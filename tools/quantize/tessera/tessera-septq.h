@@ -98,8 +98,15 @@ void ts_septq_build_hessian(int64_t in_dim,
 void ts_septq_banded_cholesky(const float * H, int64_t n, int64_t bandwidth,
                               float * L_out);
 
-// GPTQ update matrix M from L: strictly upper-triangular banded portion
-// of L^{-1} rescaled by diag(L). M_out must have room for n*n floats.
+// GPTQ update matrix M from L (H approx= L L^T): strictly upper-triangular,
+// banded to `bandwidth`. M[j,k] = U[j,k]/U[j,j] for k>j, where H^{-1} =
+// U^T U (U upper triangular) - the Cholesky factor of the HESSIAN'S
+// INVERSE, not of H itself. This requires an explicit O(n^3) inversion of
+// (L L^T) regardless of `bandwidth` (H^{-1} is generally dense even when H
+// is banded); only the output M is truncated to the band. See
+// tessera-septq.cpp for the derivation and why the naive (L^{-1})-based
+// shortcut is NOT equivalent (it corresponds to reverse-order elimination).
+// M_out must have room for n*n floats.
 void ts_septq_gptq_M(const float * L, int64_t n, int64_t bandwidth,
                      float * M_out);
 

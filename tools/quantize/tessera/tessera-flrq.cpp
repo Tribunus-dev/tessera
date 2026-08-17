@@ -7,6 +7,9 @@
 #endif
 #include <Accelerate/Accelerate.h>
 #define TS_HAS_CBLAS 1
+#elif defined(TS_USE_ROCBLAS)
+// rocBLAS before GGML_USE_OPENBLAS: matmul-acceleration, not fallback (D1).
+#include "tessera-rocblas.h"
 #elif defined(GGML_USE_OPENBLAS)
 #include <cblas.h>
 #define TS_HAS_CBLAS 1
@@ -76,6 +79,30 @@ void ts_matmul(const float * A, const float * B, float * C,
     cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
                 (int)m, (int)n, (int)k,
                 1.0f, A, (int)k, B, (int)n, 0.0f, C, (int)n);
+#elif defined(TS_USE_ROCBLAS)
+    {
+    const float alpha = 1.0f;
+    const float beta  = 0.0f;
+    rocblas_status st = ts_rblas_sgemm_bf16acc(
+        rocblas_operation_none, rocblas_operation_none,
+        (int)n, (int)m, (int)k,
+        &alpha,
+        B, (int)n, (size_t)k * n,
+        A, (int)k, (size_t)m * k,
+        &beta,
+        C, (int)n, (size_t)m * n);
+    if (st != rocblas_status_success) {
+        for (int64_t i = 0; i < m; i++) {
+            for (int64_t j = 0; j < n; j++) {
+                float s = 0.0f;
+                for (int64_t p = 0; p < k; p++) {
+                    s += A[i*k + p] * B[p*n + j];
+                }
+                C[i*n + j] = s;
+            }
+        }
+    }
+    }
 #else
     for (int64_t i = 0; i < m; i++) {
         for (int64_t j = 0; j < n; j++) {
@@ -97,6 +124,30 @@ void ts_matmul_atb(const float * A, const float * B, float * C,
     cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
                 (int)n, (int)k, (int)m,
                 1.0f, A, (int)n, B, (int)k, 0.0f, C, (int)k);
+#elif defined(TS_USE_ROCBLAS)
+    {
+    const float alpha = 1.0f;
+    const float beta  = 0.0f;
+    rocblas_status st = ts_rblas_sgemm_bf16acc(
+        rocblas_operation_transpose, rocblas_operation_none,
+        (int)k, (int)n, (int)m,
+        &alpha,
+        B, (int)k, (size_t)m * k,
+        A, (int)n, (size_t)m * n,
+        &beta,
+        C, (int)k, (size_t)n * k);
+    if (st != rocblas_status_success) {
+        for (int64_t i = 0; i < n; i++) {
+            for (int64_t j = 0; j < k; j++) {
+                float s = 0.0f;
+                for (int64_t r = 0; r < m; r++) {
+                    s += A[r*n + i] * B[r*k + j];
+                }
+                C[i*k + j] = s;
+            }
+        }
+    }
+    }
 #else
     for (int64_t i = 0; i < n; i++) {
         for (int64_t j = 0; j < k; j++) {

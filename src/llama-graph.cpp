@@ -1463,7 +1463,8 @@ void llm_graph_context::build_imatrix_observer_dense(
     }
 
     ggml_tensor * observer =
-        ggml_imatrix_observer(ctx0, cur, nullptr, weight_anchor, 1);
+        ggml_imatrix_observer(ctx0, cur, nullptr, weight_anchor, 1,
+                              cparams.calib_x_tokens);
     ggml_set_name(observer, imatrix_observer_name(weight_name).c_str());
     ggml_set_output(observer);
     if (weight_anchor->buffer &&
@@ -1653,10 +1654,109 @@ ggml_tensor * llm_graph_context::build_tile640_lora_mm(
         cur = ggml_cast(ctx0, cur, GGML_TYPE_F16);
     }
     GGML_ASSERT(cur->type == GGML_TYPE_F16 || cur->type == GGML_TYPE_F32);
+    // Feature flag: TESSERA_TILE640_INTERLEAVED gates the Metal + HIP
+    // interleaved kernel. When unset the graph node uses the base
+    // GGML_OP_TILE640_MATMUL path unchanged.
+    if (getenv("TESSERA_TILE640_INTERLEAVED") != NULL) {
+        return ggml_tile640_matmul_interleaved(ctx0,
+                w_packed, w_page_scales, w_lane_scales,
+                w_outlier_row_offsets, w_outlier_cols, w_outlier_vals,
+                cur);
+    }
     return ggml_tile640_matmul(ctx0,
             w_packed, w_page_scales, w_lane_scales,
             w_outlier_row_offsets, w_outlier_cols, w_outlier_vals,
             cur);
+}
+
+ggml_tensor * llm_graph_context::build_tile_rdna3_lora_mm(
+          ggml_tensor * w_packed,
+          ggml_tensor * w_page_scales,
+          ggml_tensor * w_lane_scales,
+          ggml_tensor * cur,
+          ggml_tensor * dartquant_rotation,
+          ggml_tensor * w_outlier_row_offsets,
+          ggml_tensor * w_outlier_cols,
+          ggml_tensor * w_outlier_vals,
+          ggml_tensor * w_act_scale) const {
+    // AMD RDNA3 WMMA-native tile matmul (docs/amd-tile-format-spec.md 3.4).
+    // ggml_tile_rdna3_matmul's kernel accepts F16 or F32 activations
+    // directly (ggml_compute_forward_tile_rdna3_matmul_f32's
+    // load_activation handles both), so no forced cast is needed unless
+    // cur is some other type.
+    //
+    // cur_orig is captured before any transform below and is what the
+    // outlier correction (added after the tile matmul, see below) uses:
+    // outlier_vals are the ORIGINAL weight value at that position
+    // (tessera-quant.cpp's ts_quantize_2d_ternary, "residual = original"),
+    // so the matching activation term must be the original, un-rescaled
+    // one too - `outlier_val[k] * X_orig[k]` reconstructs W_orig[r,k]*X[k]
+    // directly, with no wscale/input_scale factor to cancel. This is the
+    // same class of scale-space mismatch CORRECTION-w3-7 fixed for
+    // ts_measure_true_t2; ggml_compute_forward_tile640_matmul_f32
+    // (ggml-cpu/ops.cpp) has the identical bug in its own outlier addback
+    // (it documents "residual = original" but is fed the SAME
+    // already-act_scale-multiplied B its ternary term uses) - flagged in
+    // the gap ledger, not fixed here (Metal is that path's load-bearing
+    // kernel, unreachable/untestable on this host).
+    ggml_tensor * cur_orig = cur;
+    if (w_act_scale) {
+        // AWQ activation-side compensation: the packed trits were decided
+        // on weights*wscale[c], so `cur` must be pre-scaled by the
+        // reciprocal (w_act_scale = 1/wscale, tessera-quant.cpp's
+        // input_scale) for the tile matmul's ternary term to reconstruct
+        // the true W @ X. Never coincides with dartquant_rotation in
+        // practice (a tensor is quantized via AWQ xor DartQuant, never
+        // both), but applying both if somehow present is still
+        // well-defined - this multiply is in the same (unrotated) in_dim
+        // space dartquant_rotation's input is.
+        cur = ggml_mul(ctx0, cur, w_act_scale);
+    }
+    if (cur->type != GGML_TYPE_F16 && cur->type != GGML_TYPE_F32) {
+        cur = ggml_cast(ctx0, cur, GGML_TYPE_F32);
+    }
+    if (dartquant_rotation != nullptr) {
+        // DartQuant: this tensor's trits were decided on `weights @
+        // blockdiag(R)` (tessera-quant.cpp's DartQuant dispatch), so
+        // reconstructing the true `W @ X` from the shipped Wrot requires
+        // rotating activations by blockdiag(R)^T first - Wrot @ (R^T @ X)
+        // == (W @ R) @ (R^T @ X) == W @ X for orthogonal R (see
+        // tessera-ternary.h's dartquant_rotation comment). `cur` is
+        // [in_dim, n_tokens]; in_dim is a multiple of K by construction
+        // (tessera-quant.cpp picks K as a divisor of in_dim). Reshaping to
+        // [K, n_blocks*n_tokens] is a free view (K is already the fastest-
+        // varying axis within each token's row), and since the SAME R
+        // applies to every block, one ggml_mul_mat rotates every block for
+        // every token in a single call - dartquant_rotation is shipped
+        // pre-transposed (R^T, not R) specifically so this single
+        // ggml_mul_mat(dartquant_rotation, cur_blocks) call computes R^T @
+        // X directly, with no separate transpose op. Verified numerically
+        // (not just derived) against ggml_mul_mat's own index convention
+        // before relying on it here - see the DartQuant round-trip check.
+        ggml_tensor * cur_f32 = (cur->type == GGML_TYPE_F32) ? cur : ggml_cast(ctx0, cur, GGML_TYPE_F32);
+        if (!ggml_is_contiguous(cur_f32)) {
+            cur_f32 = ggml_cont(ctx0, cur_f32);
+        }
+        const int64_t K         = dartquant_rotation->ne[0];
+        const int64_t in_dim    = cur_f32->ne[0];
+        const int64_t n_tokens  = cur_f32->ne[1];
+        GGML_ASSERT(in_dim % K == 0);
+        const int64_t n_blocks  = in_dim / K;
+
+        ggml_tensor * cur_blocks = ggml_reshape_2d(ctx0, cur_f32, K, n_blocks * n_tokens);
+        ggml_tensor * rotated    = ggml_mul_mat(ctx0, dartquant_rotation, cur_blocks);
+        cur = ggml_reshape_2d(ctx0, rotated, in_dim, n_tokens);
+    }
+    ggml_tensor * result = ggml_tile_rdna3_matmul(ctx0, w_packed, w_page_scales, w_lane_scales, cur);
+    if (w_outlier_row_offsets != nullptr) {
+        // Sparse outlier addback (ggml_sparse_outlier_add, ggml.h) - uses
+        // cur_orig (see its declaration comment above), NOT the possibly
+        // act_scale-scaled/rotated `cur` the tile matmul above consumed.
+        result = ggml_sparse_outlier_add(ctx0, result,
+                                         w_outlier_row_offsets, w_outlier_cols, w_outlier_vals,
+                                         cur_orig);
+    }
+    return result;
 }
 
 ggml_tensor * llm_graph_context::build_tile640_lora_mm_id(
@@ -1698,7 +1798,8 @@ ggml_tensor * llm_graph_context::build_tile640_lora_mm_id(
             w_packed->name);
         if (imatrix_observer_enabled(observer_name)) {
             ggml_tensor * observer =
-                ggml_imatrix_observer(ctx0, cur, ids, w_packed, experts);
+                ggml_imatrix_observer(ctx0, cur, ids, w_packed, experts,
+                                      cparams.calib_x_tokens);
             ggml_set_name(observer, imatrix_observer_name(observer_name).c_str());
             ggml_set_output(observer);
             if (w_packed->buffer && ggml_backend_buffer_is_host(w_packed->buffer)) {
@@ -1728,7 +1829,8 @@ ggml_tensor * llm_graph_context::build_lora_mm_id(
         cur->type == GGML_TYPE_F32 &&
         strncmp(w->name, "blk.", 4) == 0) {
         ggml_tensor * observer =
-            ggml_imatrix_observer(ctx0, cur, ids, w, (int32_t) w->ne[2]);
+            ggml_imatrix_observer(ctx0, cur, ids, w, (int32_t) w->ne[2],
+                                  cparams.calib_x_tokens);
         ggml_set_name(observer, imatrix_observer_name(w->name).c_str());
         ggml_set_output(observer);
         if (w->buffer && ggml_backend_buffer_is_host(w->buffer)) {
@@ -1811,7 +1913,10 @@ llm_graph_qkv llm_graph_context::build_qkv(
                   int64_t   n_embd_head,
                   int64_t   n_head,
                   int64_t   n_head_kv,
-                      int   il) const {
+                      int   il,
+        const llama_tile_rdna3_tensor * wq_tile_rdna3,
+        const llama_tile_rdna3_tensor * wk_tile_rdna3,
+        const llama_tile_rdna3_tensor * wv_tile_rdna3) const {
     const int64_t n_embd_q  = n_embd_head * n_head;
     const int64_t n_embd_kv = n_embd_head * n_head_kv;
 
@@ -1838,8 +1943,22 @@ llm_graph_qkv llm_graph_context::build_qkv(
             ggml_row_size(qkv->type, n_embd_head), qkv->nb[1],
             ggml_row_size(qkv->type, n_embd_q + n_embd_kv));
     } else {
-        // separate Q/K/V path
-        Qcur = build_lora_mm(layer.wq, cur, layer.wq_s);
+        // separate Q/K/V path. Check the RDNA3 cluster pointer first (not
+        // layer.wq) - layer.wq is also null for the pre-existing T640
+        // tile640 path (create_tensor_qkv's own tile640 branch, which
+        // build_qkv has never actually consumed), and wq_tile_rdna3 would
+        // be null there too; falling through to the unchanged
+        // build_lora_mm(layer.wq, ...) expression preserves that
+        // pre-existing (already broken, out of scope here) behavior
+        // exactly rather than dereferencing a null wq_tile_rdna3.
+        Qcur = wq_tile_rdna3 ? build_tile_rdna3_lora_mm(wq_tile_rdna3->packed, wq_tile_rdna3->page_scales,
+                                                        wq_tile_rdna3->lane_scales, cur,
+                                                        wq_tile_rdna3->dartquant_rotation,
+                                                        wq_tile_rdna3->outlier_row_offsets,
+                                                        wq_tile_rdna3->outlier_cols,
+                                                        wq_tile_rdna3->outlier_vals,
+                                                        wq_tile_rdna3->act_scale)
+                             : build_lora_mm(layer.wq, cur, layer.wq_s);
         cb(Qcur, "Qcur", il);
         if (layer.wq_b) {
             Qcur = ggml_add(ctx0, Qcur, layer.wq_b);
@@ -1849,7 +1968,14 @@ llm_graph_qkv llm_graph_context::build_qkv(
             Qcur = ggml_clamp(ctx0, Qcur, -hparams.f_clamp_kqv, hparams.f_clamp_kqv);
             cb(Qcur, "Qcur_clamped", il);
         }
-        Kcur = build_lora_mm(layer.wk, cur, layer.wk_s);
+        Kcur = wk_tile_rdna3 ? build_tile_rdna3_lora_mm(wk_tile_rdna3->packed, wk_tile_rdna3->page_scales,
+                                                        wk_tile_rdna3->lane_scales, cur,
+                                                        wk_tile_rdna3->dartquant_rotation,
+                                                        wk_tile_rdna3->outlier_row_offsets,
+                                                        wk_tile_rdna3->outlier_cols,
+                                                        wk_tile_rdna3->outlier_vals,
+                                                        wk_tile_rdna3->act_scale)
+                             : build_lora_mm(layer.wk, cur, layer.wk_s);
         cb(Kcur, "Kcur", il);
         if (layer.wk_b) {
             Kcur = ggml_add(ctx0, Kcur, layer.wk_b);
@@ -1859,7 +1985,14 @@ llm_graph_qkv llm_graph_context::build_qkv(
             Kcur = ggml_clamp(ctx0, Kcur, -hparams.f_clamp_kqv, hparams.f_clamp_kqv);
             cb(Kcur, "Kcur_clamped", il);
         }
-        Vcur = build_lora_mm(layer.wv, cur, layer.wv_s);
+        Vcur = wv_tile_rdna3 ? build_tile_rdna3_lora_mm(wv_tile_rdna3->packed, wv_tile_rdna3->page_scales,
+                                                        wv_tile_rdna3->lane_scales, cur,
+                                                        wv_tile_rdna3->dartquant_rotation,
+                                                        wv_tile_rdna3->outlier_row_offsets,
+                                                        wv_tile_rdna3->outlier_cols,
+                                                        wv_tile_rdna3->outlier_vals,
+                                                        wv_tile_rdna3->act_scale)
+                             : build_lora_mm(layer.wv, cur, layer.wv_s);
         cb(Vcur, "Vcur", il);
         if (layer.wv_b) {
             Vcur = ggml_add(ctx0, Vcur, layer.wv_b);
@@ -1896,7 +2029,10 @@ ggml_tensor * llm_graph_context::build_ffn(
          ggml_tensor * act_scales,
      llm_ffn_op_type   type_op,
    llm_ffn_gate_type   type_gate,
-                 int   il) const {
+                 int   il,
+    const llama_tile_rdna3_tensor * up_tile_rdna3,
+    const llama_tile_rdna3_tensor * gate_tile_rdna3,
+    const llama_tile_rdna3_tensor * down_tile_rdna3) const {
     // NVFP4 support is currently restricted to
     // 1) LORA absence (*_s would be applied after LORA residual, which is incorrect)
     // 2) bias absense (*_s would be applied after bias addition, which is incorrect)
@@ -1920,7 +2056,20 @@ ggml_tensor * llm_graph_context::build_ffn(
     GGML_ASSERT(!gate_s || !gate || gate->type != GGML_TYPE_NVFP4 || !has_lora(gate));
     GGML_ASSERT(!down_s || !down || down->type != GGML_TYPE_NVFP4 || !has_lora(down));
 
-    ggml_tensor * tmp = up ? build_lora_mm(up, cur) : cur;
+    ggml_tensor * tmp;
+    if (up) {
+        tmp = build_lora_mm(up, cur);
+    } else if (up_tile_rdna3) {
+        tmp = build_tile_rdna3_lora_mm(up_tile_rdna3->packed, up_tile_rdna3->page_scales,
+                                       up_tile_rdna3->lane_scales, cur,
+                                       up_tile_rdna3->dartquant_rotation,
+                                       up_tile_rdna3->outlier_row_offsets,
+                                       up_tile_rdna3->outlier_cols,
+                                       up_tile_rdna3->outlier_vals,
+                                       up_tile_rdna3->act_scale);
+    } else {
+        tmp = cur;
+    }
     cb(tmp, "ffn_up", il);
 
     if (up_b) {
@@ -1933,16 +2082,30 @@ ggml_tensor * llm_graph_context::build_ffn(
         cb(tmp, "ffn_up_s", il);
     }
 
-    if (gate) {
+    if (gate || gate_tile_rdna3) {
         switch (type_gate) {
             case LLM_FFN_SEQ:
                 {
-                    cur = build_lora_mm(gate, tmp);
+                    cur = gate ? build_lora_mm(gate, tmp)
+                               : build_tile_rdna3_lora_mm(gate_tile_rdna3->packed, gate_tile_rdna3->page_scales,
+                                                          gate_tile_rdna3->lane_scales, tmp,
+                                                          gate_tile_rdna3->dartquant_rotation,
+                                                          gate_tile_rdna3->outlier_row_offsets,
+                                                          gate_tile_rdna3->outlier_cols,
+                                                          gate_tile_rdna3->outlier_vals,
+                                                          gate_tile_rdna3->act_scale);
                     cb(cur, "ffn_gate", il);
                 } break;
             case LLM_FFN_PAR:
                 {
-                    cur = build_lora_mm(gate, cur);
+                    cur = gate ? build_lora_mm(gate, cur)
+                               : build_tile_rdna3_lora_mm(gate_tile_rdna3->packed, gate_tile_rdna3->page_scales,
+                                                          gate_tile_rdna3->lane_scales, cur,
+                                                          gate_tile_rdna3->dartquant_rotation,
+                                                          gate_tile_rdna3->outlier_row_offsets,
+                                                          gate_tile_rdna3->outlier_cols,
+                                                          gate_tile_rdna3->outlier_vals,
+                                                          gate_tile_rdna3->act_scale);
                     cb(cur, "ffn_gate", il);
                 } break;
         }
@@ -1963,7 +2126,7 @@ ggml_tensor * llm_graph_context::build_ffn(
 
     switch (type_op) {
         case LLM_FFN_SILU:
-            if (gate && type_gate == LLM_FFN_PAR) {
+            if ((gate || gate_tile_rdna3) && type_gate == LLM_FFN_PAR) {
                 if (il >= 0) {
                     const float limit = hparams.swiglu_clamp_shexp[il];
                     constexpr float eps = 1e-6f;
@@ -1996,7 +2159,7 @@ ggml_tensor * llm_graph_context::build_ffn(
                 cb(cur, "ffn_silu", il);
             } break;
         case LLM_FFN_GELU:
-            if (gate && type_gate == LLM_FFN_PAR) {
+            if ((gate || gate_tile_rdna3) && type_gate == LLM_FFN_PAR) {
                 cur = ggml_geglu_split(ctx0, cur, tmp);
                 cb(cur, "ffn_geglu", il);
                 type_gate = LLM_FFN_SEQ;
@@ -2009,7 +2172,7 @@ ggml_tensor * llm_graph_context::build_ffn(
                 }
             } break;
         case LLM_FFN_RELU:
-            if (gate && type_gate == LLM_FFN_PAR) {
+            if ((gate || gate_tile_rdna3) && type_gate == LLM_FFN_PAR) {
                 cur = ggml_reglu_split(ctx0, cur, tmp);
                 cb(cur, "ffn_reglu", il);
                 type_gate = LLM_FFN_SEQ;
@@ -2042,7 +2205,7 @@ ggml_tensor * llm_graph_context::build_ffn(
             } break;
         case LLM_FFN_SITU:
             {
-                GGML_ASSERT(gate && type_gate == LLM_FFN_PAR);
+                GGML_ASSERT((gate || gate_tile_rdna3) && type_gate == LLM_FFN_PAR);
                 ggml_tensor * gate_tanh = ggml_tanh(
                         ctx0, ggml_scale(ctx0, cur, 1.0f / hparams.situ_beta));
                 gate_tanh = ggml_scale(ctx0, gate_tanh, hparams.situ_beta);
@@ -2061,15 +2224,22 @@ ggml_tensor * llm_graph_context::build_ffn(
             GGML_ABORT("fatal error");
     }
 
-    if (gate && type_gate == LLM_FFN_PAR) {
+    if ((gate || gate_tile_rdna3) && type_gate == LLM_FFN_PAR) {
         cur = ggml_mul(ctx0, cur, tmp);
         cb(cur, "ffn_gate_par", il);
     }
 
-    if (down) {
-        cur = build_lora_mm(down, cur);
+    if (down || down_tile_rdna3) {
+        cur = down ? build_lora_mm(down, cur)
+                   : build_tile_rdna3_lora_mm(down_tile_rdna3->packed, down_tile_rdna3->page_scales,
+                                              down_tile_rdna3->lane_scales, cur,
+                                              down_tile_rdna3->dartquant_rotation,
+                                              down_tile_rdna3->outlier_row_offsets,
+                                              down_tile_rdna3->outlier_cols,
+                                              down_tile_rdna3->outlier_vals,
+                                              down_tile_rdna3->act_scale);
         cb(cur, "ffn_down", il);
-        if (arch == LLM_ARCH_GLM4 || arch == LLM_ARCH_GLM4_MOE || arch == LLM_ARCH_JAIS2) {
+        if (down && (arch == LLM_ARCH_GLM4 || arch == LLM_ARCH_GLM4_MOE || arch == LLM_ARCH_JAIS2)) {
             // GLM4, GLM4_MOE, and JAIS2 seem to have numerical issues with half-precision accumulators
             ggml_mul_mat_set_prec(cur, GGML_PREC_F32);
         }
@@ -2219,8 +2389,13 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
             "blk.%d.ffn_moe_router",
             il);
         if (imatrix_observer_enabled(observer_name)) {
+            // capture_tokens=0: this observes the MoE router's own routing
+            // probabilities, not a quantizable weight's input activation -
+            // not useful calib_X for SEPTQ/DartQuant/Hessian-sensitivity,
+            // so never captured regardless of --calib-tokens.
             ggml_tensor * router_observer =
-                ggml_imatrix_observer(ctx0, probs, nullptr, gate_inp, 1);
+                ggml_imatrix_observer(ctx0, probs, nullptr, gate_inp, 1,
+                                      /*capture_tokens=*/0);
             ggml_set_name(router_observer, imatrix_observer_name(observer_name).c_str());
             ggml_set_output(router_observer);
             if (gate_inp->buffer && ggml_backend_buffer_is_host(gate_inp->buffer)) {

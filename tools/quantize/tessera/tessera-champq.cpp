@@ -8,6 +8,9 @@
 #endif
 #include <Accelerate/Accelerate.h>
 #define TS_HAS_CBLAS 1
+#elif defined(TS_USE_ROCBLAS)
+// rocBLAS before GGML_USE_OPENBLAS: matmul-acceleration, not fallback (D1).
+#include "tessera-rocblas.h"
 #elif defined(GGML_USE_OPENBLAS)
 #include <cblas.h>
 #define TS_HAS_CBLAS 1
@@ -222,6 +225,35 @@ static float ts_champq_eval(const float * x, float * grad, int64_t n, void * ctx
     cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
                 (int)out_dim, (int)K, (int)K,
                 1.0f, W, (int)K, x, (int)K, 0.0f, W_perm.data(), (int)K);
+#elif defined(TS_USE_ROCBLAS)
+    // Scoped block: the outer `c` is the ts_champq_ctx* captured above, so
+    // the rocBLAS output buffer is named `co` to avoid shadowing it (this
+    // branch never compiled before the D1 macro-precedence fix, since
+    // GGML_USE_OPENBLAS previously always won TS_HAS_CBLAS's #if).
+    {
+    const float alpha = 1.0f;
+    const float beta  = 0.0f;
+    rocblas_status st = ts_rblas_sgemm_bf16acc(
+        rocblas_operation_none, rocblas_operation_none,
+        (int)K, (int)out_dim, (int)K,
+        &alpha,
+        x, (int)K, (size_t)K * K,
+        W, (int)K, (size_t)out_dim * K,
+        &beta,
+        W_perm.data(), (int)K, (size_t)out_dim * K);
+    if (st != rocblas_status_success) {
+        for (int64_t r = 0; r < out_dim; r++) {
+            const float * Wr = W + r * K;
+            for (int64_t col = 0; col < K; col++) {
+                float s = 0.0f;
+                for (int64_t i = 0; i < K; i++) {
+                    s += Wr[i] * x[i * K + col];
+                }
+                W_perm[r * K + col] = s;
+            }
+        }
+    }
+    }
 #else
     for (int64_t r = 0; r < out_dim; r++) {
         const float * Wr = W + r * K;
@@ -277,6 +309,32 @@ static float ts_champq_eval(const float * x, float * grad, int64_t n, void * ctx
                 (int)K, (int)K, (int)out_dim,
                 1.0f, W, (int)K, g.data(), (int)K,
                 0.0f, grad, (int)K);
+#elif defined(TS_USE_ROCBLAS)
+    // Scoped block: see the W_perm rocBLAS block above for why `c` (the
+    // outer ts_champq_ctx*) is avoided and each block gets its own scope.
+    {
+    const float alpha = 1.0f;
+    const float beta  = 0.0f;
+    rocblas_status st = ts_rblas_sgemm_bf16acc(
+        rocblas_operation_transpose, rocblas_operation_none,
+        (int)K, (int)K, (int)out_dim,
+        &alpha,
+        W, (int)K, (size_t)out_dim * K,
+        g.data(), (int)K, (size_t)out_dim * K,
+        &beta,
+        grad, (int)K, (size_t)K * K);
+    if (st != rocblas_status_success) {
+        for (int64_t i = 0; i < K; i++) {
+            for (int64_t k = 0; k < K; k++) {
+                float s = 0.0f;
+                for (int64_t r = 0; r < out_dim; r++) {
+                    s += W[r * K + i] * g[r * K + k];
+                }
+                grad[i * K + k] = s;
+            }
+        }
+    }
+    }
 #else
     for (int64_t i = 0; i < K; i++) {
         for (int64_t k = 0; k < K; k++) {

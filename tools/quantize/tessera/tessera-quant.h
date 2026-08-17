@@ -77,6 +77,22 @@ void ts_pack_tile(const int8_t * ternary, const ts_tile_config * config,
                   int8_t * lane_scales_placeholder,
                   int64_t out_dim, int64_t in_dim);
 
+// W3 task 3.5 (host-amd-implementation-plan.md; master-plan criteria
+// 18-19): resolves `pack --quant=host-amd` to a `--tile` string by probing
+// this host's AMD GPU arch (ts_detect_amd_arch). Only meant to be called
+// when the user passed --quant but not an explicit --tile - "explicit
+// --tile wins" is the caller's responsibility (quantize.cpp's ts_cli_pack),
+// not this function's.
+//
+// Returns "tile-amd-rdna35" on a detected RDNA 3.5 iGPU (gfx1103/1150/
+// 1151), "tile-amd-rdna3" on a detected discrete RDNA3 card, or "t640" as
+// the safe fallback on any other host (GCN/RDNA1/RDNA2/RDNA4/CDNA*/unknown
+// - matches the existing ts_detect_tile_config() Apple/Intel probe's "safe
+// T640 default" convention). Prints exactly one stderr diagnostic line
+// either way; never aborts - detection failure must not brick
+// quantization.
+std::string ts_resolve_host_amd_quant_tile();
+
 // Compute page and lane scales from weights and ternary encoding.
 // Writes into page_scales and lane_scales (pre-allocated).
 void ts_compute_scales(const float * weights, const int8_t * ternary_flat,
@@ -92,6 +108,22 @@ void ts_compute_scales(const float * core, const int8_t * ternary_flat,
                        uint16_t * page_scales, int8_t * lane_scales,
                        int64_t out_dim, int64_t in_dim);
 
+// Computes ts_ternary_tensor::row_scale/lane_scale (see tessera-ternary.h
+// for the full rationale): mean(|magnitude_source|) over nonzero-trit
+// positions, at row granularity and TS_TRANSPORT_LANE_SIZE-element lane
+// granularity, f16-encoded. Falls back to global_amp for any row/lane with
+// no nonzero trits.
+void ts_compute_row_lane_scale(const float * magnitude_source, const int8_t * ternary_flat,
+                               int64_t out_dim, int64_t in_dim, float global_amp,
+                               std::vector<uint16_t> & row_scale,
+                               std::vector<uint16_t> & lane_scale);
+
+// Synthesizes a full out_dim*in_dim per-element magnitude array from the
+// best-available source in `tn`: core > lane_scale > row_scale >
+// global_amp. Shared by every ts_pack_ternary_to_tile packer branch. See
+// tessera-quant.cpp for the full fallback-tier rationale.
+std::vector<float> ts_ternary_synth_magnitude(const ts_ternary_tensor & tn);
+
 // Select repair residuals (outlier columns) for a quantized tensor.
 // Returns indices of selected outlier columns.
 std::vector<int32_t> ts_select_repair_residuals(
@@ -102,6 +134,51 @@ std::vector<int32_t> ts_select_repair_residuals(
 // Normalized AWQ scale: s_j = (|act_j|^alpha) / mean(|act|^alpha).
 void ts_normalized_awq_scale(const float * act_scales, float alpha,
                              float * scale_out, int64_t in_dim);
+
+// Runs the REAL AWQ or SEPTQ path (via ts_quantize_2d_ternary, not a
+// cheap proxy) and returns the true relative Frobenius t2 = ||recon -
+// weights||^2 / ||weights||^2, where recon is reassembled from the
+// resulting trits + row/lane-scale magnitude hints (ts_ternary_synth_
+// magnitude) plus the outlier CSR corrections - the same reconstruction
+// the packer itself uses, so this is the actual shippable fidelity, not
+// an approximation. Exists because ts_dispatch_forced_t2 (tessera-
+// dispatch.cpp) routes both AWQ and SEPTQ through ts_quantize_mse_
+// streaming, which has no use_septq awareness at all - it only reads
+// alpha_scale/clip_scale from the expert profile, both of which are
+// identical between AWQ's and SEPTQ's default profiles, so forced_t2
+// mathematically cannot distinguish the two (verified: identical output
+// for every tensor in a live run). Returns -1.0f on failure.
+// calib_X/n_tokens: optional real per-token calibration activations
+// (row-major [n_tokens][in_dim], from llama-imatrix's --calib-tokens via
+// ts_imatrix_lookup_calib_x). When use_septq is set and calib_X is non-null,
+// SEPTQ measures its true banded-Hessian output instead of the diagonal
+// fallback - so live algorithm selection compares what would actually ship,
+// not a mismatched proxy. ref_output: optional (n_tokens x out_dim) =
+// calib_X @ weights^T (see ts_awq_compute_ref_output). When both calib_X and
+// ref_output are non-null, the internal AWQ alpha resolve (which every path
+// here runs, not just the AWQ candidate) uses the true layer-output-MSE
+// search (ts_awq_scale_search_layer_output) instead of the coarser
+// weight-magnitude proxy (ts_awq_scale_search) - so the AWQ candidate's own
+// measurement, and the alpha pre-scale SEPTQ's measurement builds on top of,
+// both reflect what would actually ship. nullptr/0 reproduces prior behavior
+// exactly.
+float ts_measure_true_t2(const float * weights, const float * act_scales,
+                         int64_t out_dim, int64_t in_dim,
+                         bool use_septq, float alpha, float clip,
+                         float outlier_thresh, uint32_t seed,
+                         const float * calib_X = nullptr, int64_t n_tokens = 0,
+                         const float * ref_output = nullptr);
+
+// Reconstructs a ts_ternary_tensor back to a dense [out_dim, in_dim] float
+// array in ORIGINAL weight space (not AWQ column-scaled space) - trits *
+// ts_ternary_synth_magnitude, unscaled by awq_input_scale when present, then
+// the outlier CSR overrides those positions with their exact original value.
+// Same reconstruction ts_measure_true_t2 and the real packer both use, so
+// this is the actual shippable fidelity, not an approximation. recon_out
+// must have room for out_dim*in_dim floats.
+void ts_ternary_tensor_reconstruct(const ts_ternary_tensor & tn,
+                                   int64_t out_dim, int64_t in_dim,
+                                   float * recon_out);
 
 // AWQ scale search: grid search over alpha in [0, 1] minimizing
 // layer-output MSE. Returns best alpha.
@@ -119,10 +196,26 @@ float ts_awq_scale_search_layer_output(
     int64_t out_dim, int64_t in_dim,
     int64_t n_tokens, int64_t n_grid);
 
+// Computes ref_output (n_tokens x out_dim) = calib_X @ weights^T, the
+// reference input to ts_awq_scale_search_layer_output / the layer_output_
+// search branch inside ts_quantize_2d_ternary. BLAS-accelerated when
+// available (TS_HAS_CBLAS), scalar fallback otherwise. No-op (leaves
+// ref_output_out untouched) if any required input is missing.
+void ts_awq_compute_ref_output(const float * weights, const float * calib_X,
+                               int64_t out_dim, int64_t in_dim,
+                               int64_t n_tokens, float * ref_output_out);
+
 // Top-level 2D quantization. Produces all 6 GGUF components.
 // Returns 0 on success.
 struct ts_quant_result_2d {
     std::vector<uint32_t> packed;
+    // AMD RDNA3 packing only (TS_PACK_AMD_RDNA3): the WMMA-native packed
+    // element is a real signed int8 magnitude (symmetric linear quant), not
+    // a radix-243 word - see quantize_row_tessera_t_rdna3_ref in
+    // ggml-quants.c, the reference this mirrors. `packed` above (T640/
+    // TS_PACK_RADIX243) and `packed_i8` here are mutually exclusive; exactly
+    // one is populated depending on the tile config's packing kind.
+    std::vector<int8_t>   packed_i8;
     std::vector<uint16_t> page_scales;
     std::vector<int8_t>   lane_scales;
     std::vector<int32_t>  outlier_row_offsets;  // size out_dim + 1
@@ -145,6 +238,18 @@ struct ts_quant_params_2d {
     bool      use_septq;        // use SEPTQ Hessian compensation
     int64_t   awq_grid;         // grid points for alpha search (default 20)
     uint32_t  seed;             // determinism
+
+    // FLRQ (low-rank multiplicative pre-scale, tessera-lrq.h) and DartQuant
+    // (learned block-diagonal rotation, tessera-dartquant.h) regime
+    // experts. Mutually exclusive with use_septq and each other -
+    // ts_quantize_2d_ternary checks them in a fixed priority order (septq
+    // > flrq > dartquant > AWQ), documented at the dispatch sites.
+    bool      use_flrq;
+    int64_t   flrq_rank;        // 0 -> default (32)
+    int64_t   flrq_iters;       // 0 -> default (50)
+    bool      use_dartquant;
+    int64_t   dartquant_block;  // 0 -> default (128, clamped to a divisor of in_dim)
+    int64_t   dartquant_iters;  // 0 -> default (30)
 };
 
 int ts_quantize_2d(const float * weights,

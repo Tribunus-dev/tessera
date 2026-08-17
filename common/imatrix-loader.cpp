@@ -119,13 +119,15 @@ bool common_imatrix_load(const std::string & fname, common_imatrix & imatrix) {
     const std::string in_sum4_suffix{ ".in_sum4" };
     const std::string in_maxabs_suffix{ ".in_maxabs" };
     const std::string counts_suffix{ ".counts" };
+    const std::string calib_x_suffix{ ".calib_x" };
 
     struct imatrix_tensors {
-        struct ggml_tensor * sum2   = nullptr;
-        struct ggml_tensor * sumabs = nullptr;
-        struct ggml_tensor * sum4   = nullptr;
-        struct ggml_tensor * maxabs = nullptr;
-        struct ggml_tensor * counts = nullptr;
+        struct ggml_tensor * sum2    = nullptr;
+        struct ggml_tensor * sumabs  = nullptr;
+        struct ggml_tensor * sum4    = nullptr;
+        struct ggml_tensor * maxabs  = nullptr;
+        struct ggml_tensor * counts  = nullptr;
+        struct ggml_tensor * calib_x = nullptr;
     };
     std::map<std::string, imatrix_tensors> tensors_for;
 
@@ -144,6 +146,8 @@ bool common_imatrix_load(const std::string & fname, common_imatrix & imatrix) {
             tensors_for[std::move(name)].maxabs = cur;
         } else if (string_remove_suffix(name, counts_suffix)) {
             tensors_for[std::move(name)].counts = cur;
+        } else if (string_remove_suffix(name, calib_x_suffix)) {
+            tensors_for[std::move(name)].calib_x = cur;
         }
     }
 
@@ -198,6 +202,30 @@ bool common_imatrix_load(const std::string & fname, common_imatrix & imatrix) {
         for (int64_t j = 0; j < ncounts; ++j) {
             e.counts[j] = std::lround(
                 ((const float *) tensors.counts->data)[j]);
+        }
+
+        // calib_x: [in_dim, n_tokens] (ne[0]=in_dim, ne[1]=n_tokens; see
+        // llama-imatrix's save_imatrix, ggml_new_tensor_2d(ctx, F32,
+        // nval/nmat, captured)) - in_dim must match sum2's own dimension
+        // (nval) since both describe the same tensor's input channels;
+        // unlike sumabs/sum4/maxabs this is 2D and n_tokens varies per
+        // tensor, so it needs its own check rather than load_optional's
+        // flat nval comparison.
+        if (tensors.calib_x) {
+            const int64_t in_dim    = tensors.calib_x->ne[0];
+            const int64_t n_tokens  = tensors.calib_x->ne[1];
+            if (in_dim != nval) {
+                LOG_ERR("%s: mismatched calib_x in_dim for %s (%lld vs %lld)\n",
+                        __func__, name.c_str(), (long long) in_dim, (long long) nval);
+                gguf_free(ctx_gguf);
+                ggml_free(ctx);
+                return false;
+            }
+            const int64_t n = in_dim * n_tokens;
+            e.calib_x.assign(
+                (const float *) tensors.calib_x->data,
+                (const float *) tensors.calib_x->data + n);
+            e.calib_x_tokens = n_tokens;
         }
     }
 

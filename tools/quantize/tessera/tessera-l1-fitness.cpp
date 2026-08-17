@@ -6,7 +6,9 @@
 
 #include "tessera-l1-fitness.h"
 #include "tessera-sidecar-v3.h"
+#include "tessera-metal.h"
 
+#include <cmath>
 #include <cstring>
 #include <string>
 
@@ -65,10 +67,27 @@ float ts_l1_kernel_direct_t2(const float * w_hat,
         return 0.0f;
     }
 
+    // HIP shim fast path: compute the (w_hat - kernel_dequant) diff into
+    // a scratch buffer, hand it to ts_metal_l1_ratio, return the ratio
+    // directly. The scratch buffer is reused by the scalar fallback when
+    // the shim is unavailable (-1.0); we never mutate the caller's w_hat.
+    // (The earlier const_cast + in-place mutate pattern broke the scalar
+    // path on -1: w_hat was overwritten with (w_hat - kernel_dequant)
+    // before the scalar loop ran, so the ratio was computed against a
+    // doubly-differenced diff and came out near-1.0 instead of small.)
+    std::vector<float> diff((size_t)n);
+    for (int64_t i = 0; i < n; i++) {
+        diff[(size_t)i] = w_hat[i] - kernel_dequant[i];
+    }
+    const double shim_result = ts_metal_l1_ratio(diff.data(), w_original, n);
+    if (shim_result >= 0.0) {
+        return (float)shim_result;
+    }
+
     double num = 0.0;
     double den = 0.0;
     for (int64_t i = 0; i < n; i++) {
-        const double d = (double)w_hat[i] - (double)kernel_dequant[i];
+        const double d = (double)diff[(size_t)i];
         num += d * d;
         den += (double)w_original[i] * (double)w_original[i];
     }
