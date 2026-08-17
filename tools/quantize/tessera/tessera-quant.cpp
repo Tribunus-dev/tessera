@@ -818,22 +818,35 @@ float ts_awq_scale_search(const float * weights, const float * act_scales,
                 diffrow[c] = drow[c] / scale[c] - wrow[c];
             }
         }
-        // importance-weighted MSE: mean( diff^2 * act^2 ).
+        // importance-weighted MSE: mean( diff^2 * act^2 ). act2 is per-
+        // input-column (length in_dim) and must be broadcast across all R
+        // rows of diff (length R*in_dim) - indexing it with the flat
+        // r*in_dim+c offset instead of the column c alone reads far past
+        // its end. This was masked all along by act_scales==nullptr
+        // (early return above) until a separate imatrix key-normalization
+        // fix made act_scales real; confirmed via a live SIGSEGV in this
+        // loop once that happened.
         float err_sum = 0.0f;
         const int64_t mn = R * in_dim;
 #if defined(__APPLE__)
-        // Square diff in place, then multiply by act^2, then sum.
-        // vDSP_vmul(a, a, a) computes a*a elementwise (in-place squaring).
+        // Square diff in place, then multiply by act^2 one row at a time
+        // (act2 only spans one row's worth of columns), then sum.
         static thread_local std::vector<float> scratch;
         if ((int64_t)scratch.size() < mn) scratch.resize((size_t)mn);
         vDSP_vmul(diff.data(), 1, diff.data(), 1, scratch.data(), 1, (vDSP_Length)mn);
-        vDSP_vmul(scratch.data(), 1, act2.data(), 1, scratch.data(), 1, (vDSP_Length)mn);
+        for (int64_t r = 0; r < R; r++) {
+            vDSP_vmul(scratch.data() + r * in_dim, 1, act2.data(), 1,
+                      scratch.data() + r * in_dim, 1, (vDSP_Length)in_dim);
+        }
         vDSP_sve(scratch.data(), 1, &err_sum, (vDSP_Length)mn);
 #else
         double err = 0.0;
-        for (int64_t i = 0; i < mn; i++) {
-            double d = diff[(size_t)i];
-            err += d * d * (double)act2[(size_t)i];
+        for (int64_t r = 0; r < R; r++) {
+            const float * drow = diff.data() + r * in_dim;
+            for (int64_t c = 0; c < in_dim; c++) {
+                double d = drow[c];
+                err += d * d * (double)act2[(size_t)c];
+            }
         }
         err_sum = (float)err;
 #endif
@@ -1474,7 +1487,14 @@ int ts_quantize_2d_ternary(const float * weights, const float * act_scales,
         int64_t row = idx / in_dim;
         result->outlier_row_offsets[(size_t)row + 1]++;
         result->outlier_cols[i] = (int32_t)(idx % in_dim);
-        result->outlier_vals[i] = ts_f32_to_f16(ws[(size_t)idx]);
+        // Outlier CSR is an exact escape hatch in ORIGINAL weight space (the
+        // packer/reader/ts_measure_true_t2 all treat it that way), but ws is
+        // the AWQ column-scaled weight (weights*wscale[c], scale up to ~256x
+        // in either direction) - shipping ws[idx] here silently corrupted
+        // every outlier that landed in a heavily AWQ-scaled column whenever
+        // act_scales was real. weights[idx] is the same flat index into the
+        // untouched input array, always correct regardless of AWQ scaling.
+        result->outlier_vals[i] = ts_f32_to_f16(weights[(size_t)idx]);
     }
     for (int64_t r = 0; r < out_dim; r++) {
         result->outlier_row_offsets[(size_t)r + 1] += result->outlier_row_offsets[(size_t)r];
@@ -1577,11 +1597,29 @@ float ts_measure_true_t2(const float * weights, const float * act_scales,
         return -1.0f;
     }
 
+    // synth_mag (via core/lane_scale/row_scale/global_amp) lives in AWQ
+    // column-scaled space ("core (clipped AWQ-scaled magnitudes) is the
+    // same space global_amp was computed in" - see ts_quantize_2d_ternary's
+    // own comment above result->row_scale). The real inference graph
+    // compensates by multiplying activations by w_act_scale
+    // (llama-graph.cpp, ggml_mul(cur, w_act_scale)), so the shipped model
+    // is correct; this offline measurement has no activations to scale, so
+    // it must instead unscale the weight-side reconstruction by
+    // awq_input_scale (=1/wscale) before comparing to the original
+    // `weights` - omitting this previously inflated AWQ's t2 by up to
+    // several hundred x on tensors with wide per-channel AWQ scale
+    // (attn_k/attn_q), corrupting the live algorithm-selection outcome.
+    const bool has_input_scale =
+        !tn.awq_input_scale.empty() && (int64_t) tn.awq_input_scale.size() == in_dim;
     const std::vector<float> synth_mag = ts_ternary_synth_magnitude(tn);
     std::vector<float> recon((size_t) n);
     for (int64_t i = 0; i < n; i++) {
         const int8_t t = tn.trits[(size_t) i];
-        recon[(size_t) i] = (t == 0) ? 0.0f : ((t > 0) ? synth_mag[(size_t) i] : -synth_mag[(size_t) i]);
+        float v = (t == 0) ? 0.0f : ((t > 0) ? synth_mag[(size_t) i] : -synth_mag[(size_t) i]);
+        if (has_input_scale) {
+            v *= tn.awq_input_scale[(size_t) (i % in_dim)];
+        }
+        recon[(size_t) i] = v;
     }
     // Outlier CSR overrides the trit-based reconstruction exactly (the
     // packer's own contract - trits are zeroed at outlier positions).
