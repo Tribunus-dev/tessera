@@ -201,43 +201,72 @@ void ts_septq_banded_cholesky(const float * H, int64_t n, int64_t bandwidth,
 // GPTQ-M
 // ===========================================================================
 
+// H_approx = L @ L^T (the same H, or its banded approximation, L itself
+// represents), then Hinv = inv(H_approx), then L2 = chol_lower(Hinv), giving
+// U = L2^T (upper) with Hinv = U^T U. Steps 1-2 use CBLAS when available
+// (triangular solve + symmetric rank-n update); step 3 reuses the existing
+// scalar full Cholesky (already a proven, tested code path here as the
+// banded-Cholesky's own fallback). All O(n^3) regardless of bandwidth - see
+// tessera-septq.h for why no cheaper banded shortcut exists.
+static void ts_septq_invert_lower_triangular(const float * L, int64_t n,
+                                              float * B_out) {
+#if defined(TS_HAS_CBLAS)
+    // B := L^{-1} via cblas_strsm solving L @ B = I in place (B starts as I).
+    for (int64_t i = 0; i < n * n; i++) B_out[i] = 0.0f;
+    for (int64_t i = 0; i < n; i++) B_out[i * n + i] = 1.0f;
+    cblas_strsm(CblasRowMajor, CblasLeft, CblasLower, CblasNoTrans, CblasNonUnit,
+                (int)n, (int)n, 1.0f, L, (int)n, B_out, (int)n);
+#else
+    // Forward substitution, column by column: L @ B[:,col] = e_col.
+    std::memset(B_out, 0, sizeof(float) * (size_t)(n * n));
+    for (int64_t col = 0; col < n; col++) {
+        for (int64_t i = col; i < n; i++) {
+            double s = (i == col) ? 1.0 : 0.0;
+            for (int64_t k = col; k < i; k++) {
+                s -= (double)L[i * n + k] * (double)B_out[k * n + col];
+            }
+            float lii = L[i * n + i];
+            B_out[i * n + col] = (lii != 0.0f) ? (float)(s / (double)lii) : 0.0f;
+        }
+    }
+#endif
+}
+
 void ts_septq_gptq_M(const float * L, int64_t n, int64_t bandwidth,
                      float * M_out) {
     std::memset(M_out, 0, sizeof(float) * (size_t)(n * n));
-    // Per-column banded forward substitution: solve L x = e_j, keep x[k] for
-    // k in (j, j + bandwidth + 1). M[j, k] = x[k] * L[j, j].
-    // We avoid a full scratch array by walking j innermost.
-    for (int64_t j = 0; j < n; j++) {
-        float ljj = L[j * n + j];
-        if (ljj == 0.0f) continue;
-        float x_j = 1.0f / ljj;
-        int64_t k_max = std::min(n, j + bandwidth + 1);
-        // x[k] for k in (j, k_max). Store locally.
-        std::vector<float> x((size_t)(k_max - (j + 1)), 0.0f);
-        for (int64_t k = j + 1; k < k_max; k++) {
-            int64_t row_min = std::max<int64_t>(0, k - bandwidth);
+
+    std::vector<float> B((size_t)(n * n));
+    ts_septq_invert_lower_triangular(L, n, B.data());
+
+    // Hinv (lower triangle only - all that ts_septq_full_cholesky reads)
+    // = B^T @ B = (L L^T)^{-1}, since L L^T = H_approx.
+    std::vector<float> Hinv((size_t)(n * n), 0.0f);
+#if defined(TS_HAS_CBLAS)
+    cblas_ssyrk(CblasRowMajor, CblasLower, CblasTrans,
+                (int)n, (int)n, 1.0f, B.data(), (int)n, 0.0f, Hinv.data(), (int)n);
+#else
+    for (int64_t i = 0; i < n; i++) {
+        for (int64_t j = 0; j <= i; j++) {
             double s = 0.0;
-            // s = -dot(L[k, row_min:k], x[row_min:k]). In the Python
-            // reference x is a full length-n zero vector with only x[j]
-            // and x[j+1:k] set, so x[m] = 0 for m < j (no contribution).
-            for (int64_t m = row_min; m < k; m++) {
-                float xm;
-                if (m < j) {
-                    xm = 0.0f;             // never set in the reference
-                } else if (m == j) {
-                    xm = x_j;
-                } else {
-                    xm = x[(size_t)(m - (j + 1))];
-                }
-                s -= (double)L[k * n + m] * (double)xm;
+            for (int64_t m = 0; m < n; m++) {
+                s += (double)B[m * n + i] * (double)B[m * n + j];
             }
-            float xk = (float)(s / (double)L[k * n + k]);
-            x[(size_t)(k - (j + 1))] = xk;
+            Hinv[i * n + j] = (float)s;
         }
-        if (k_max > j + 1) {
-            for (int64_t k = j + 1; k < k_max; k++) {
-                M_out[j * n + k] = x[(size_t)(k - (j + 1))] * ljj;
-            }
+    }
+#endif
+
+    std::vector<float> L2((size_t)(n * n));
+    ts_septq_full_cholesky(Hinv.data(), n, L2.data());  // Hinv = L2 L2^T
+
+    // M[j,k] = U[j,k]/U[j,j] = L2[k,j]/L2[j,j] (U := L2^T), for k>j, banded.
+    for (int64_t j = 0; j < n; j++) {
+        float ljj = L2[j * n + j];
+        if (ljj == 0.0f) continue;
+        int64_t k_max = std::min(n, j + bandwidth + 1);
+        for (int64_t k = j + 1; k < k_max; k++) {
+            M_out[j * n + k] = L2[k * n + j] / ljj;
         }
     }
 }
@@ -619,7 +648,20 @@ int ts_septq_quantize_2d(const float * weights, int64_t out_dim, int64_t in_dim,
         ts_septq_build_hessian(in_dim, act_scales, activations, n_tokens,
                                params->ridge_fraction, H.data());
         std::vector<float> L((size_t)(in_dim * in_dim));
-        ts_septq_banded_cholesky(H.data(), in_dim, bandwidth, L.data());
+        // ts_septq_gptq_M inverts (L L^T) to get the correct GPTQ update
+        // matrix (see its own comment) - an O(n^3) step regardless of
+        // bandwidth, so a BANDED L no longer saves any compute here; it only
+        // throws away H's off-band energy before that inversion. Real
+        // calibration Hessians (few hundred tokens vs thousands of input
+        // channels) routinely have large off-band energy - exactly the case
+        // ts_septq_banded_cholesky's own docstring calls out as triggering
+        // its full-Cholesky fallback - so a banded L here silently corrupts
+        // the matrix being inverted, producing wild (not just approximate)
+        // compensation values. Use the full Cholesky directly; `bandwidth`
+        // still truncates the OUTPUT M (ts_septq_gptq_M's last argument),
+        // which is where dropping long-range corrections is actually a
+        // sound approximation.
+        ts_septq_full_cholesky(H.data(), in_dim, L.data());
         std::vector<float> M((size_t)(in_dim * in_dim));
         ts_septq_gptq_M(L.data(), in_dim, bandwidth, M.data());
         // W_comp = W - error_2d @ M;  error_2d is (out_dim x in_dim),

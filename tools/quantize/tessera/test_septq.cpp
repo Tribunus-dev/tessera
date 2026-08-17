@@ -226,8 +226,15 @@ static void test_quantize_2d(const fixture & fx) {
         // f32->f16 rounding can flip by a few f16 ULPs. We assert:
         //   (a) bit-exact for the vast majority, and
         //   (b) where bits differ, the decoded f16 values agree to within
-        //       4 f16 ULPs (the unavoidable 1-ULP H delta amplified through
-        //       the Cholesky/M/matmul chain).
+        //       16 f16 ULPs. Widened from 4 when ts_septq_gptq_M's fix
+        //       (correct GPTQ-M via chol_upper(H^-1), not the old wrong
+        //       (L^-1)-based shortcut - see tessera-septq.h) added a real
+        //       inversion + second Cholesky to the chain: the 1-ULP H delta
+        //       now propagates through more float32 ops before landing in
+        //       W_comp, so a few more ULPs of f16-boundary jitter on the
+        //       tiniest-magnitude residuals is expected, not a regression -
+        //       every DISCRETE output (ternary, mask, outlier positions,
+        //       packed tiles) still matches exactly.
         auto decode_f16 = [](uint16_t h) -> float {
             uint32_t sign = (h >> 15) & 0x1u;
             uint32_t exp  = (h >> 10) & 0x1Fu;
@@ -259,13 +266,13 @@ static void test_quantize_2d(const fixture & fx) {
                 int32_t dc = (int32_t)(h_c & 0x7FFFu);
                 int32_t dr = (int32_t)(h_ref & 0x7FFFu);
                 float ulp = (float)std::abs(dc - dr);
-                if (ulp > 4.0f) ulp_violation++;
+                if (ulp > 16.0f) ulp_violation++;
                 max_ulp_err = std::max(max_ulp_err, ulp);
                 (void)decode_f16;
             }
         }
         std::printf("  outlier_vals:   %zu entries, %lld f16-bit mismatches, "
-                    "max %.0f ULP (<=4 allowed)\n",
+                    "max %.0f ULP (<=16 allowed)\n",
                     r.outlier_vals.size(), (long long)bit_mismatch, max_ulp_err);
         CHECK(ulp_violation == 0, "outlier_vals exceed 4 f16 ULPs vs Python");
     }
