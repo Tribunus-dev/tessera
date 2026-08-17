@@ -1447,7 +1447,8 @@ void llm_graph_context::build_imatrix_observer_dense(
     }
 
     ggml_tensor * observer =
-        ggml_imatrix_observer(ctx0, cur, nullptr, weight_anchor, 1);
+        ggml_imatrix_observer(ctx0, cur, nullptr, weight_anchor, 1,
+                              cparams.calib_x_tokens);
     ggml_set_name(observer, imatrix_observer_name(weight_name).c_str());
     ggml_set_output(observer);
     if (weight_anchor->buffer &&
@@ -1733,7 +1734,8 @@ ggml_tensor * llm_graph_context::build_tile640_lora_mm_id(
             w_packed->name);
         if (imatrix_observer_enabled(observer_name)) {
             ggml_tensor * observer =
-                ggml_imatrix_observer(ctx0, cur, ids, w_packed, experts);
+                ggml_imatrix_observer(ctx0, cur, ids, w_packed, experts,
+                                      cparams.calib_x_tokens);
             ggml_set_name(observer, imatrix_observer_name(observer_name).c_str());
             ggml_set_output(observer);
             if (w_packed->buffer && ggml_backend_buffer_is_host(w_packed->buffer)) {
@@ -1763,7 +1765,8 @@ ggml_tensor * llm_graph_context::build_lora_mm_id(
         cur->type == GGML_TYPE_F32 &&
         strncmp(w->name, "blk.", 4) == 0) {
         ggml_tensor * observer =
-            ggml_imatrix_observer(ctx0, cur, ids, w, (int32_t) w->ne[2]);
+            ggml_imatrix_observer(ctx0, cur, ids, w, (int32_t) w->ne[2],
+                                  cparams.calib_x_tokens);
         ggml_set_name(observer, imatrix_observer_name(w->name).c_str());
         ggml_set_output(observer);
         if (w->buffer && ggml_backend_buffer_is_host(w->buffer)) {
@@ -2322,8 +2325,13 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
             "blk.%d.ffn_moe_router",
             il);
         if (imatrix_observer_enabled(observer_name)) {
+            // capture_tokens=0: this observes the MoE router's own routing
+            // probabilities, not a quantizable weight's input activation -
+            // not useful calib_X for SEPTQ/DartQuant/Hessian-sensitivity,
+            // so never captured regardless of --calib-tokens.
             ggml_tensor * router_observer =
-                ggml_imatrix_observer(ctx0, probs, nullptr, gate_inp, 1);
+                ggml_imatrix_observer(ctx0, probs, nullptr, gate_inp, 1,
+                                      /*capture_tokens=*/0);
             ggml_set_name(router_observer, imatrix_observer_name(observer_name).c_str());
             ggml_set_output(router_observer);
             if (gate_inp->buffer && ggml_backend_buffer_is_host(gate_inp->buffer)) {

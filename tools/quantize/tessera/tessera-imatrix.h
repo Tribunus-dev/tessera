@@ -24,6 +24,16 @@ struct ts_imatrix {
     // aware experts (DartQuant/CHAMP-Q) to localize which channels carry the
     // heavy tail. Length matches data[name] when present.
     std::map<std::string, std::vector<float>> max_abs;
+    // tensor_name -> raw calibration activation rows, row-major
+    // [n_tokens][in_dim] (token-major - one row per calibration token seen
+    // during imatrix collection). Populated only when the source GGUF was
+    // produced with --calib-tokens > 0 (llama-imatrix); empty otherwise, in
+    // which case SEPTQ/DartQuant/the Hessian sensitivity scorer fall back to
+    // their existing act_scales-only or unweighted behavior. Row count is
+    // tracked separately in calib_x_tokens (in_dim = calib_x[name].size() /
+    // calib_x_tokens[name]).
+    std::map<std::string, std::vector<float>> calib_x;
+    std::map<std::string, int64_t> calib_x_tokens;
     std::string source_path;
 };
 
@@ -48,6 +58,21 @@ const float * ts_imatrix_lookup(const ts_imatrix * imatrix,
 const float * ts_imatrix_lookup_max_abs(const ts_imatrix * imatrix,
                                         const char * tensor_name,
                                         int64_t * out_dim);
+
+// Lookup raw calibration activation rows for a tensor (the optional
+// .calib_x field of a GGUF imatrix written with --calib-tokens > 0).
+// Returns nullptr if absent (no --calib-tokens at collection time, or a
+// producer that predates this field) - callers must treat that the same
+// as "no real calibration activations available" and fall back accordingly
+// (same convention as ts_imatrix_lookup_max_abs). On success, *out_n_tokens
+// receives the row count and *out_in_dim the row width; the returned
+// pointer is row-major [n_tokens][in_dim], matching what
+// ts_septq_build_hessian/ts_dartquant_qr_orth/
+// ts_awq_scale_search_layer_output already expect for calib_X.
+const float * ts_imatrix_lookup_calib_x(const ts_imatrix * imatrix,
+                                        const char * tensor_name,
+                                        int64_t * out_n_tokens,
+                                        int64_t * out_in_dim);
 
 // Compute regime statistics from imatrix data for one tensor.
 struct ts_imatrix_regime_stats {

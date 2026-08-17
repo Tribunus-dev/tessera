@@ -380,6 +380,10 @@ extern "C" {
         ggml_backend_sched_eval_callback cb_eval;
         void * cb_eval_user_data;
         bool imatrix_observers; // graph-resident compact activation observers [EXPERIMENTAL]
+        // per-tensor raw calibration activation rows to additionally capture
+        // via the dense imatrix_observers path (0 = disabled, matches prior
+        // behavior exactly) - llama-imatrix's --calib-tokens [EXPERIMENTAL]
+        int32_t calib_x_tokens;
 
         enum ggml_type type_k; // data type for K cache [EXPERIMENTAL]
         enum ggml_type type_v; // data type for V cache [EXPERIMENTAL]

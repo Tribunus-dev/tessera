@@ -35,10 +35,18 @@ float ts_dispatch_forced_t2(const float * weights, const float * act_scales,
 // gate's held-out panel: actually runs the rotation/low-rank trainer,
 // unlike ts_dispatch_forced_t2's cheaper profile-tuned proxy for those two
 // experts). Returns -1.0f on failure or for experts it doesn't handle.
+// calib_X/n_tokens: optional real per-token calibration activations
+// (row-major [n_tokens][in_dim]); when non-null, DartQuant's measurement
+// trains against the true whip-loss + activation-projected reconstruction
+// objective instead of the weight-only fallback, and FLRQ's ts_train_lrq
+// weights its per-column reconstruction loss by that column's calibrated
+// activation second moment - so live selection compares what would
+// actually ship for both. nullptr/0 reproduces prior behavior exactly.
 float ts_dispatch_tier2_t2(ts_expert_id expert, const float * w,
                            const float * act_scales,
                            int64_t out_dim, int64_t in_dim,
-                           float alpha, float clip, uint32_t seed);
+                           float alpha, float clip, uint32_t seed,
+                           const float * calib_X = nullptr, int64_t n_tokens = 0);
 
 // Forward declaration; full definition in tessera-dispatch-internal.h.
 struct ts_dispatch_refine_entry;

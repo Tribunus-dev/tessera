@@ -561,7 +561,8 @@ static float ts_dispatch_kernel_direct_t2(
 float ts_dispatch_tier2_t2(ts_expert_id expert, const float * w,
                                   const float * act_scales,
                                   int64_t out_dim, int64_t in_dim,
-                                  float alpha, float clip, uint32_t seed) {
+                                  float alpha, float clip, uint32_t seed,
+                                  const float * calib_X, int64_t n_tokens) {
     std::lock_guard<std::mutex> rblas_lock(g_rblas_dispatch_mutex);
     const int64_t n = out_dim * in_dim;
     if (w == nullptr || n <= 0) return -1.0f;
@@ -585,7 +586,8 @@ float ts_dispatch_tier2_t2(ts_expert_id expert, const float * w,
             dp.whip_weight = 0.1f;
             dp.seed        = seed;
             ts_dartquant_result dr;
-            if (ts_dartquant_qr_orth(w, out_dim, in_dim, &dp, &dr) != 0) {
+            if (ts_dartquant_qr_orth(w, out_dim, in_dim, calib_X, n_tokens,
+                                     nullptr, &dp, &dr) != 0) {
                 return -1.0f;
             }
             std::vector<float> wrot((size_t)n);
@@ -604,7 +606,7 @@ float ts_dispatch_tier2_t2(ts_expert_id expert, const float * w,
             lp.tol       = 1.0e-6f;
             lp.seed      = seed;
             ts_lrq_result lres;
-            if (ts_train_lrq(w, out_dim, in_dim, &lp, &lres) != 0) {
+            if (ts_train_lrq(w, out_dim, in_dim, &lp, &lres, calib_X, n_tokens) != 0) {
                 return -1.0f;
             }
             const int64_t r = lres.rank;

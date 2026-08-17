@@ -7115,7 +7115,8 @@ struct ggml_tensor * ggml_imatrix_observer(
         struct ggml_tensor  * activations,
         struct ggml_tensor  * ids,
         struct ggml_tensor  * weight_anchor,
-        int32_t               experts) {
+        int32_t               experts,
+        int32_t               capture_tokens) {
     GGML_ASSERT(activations->type == GGML_TYPE_F32 ||
                 activations->type == GGML_TYPE_F16);
     GGML_ASSERT(experts > 0);
@@ -7123,13 +7124,25 @@ struct ggml_tensor * ggml_imatrix_observer(
         GGML_ASSERT(ids->type == GGML_TYPE_I32);
         GGML_ASSERT(experts > 1);
         GGML_ASSERT(ids->ne[1] == activations->ne[2]);
+        // Raw-sample capture is dense-only for now (see ggml.h) - the
+        // routed/MoE reduction below selects a different token subset per
+        // expert, which capture would need its own per-expert bookkeeping
+        // for; not needed by any current caller (Granite-family dense
+        // models), so left unimplemented rather than silently wrong.
+        capture_tokens = 0;
     } else {
         GGML_ASSERT(experts == 1);
     }
+    if (capture_tokens < 0) {
+        capture_tokens = 0;
+    }
 
     // Four compact per-channel statistics followed by a sample count:
-    // sum(x^2), sum(abs(x)), sum(x^4), max(abs(x)), count.
-    const int64_t ne[2] = { 4 * activations->ne[0] + 1, experts };
+    // sum(x^2), sum(abs(x)), sum(x^4), max(abs(x)), count - then, dense
+    // case only, the first min(count, capture_tokens) raw activation rows,
+    // row-major [capture_tokens][channels] (see ggml.h).
+    const int64_t channels = activations->ne[0];
+    const int64_t ne[2] = { 4 * channels + 1 + channels * capture_tokens, experts };
     struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, 2, ne);
     result->op     = GGML_OP_IMATRIX_OBSERVER;
     result->src[0] = activations;
@@ -7141,6 +7154,7 @@ struct ggml_tensor * ggml_imatrix_observer(
     result->src[2] = weight_anchor;
     ggml_set_op_params_i32(result, 0, experts);
     ggml_set_op_params_i32(result, 1, 0);
+    ggml_set_op_params_i32(result, 2, capture_tokens);
     return result;
 }
 

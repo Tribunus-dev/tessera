@@ -2868,16 +2868,23 @@ extern "C" {
             struct ggml_tensor  * B);
 
     // Graph-resident importance-matrix observer. The output is F32
-    // [4*channels + 1, experts], where each expert row contains per-channel
-    // sum(x^2), sum(abs(x)), sum(x^4), max(abs(x)), followed by the routed
-    // sample count. When ids is NULL the observer is dense and experts must
-    // be 1.
+    // [4*channels + 1 + channels*capture_tokens, experts], where each expert
+    // row contains per-channel sum(x^2), sum(abs(x)), sum(x^4), max(abs(x)),
+    // the routed sample count, then (dense/ids==NULL only - capture_tokens
+    // is ignored, always 0 output rows, for the routed/MoE case) the first
+    // min(count, capture_tokens) raw activation rows, row-major
+    // [capture_tokens][channels] - real per-token calibration samples for
+    // export-ternary's SEPTQ/DartQuant/Hessian-sensitivity paths
+    // (llama-imatrix's --calib-tokens). capture_tokens=0 reproduces the
+    // exact prior output shape and kernel cost. When ids is NULL the
+    // observer is dense and experts must be 1.
     GGML_API struct ggml_tensor * ggml_imatrix_observer(
             struct ggml_context * ctx,
             struct ggml_tensor  * activations,
             struct ggml_tensor  * ids,
             struct ggml_tensor  * weight_anchor,
-            int32_t               experts);
+            int32_t               experts,
+            int32_t               capture_tokens);
 
     // Fused dense observation and F32-to-F16 cast. One scheduler-owned
     // allocation contains an F16 activation prefix and an aligned F32

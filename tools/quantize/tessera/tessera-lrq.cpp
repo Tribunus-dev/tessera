@@ -185,7 +185,8 @@ static float ts_rng_gaussian(uint32_t * state) {
 // --- LRQ ---
 
 int ts_train_lrq(const float * weights, int64_t out_dim, int64_t in_dim,
-                 const ts_lrq_params * params, ts_lrq_result * result) {
+                 const ts_lrq_params * params, ts_lrq_result * result,
+                 const float * calib_X, int64_t n_tokens) {
     int64_t rank = params->rank;
     int64_t max_iters = params->max_iters > 0 ? params->max_iters : 200;
     float lr = params->lr > 0.0f ? params->lr : 1e-3f;
@@ -207,6 +208,37 @@ int ts_train_lrq(const float * weights, int64_t out_dim, int64_t in_dim,
     std::vector<float> d_scaled(n_w), d_s(n_w);
     std::vector<float> dU(n_u), dV(n_v);
     std::vector<float> Vt(n_v);  // V^T, (in_dim x rank), rebuilt each iter
+
+    // Per-input-channel loss weight from real calibration activations:
+    // w_col[j] = mean_t calib_X[t,j]^2, the same diag(X^T X)/n second-moment
+    // signal SEPTQ's diagonal Hessian and AWQ's act_scales are built from.
+    // Normalized to mean 1 so the loss magnitude (and therefore the fixed
+    // Adam lr) stays in the same range as the uncalibrated uniform-weight
+    // case below. calib_X == nullptr keeps w_col all-ones, reproducing the
+    // prior behavior exactly (byte-identical loss/gradient).
+    std::vector<float> w_col(in_dim, 1.0f);
+    if (calib_X != nullptr && n_tokens > 0) {
+        double sum = 0.0;
+        for (int64_t j = 0; j < in_dim; j++) {
+            double acc = 0.0;
+            for (int64_t t = 0; t < n_tokens; t++) {
+                double x = (double)calib_X[(size_t)(t * in_dim + j)];
+                acc += x * x;
+            }
+            double mean_sq = acc / (double)n_tokens;
+            w_col[(size_t)j] = (float)mean_sq;
+            sum += mean_sq;
+        }
+        double mean_w = sum / (double)in_dim;
+        if (mean_w > 0.0) {
+            float inv_mean = (float)(1.0 / mean_w);
+            for (int64_t j = 0; j < in_dim; j++) {
+                w_col[(size_t)j] *= inv_mean;
+            }
+        } else {
+            std::fill(w_col.begin(), w_col.end(), 1.0f);
+        }
+    }
 
     // init U, V so that S = U@V starts near 1 (identity scaling)
     uint32_t rng = seed;
@@ -240,11 +272,16 @@ int ts_train_lrq(const float * weights, int64_t out_dim, int64_t in_dim,
         // w_q = ternarize_recon(scaled)
         ts_ternarize_recon(scaled.data(), w_q.data(), n_w);
 
-        // loss = mean((w_q - W)^2)
+        // loss = mean(w_col[col] * (w_q - W)^2). w_col is all-ones when
+        // calib_X is absent, so this is byte-identical to the prior
+        // uncalibrated mean((w_q - W)^2).
         float loss = 0.0f;
-        for (int64_t i = 0; i < n_w; i++) {
-            float d = w_q[i] - weights[i];
-            loss += d * d;
+        for (int64_t row = 0; row < out_dim; row++) {
+            const int64_t base = row * in_dim;
+            for (int64_t col = 0; col < in_dim; col++) {
+                float d = w_q[(size_t)(base + col)] - weights[base + col];
+                loss += w_col[(size_t)col] * d * d;
+            }
         }
         loss /= (float)n_w;
 
@@ -254,9 +291,14 @@ int ts_train_lrq(const float * weights, int64_t out_dim, int64_t in_dim,
         }
         prev_loss = loss;
 
-        // backward (STE): d_loss/d_scaled = 2*(w_q - W) / n_w
-        for (int64_t i = 0; i < n_w; i++) {
-            d_scaled[i] = 2.0f * (w_q[i] - weights[i]) / (float)n_w;
+        // backward (STE): d_loss/d_scaled = 2*w_col[col]*(w_q - W) / n_w
+        for (int64_t row = 0; row < out_dim; row++) {
+            const int64_t base = row * in_dim;
+            for (int64_t col = 0; col < in_dim; col++) {
+                float d = w_q[(size_t)(base + col)] - weights[base + col];
+                d_scaled[(size_t)(base + col)] =
+                    2.0f * w_col[(size_t)col] * d / (float)n_w;
+            }
         }
 
         // d_loss/d_S = d_scaled * W

@@ -2053,6 +2053,24 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             params.features_warmup = value;
         }
     ).set_examples({LLAMA_EXAMPLE_IMATRIX}));
+    add_opt(common_arg(
+        {"--calib-tokens"}, "N",
+        string_format(
+            "[imatrix] per-tensor number of raw calibration activation rows "
+            "to capture and store as an optional \"<name>.calib_x\" GGUF "
+            "tensor [in_dim, N], alongside the usual aggregate sums/counts "
+            "stats (default: %d, 0 = disabled - no calib_x tensors written, "
+            "same output as today). Consumed by export-ternary's SEPTQ "
+            "banded-Hessian quantizer, DartQuant's training loop, and the "
+            "--sensitivity-out Hessian-based ranking; all three otherwise "
+            "fall back to weaker proxies. Captured from the exact same "
+            "per-tensor matmul-input activations already flowing through "
+            "the sums accumulation below, just the first N rows seen.",
+            params.calib_x_tokens),
+        [](common_params & params, int value) {
+            params.calib_x_tokens = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_IMATRIX}));
     add_opt(common_arg({ "-fa", "--flash-attn" }, "[on|off|auto]",
                        string_format("set Flash Attention use ('on', 'off', or 'auto', default: '%s')",
                                      llama_flash_attn_type_name(params.flash_attn_type)),

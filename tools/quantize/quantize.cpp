@@ -1372,6 +1372,12 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
     // after the loop joins.
     std::vector<std::pair<const float *, int64_t>> sensitivity_inputs(
         work.size(), {nullptr, 0});
+    // Real Hessian-based (OBQ) sensitivity, computed per work item when
+    // --sensitivity-out + real calib_X are both available - see the block
+    // below process_item's per-expert loop. -1.0f (the default) means "no
+    // real calib_X for this tensor"; the --sensitivity-out block falls back
+    // to the mean(|act|) signal (sensitivity_inputs above) for those.
+    std::vector<float> hessian_scores(work.size(), -1.0f);
 
     const int32_t n_threads = std::max(1, std::min(
         (int32_t) std::thread::hardware_concurrency(),
@@ -1446,6 +1452,24 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
             sensitivity_inputs[idx] = {act_scales, item.in_dim};
         }
 
+        // Real per-token calibration activations (llama-imatrix's
+        // --calib-tokens), when the imatrix was collected with them.
+        // Absent (the common case for older imatrix files) means calib_X
+        // stays nullptr and every consumer below falls back to its
+        // existing act_scales-only or unweighted behavior - same as
+        // before this was wired in.
+        const float * calib_X  = nullptr;
+        int64_t       n_tokens = 0;
+        if (have_imatrix) {
+            int64_t calib_in_dim = 0;
+            calib_X = ts_imatrix_lookup_calib_x(&imatrix, item.base_name.c_str(),
+                                                &n_tokens, &calib_in_dim);
+            if (calib_X != nullptr && calib_in_dim != item.in_dim) {
+                calib_X  = nullptr;
+                n_tokens = 0;
+            }
+        }
+
         const int64_t per = item.out_dim * item.in_dim;
         for (int64_t e = 0; e < item.n_experts; e++) {
             const float * wptr = full.data() + (size_t)(e * per);
@@ -1479,6 +1503,24 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
             qp.max_outliers = std::max<int64_t>(
                 1, (int64_t) std::ceil((double) qp_base.outlier_thresh * (double) per));
 
+            // ref_output[t,o] = calib_X @ weights^T: the original unquantized
+            // layer's output over the calibration set. Computed once per
+            // tensor/expert and reused by every call below that resolves an
+            // AWQ alpha (the AWQ candidate's own measurement, the SEPTQ
+            // measurement's internal alpha pre-scale, and the final shipping
+            // call) so each uses the true layer-output-MSE search
+            // (ts_awq_scale_search_layer_output) instead of the coarser
+            // weight-magnitude proxy (ts_awq_scale_search) whenever real
+            // calib_X is available. Empty (nullptr) when calib_X is absent -
+            // every consumer already falls back correctly in that case.
+            std::vector<float> ref_output;
+            if (calib_X != nullptr) {
+                ref_output.resize((size_t) n_tokens * (size_t) item.out_dim);
+                ts_awq_compute_ref_output(wptr, calib_X, item.out_dim, item.in_dim,
+                                          n_tokens, ref_output.data());
+            }
+            const float * ref_output_ptr = ref_output.empty() ? nullptr : ref_output.data();
+
             // Live per-tensor algorithm selection: measure AWQ/SEPTQ (via
             // ts_measure_true_t2, which runs the REAL dispatch through
             // ts_quantize_2d_ternary and reconstructs the actual shippable
@@ -1502,19 +1544,23 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
                 float t2;
                 t2 = ts_measure_true_t2(wptr, act_scales, item.out_dim, item.in_dim,
                                         /*use_septq=*/false, qp_base.alpha, qp_base.clip,
-                                        qp_base.outlier_thresh, qp_base.seed);
+                                        qp_base.outlier_thresh, qp_base.seed,
+                                        calib_X, n_tokens, ref_output_ptr);
                 if (t2 >= 0.0f) cands.push_back({TS_EXPERT_AWQ, t2});
                 t2 = ts_measure_true_t2(wptr, act_scales, item.out_dim, item.in_dim,
                                         /*use_septq=*/true, qp_base.alpha, qp_base.clip,
-                                        qp_base.outlier_thresh, qp_base.seed);
+                                        qp_base.outlier_thresh, qp_base.seed,
+                                        calib_X, n_tokens, ref_output_ptr);
                 if (t2 >= 0.0f) cands.push_back({TS_EXPERT_SEPTQ, t2});
                 t2 = ts_dispatch_tier2_t2(TS_EXPERT_DARTQUANT, wptr, act_scales,
                                           item.out_dim, item.in_dim,
-                                          qp_base.alpha, qp_base.clip, qp_base.seed);
+                                          qp_base.alpha, qp_base.clip, qp_base.seed,
+                                          calib_X, n_tokens);
                 if (t2 >= 0.0f) cands.push_back({TS_EXPERT_DARTQUANT, t2});
                 t2 = ts_dispatch_tier2_t2(TS_EXPERT_FLRQ, wptr, act_scales,
                                           item.out_dim, item.in_dim,
-                                          qp_base.alpha, qp_base.clip, qp_base.seed);
+                                          qp_base.alpha, qp_base.clip, qp_base.seed,
+                                          calib_X, n_tokens);
                 if (t2 >= 0.0f) cands.push_back({TS_EXPERT_FLRQ, t2});
 
                 if (!cands.empty()) {
@@ -1541,8 +1587,8 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
 
             ts_ternary_tensor tn;
             int rc = ts_quantize_2d_ternary(wptr, act_scales,
-                                            nullptr, nullptr, nullptr,
-                                            item.out_dim, item.in_dim, 0,
+                                            calib_X, ref_output_ptr, nullptr,
+                                            item.out_dim, item.in_dim, n_tokens,
                                             &qp, &tn);
             if (rc != 0) {
                 fprintf(stderr, "export-ternary: warning: quantize failed for '%s', skipping\n",
@@ -1550,6 +1596,47 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
                 item_skipped[idx]++;
                 continue;
             }
+
+            // Real Hessian (OBQ) sensitivity for --sensitivity-out, when
+            // real calib_X is available. e==0 only (dense-model
+            // assumption already made by sensitivity_inputs/calib_X above,
+            // both looked up once per work item on item.base_name, not
+            // per-expert). Skipped entirely unless --sensitivity-out was
+            // actually requested - ts_l5_hessian_factorize_inverse's full
+            // Cholesky is O(in_dim^3), real cost for in_dim=8192 tensors,
+            // not something to pay on every quantize.
+            if (e == 0 && calib_X != nullptr && !tp.export_sensitivity_out.empty()) {
+                std::vector<float> H_inv_diag((size_t) item.in_dim);
+                std::vector<float> H_scratch((size_t) (item.in_dim * item.in_dim));
+                if (ts_l5_hessian_factorize_inverse(item.in_dim, calib_X, n_tokens,
+                                                    /*ridge_fraction=*/1e-4f,
+                                                    H_inv_diag.data(), nullptr,
+                                                    H_scratch.data()) == 0) {
+                    std::vector<float> recon((size_t) per);
+                    ts_ternary_tensor_reconstruct(tn, item.out_dim, item.in_dim, recon.data());
+                    // omega_ij = (w_ij - quant(w_ij))^2 / H_inv_diag[col] -
+                    // OBQ criterion (Frantar & Alistarh), tensor score =
+                    // mean over all (row, col). H_inv_diag is indexed by
+                    // input channel (col), matching wptr/recon's own
+                    // [out_dim, in_dim] row-major layout directly - no
+                    // transpose needed (ts_l5_hessian_sensitivity's own
+                    // batched API expects a different (in_dim, out_dim)
+                    // storage convention that doesn't fit this per-tensor,
+                    // per-work-item computation, so this reimplements its
+                    // documented formula directly rather than calling it).
+                    double sum_omega = 0.0;
+                    for (int64_t row = 0; row < item.out_dim; row++) {
+                        for (int64_t col = 0; col < item.in_dim; col++) {
+                            const double d = (double) wptr[row * item.in_dim + col] -
+                                             (double) recon[(size_t) (row * item.in_dim + col)];
+                            sum_omega += (d * d) /
+                                std::max((double) H_inv_diag[(size_t) col], 1e-12);
+                        }
+                    }
+                    hessian_scores[idx] = (float) (sum_omega / (double) per);
+                }
+            }
+
             results[idx].push_back({ std::move(tname), std::move(tn) });
         }
 
@@ -1580,45 +1667,74 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
         n_skipped += s;
     }
 
-    // --sensitivity-out: rank each work item by ts_l5_imatrix_magnitude
-    // (mean(|act|) per tensor, tessera-l5.h/.cpp), then ts_l5_percentile_rank
-    // for an evenly-distributed [0,1] ranking signal (peak-normalization
-    // alone lets one dominant tensor compress everything else near 0).
-    // Threads have joined by this point, so sensitivity_inputs/work are safe
-    // to walk sequentially. Only meaningful with real calibration data - skip
-    // (warn, not error) without one, same convention have_imatrix already
-    // uses elsewhere in this function.
+    // --sensitivity-out: rank each work item by the best signal available -
+    // hessian_scores (real OBQ, see process_item above) when real calib_X
+    // was available for that tensor, else ts_l5_imatrix_magnitude's
+    // mean(|act|) fallback - then ts_l5_percentile_rank for an evenly-
+    // distributed [0,1] ranking signal (peak-normalization alone lets one
+    // dominant tensor compress everything else near 0). Threads have
+    // joined by this point, so sensitivity_inputs/hessian_scores/work are
+    // safe to walk sequentially. Only meaningful with real calibration
+    // data - skip (warn, not error) without one, same convention
+    // have_imatrix already uses elsewhere in this function.
     if (!tp.export_sensitivity_out.empty()) {
         if (!have_imatrix) {
             fprintf(stderr, "export-ternary: warning: --sensitivity-out requires --imatrix; "
                             "skipping sensitivity sidecar\n");
         } else {
-            std::vector<float>       concat_act;
-            std::vector<int64_t>     tensor_dims;
-            std::vector<std::string> tensor_names_storage;
-            for (size_t idx = 0; idx < work.size(); idx++) {
-                const float * ptr    = sensitivity_inputs[idx].first;
-                const int64_t in_dim = sensitivity_inputs[idx].second;
-                if (ptr == nullptr || in_dim <= 0) {
-                    continue;
+            ts_score_map combined;
+            int64_t n_hessian = 0;
+
+            // Fallback subset: tensors without a real hessian_scores entry
+            // (no --calib-tokens at imatrix time, or a per-tensor mismatch)
+            // still get ranked via the existing mean(|act|) signal, kept in
+            // its own ts_l5_imatrix_magnitude call so its internal peak-
+            // normalization is relative to just this subset - a known,
+            // accepted imprecision when mixing with the Hessian subset
+            // below (different metrics, different scales); rare in
+            // practice once an imatrix is regenerated with --calib-tokens,
+            // since collection covers every tensor uniformly.
+            {
+                std::vector<float>       concat_act;
+                std::vector<int64_t>     tensor_dims;
+                std::vector<std::string> tensor_names_storage;
+                for (size_t idx = 0; idx < work.size(); idx++) {
+                    if (hessian_scores[idx] >= 0.0f) {
+                        continue;
+                    }
+                    const float * ptr    = sensitivity_inputs[idx].first;
+                    const int64_t in_dim = sensitivity_inputs[idx].second;
+                    if (ptr == nullptr || in_dim <= 0) {
+                        continue;
+                    }
+                    concat_act.insert(concat_act.end(), ptr, ptr + in_dim);
+                    tensor_dims.push_back(in_dim);
+                    tensor_names_storage.push_back(work[idx].base_name);
                 }
-                concat_act.insert(concat_act.end(), ptr, ptr + in_dim);
-                tensor_dims.push_back(in_dim);
-                tensor_names_storage.push_back(work[idx].base_name);
+                if (!tensor_names_storage.empty()) {
+                    std::vector<const char *> tensor_names_c;
+                    tensor_names_c.reserve(tensor_names_storage.size());
+                    for (const std::string & n : tensor_names_storage) {
+                        tensor_names_c.push_back(n.c_str());
+                    }
+                    ts_score_map raw = ts_l5_imatrix_magnitude(
+                        concat_act.data(), tensor_names_c.data(), tensor_dims.data(),
+                        (int64_t) tensor_names_storage.size());
+                    combined.insert(raw.begin(), raw.end());
+                }
             }
-            if (tensor_names_storage.empty()) {
+            for (size_t idx = 0; idx < work.size(); idx++) {
+                if (hessian_scores[idx] >= 0.0f) {
+                    combined[work[idx].base_name] = hessian_scores[idx];
+                    n_hessian++;
+                }
+            }
+
+            if (combined.empty()) {
                 fprintf(stderr, "export-ternary: warning: --sensitivity-out: no tensor had "
                                 "usable calibration data; skipping sidecar\n");
             } else {
-                std::vector<const char *> tensor_names_c;
-                tensor_names_c.reserve(tensor_names_storage.size());
-                for (const std::string & n : tensor_names_storage) {
-                    tensor_names_c.push_back(n.c_str());
-                }
-                ts_score_map raw = ts_l5_imatrix_magnitude(
-                    concat_act.data(), tensor_names_c.data(), tensor_dims.data(),
-                    (int64_t) tensor_names_storage.size());
-                ts_score_map ranked = ts_l5_percentile_rank(&raw);
+                ts_score_map ranked = ts_l5_percentile_rank(&combined);
                 nlohmann::json j;
                 for (const auto & kv : ranked) {
                     j[kv.first] = kv.second;
@@ -1629,8 +1745,10 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
                             tp.export_sensitivity_out.c_str());
                 } else {
                     sf << j.dump(2);
-                    fprintf(stderr, "export-ternary: wrote sensitivity scores for %zu tensor(s) to %s\n",
-                            tensor_names_storage.size(), tp.export_sensitivity_out.c_str());
+                    fprintf(stderr, "export-ternary: wrote sensitivity scores for %zu tensor(s) "
+                                    "(%lld via real Hessian, %zu via mean(|act|) fallback) to %s\n",
+                            combined.size(), (long long) n_hessian,
+                            combined.size() - (size_t) n_hessian, tp.export_sensitivity_out.c_str());
                 }
             }
         }

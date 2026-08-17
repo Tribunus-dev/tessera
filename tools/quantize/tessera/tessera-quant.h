@@ -148,10 +148,37 @@ void ts_normalized_awq_scale(const float * act_scales, float alpha,
 // identical between AWQ's and SEPTQ's default profiles, so forced_t2
 // mathematically cannot distinguish the two (verified: identical output
 // for every tensor in a live run). Returns -1.0f on failure.
+// calib_X/n_tokens: optional real per-token calibration activations
+// (row-major [n_tokens][in_dim], from llama-imatrix's --calib-tokens via
+// ts_imatrix_lookup_calib_x). When use_septq is set and calib_X is non-null,
+// SEPTQ measures its true banded-Hessian output instead of the diagonal
+// fallback - so live algorithm selection compares what would actually ship,
+// not a mismatched proxy. ref_output: optional (n_tokens x out_dim) =
+// calib_X @ weights^T (see ts_awq_compute_ref_output). When both calib_X and
+// ref_output are non-null, the internal AWQ alpha resolve (which every path
+// here runs, not just the AWQ candidate) uses the true layer-output-MSE
+// search (ts_awq_scale_search_layer_output) instead of the coarser
+// weight-magnitude proxy (ts_awq_scale_search) - so the AWQ candidate's own
+// measurement, and the alpha pre-scale SEPTQ's measurement builds on top of,
+// both reflect what would actually ship. nullptr/0 reproduces prior behavior
+// exactly.
 float ts_measure_true_t2(const float * weights, const float * act_scales,
                          int64_t out_dim, int64_t in_dim,
                          bool use_septq, float alpha, float clip,
-                         float outlier_thresh, uint32_t seed);
+                         float outlier_thresh, uint32_t seed,
+                         const float * calib_X = nullptr, int64_t n_tokens = 0,
+                         const float * ref_output = nullptr);
+
+// Reconstructs a ts_ternary_tensor back to a dense [out_dim, in_dim] float
+// array in ORIGINAL weight space (not AWQ column-scaled space) - trits *
+// ts_ternary_synth_magnitude, unscaled by awq_input_scale when present, then
+// the outlier CSR overrides those positions with their exact original value.
+// Same reconstruction ts_measure_true_t2 and the real packer both use, so
+// this is the actual shippable fidelity, not an approximation. recon_out
+// must have room for out_dim*in_dim floats.
+void ts_ternary_tensor_reconstruct(const ts_ternary_tensor & tn,
+                                   int64_t out_dim, int64_t in_dim,
+                                   float * recon_out);
 
 // AWQ scale search: grid search over alpha in [0, 1] minimizing
 // layer-output MSE. Returns best alpha.
@@ -168,6 +195,15 @@ float ts_awq_scale_search_layer_output(
     const float * calib_X, const float * ref_output,
     int64_t out_dim, int64_t in_dim,
     int64_t n_tokens, int64_t n_grid);
+
+// Computes ref_output (n_tokens x out_dim) = calib_X @ weights^T, the
+// reference input to ts_awq_scale_search_layer_output / the layer_output_
+// search branch inside ts_quantize_2d_ternary. BLAS-accelerated when
+// available (TS_HAS_CBLAS), scalar fallback otherwise. No-op (leaves
+// ref_output_out untouched) if any required input is missing.
+void ts_awq_compute_ref_output(const float * weights, const float * calib_X,
+                               int64_t out_dim, int64_t in_dim,
+                               int64_t n_tokens, float * ref_output_out);
 
 // Top-level 2D quantization. Produces all 6 GGUF components.
 // Returns 0 on success.

@@ -11911,11 +11911,23 @@ void ggml_compute_forward_imatrix_observer(
     }
 
     const int64_t count = ggml_nrows(src);
+    // Optional raw-sample capture (llama-imatrix's --calib-tokens): the
+    // first min(count, capture_tokens) rows, row-major [capture_tokens]
+    // [channels], appended after the compact stats (see ggml_imatrix_
+    // observer's constructor comment in ggml.h). Each channel's own thread
+    // writes only its own column across these rows - disjoint from every
+    // other channel's writes, so this is thread-safe with no extra
+    // synchronization, same as the stats writes above.
+    const int32_t capture_tokens_param = ggml_get_op_params_i32(dst, 2);
+    const int64_t capture_tokens = std::min<int64_t>(
+        std::max<int64_t>(capture_tokens_param, 0), count);
+    const int64_t capture_base = 4 * channels + 1;
     for (int64_t channel = params->ith; channel < channels; channel += params->nth) {
         double sum2 = 0.0;
         double sumabs = 0.0;
         double sum4 = 0.0;
         float maxabs = 0.0f;
+        int64_t row_idx = 0;
         for (int64_t i3 = 0; i3 < src->ne[3]; ++i3) {
             for (int64_t i2 = 0; i2 < src->ne[2]; ++i2) {
                 for (int64_t i1 = 0; i1 < src->ne[1]; ++i1) {
@@ -11931,6 +11943,10 @@ void ggml_compute_forward_imatrix_observer(
                     sumabs += magnitude;
                     sum4 += square * square;
                     maxabs = std::max(maxabs, magnitude);
+                    if (row_idx < capture_tokens) {
+                        out[capture_base + row_idx * channels + channel] = value;
+                    }
+                    row_idx++;
                 }
             }
         }

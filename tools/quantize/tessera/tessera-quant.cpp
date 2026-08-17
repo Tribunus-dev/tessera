@@ -28,6 +28,10 @@
 
 #if defined(__APPLE__)
 #  include <Accelerate/Accelerate.h>
+#  define TS_HAS_CBLAS 1
+#elif defined(GGML_USE_OPENBLAS)
+#  include <cblas.h>
+#  define TS_HAS_CBLAS 1
 #endif
 
 // Wire-format constants (mirror ggml/src/ggml-common.h).
@@ -883,6 +887,47 @@ float ts_awq_scale_search(const float * weights, const float * act_scales,
 // AWQ scale search (layer-output MSE)
 // ---------------------------------------------------------------------------
 
+// ref_output[t, o] = calib_X @ weights^T, i.e. the ORIGINAL unquantized
+// layer's output over the calibration set - the "FP16 reference" every grid
+// candidate in ts_awq_scale_search_layer_output is compared against. One
+// GEMM per tensor, shared across every caller that needs the true
+// layer-output-MSE AWQ variant (both the AWQ candidate's own measurement and
+// the alpha pre-scale that SEPTQ/DartQuant/FLRQ all build on top of inside
+// ts_quantize_2d_ternary), so callers compute it once and pass the same
+// buffer everywhere instead of re-deriving it per call site.
+void ts_awq_compute_ref_output(const float * weights, const float * calib_X,
+                               int64_t out_dim, int64_t in_dim,
+                               int64_t n_tokens, float * ref_output_out) {
+    if (weights == nullptr || calib_X == nullptr || ref_output_out == nullptr ||
+        out_dim <= 0 || in_dim <= 0 || n_tokens <= 0) {
+        return;
+    }
+#if defined(TS_HAS_CBLAS)
+    // ref_output (n_tokens x out_dim) = calib_X (n_tokens x in_dim) @
+    // weights^T (in_dim x out_dim). Row-major throughout; weights is stored
+    // (out_dim x in_dim), so B is passed as CblasTrans with its own row
+    // stride (in_dim) as ldb, the standard row-major-via-CBLAS transpose
+    // convention (mirrors ts_septq_build_hessian's CblasTrans use above).
+    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                (int)n_tokens, (int)out_dim, (int)in_dim,
+                1.0f, calib_X, (int)in_dim, weights, (int)in_dim,
+                0.0f, ref_output_out, (int)out_dim);
+#else
+    for (int64_t t = 0; t < n_tokens; t++) {
+        const float * xrow = calib_X + (size_t)(t * in_dim);
+        float * orow = ref_output_out + (size_t)(t * out_dim);
+        for (int64_t o = 0; o < out_dim; o++) {
+            const float * wrow = weights + (size_t)(o * in_dim);
+            double s = 0.0;
+            for (int64_t c = 0; c < in_dim; c++) {
+                s += (double)xrow[c] * (double)wrow[c];
+            }
+            orow[o] = (float)s;
+        }
+    }
+#endif
+}
+
 // Batched AWQ layer-output scale search. The previous implementation looped
 // over the n_grid alpha values and, for each one, re-derived the per-column
 // AWQ scale (including the O(in_dim log in_dim) median), materialized the full
@@ -1103,7 +1148,16 @@ int ts_quantize_2d_ternary(const float * weights, const float * act_scales,
         sp.septq_ratio = std::min(1.0f, std::max(0.5f, 1.0f - params->outlier_thresh));
         sp.septq_iterations    = 1;
         sp.ternary_threshold   = 1.0f;
-        sp.hessian_bandwidth   = 0;
+        // hessian_bandwidth=0 makes ts_septq_banded_cholesky mathematically
+        // equivalent to pure-diagonal regardless of TS_SEPTQ_HESSIAN_BANDED
+        // mode - k_min==j and i_max==j+1 when bandwidth==0
+        // (tessera-septq.cpp), so no off-diagonal Hessian term is ever
+        // computed. 64 is a standard GPTQ-style choice, giving real
+        // cross-column compensation now that calib_X can be real (see gap
+        // ledger); the Hessian build itself is BLAS-accelerated
+        // (cblas_dgemm, TS_HAS_CBLAS), so this bandwidth doesn't meaningfully
+        // change build cost, only the Cholesky's O(in_dim * bandwidth).
+        sp.hessian_bandwidth   = 64;
         sp.importance_weight   = TS_SEPTQ_IMP_QUANT_ERROR_H;
         sp.importance_lambda   = 0.0f;
         sp.ridge_fraction      = 1e-4f;
@@ -1183,7 +1237,7 @@ int ts_quantize_2d_ternary(const float * weights, const float * act_scales,
         lp.seed      = params->seed ? params->seed : 42;
 
         ts_lrq_result lr;
-        if (ts_train_lrq(weights, out_dim, in_dim, &lp, &lr) != 0) {
+        if (ts_train_lrq(weights, out_dim, in_dim, &lp, &lr, calib_X, n_tokens) != 0) {
             return 1;
         }
 
@@ -1571,7 +1625,9 @@ std::vector<float> ts_ternary_synth_magnitude(const ts_ternary_tensor & tn) {
 float ts_measure_true_t2(const float * weights, const float * act_scales,
                          int64_t out_dim, int64_t in_dim,
                          bool use_septq, float alpha, float clip,
-                         float outlier_thresh, uint32_t seed) {
+                         float outlier_thresh, uint32_t seed,
+                         const float * calib_X, int64_t n_tokens,
+                         const float * ref_output) {
     if (weights == nullptr || out_dim <= 0 || in_dim <= 0) {
         return -1.0f;
     }
@@ -1592,8 +1648,8 @@ float ts_measure_true_t2(const float * weights, const float * act_scales,
     qp.seed           = seed;
 
     ts_ternary_tensor tn;
-    if (ts_quantize_2d_ternary(weights, act_scales, nullptr, nullptr, nullptr,
-                               out_dim, in_dim, 0, &qp, &tn) != 0) {
+    if (ts_quantize_2d_ternary(weights, act_scales, calib_X, ref_output, nullptr,
+                               out_dim, in_dim, n_tokens, &qp, &tn) != 0) {
         return -1.0f;
     }
 
@@ -1609,26 +1665,8 @@ float ts_measure_true_t2(const float * weights, const float * act_scales,
     // `weights` - omitting this previously inflated AWQ's t2 by up to
     // several hundred x on tensors with wide per-channel AWQ scale
     // (attn_k/attn_q), corrupting the live algorithm-selection outcome.
-    const bool has_input_scale =
-        !tn.awq_input_scale.empty() && (int64_t) tn.awq_input_scale.size() == in_dim;
-    const std::vector<float> synth_mag = ts_ternary_synth_magnitude(tn);
     std::vector<float> recon((size_t) n);
-    for (int64_t i = 0; i < n; i++) {
-        const int8_t t = tn.trits[(size_t) i];
-        float v = (t == 0) ? 0.0f : ((t > 0) ? synth_mag[(size_t) i] : -synth_mag[(size_t) i]);
-        if (has_input_scale) {
-            v *= tn.awq_input_scale[(size_t) (i % in_dim)];
-        }
-        recon[(size_t) i] = v;
-    }
-    // Outlier CSR overrides the trit-based reconstruction exactly (the
-    // packer's own contract - trits are zeroed at outlier positions).
-    for (int64_t row = 0; row < out_dim; row++) {
-        for (int32_t k = tn.outlier_row_offsets[(size_t) row]; k < tn.outlier_row_offsets[(size_t) row + 1]; k++) {
-            const int64_t col = tn.outlier_cols[(size_t) k];
-            recon[(size_t) (row * in_dim + col)] = ts_f16_to_f32(tn.outlier_vals[(size_t) k]);
-        }
-    }
+    ts_ternary_tensor_reconstruct(tn, out_dim, in_dim, recon.data());
 
     double diff2 = 0.0, norm2 = 0.0;
     for (int64_t i = 0; i < n; i++) {
@@ -1637,6 +1675,41 @@ float ts_measure_true_t2(const float * weights, const float * act_scales,
         norm2 += (double) weights[i] * (double) weights[i];
     }
     return (norm2 > 0.0) ? (float) (diff2 / norm2) : (float) diff2;
+}
+
+void ts_ternary_tensor_reconstruct(const ts_ternary_tensor & tn,
+                                   int64_t out_dim, int64_t in_dim,
+                                   float * recon_out) {
+    const int64_t n = out_dim * in_dim;
+    // synth_mag (via core/lane_scale/row_scale/global_amp) lives in AWQ
+    // column-scaled space ("core (clipped AWQ-scaled magnitudes) is the
+    // same space global_amp was computed in" - see ts_quantize_2d_ternary's
+    // own comment above result->row_scale). The real inference graph
+    // compensates by multiplying activations by w_act_scale
+    // (llama-graph.cpp, ggml_mul(cur, w_act_scale)), so the shipped model
+    // is correct; an offline consumer has no activations to scale, so it
+    // must instead unscale the weight-side reconstruction by
+    // awq_input_scale (=1/wscale) to land back in original weight space -
+    // see CORRECTION-w3-7 in the gap ledger.
+    const bool has_input_scale =
+        !tn.awq_input_scale.empty() && (int64_t) tn.awq_input_scale.size() == in_dim;
+    const std::vector<float> synth_mag = ts_ternary_synth_magnitude(tn);
+    for (int64_t i = 0; i < n; i++) {
+        const int8_t t = tn.trits[(size_t) i];
+        float v = (t == 0) ? 0.0f : ((t > 0) ? synth_mag[(size_t) i] : -synth_mag[(size_t) i]);
+        if (has_input_scale) {
+            v *= tn.awq_input_scale[(size_t) (i % in_dim)];
+        }
+        recon_out[i] = v;
+    }
+    // Outlier CSR overrides the trit-based reconstruction exactly (the
+    // packer's own contract - trits are zeroed at outlier positions).
+    for (int64_t row = 0; row < out_dim; row++) {
+        for (int32_t k = tn.outlier_row_offsets[(size_t) row]; k < tn.outlier_row_offsets[(size_t) row + 1]; k++) {
+            const int64_t col = tn.outlier_cols[(size_t) k];
+            recon_out[row * in_dim + col] = ts_f16_to_f32(tn.outlier_vals[(size_t) k]);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
