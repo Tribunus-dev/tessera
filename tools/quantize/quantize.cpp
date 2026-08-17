@@ -1169,6 +1169,23 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
                 escape_set.size());
     }
 
+    // reuse-ttt (progressive-mixed-precision.py): a prior round's own .ttt
+    // output, loaded once up front so process_item's per-tensor lookups
+    // below are simple read-only std::map queries (thread-safe across the
+    // pool with no locking needed - see ts_ternary_model's own comment).
+    ts_ternary_model reuse_model;
+    bool have_reuse_ttt = false;
+    if (!tp.export_reuse_ttt.empty()) {
+        if (ts_read_ttt(tp.export_reuse_ttt, reuse_model) != 0) {
+            fprintf(stderr, "error: export-ternary: --reuse-ttt: failed to read '%s'\n",
+                    tp.export_reuse_ttt.c_str());
+            return 1;
+        }
+        have_reuse_ttt = true;
+        fprintf(stderr, "export-ternary: --reuse-ttt: loaded %zu tensor(s) from %s\n",
+                reuse_model.tensors.size(), tp.export_reuse_ttt.c_str());
+    }
+
     // open + mmap the source GGUF. ts_export_open_gguf uses a lazy MAP_PRIVATE
     // mmap (no prefetch, POSIX_MADV_RANDOM) so opening a 65 GB file on a 17 GB
     // host does not page anything in until a tensor is touched.
@@ -1368,6 +1385,39 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
     auto process_item = [&](size_t idx) {
         const ts_export_work_item & item = work[idx];
         struct ggml_tensor * t = item.t;
+
+        // --reuse-ttt fast path: this tensor stays ternary (not in
+        // escape_set) and a prior round already computed it - copy that
+        // result verbatim instead of touching the mmap'd weight at all.
+        // Per-expert names must match exactly what the results-push below
+        // constructs (base_name, or base_name+".E{e}" for a 3D/MoE work
+        // item); if ANY expert is missing from the reuse source, fall
+        // through to full computation for the whole item rather than
+        // mixing reused and freshly-computed experts.
+        if (have_reuse_ttt && !escape_set.count(item.base_name)) {
+            std::vector<std::pair<std::string, const ts_ternary_tensor *>> reused;
+            reused.reserve((size_t) item.n_experts);
+            bool all_found = true;
+            for (int64_t e = 0; e < item.n_experts; e++) {
+                std::string tname = item.base_name;
+                if (item.n_dims == 3) {
+                    tname += ".E" + std::to_string(e);
+                }
+                auto it = reuse_model.tensors.find(tname);
+                if (it == reuse_model.tensors.end()) {
+                    all_found = false;
+                    break;
+                }
+                reused.push_back({tname, &it->second});
+            }
+            if (all_found) {
+                for (auto & [tname, tn_ptr] : reused) {
+                    results[idx].push_back({tname, *tn_ptr});
+                }
+                return;
+            }
+        }
+
         // WILLNEED/DONTNEED act on this tensor's own disjoint mmap byte
         // range, so concurrent calls for different tensors don't race.
         if (t->data) {

@@ -85,7 +85,8 @@ def compare_cosine(script_dir, ref, cand, label):
     return float(cm.group(1)), float(fm.group(1))
 
 
-def export_and_pack(tessera_bin, source, imatrix, out_dir, escape_list=None, sensitivity_out=None):
+def export_and_pack(tessera_bin, source, imatrix, out_dir, escape_list=None, sensitivity_out=None,
+                     reuse_ttt=None):
     ttt_dir = out_dir / "ttt"
     gguf_path = out_dir / "host-amd.gguf"
     cmd = [str(tessera_bin), "export-ternary", "--in", str(source), "--out", str(ttt_dir),
@@ -94,6 +95,14 @@ def export_and_pack(tessera_bin, source, imatrix, out_dir, escape_list=None, sen
         cmd += ["--escape-list", str(escape_list)]
     if sensitivity_out is not None:
         cmd += ["--sensitivity-out", str(sensitivity_out)]
+    if reuse_ttt is not None:
+        # Round 0's own ttt output already has every tensor any later round
+        # needs (the escape-list only grows), so every round after 0 passes
+        # round 0's ttt dir here - export-ternary reuses each still-ternary
+        # tensor's already-computed result instead of recomputing it, only
+        # doing real work for tensors newly added to this round's
+        # escape-list (a cheap passthrough copy, not a quantization).
+        cmd += ["--reuse-ttt", str(reuse_ttt)]
     run(cmd)
     run([str(tessera_bin), "pack", "--quant", "host-amd", "--in", str(ttt_dir), "--out", str(gguf_path)])
     return gguf_path
@@ -197,7 +206,7 @@ def main():
             escape_list_path.write_text("\n".join(escaped) + "\n")
 
             gguf = export_and_pack(tessera_bin, args.source, args.imatrix, round_dir,
-                                   escape_list=escape_list_path)
+                                   escape_list=escape_list_path, reuse_ttt=round0_dir / "ttt")
             dump_path = round_dir / "candidate.logits.bin"
             dump_logits(dump_bin, gguf, args.prompt, dump_path, ngl=0)
             cos, frob = compare_cosine(script_dir, ref_dump, dump_path, f"round-{round_idx:03d}")
@@ -230,27 +239,48 @@ def main():
             print(f"reached --max-rounds={args.max_rounds} without hitting the target cosine; "
                   f"reporting best achieved.", file=sys.stderr)
 
-    final = history[-1]
+    # The search's halving/gain-threshold schedule can (and did, on the
+    # first real run) chase a batch past its peak - round N+1's cosine is
+    # not guaranteed >= round N's, especially once batch_size has halved
+    # down to chasing individual tensors whose interaction with the rest
+    # of the model isn't captured by the static round-0 sensitivity
+    # ranking. Report the BEST round found, not just the last one tried -
+    # history[-1] would silently surface a worse result than what the
+    # search actually discovered along the way.
+    best = max(history, key=lambda h: h["cosine"])
+    best_round_idx = history.index(best)
+    best_escape_list = [t for h in history[:best_round_idx + 1] for t in h["batch"]]
+    last = history[-1]
+
     report = {
         "source": str(args.source),
         "target_cosine": args.target_cosine,
         "n_total_candidates": n_total,
-        "final_escaped_count": final["escaped_count"],
-        "final_escaped_fraction": final["escaped_fraction"],
-        "final_cosine": final["cosine"],
-        "final_frobenius_rel": final["frobenius_rel"],
+        "best_round": best["round"],
+        "best_escaped_count": best["escaped_count"],
+        "best_escaped_fraction": best["escaped_fraction"],
+        "best_cosine": best["cosine"],
+        "best_frobenius_rel": best["frobenius_rel"],
+        "best_escape_list": best_escape_list,
+        "last_round": last["round"],
+        "last_cosine": last["cosine"],
+        "last_frobenius_rel": last["frobenius_rel"],
         "history": history,
-        "final_escape_list": escaped,
     }
     report_path = evidence_dir / "report.json"
     report_path.write_text(json.dumps(report, indent=2))
 
     print("\n=== SUMMARY ===", file=sys.stderr)
-    print(f"escaped {final['escaped_count']}/{n_total} tensors "
-          f"({final['escaped_fraction']:.1%}) to reach cosine={final['cosine']:.6f} "
+    print(f"best: round {best['round']}, escaped {best['escaped_count']}/{n_total} tensors "
+          f"({best['escaped_fraction']:.1%}), cosine={best['cosine']:.6f} "
           f"(target {args.target_cosine})", file=sys.stderr)
+    if best["round"] != last["round"]:
+        print(f"note: the search continued past this round (last tried: round {last['round']}, "
+              f"cosine={last['cosine']:.6f}) - later batches reduced fidelity rather than "
+              f"improving it, so the best-found configuration is reported instead of the last "
+              f"one tried.", file=sys.stderr)
     print(f"full report: {report_path}", file=sys.stderr)
-    return 0 if final["cosine"] >= args.target_cosine else 1
+    return 0 if best["cosine"] >= args.target_cosine else 1
 
 
 if __name__ == "__main__":

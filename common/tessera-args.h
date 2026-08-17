@@ -178,6 +178,17 @@ struct common_tessera_params {
     // by the search script to rank escape candidates.
     std::string export_escape_list;
     std::string export_sensitivity_out;
+    // export_reuse_ttt: path to a prior round's own .ttt output directory.
+    // When set, any tensor NOT in export_escape_list is first looked up by
+    // name in that directory (ts_read_ttt) and, if found, its already-
+    // computed ts_ternary_tensor is copied verbatim instead of rerunning
+    // weight dequant + the 4-way AWQ/SEPTQ/DartQuant/FLRQ selection - a
+    // >90% wall-clock cut for progressive-mixed-precision.py's rounds 1+,
+    // since its escape-list only grows round over round, so round 0's
+    // full computation is a strict superset of every later round's
+    // ternary-tensor needs. Falls back to full computation for any tensor
+    // not found in the reuse source (e.g. unset, or genuinely new).
+    std::string export_reuse_ttt;
     // pack subcommand: read a .ttt directory, pack each tensor to the
     // target tile geometry via ts_pack_ternary_to_tile, write a GGUF.
     // pack_in is the source .ttt dir, pack_out is the destination GGUF.

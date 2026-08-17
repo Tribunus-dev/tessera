@@ -4797,6 +4797,19 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             tessera_params.export_sensitivity_out = value;
         }
     ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_EXPORT_TERNARY}));
+    add_opt(common_arg(
+        {"--reuse-ttt"}, "PATH",
+        "Tessera (export-ternary): a prior round's own .ttt output\n"
+        "directory. Tensors not in --escape-list are looked up there first\n"
+        "and reused verbatim instead of recomputing, skipping weight\n"
+        "dequant and the 4-way algorithm selection entirely. Optional;\n"
+        "used by scripts/progressive-mixed-precision.py's rounds 1+ (its\n"
+        "escape-list only grows, so round 0's ttt output already has\n"
+        "everything every later round needs).",
+        [](common_params &, const std::string & value) {
+            tessera_params.export_reuse_ttt = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_EXPORT_TERNARY}));
 
     // ----- `pack` subcommand -----
     // Reads a tile-neutral safetensors directory, packs each tensor to the
