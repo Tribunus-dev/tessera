@@ -12,6 +12,7 @@
 #include "tessera-regime.h"       // ts_expert_default_profile, ts_expert_name
 #include "tessera-dartquant.h"
 #include "tessera-flrq.h"
+#include "tessera-lrq.h"
 #include "tessera-champq.h"
 #include "tessera-septq.h"
 #include "tessera-l1-fitness.h"   // ts_l1_load_sidecar, ts_l1_kernel_direct_t2_tail
@@ -184,12 +185,29 @@ static int ts_eval_real_dartquant(const ts_eval_tensor_ctx & ctx,
 }
 
 // ---------------------------------------------------------------------------
-// REAL tier: FLRQ -- CORRECTED RECIPE. The prior ts_dispatch_tier2_t2 FLRQ
-// arm wrongly treated ts_train_lrq's U,V as an additive factorization; that
-// module actually trains a MULTIPLICATIVE scale field (S = U@V, loss =
-// mean((ternarize_recon(W*S) - W)^2)). This adapter uses ts_train_flrq
-// instead: genuinely additive (residual = W - U@V), returns
-// reconstruction_mse directly in the original weight domain.
+// REAL tier: FLRQ. CORRECTNESS NOTE (reverted from a since-found-wrong
+// "correction"): an earlier version of this adapter switched from
+// ts_train_lrq to ts_train_flrq on the theory that ts_train_lrq's U,V were
+// being wrongly treated as an additive factorization. That diagnosis was
+// right about the OLD ts_dispatch_tier2_t2 bug, but the fix went too far:
+// ts_train_lrq itself is correct and IS what actually ships (tessera-
+// quant.cpp's params->use_flrq path trains and applies it via
+// ts_lrq_reconstruct_scale as a multiplicative pre-scale, S = U@V, warm-
+// started near identity - see tessera-lrq.h). ts_train_flrq is a genuinely
+// different, calibration-free, additive algorithm with no production
+// application path anywhere in the pipeline - scoring FLRQ candidates
+// against an algorithm that doesn't ship would make live/panel selection
+// meaningless for this expert. Restored to ts_train_lrq + ts_lrq_reconstruct
+// _scale, mirroring tessera-dispatch.cpp's TS_EXPERT_FLRQ case (the fix for
+// the ORIGINAL bug: `scaled = W * S`, not `W - U@V`) and this file's own
+// DartQuant convention just above (self-referential ternarize round-trip
+// MSE of the transformed weight via ts_quantize_mse_streaming, normalized
+// against the original frob2 - not a true W-vs-reconstruction comparison,
+// but consistent with the sibling expert above and with what ts_train_lrq's
+// own training loss actually optimizes). ts_eval_tensor_ctx carries no
+// calib_X/n_tokens today, so this runs uncalibrated (nullptr/0) - matches
+// this seam's existing DartQuant/CHAMP-Q/SEPTQ calibration state, not a
+// regression from before.
 // ---------------------------------------------------------------------------
 
 static int ts_eval_real_flrq(const ts_eval_tensor_ctx & ctx,
@@ -202,30 +220,46 @@ static int ts_eval_real_flrq(const ts_eval_tensor_ctx & ctx,
                                          "frob2_nonpositive");
     }
 
-    // Zero-init triggers every documented runtime default: rank_candidates
-    // -> {4,8,16,32,64}, n_projections -> 32, blc_iters -> 4, qbits -> 4,
-    // mse_threshold -> 1e-3 (tessera-flrq.h / the contracts appendix).
-    // FLRQ is calibration-free (no act_scales/alpha/clip parameter exists
-    // on ts_train_flrq); opts.seed feeds the sketch RNG (0 -> 1 internally).
-    ts_flrq_params fp = {};
-    fp.seed = opts.seed;
+    ts_lrq_params lp;
+    lp.rank      = std::max<int64_t>(1,
+        std::min<int64_t>(32, std::min(ctx.out_dim, ctx.in_dim) / 8));
+    lp.max_iters = 50;
+    lp.lr        = 1.0e-3f;
+    lp.tol       = 1.0e-6f;
+    lp.seed      = opts.seed;
 
-    ts_flrq_bcl_result fr;
-    int64_t chosen_rank = -1;
-    if (ts_train_flrq(ctx.weights, ctx.out_dim, ctx.in_dim, &fp, &fr,
-                      &chosen_rank) != 0 || chosen_rank < 0) {
+    ts_lrq_result lres;
+    if (ts_train_lrq(ctx.weights, ctx.out_dim, ctx.in_dim, &lp, &lres) != 0) {
         return ts_eval_fallback_to_proxy(TS_EXPERT_FLRQ, ctx, opts, out,
-                                         "train_flrq_failed");
+                                         "train_lrq_failed");
+    }
+    const int64_t r = lres.rank;
+    if (r <= 0 || (int64_t)lres.U.size() < ctx.out_dim * r ||
+        (int64_t)lres.V.size() < r * ctx.in_dim) {
+        return ts_eval_fallback_to_proxy(TS_EXPERT_FLRQ, ctx, opts, out,
+                                         "degenerate_rank");
     }
 
-    // reconstruction_mse is already mean((W - (U@V + residual_q))^2) in the
-    // original weight domain -- no further quantize/dequant pass needed.
-    out->mse = fr.reconstruction_mse;
-    out->t2  = fr.reconstruction_mse * (float)n / frob2;
+    std::vector<float> S((size_t)n), scaled((size_t)n);
+    ts_lrq_reconstruct_scale(&lres, ctx.out_dim, ctx.in_dim, S.data());
+    for (int64_t i = 0; i < n; i++) {
+        scaled[(size_t)i] = ctx.weights[i] * S[(size_t)i];
+    }
+
+    const float mse = ts_quantize_mse_streaming(
+        scaled.data(), ctx.act_scales, opts.alpha, opts.clip,
+        ctx.out_dim, ctx.in_dim);
+    if (mse < 0.0f) {
+        return ts_eval_fallback_to_proxy(TS_EXPERT_FLRQ, ctx, opts, out,
+                                         "streaming_mse_failed");
+    }
+
+    out->mse = mse;
+    out->t2  = mse * (float)n / frob2;
     out->from_cache = false;
     std::snprintf(out->aux, sizeof(out->aux),
                  "{\"expert\":\"flrq\",\"tier\":\"real\",\"rank\":%lld}",
-                 (long long)chosen_rank);
+                 (long long)r);
     return 0;
 }
 
