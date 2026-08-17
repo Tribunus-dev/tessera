@@ -11466,6 +11466,87 @@ void ggml_compute_forward_tile_rdna3_matmul(
     ggml_compute_forward_tile_rdna3_matmul_f32(params, dst);
 }
 
+// ggml_compute_forward_sparse_outlier_add
+//
+// Packing-format-agnostic sparse CSR outlier addback (ggml.h's
+// ggml_sparse_outlier_add). dst = base + correction, where
+// correction[i,j,b,s] = sum over row i's outliers of
+// outlier_val[k] * B[outlier_cols[k], j, b, s]. Row-partitioned across
+// threads, same convention as ggml_compute_forward_tile_rdna3_matmul_f32
+// above (this op's base/dst share that kernel's exact output layout).
+void ggml_compute_forward_sparse_outlier_add(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+    const ggml_tensor * base                  = dst->src[0];
+    const ggml_tensor * A_outlier_row_offsets = dst->src[1];
+    const ggml_tensor * A_outlier_cols        = dst->src[2];
+    const ggml_tensor * A_outlier_vals        = dst->src[3];
+    const ggml_tensor * B                     = dst->src[4];
+
+    const int64_t out_dim  = base->ne[0];
+    const int64_t n_tokens = base->ne[1];
+    const int64_t n_batch  = base->ne[2];
+    const int64_t n_seqs   = base->ne[3];
+    const int64_t in_dim   = B->ne[0];
+
+    const float *       base_data  = (const float *)       base->data;
+    const int32_t *      outlier_row_offsets = (const int32_t *) A_outlier_row_offsets->data;
+    const int32_t *      outlier_cols        = (const int32_t *) A_outlier_cols->data;
+    const ggml_fp16_t *  outlier_vals        = (const ggml_fp16_t *) A_outlier_vals->data;
+    const char * B_data = (const char *) B->data;
+    const size_t B_element_size = ggml_element_size(B);
+    const auto load_activation = [B](const char * value) {
+        return B->type == GGML_TYPE_F32
+            ? *(const float *) value
+            : ggml_fp16_to_fp32(*(const ggml_fp16_t *) value);
+    };
+
+    // zero-outlier tensors ship a length-1 cols/vals placeholder (GGUF
+    // cannot store empty tensors) - the CSR scan only indexes the per-row
+    // range [offsets[i], offsets[i+1]), so the placeholder is never read,
+    // same convention ggml_compute_forward_tile640_matmul_f32 relies on.
+    GGML_ASSERT((int64_t) A_outlier_row_offsets->ne[0] == out_dim + 1);
+
+    const int64_t dst_row_stride = out_dim;
+
+    const int64_t n_rows_total = out_dim * n_batch * n_seqs;
+    const int64_t n_per_thread = (n_rows_total + params->nth - 1) / params->nth;
+    const int64_t ith          = params->ith;
+    const int64_t row_start    = ith * n_per_thread;
+    const int64_t row_end      = MIN(row_start + n_per_thread, n_rows_total);
+
+    float * dst_data = (float *) dst->data;
+
+    for (int64_t idx = row_start; idx < row_end; ++idx) {
+        const int64_t i = idx % out_dim;
+        const int64_t b = (idx / out_dim) % n_batch;
+        const int64_t s = idx / (out_dim * n_batch);
+
+        const int64_t row_off_lo = outlier_row_offsets[i];
+        const int64_t row_off_hi = outlier_row_offsets[i + 1];
+        const int64_t K_i        = row_off_hi - row_off_lo;
+
+        const char * B_slab = B_data +
+            (int64_t) (s * n_batch + b) * n_tokens * in_dim * B_element_size;
+        const int64_t slab_off = (s * n_batch + b) * n_tokens * out_dim;
+
+        for (int64_t j = 0; j < n_tokens; ++j) {
+            const char * B_col = B_slab + (int64_t) j * in_dim * B_element_size;
+
+            float acc = 0.0f;
+            for (int64_t kk = 0; kk < K_i; ++kk) {
+                const int64_t gk  = row_off_lo + kk;
+                const int64_t col = (int64_t) outlier_cols[gk];
+                acc += ggml_fp16_to_fp32(outlier_vals[gk]) *
+                    load_activation(B_col + col * B_element_size);
+            }
+
+            const int64_t dst_idx = slab_off + j * dst_row_stride + i;
+            dst_data[dst_idx] = base_data[dst_idx] + acc;
+        }
+    }
+}
+
 
 // ggml_compute_forward_tile640_matmul_id
 //

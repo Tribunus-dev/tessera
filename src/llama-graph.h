@@ -1024,20 +1024,29 @@ struct llm_graph_context {
               ggml_tensor * cur) const;
 
     // do matmul with an AMD RDNA3 WMMA-native tile-packed weight: 3 tensors
-    // (packed, page_scales, lane_scales) - no outlier correction cluster
-    // and no act_scale, unlike build_tile640_lora_mm (docs/amd-tile-
-    // format-spec.md 3.4 has no outlier path for this format). LoRA
-    // adapters are not supported for RDNA3 tile weights, same as Tile640.
+    // (packed, page_scales, lane_scales), plus optional outlier CSR and
+    // AWQ act_scale (see CORRECTION-w3-7 in the gap ledger: both are now
+    // shipped/loaded for RDNA3 tensors the same as Tile640, previously
+    // silently dropped). LoRA adapters are not supported for RDNA3 tile
+    // weights, same as Tile640.
     // dartquant_rotation: optional (nullptr = no rotation, the common
     // case). When present, block-diagonally rotates `cur` by its
     // transpose before the tile matmul - see llama-graph.cpp and
     // tessera-ternary.h's dartquant_rotation comment.
+    // w_outlier_row_offsets/cols/vals: optional CSR (nullptr = no outliers
+    // selected for this tensor, the common case at the current 2% budget).
+    // w_act_scale: optional F16[in_dim] (nullptr = AWQ's alpha resolved to
+    // 0, i.e. no per-channel pre-scale was applied at quantize time).
     ggml_tensor * build_tile_rdna3_lora_mm(
               ggml_tensor * w_packed,
               ggml_tensor * w_page_scales,
               ggml_tensor * w_lane_scales,
               ggml_tensor * cur,
-              ggml_tensor * dartquant_rotation = nullptr) const;
+              ggml_tensor * dartquant_rotation = nullptr,
+              ggml_tensor * w_outlier_row_offsets = nullptr,
+              ggml_tensor * w_outlier_cols = nullptr,
+              ggml_tensor * w_outlier_vals = nullptr,
+              ggml_tensor * w_act_scale = nullptr) const;
 
     // Per-expert variant of build_tile640_lora_mm for MoE FFN.
     // out_dim is the per-expert output dim (rows of each expert matrix).

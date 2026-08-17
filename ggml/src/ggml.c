@@ -1165,6 +1165,7 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "TILE1024_GET_ROWS",
     "TILE1024_DEQUANT",
     "TILE_RDNA3_MATMUL",
+    "SPARSE_OUTLIER_ADD",
     "IMATRIX_OBSERVER",
 
     "UNARY",
@@ -1183,7 +1184,7 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "GLU",
 };
 
-static_assert(GGML_OP_COUNT == 117, "GGML_OP_COUNT != 117");
+static_assert(GGML_OP_COUNT == 118, "GGML_OP_COUNT != 118");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -1295,6 +1296,7 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "tile1024_get_rows(A, scales, outliers, ids)",
     "tile1024_dequant(A, scales, outliers)",
     "tile_rdna3_matmul(A_packed, page_scales, lane_scales, B)",
+    "sparse_outlier_add(base, row_offsets, cols, vals, B)",
     "imatrix_observer(activations, ids, weight_anchor)",
 
     "unary(x)",
@@ -1313,7 +1315,7 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "glu(x)",
 };
 
-static_assert(GGML_OP_COUNT == 117, "GGML_OP_COUNT != 117");
+static_assert(GGML_OP_COUNT == 118, "GGML_OP_COUNT != 118");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -7065,6 +7067,45 @@ struct ggml_tensor * ggml_tile_rdna3_matmul(
     // op_params: out_dim (i32) - consumed by the forward kernel, same
     // convention as ggml_tile640_matmul.
     ggml_set_op_params_i32(result, 0, (int32_t) out_dim);
+
+    return result;
+}
+
+// Packing-format-agnostic sparse CSR outlier addback - see ggml.h's
+// declaration comment for the full contract. CPU-only (no CUDA/HIP
+// supports_op case, so ggml_backend_sched places it on CPU automatically,
+// same as GGML_OP_IMATRIX_OBSERVER's own Metal-only support).
+struct ggml_tensor * ggml_sparse_outlier_add(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * base,
+        struct ggml_tensor  * A_outlier_row_offsets,
+        struct ggml_tensor  * A_outlier_cols,
+        struct ggml_tensor  * A_outlier_vals,
+        struct ggml_tensor  * B) {
+    GGML_ASSERT(base->type == GGML_TYPE_F32);
+    GGML_ASSERT(A_outlier_row_offsets->type == GGML_TYPE_I32);
+    GGML_ASSERT(A_outlier_cols->type        == GGML_TYPE_I32);
+    GGML_ASSERT(A_outlier_vals->type        == GGML_TYPE_F16);
+    GGML_ASSERT(B->type == GGML_TYPE_F16 || B->type == GGML_TYPE_F32);
+
+    GGML_ASSERT(ggml_is_contiguous(base));
+    GGML_ASSERT(ggml_is_contiguous(A_outlier_row_offsets));
+    GGML_ASSERT(ggml_is_contiguous(A_outlier_cols));
+    GGML_ASSERT(ggml_is_contiguous(A_outlier_vals));
+    GGML_ASSERT(ggml_is_contiguous(B));
+
+    const int64_t out_dim = base->ne[0];
+    GGML_ASSERT(A_outlier_row_offsets->ne[0] == out_dim + 1);
+    GGML_ASSERT(base->ne[1] == B->ne[1] && base->ne[2] == B->ne[2] && base->ne[3] == B->ne[3]);
+
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, 4, base->ne);
+
+    result->op     = GGML_OP_SPARSE_OUTLIER_ADD;
+    result->src[0] = base;
+    result->src[1] = A_outlier_row_offsets;
+    result->src[2] = A_outlier_cols;
+    result->src[3] = A_outlier_vals;
+    result->src[4] = B;
 
     return result;
 }

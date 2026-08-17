@@ -1683,10 +1683,19 @@ int ts_pack_ternary_to_tile(const ts_ternary_tensor & tn,
         result->page_scales.assign((size_t) out_dim * (size_t) pages, 0);
         result->lane_scales.assign((size_t) out_dim * (size_t) lanes_per_row, 0);
         result->packed.clear();
-        result->outlier_row_offsets.clear();
-        result->outlier_cols.clear();
-        result->outlier_vals.clear();
-        result->act_scale.clear();
+        // outlier CSR and act_scale are packing-format-agnostic (column/row
+        // indices and per-input-channel scale, independent of RDNA3's
+        // page/lane layout) - copy verbatim, same as the generic/Tile640
+        // path below. Previously cleared here unconditionally, silently
+        // dropping both for every RDNA3-packed model: outlier-selected
+        // elements shipped as hard zeros with no exact-value fallback, and
+        // AWQ's per-channel weight pre-scale shipped with no compensating
+        // activation scale for the inference graph to apply - see
+        // CORRECTION-w3-7 in the gap ledger.
+        result->outlier_row_offsets = tn.outlier_row_offsets;
+        result->outlier_cols        = tn.outlier_cols;
+        result->outlier_vals        = tn.outlier_vals;
+        result->act_scale           = tn.act_scale;
 
         // Reconstruct per-element float magnitudes from the best available
         // source - see ts_ternary_synth_magnitude (core > lane_scale >

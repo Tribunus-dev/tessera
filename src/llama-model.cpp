@@ -3360,6 +3360,31 @@ ggml_tensor * llama_model_base::create_tensor_or_tile_rdna3(
             rotation_tn, { rotation_meta->ne[0], rotation_meta->ne[1] }, TENSOR_NOT_REQUIRED);
     }
 
+    // Optional outlier CSR + AWQ act_scale - same loading pattern
+    // create_tensor_or_tile640 above uses. outlier_cols/outlier_vals share
+    // a size only known from the GGUF's own metadata (total outlier count
+    // is per-tensor, not derivable from `ne`); the writer always emits a
+    // length-1 placeholder even for zero outliers (tessera-gguf-writer.cpp),
+    // so outlier_row_offsets' presence alone gates all three.
+    const std::string row_off_suffix = stem + "_outlier_row_offsets";
+    const LLM_TN_IMPL row_off_tn(tn.arch, tn.tensor, row_off_suffix.c_str(), tn.bid, tn.xid);
+    if (ml->get_tensor_meta(row_off_tn.str().c_str()) != nullptr) {
+        value.outlier_row_offsets = create_tensor(
+            row_off_tn, { n_rows + 1 }, TENSOR_NOT_REQUIRED);
+
+        const std::string cols_suffix = stem + "_outlier_cols";
+        const LLM_TN_IMPL cols_tn(tn.arch, tn.tensor, cols_suffix.c_str(), tn.bid, tn.xid);
+        const auto * outlier_meta = ml->require_tensor_meta(cols_tn.str());
+        value.outlier_cols = create_tensor(
+            cols_tn, { outlier_meta->ne[0] }, TENSOR_NOT_REQUIRED);
+        value.outlier_vals = component("_outlier_vals", { outlier_meta->ne[0] });
+    }
+    const std::string act_suffix = stem + "_act_scale";
+    const LLM_TN_IMPL act_tn(tn.arch, tn.tensor, act_suffix.c_str(), tn.bid, tn.xid);
+    if (ml->get_tensor_meta(act_tn.str().c_str()) != nullptr) {
+        value.act_scale = create_tensor(act_tn, { row_width }, TENSOR_NOT_REQUIRED);
+    }
+
     tile_rdna3_tensors.emplace(logical_name, value);
     return nullptr;
 }

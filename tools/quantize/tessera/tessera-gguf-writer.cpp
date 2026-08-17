@@ -186,6 +186,42 @@ void ts_gguf_write_tensor_cluster_amd_rdna3(struct gguf_context * ctx,
         t->data = (void *)dartquant_rotation;
         gguf_add_tensor(ctx, t);
     }
+
+    // weight_outlier_row_offsets/cols/vals + weight_act_scale: same fields
+    // and layout ts_gguf_write_tensor_cluster writes above for Tile640 -
+    // ts_pack_ternary_to_tile's RDNA3 branch now populates res->outlier_*/
+    // act_scale the same way (previously cleared unconditionally here,
+    // silently dropping both for every RDNA3-packed model - see
+    // CORRECTION-w3-7 in the gap ledger). outlier_cols/vals ship a
+    // length-1 placeholder when there are zero outliers, same reason as
+    // the generic writer above (gguf can't store empty tensors).
+    const int64_t n_outliers = (int64_t) res->outlier_cols.size();
+    static const int32_t     empty_i32 = 0;
+    static const ggml_fp16_t empty_f16 = 0;
+
+    t = ggml_new_tensor_1d(gctx, GGML_TYPE_I32, out_dim + 1);
+    ggml_format_name(t, "%s.weight_outlier_row_offsets", base);
+    t->data = (void *) res->outlier_row_offsets.data();
+    gguf_add_tensor(ctx, t);
+
+    t = ggml_new_tensor_1d(gctx, GGML_TYPE_I32, n_outliers > 0 ? n_outliers : 1);
+    ggml_format_name(t, "%s.weight_outlier_cols", base);
+    t->data = (n_outliers > 0) ? (void *) res->outlier_cols.data()
+                               : (void *) &empty_i32;
+    gguf_add_tensor(ctx, t);
+
+    t = ggml_new_tensor_1d(gctx, GGML_TYPE_F16, n_outliers > 0 ? n_outliers : 1);
+    ggml_format_name(t, "%s.weight_outlier_vals", base);
+    t->data = (n_outliers > 0) ? (void *) res->outlier_vals.data()
+                               : (void *) &empty_f16;
+    gguf_add_tensor(ctx, t);
+
+    if (!res->act_scale.empty()) {
+        t = ggml_new_tensor_1d(gctx, GGML_TYPE_F16, in_dim);
+        ggml_format_name(t, "%s.weight_act_scale", base);
+        t->data = (void *) res->act_scale.data();
+        gguf_add_tensor(ctx, t);
+    }
 }
 
 int ts_gguf_repoint_tensor_cluster(struct ggml_context * gctx,

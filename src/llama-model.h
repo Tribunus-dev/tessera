@@ -689,6 +689,19 @@ struct llama_tile_rdna3_tensor {
     // so a model with no DartQuant tensors pays zero extra graph cost.
     ggml_tensor * dartquant_rotation  = nullptr;
 
+    // Optional outlier CSR + AWQ activation-compensation scale - same
+    // fields llama_tile640_tensor already carries (see CORRECTION-w3-7 in
+    // the gap ledger: these were shipped by the packer but never loaded or
+    // consumed for RDNA3-packed tensors before, silently dropping both
+    // outlier correction and AWQ calibration for this host's actual
+    // packing target). nullptr (the common case: no outliers selected, or
+    // AWQ's alpha resolved to 0) means build_tile_rdna3_lora_mm skips both
+    // entirely, same zero-extra-cost convention as dartquant_rotation.
+    ggml_tensor * outlier_row_offsets = nullptr;
+    ggml_tensor * outlier_cols        = nullptr;
+    ggml_tensor * outlier_vals        = nullptr;
+    ggml_tensor * act_scale           = nullptr;
+
     bool valid() const { return packed != nullptr; }
 };
 

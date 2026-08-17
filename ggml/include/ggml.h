@@ -606,6 +606,14 @@ extern "C" {
         // TS_TILE_GPU != 0 (ggml-cuda/tile-amd-rdna3.cu, mirrors the
         // TILE640_MATMUL_INTERLEAVED GPU-dispatch pattern).
         GGML_OP_TILE_RDNA3_MATMUL,
+        // Sparse CSR outlier addback, packing-format-agnostic: dst = base
+        // + (outlier correction). See ggml_sparse_outlier_add below.
+        // CPU-only (no CUDA/HIP dispatch case, so the scheduler
+        // automatically places it on CPU - same pattern GGML_OP_
+        // IMATRIX_OBSERVER already uses for its own Metal-only backend
+        // support); outliers are a small (~2%) fraction of elements so
+        // this is cheap regardless of device.
+        GGML_OP_SPARSE_OUTLIER_ADD,
         GGML_OP_IMATRIX_OBSERVER,
 
         GGML_OP_UNARY,
@@ -2832,6 +2840,31 @@ extern "C" {
             struct ggml_tensor  * A_packed,
             struct ggml_tensor  * A_page_scales,
             struct ggml_tensor  * A_lane_scales,
+            struct ggml_tensor  * B);
+
+    // Packing-format-agnostic sparse CSR outlier addback: dst[i,j,b,s] =
+    // base[i,j,b,s] + sum over row i's outliers of
+    //   outlier_val[k] * B[outlier_cols[k], j, b, s]
+    // outlier_vals are the ORIGINAL (un-rescaled) weight value at that
+    // position (tessera-quant.cpp's ts_quantize_2d_ternary), so B must be
+    // the matching original activation - a caller that pre-scales
+    // activations for AWQ (e.g. build_tile640_lora_mm/build_tile_rdna3_
+    // lora_mm's w_act_scale multiply) must pass the PRE-scale tensor here,
+    // not the post-scale one the main tile matmul consumes.
+    //   base:                   F32   [out_dim, n_tokens, n_batch, n_seqs]
+    //   A_outlier_row_offsets:  I32   [out_dim + 1]  (CSR)
+    //   A_outlier_cols:         I32   [total_outliers]
+    //   A_outlier_vals:         F16   [total_outliers]
+    //   B:                      F16 or F32   [in_dim, n_tokens, n_batch, n_seqs]
+    // Output: F32, same shape as base. CPU-only (see GGML_OP_SPARSE_
+    // OUTLIER_ADD's comment) - outliers are ~2% of elements, cheap
+    // regardless of device.
+    GGML_API struct ggml_tensor * ggml_sparse_outlier_add(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * base,
+            struct ggml_tensor  * A_outlier_row_offsets,
+            struct ggml_tensor  * A_outlier_cols,
+            struct ggml_tensor  * A_outlier_vals,
             struct ggml_tensor  * B);
 
     // Graph-resident importance-matrix observer. The output is F32
