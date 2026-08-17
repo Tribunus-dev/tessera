@@ -1496,7 +1496,7 @@ void llm_graph_context::build_kv_stats_observer(
     // lines below this call site) -- ggml_imatrix_observer itself accepts
     // a null weight_anchor without issue, so skip only the scheduling hint
     // when there is nothing to anchor to, rather than dereferencing it.
-    ggml_tensor * observer = ggml_imatrix_observer(ctx0, cur, nullptr, weight_anchor, 1);
+    ggml_tensor * observer = ggml_imatrix_observer(ctx0, cur, nullptr, weight_anchor, 1, /*capture_tokens=*/0);
     ggml_set_name(observer, name.c_str());
     ggml_set_output(observer);
     if (weight_anchor && weight_anchor->buffer &&
