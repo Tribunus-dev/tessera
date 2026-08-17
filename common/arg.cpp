@@ -4775,6 +4775,28 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             tessera_params.imatrix = value;
         }
     ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_EXPORT_TERNARY}));
+    add_opt(common_arg(
+        {"--escape-list"}, "PATH",
+        "Tessera (export-ternary): file of tensor names (one per line,\n"
+        "'#'-comments and blank lines skipped) to force to BF16 passthrough\n"
+        "instead of ternary quantization, regardless of the usual name-\n"
+        "pattern decision. Optional; omitted or empty reproduces the\n"
+        "default all-ternary-eligible behavior. Used by\n"
+        "scripts/progressive-mixed-precision.py's sensitivity search.",
+        [](common_params &, const std::string & value) {
+            tessera_params.export_escape_list = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_EXPORT_TERNARY}));
+    add_opt(common_arg(
+        {"--sensitivity-out"}, "PATH",
+        "Tessera (export-ternary): write a {tensor_name: score} JSON\n"
+        "sidecar (ts_l5_imatrix_magnitude) ranking each ternary-eligible\n"
+        "tensor's sensitivity, for scripts/progressive-mixed-precision.py\n"
+        "to prioritize escape candidates. Optional.",
+        [](common_params &, const std::string & value) {
+            tessera_params.export_sensitivity_out = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TESSERA}).set_tessera_sc({TESSERA_SC_EXPORT_TERNARY}));
 
     // ----- `pack` subcommand -----
     // Reads a tile-neutral safetensors directory, packs each tensor to the

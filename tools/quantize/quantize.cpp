@@ -19,6 +19,7 @@
 #include "tessera/tessera-quant.h"
 #include "tessera/tessera-imatrix.h"
 #include "tessera/tessera-regime.h"
+#include "tessera/tessera-l5.h"
 #include "tessera/ttt-writer.h"
 #include "tessera/ttt-reader.h"
 #include "tessera/tessera-gguf-writer.h"
@@ -44,6 +45,7 @@
 #include <vector>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <fstream>
 #include <filesystem>
 #include <atomic>
@@ -812,7 +814,17 @@ static size_t ts_export_physmem_bytes() {
 // (attn/ffn/...) and a registered dequant path. Matches ts_is_quantizable
 // in tessera-dispatch.cpp; duplicated here so the export path does not
 // pull the dispatch's full header surface into quantize.cpp.
-static bool ts_export_is_weight(const char * name, enum ggml_type type, int n_dims) {
+//
+// escape_set (progressive-mixed-precision.py): tensor names to force to
+// BF16 passthrough regardless of the family-pattern decision below - checked
+// FIRST so a tensor the mixed-precision search flagged as ternary-intolerant
+// is excluded before any other logic runs. Empty set reproduces the
+// function's pre-existing behavior exactly.
+static bool ts_export_is_weight(const char * name, enum ggml_type type, int n_dims,
+                                const std::unordered_set<std::string> & escape_set) {
+    if (escape_set.count(name) != 0) {
+        return false;
+    }
     if (type == GGML_TYPE_TESSERA_T640) {
         return false;
     }
@@ -837,6 +849,34 @@ static bool ts_export_is_weight(const char * name, enum ggml_type type, int n_di
     std::string family = ts_regime_infer_family(name);
     if (family.empty() || family == "other" || family == "unknown") {
         return false;
+    }
+    return true;
+}
+
+// Loads a --escape-list file (one tensor name per line, '#'-comments and
+// blank lines skipped) into `out`. Returns true on success (including a
+// missing/empty path, which is the common case - `out` stays empty and
+// ts_export_is_weight's behavior is unchanged). Returns false only on a
+// real I/O error for an explicitly-supplied path, with `err` set.
+static bool ts_export_load_escape_set(const std::string & path,
+                                      std::unordered_set<std::string> & out,
+                                      std::string & err) {
+    if (path.empty()) {
+        return true;
+    }
+    std::ifstream f(path);
+    if (!f) {
+        err = "failed to open --escape-list file: " + path;
+        return false;
+    }
+    std::string line;
+    while (std::getline(f, line)) {
+        size_t start = line.find_first_not_of(" \t\r\n");
+        if (start == std::string::npos || line[start] == '#') {
+            continue;
+        }
+        size_t end = line.find_last_not_of(" \t\r\n");
+        out.insert(line.substr(start, end - start + 1));
     }
     return true;
 }
@@ -1115,6 +1155,20 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
         have_imatrix = !imatrix.data.empty();
     }
 
+    // mixed-precision escape set (progressive-mixed-precision.py): tensor
+    // names to force to BF16 passthrough regardless of the usual family-
+    // pattern decision. Empty/unset reproduces today's exact behavior.
+    std::unordered_set<std::string> escape_set;
+    if (!tp.export_escape_list.empty()) {
+        std::string eerr;
+        if (!ts_export_load_escape_set(tp.export_escape_list, escape_set, eerr)) {
+            fprintf(stderr, "error: export-ternary: %s\n", eerr.c_str());
+            return 1;
+        }
+        fprintf(stderr, "export-ternary: --escape-list: %zu tensor(s) forced to passthrough\n",
+                escape_set.size());
+    }
+
     // open + mmap the source GGUF. ts_export_open_gguf uses a lazy MAP_PRIVATE
     // mmap (no prefetch, POSIX_MADV_RANDOM) so opening a 65 GB file on a 17 GB
     // host does not page anything in until a tensor is touched.
@@ -1266,7 +1320,7 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
         while (nd > 1 && ne[nd - 1] == 1) {
             nd--;
         }
-        if (!ts_export_is_weight(name, type, nd)) {
+        if (!ts_export_is_weight(name, type, nd, escape_set)) {
             n_skipped++;
             continue;
         }
@@ -1292,6 +1346,15 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
     };
     std::vector<std::vector<ts_export_result>> results(work.size());
     std::vector<int64_t> item_skipped(work.size(), 0);
+    // Sensitivity scoring (--sensitivity-out, progressive-mixed-precision.py):
+    // records each work item's own act_scales pointer (into `imatrix`'s
+    // storage, alive for the whole function) + in_dim, one write per idx from
+    // that idx's own thread - thread-safe, same pattern as results[idx]/
+    // item_skipped[idx]. Left {nullptr,0} for items with no calibration
+    // signal; ts_l5_imatrix_magnitude is only run over the populated subset
+    // after the loop joins.
+    std::vector<std::pair<const float *, int64_t>> sensitivity_inputs(
+        work.size(), {nullptr, 0});
 
     const int32_t n_threads = std::max(1, std::min(
         (int32_t) std::thread::hardware_concurrency(),
@@ -1328,6 +1391,9 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
             if (act_scales != nullptr && act_n != item.in_dim) {
                 act_scales = nullptr;
             }
+        }
+        if (act_scales != nullptr) {
+            sensitivity_inputs[idx] = {act_scales, item.in_dim};
         }
 
         const int64_t per = item.out_dim * item.in_dim;
@@ -1464,6 +1530,62 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
         n_skipped += s;
     }
 
+    // --sensitivity-out: rank each work item by ts_l5_imatrix_magnitude
+    // (mean(|act|) per tensor, tessera-l5.h/.cpp), then ts_l5_percentile_rank
+    // for an evenly-distributed [0,1] ranking signal (peak-normalization
+    // alone lets one dominant tensor compress everything else near 0).
+    // Threads have joined by this point, so sensitivity_inputs/work are safe
+    // to walk sequentially. Only meaningful with real calibration data - skip
+    // (warn, not error) without one, same convention have_imatrix already
+    // uses elsewhere in this function.
+    if (!tp.export_sensitivity_out.empty()) {
+        if (!have_imatrix) {
+            fprintf(stderr, "export-ternary: warning: --sensitivity-out requires --imatrix; "
+                            "skipping sensitivity sidecar\n");
+        } else {
+            std::vector<float>       concat_act;
+            std::vector<int64_t>     tensor_dims;
+            std::vector<std::string> tensor_names_storage;
+            for (size_t idx = 0; idx < work.size(); idx++) {
+                const float * ptr    = sensitivity_inputs[idx].first;
+                const int64_t in_dim = sensitivity_inputs[idx].second;
+                if (ptr == nullptr || in_dim <= 0) {
+                    continue;
+                }
+                concat_act.insert(concat_act.end(), ptr, ptr + in_dim);
+                tensor_dims.push_back(in_dim);
+                tensor_names_storage.push_back(work[idx].base_name);
+            }
+            if (tensor_names_storage.empty()) {
+                fprintf(stderr, "export-ternary: warning: --sensitivity-out: no tensor had "
+                                "usable calibration data; skipping sidecar\n");
+            } else {
+                std::vector<const char *> tensor_names_c;
+                tensor_names_c.reserve(tensor_names_storage.size());
+                for (const std::string & n : tensor_names_storage) {
+                    tensor_names_c.push_back(n.c_str());
+                }
+                ts_score_map raw = ts_l5_imatrix_magnitude(
+                    concat_act.data(), tensor_names_c.data(), tensor_dims.data(),
+                    (int64_t) tensor_names_storage.size());
+                ts_score_map ranked = ts_l5_percentile_rank(&raw);
+                nlohmann::json j;
+                for (const auto & kv : ranked) {
+                    j[kv.first] = kv.second;
+                }
+                std::ofstream sf(tp.export_sensitivity_out);
+                if (!sf) {
+                    fprintf(stderr, "export-ternary: warning: failed to write --sensitivity-out '%s'\n",
+                            tp.export_sensitivity_out.c_str());
+                } else {
+                    sf << j.dump(2);
+                    fprintf(stderr, "export-ternary: wrote sensitivity scores for %zu tensor(s) to %s\n",
+                            tensor_names_storage.size(), tp.export_sensitivity_out.c_str());
+                }
+            }
+        }
+    }
+
     // Sequential replay into ts_write_ttt_stream: all the expensive work
     // (dequant + AWQ/SEPTQ) already happened above in parallel; this just
     // walks the pre-computed `results` in original tensor order so the
@@ -1505,7 +1627,7 @@ static int ts_cli_export_ternary(const common_tessera_params & tp) {
             while (nd > 1 && ne[nd - 1] == 1) {
                 nd--;
             }
-            if (ts_export_is_weight(name, type, nd)) {
+            if (ts_export_is_weight(name, type, nd, escape_set)) {
                 continue; // ternary-quantized elsewhere; not passthrough
             }
             struct ggml_tensor * t = ggml_get_tensor(ggml_ctx, name);

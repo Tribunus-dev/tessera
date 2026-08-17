@@ -167,6 +167,17 @@ struct common_tessera_params {
     // stats file (GGUF or .npz).
     std::string export_in;
     std::string export_out;
+    // export-ternary mixed-precision escape (progressive-mixed-precision.py):
+    // export_escape_list is a path to a file of tensor names (one per line,
+    // '#'-comments and blank lines skipped) to force to BF16 passthrough
+    // regardless of what ts_regime_infer_family's name-pattern match would
+    // otherwise decide - empty/unset reproduces today's exact ternary-vs-
+    // passthrough behavior (ts_export_is_weight, quantize.cpp). export_
+    // sensitivity_out, when set, writes a {tensor_name: score} JSON sidecar
+    // (ts_l5_imatrix_magnitude, tessera-l5.h) after export completes, used
+    // by the search script to rank escape candidates.
+    std::string export_escape_list;
+    std::string export_sensitivity_out;
     // pack subcommand: read a .ttt directory, pack each tensor to the
     // target tile geometry via ts_pack_ternary_to_tile, write a GGUF.
     // pack_in is the source .ttt dir, pack_out is the destination GGUF.
